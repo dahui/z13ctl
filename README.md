@@ -4,8 +4,34 @@ RGB lighting control for the 2025 ASUS ROG Flow Z13 via Linux hidraw.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
+## Background
+
+Linux support for RGB control on the 2025 ASUS ROG Flow Z13 is frustratingly
+sparse. The existing options all have significant problems:
+
+- **[OpenRGB](https://openrgb.org/)** does not support the 2025 Z13 at all.
+- **[asusctl](https://gitlab.com/asus-linux/asusctl)** does not work with this
+  model.
+- **[rogauracore](https://github.com/wroberts/rogauracore)** only controls the
+  keyboard backlight; the edge lightbar is not supported.
+- **[HHD](https://github.com/hhd-dev/hhd)** works but is broken on CachyOS
+  without the Bazzite kernel. Using the Bazzite kernel instead of CachyOS's
+  performance-tuned kernels (deckify or bore) causes a meaningful reduction in
+  gaming performance -- around 10-20% depending on the workload. Getting HHD to
+  work on a non-Bazzite kernel requires out-of-tree kernel patches that turn
+  out to be useful only for HHD itself, as demonstrated by this tool working
+  without them.
+
+`z13ctl` implements the Aura HID protocol directly against the Linux `hidraw`
+interface, with no kernel patches and no external daemons required. The
+protocol was reverse-engineered from
+[g-helper](https://github.com/seerge/g-helper) (MIT license), which documents
+it in `app/USB/AsusHid.cs` and `app/USB/Aura.cs`. A detailed technical
+description of the protocol is available in [PROTOCOL.md](PROTOCOL.md).
+
 ## Table of Contents
 
+- [Background](#background)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
