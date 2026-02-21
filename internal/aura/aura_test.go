@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/aura"
 )
 
 // mockWriter captures all Write calls, zero-padding each to 64 bytes.

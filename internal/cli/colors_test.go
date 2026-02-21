@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
 func TestResolveColor(t *testing.T) {

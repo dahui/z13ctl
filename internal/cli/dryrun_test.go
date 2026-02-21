@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
 // captureStdout redirects os.Stdout to a pipe, calls f, restores stdout,

@@ -16,7 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"z13ctl/internal/daemon"
+	"github.com/dahui/z13ctl/internal/daemon"
 )
 
 var daemonCmd = &cobra.Command{

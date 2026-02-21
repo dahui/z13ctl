@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
 func TestParseBrightness(t *testing.T) {

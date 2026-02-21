@@ -6,13 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/dahui/z13ctl/api"
 )
 
 func TestSaveAndLoadState_RoundTrip(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	s := State{
-		Lighting: LightingState{
+	s := api.State{
+		Lighting: api.LightingState{
 			Enabled:    true,
 			Mode:       "cycle",
 			Color:      "FF0000",
@@ -41,12 +43,12 @@ func TestSaveAndLoadState_RoundTrip(t *testing.T) {
 func TestSaveAndLoadState_WithDevices(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	s := State{
-		Lighting: LightingState{
+	s := api.State{
+		Lighting: api.LightingState{
 			Enabled: true, Mode: "cycle", Color: "FF0000",
 			Color2: "000000", Speed: "normal", Brightness: 3,
 		},
-		Devices: map[string]LightingState{
+		Devices: map[string]api.LightingState{
 			"keyboard": {
 				Enabled: true, Mode: "static", Color: "00FFFF",
 				Color2: "000000", Speed: "normal", Brightness: 2,
@@ -109,8 +111,8 @@ func TestLoadState_DevicesNilOnAllDeviceState(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	// Saving a state with no Devices should load back with nil Devices.
-	s := State{
-		Lighting: LightingState{
+	s := api.State{
+		Lighting: api.LightingState{
 			Enabled: true, Mode: "static", Color: "FF00FF",
 			Color2: "000000", Speed: "normal", Brightness: 2,
 		},

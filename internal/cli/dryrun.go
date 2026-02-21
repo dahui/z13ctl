@@ -8,8 +8,8 @@ package cli
 import (
 	"fmt"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/hid"
 )
 
 // auraReportID is the HID Report ID byte that begins every Aura packet (0x5d).

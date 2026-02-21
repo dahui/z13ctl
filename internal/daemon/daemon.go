@@ -22,16 +22,17 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	sddaemon "github.com/coreos/go-systemd/v22/daemon"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/hid"
 )
 
 // Daemon holds the runtime state for the long-running z13ctl process.
 type Daemon struct {
 	mu    sync.Mutex
 	dev   *hid.Device // nil if no HID device was found at startup
-	state State
+	state api.State
 
 	subMu       sync.Mutex
 	subscribers []net.Conn // long-lived connections subscribed to events
@@ -109,7 +110,7 @@ func (d *Daemon) getListener() (net.Listener, error) {
 		return listeners[0], nil
 	}
 
-	sock := socketPath()
+	sock := api.SocketPath()
 	if mkdirErr := os.MkdirAll(sock[:len(sock)-len("z13ctl.sock")-1], 0o750); mkdirErr != nil {
 		return nil, mkdirErr
 	}
@@ -165,7 +166,7 @@ func (d *Daemon) addSubscriber(conn net.Conn) {
 }
 
 // applyZone applies a LightingState to a specific HID device or zone.
-func applyZone(dev *hid.Device, ls LightingState) error {
+func applyZone(dev *hid.Device, ls api.LightingState) error {
 	if !ls.Enabled {
 		return aura.TurnOff(dev)
 	}

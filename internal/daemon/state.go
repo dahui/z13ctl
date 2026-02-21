@@ -1,35 +1,21 @@
 package daemon
 
-// state.go — State type and JSON persistence via $XDG_STATE_HOME.
+// state.go — State persistence via $XDG_STATE_HOME.
+//
+// State and LightingState types are defined in the public api package
+// (github.com/dahui/z13ctl/api) and used here for persistence.
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/dahui/z13ctl/api"
 )
 
-// State holds the last-applied settings for all controllable subsystems.
-// It is written to disk on every successful command and restored on startup.
-type State struct {
-	Lighting LightingState            `json:"lighting"`
-	Devices  map[string]LightingState `json:"devices,omitempty"` // per-device overrides keyed by name
-	Profile  string                   `json:"profile,omitempty"`
-	Battery  int                      `json:"battery_limit,omitempty"`
-}
-
-// LightingState captures all parameters needed to reproduce the last Apply call.
-type LightingState struct {
-	Enabled    bool   `json:"enabled"`
-	Mode       string `json:"mode"`
-	Color      string `json:"color"`  // "RRGGBB" hex
-	Color2     string `json:"color2"` // "RRGGBB" hex
-	Speed      string `json:"speed"`
-	Brightness int    `json:"brightness"` // 0–3
-}
-
-func defaultState() State {
-	return State{
-		Lighting: LightingState{
+func defaultState() api.State {
+	return api.State{
+		Lighting: api.LightingState{
 			Enabled:    true,
 			Mode:       "static",
 			Color:      "FF0000",
@@ -52,12 +38,12 @@ func statePath() string {
 
 // loadState reads persisted state. Returns defaultState() if the file is
 // missing or cannot be parsed.
-func loadState() State {
+func loadState() api.State {
 	data, err := os.ReadFile(statePath())
 	if err != nil {
 		return defaultState()
 	}
-	var s State
+	var s api.State
 	if err := json.Unmarshal(data, &s); err != nil {
 		return defaultState()
 	}
@@ -65,7 +51,7 @@ func loadState() State {
 }
 
 // saveState atomically writes state to disk.
-func saveState(s State) error {
+func saveState(s api.State) error {
 	path := statePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err

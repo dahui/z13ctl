@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
-	"z13ctl/internal/daemon"
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
 )
@@ -40,7 +40,7 @@ Levels:
 			return nil
 		}
 
-		handled, err := daemon.SendBrightness(deviceFlag, int(level))
+		handled, err := api.SendBrightness(deviceFlag, int(level))
 		if handled {
 			if err != nil {
 				return err

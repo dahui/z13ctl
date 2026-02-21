@@ -5,7 +5,7 @@ package cmd
 import (
 	"fmt"
 
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
 )

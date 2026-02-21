@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"os"
 
-	"z13ctl/cmd"
+	"github.com/dahui/z13ctl/cmd"
 )
 
 func main() {

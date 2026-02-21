@@ -1,10 +1,10 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS  := -s -w -X z13ctl/cmd.Version=$(VERSION)
+LDFLAGS  := -s -w -X github.com/dahui/z13ctl/cmd.Version=$(VERSION)
 
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
 SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 
-.PHONY: build test cover lint snapshot release install-service uninstall-service install-perms-service uninstall-perms-service clean help
+.PHONY: build test cover lint mod-tidy snapshot release install-service uninstall-service install-perms-service uninstall-perms-service clean help
 
 ## build: compile z13ctl with version from git tags
 build:
@@ -22,6 +22,11 @@ cover:
 ## lint: run golangci-lint
 lint:
 	golangci-lint run ./...
+
+## mod-tidy: tidy go.mod for all modules in the repo
+mod-tidy:
+	go mod tidy
+	cd api && go mod tidy
 
 ## snapshot: build a local snapshot release via goreleaser (no publish)
 snapshot:

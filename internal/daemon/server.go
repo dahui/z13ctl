@@ -12,8 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
 // request is a command sent by a client over the socket.
@@ -35,7 +36,7 @@ type response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 	Value string `json:"value,omitempty"`
-	State *State `json:"state,omitempty"`
+	State *api.State `json:"state,omitempty"`
 	Event string `json:"event,omitempty"`
 }
 
@@ -152,7 +153,7 @@ func (d *Daemon) handleApply(req request) response {
 		device = "all"
 	}
 	slog.Info("apply", "device", device, "mode", req.Mode, "color", req.Color, "brightness", req.Brightness)
-	ls := LightingState{
+	ls := api.LightingState{
 		Enabled:    true,
 		Mode:       req.Mode,
 		Color:      req.Color,
@@ -167,7 +168,7 @@ func (d *Daemon) handleApply(req request) response {
 	} else if !strings.HasPrefix(req.Device, "/") {
 		// Named per-device apply (keyboard/lightbar): save as a per-device override.
 		if d.state.Devices == nil {
-			d.state.Devices = make(map[string]LightingState)
+			d.state.Devices = make(map[string]api.LightingState)
 		}
 		d.state.Devices[req.Device] = ls
 	}
@@ -199,9 +200,9 @@ func (d *Daemon) handleOff(req request) response {
 		if !strings.HasPrefix(req.Device, "/") {
 			// Named per-device off: save disabled state for this zone.
 			if d.state.Devices == nil {
-				d.state.Devices = make(map[string]LightingState)
+				d.state.Devices = make(map[string]api.LightingState)
 			}
-			d.state.Devices[req.Device] = LightingState{Enabled: false}
+			d.state.Devices[req.Device] = api.LightingState{Enabled: false}
 			if err := saveState(d.state); err != nil {
 				slog.Warn("failed to save state", "err", err)
 			}
@@ -256,7 +257,7 @@ func (d *Daemon) handleBrightness(req request) response {
 	} else if !strings.HasPrefix(req.Device, "/") {
 		// Named per-device brightness: update or create entry, preserving other fields.
 		if d.state.Devices == nil {
-			d.state.Devices = make(map[string]LightingState)
+			d.state.Devices = make(map[string]api.LightingState)
 		}
 		ls := d.state.Lighting // base: fall back to all-device state
 		if existing, ok := d.state.Devices[req.Device]; ok {

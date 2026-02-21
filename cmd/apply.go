@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
-	"z13ctl/internal/daemon"
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
 )
@@ -69,7 +69,7 @@ var applyCmd = &cobra.Command{
 
 		color := fmt.Sprintf("%02X%02X%02X", r, g, b)
 		color2 := fmt.Sprintf("%02X%02X%02X", r2, g2, b2)
-		handled, err := daemon.SendApply(deviceFlag, color, color2, modeFlag, speedFlag, int(brightness))
+		handled, err := api.SendApply(deviceFlag, color, color2, modeFlag, speedFlag, int(brightness))
 		if handled {
 			if err != nil {
 				return err

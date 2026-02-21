@@ -10,7 +10,7 @@ builds:
   - id: z13ctl
     binary: z13ctl
     ldflags:
-      - -s -w -X z13ctl/cmd.Version={{.Version}}
+      - -s -w -X github.com/dahui/z13ctl/cmd.Version={{.Version}}
     goos:
       - linux
     goarch:

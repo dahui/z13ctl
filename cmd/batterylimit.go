@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"z13ctl/internal/cli"
-	"z13ctl/internal/daemon"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -47,7 +47,7 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 				return nil
 			}
 
-			if handled, err := daemon.SendBatteryLimitSet(limit); handled {
+			if handled, err := api.SendBatteryLimitSet(limit); handled {
 				if err != nil {
 					return err
 				}

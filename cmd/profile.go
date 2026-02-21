@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"z13ctl/internal/cli"
-	"z13ctl/internal/daemon"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -47,7 +47,7 @@ Profiles:
 				return nil
 			}
 
-			if handled, err := daemon.SendProfileSet(profile); handled {
+			if handled, err := api.SendProfileSet(profile); handled {
 				if err != nil {
 					return err
 				}

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/internal/hid"
 )
 
 func TestUeventToDevPath(t *testing.T) {

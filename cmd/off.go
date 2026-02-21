@@ -5,10 +5,10 @@ package cmd
 import (
 	"fmt"
 
-	"z13ctl/internal/aura"
-	"z13ctl/internal/cli"
-	"z13ctl/internal/daemon"
-	"z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
 )
@@ -22,7 +22,7 @@ var offCmd = &cobra.Command{
 			return nil
 		}
 
-		if handled, err := daemon.SendOff(deviceFlag); handled {
+		if handled, err := api.SendOff(deviceFlag); handled {
 			if err != nil {
 				return err
 			}
