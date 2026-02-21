@@ -1,5 +1,6 @@
-// setup.go — "setup" subcommand: install udev rules for non-root device access.
 package cmd
+
+// setup.go — "setup" subcommand: install udev rules for non-root device access.
 
 import (
 	"fmt"
@@ -34,13 +35,13 @@ access to the ASUS HID devices used for RGB control, then reloads and triggers
 udev so the rules take effect immediately.
 
 This command must be run with sudo.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if os.Getuid() != 0 {
 			return fmt.Errorf("this command requires root — run with sudo:\n  sudo z13ctl setup")
 		}
 
 		content := buildRulesContent(setupGroup)
-		if err := os.WriteFile(rulesPath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(rulesPath, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", rulesPath, err)
 		}
 		fmt.Printf("Wrote %s (group: %s)\n", rulesPath, setupGroup)

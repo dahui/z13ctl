@@ -1,5 +1,6 @@
-// off.go — "off" subcommand: turn all lighting off.
 package cmd
+
+// off.go — "off" subcommand: turn all lighting off.
 
 import (
 	"fmt"
@@ -14,7 +15,7 @@ import (
 var offCmd = &cobra.Command{
 	Use:   "off",
 	Short: "Turn all lighting off",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if dryRunFlag {
 			cli.DryRunOff()
 			return nil

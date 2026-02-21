@@ -1,0 +1,24 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck      # unchecked error returns
+    - govet         # go vet checks (shadow, printf, etc.)
+    - staticcheck   # comprehensive static analysis
+    - misspell      # common spelling mistakes in comments/strings
+    - revive        # idiomatic Go style (golint successor)
+    - gocritic      # opinionated but practical checks
+  settings:
+    govet:
+      enable:
+        - shadow
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+        - name: unused-parameter
+          severity: warning
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style

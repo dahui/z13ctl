@@ -1,11 +1,13 @@
-// modes.go — Mode and Speed types, constants, and name parsers.
 package aura
+
+// modes.go — Mode and Speed types, constants, and name parsers.
 
 import "fmt"
 
 // Mode corresponds to g-helper's AuraMode enum.
 type Mode byte
 
+// Mode byte values correspond to g-helper's AuraMode enum.
 const (
 	ModeStatic  Mode = 0
 	ModeBreathe Mode = 1
@@ -21,6 +23,7 @@ const (
 // Speed corresponds to g-helper's AuraSpeed enum speed byte values.
 type Speed byte
 
+// Speed byte values correspond to g-helper's AuraSpeed enum.
 const (
 	SpeedSlow   Speed = 0xe1
 	SpeedNormal Speed = 0xeb

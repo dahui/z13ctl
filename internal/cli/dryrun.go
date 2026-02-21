@@ -1,8 +1,9 @@
+package cli
+
 // dryrun.go — packet display for --dry-run mode.
 //
 // Each function prints the exact sequence of 64-byte HID reports that would
 // be sent to the device, without opening any hardware.
-package cli
 
 import (
 	"fmt"

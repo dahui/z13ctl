@@ -1,5 +1,6 @@
-// device.go — Device type, known device table, and I/O methods.
 package hid
+
+// device.go — Device type, known device table, and I/O methods.
 
 import (
 	"fmt"
@@ -49,9 +50,9 @@ type Device struct {
 
 // DeviceInfo describes a discovered hidraw node, for display purposes.
 type DeviceInfo struct {
-	Path    string
-	Name    string
-	HasAura bool
+	Path    string // e.g. /dev/hidraw0
+	Name    string // "keyboard", "lightbar", or "" if unrecognised
+	HasAura bool   // true if the HID descriptor contains Report ID 0x5d
 	OpenErr string // non-empty if the device could not be opened
 }
 
@@ -112,6 +113,6 @@ func (d *Device) Descriptions() []string {
 // Close releases all open nodes.
 func (d *Device) Close() {
 	for _, n := range d.nodes {
-		n.f.Close()
+		_ = n.f.Close() //nolint:errcheck // best-effort cleanup
 	}
 }

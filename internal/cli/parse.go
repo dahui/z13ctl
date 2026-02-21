@@ -1,5 +1,6 @@
-// parse.go — input parsing helpers for color and brightness flags.
 package cli
+
+// parse.go — input parsing helpers for color and brightness flags.
 
 import (
 	"fmt"

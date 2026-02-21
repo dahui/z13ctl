@@ -1,5 +1,6 @@
-// apply.go — "apply" subcommand: set color, mode, speed, and brightness.
 package cmd
+
+// apply.go — "apply" subcommand: set color, mode, speed, and brightness.
 
 import (
 	"fmt"
@@ -28,7 +29,7 @@ var applyCmd = &cobra.Command{
   z13ctl apply --color 00FF88 --mode rainbow --speed slow
   z13ctl apply --mode breathe --color hotpink --color2 blue
   z13ctl apply --list-colors`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		if listColorsFlag {
 			cli.PrintColorList()
 			return nil

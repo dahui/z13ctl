@@ -1,6 +1,7 @@
+package cmd
+
 // brightness.go — "brightness" subcommand: adjust brightness without changing the
 // current lighting effect.
-package cmd
 
 import (
 	"fmt"

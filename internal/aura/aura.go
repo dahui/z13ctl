@@ -14,11 +14,13 @@
 //	aura.go  — protocol implementation: Init, SetPower, SetBrightness, SetMode, Apply, TurnOff
 package aura
 
-import (
-	"fmt"
+import "fmt"
 
-	"z13ctl/internal/hid"
-)
+// Writer is the interface required by all Aura protocol functions.
+// *hid.Device satisfies this interface.
+type Writer interface {
+	Write(data []byte) error
+}
 
 // auraID is the HID Report ID for all Aura output reports (0x5d).
 const auraID = 0x5d
@@ -34,7 +36,7 @@ var z13Zones = []uint8{0, 1}
 // because the 2025 ROG Flow Z13 requires it to activate the lightbar.
 //
 // Source: Aura.cs Init() — lines 288–295
-func Init(d *hid.Device) error {
+func Init(d Writer) error {
 	// Packet 1: wake/init
 	if err := d.Write([]byte{auraID, 0xB9}); err != nil {
 		return fmt.Errorf("init packet 1: %w", err)
@@ -64,7 +66,7 @@ func Init(d *hid.Device) error {
 // On the Z13, bar, lid, and logo flags are merged together (Aura.cs lines 437–443).
 //
 // Source: Aura.cs AuraPowerMessage() + ApplyPower() Z13 branch
-func SetPower(d *hid.Device, on bool) error {
+func SetPower(d Writer, on bool) error {
 	var keyb, bar, lid, rear byte
 	if on {
 		// Enable awake + boot states for all zones.
@@ -81,7 +83,7 @@ func SetPower(d *hid.Device, on bool) error {
 // SetBrightness sets keyboard backlight brightness (0=off, 1=low, 2=medium, 3=high).
 //
 // Source: Aura.cs DirectBrightness() / ApplyBrightness() — line 340
-func SetBrightness(d *hid.Device, level uint8) error {
+func SetBrightness(d Writer, level uint8) error {
 	if level > 3 {
 		level = 3
 	}
@@ -96,7 +98,7 @@ func SetBrightness(d *hid.Device, level uint8) error {
 // For modes that don't use a second color, pass 0, 0, 0 for r2/g2/b2.
 //
 // Source: Aura.cs AuraMessage() — lines 266–284, plus MESSAGE_SET + MESSAGE_APPLY
-func SetMode(d *hid.Device, zone uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed) error {
+func SetMode(d Writer, zone uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed) error {
 	// Random-color flag: 0xFF when primary color is all-zero (device picks color),
 	// 0x01 for Breathe (enables dual-color), 0x00 otherwise.
 	var randFlag byte
@@ -127,7 +129,7 @@ func SetMode(d *hid.Device, zone uint8, mode Mode, r, g, b, r2, g2, b2 uint8, sp
 // commit sends MESSAGE_SET then MESSAGE_APPLY to latch the pending Aura command.
 //
 // Source: Aura.cs MESSAGE_SET (0xb5) and MESSAGE_APPLY (0xb4) — lines 70–71
-func commit(d *hid.Device) error {
+func commit(d Writer) error {
 	if err := d.Write([]byte{auraID, 0xB5, 0x00, 0x00, 0x00}); err != nil {
 		return fmt.Errorf("commit MESSAGE_SET: %w", err)
 	}
@@ -142,7 +144,7 @@ func commit(d *hid.Device) error {
 // device only responds to the zone it owns and ignores the other.
 // Use hid.FindDevice with "keyboard" or "lightbar" to target a single device.
 // This is the primary entry point for setting lighting state.
-func Apply(d *hid.Device, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
+func Apply(d Writer, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
 	if err := Init(d); err != nil {
 		return err
 	}
@@ -161,7 +163,7 @@ func Apply(d *hid.Device, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, bri
 }
 
 // TurnOff disables all lighting zones.
-func TurnOff(d *hid.Device) error {
+func TurnOff(d Writer) error {
 	if err := Init(d); err != nil {
 		return err
 	}

@@ -1,5 +1,6 @@
-// scan.go — sysfs device discovery and Aura report descriptor verification.
 package hid
+
+// scan.go — sysfs device discovery and Aura report descriptor verification.
 
 import (
 	"bufio"
@@ -63,7 +64,7 @@ func findAll() (*Device, error) {
 		if hasAuraReport(f) {
 			nodes = append(nodes, hidrawNode{path: devPath, name: name, f: f})
 		} else {
-			f.Close()
+			_ = f.Close() //nolint:errcheck // best-effort cleanup
 		}
 	}
 
@@ -91,8 +92,8 @@ func findByName(want string) (*Device, error) {
 			continue
 		}
 		if !hasAuraReport(f) {
-			f.Close()
-			continue // skip nodes without the Aura report, same as findAll
+			_ = f.Close() //nolint:errcheck // best-effort cleanup
+			continue      // skip nodes without the Aura report, same as findAll
 		}
 		return &Device{nodes: []hidrawNode{{path: devPath, name: name, f: f}}}, nil
 	}
@@ -126,7 +127,7 @@ func ListDevices() []DeviceInfo {
 			info.OpenErr = err.Error()
 		} else {
 			info.HasAura = hasAuraReport(f)
-			f.Close()
+			_ = f.Close() //nolint:errcheck // best-effort cleanup
 		}
 		results = append(results, info)
 	}
@@ -140,7 +141,7 @@ func deviceNameFromUevent(ueventPath string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only uevent file, close error not actionable
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -157,7 +158,7 @@ func deviceNameFromUevent(ueventPath string) string {
 // nameFromPath looks up the friendly name for a /dev/hidrawN path via sysfs.
 func nameFromPath(devPath string) string {
 	base := filepath.Base(devPath)
-	ueventPath := filepath.Join("/sys/class/hidraw", base, "device/uevent")
+	ueventPath := "/sys/class/hidraw/" + base + "/device/uevent"
 	return deviceNameFromUevent(ueventPath)
 }
 

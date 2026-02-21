@@ -1,5 +1,6 @@
-// list.go — "list" subcommand: enumerate matching hidraw devices.
 package cmd
+
+// list.go — "list" subcommand: enumerate matching hidraw devices.
 
 import (
 	"fmt"
@@ -12,7 +13,7 @@ import (
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List matching hidraw devices",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		devices := hid.ListDevices()
 		if len(devices) == 0 {
 			fmt.Println("No matching ASUS devices found.")

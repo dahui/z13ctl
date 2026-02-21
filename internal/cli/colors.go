@@ -1,8 +1,9 @@
+package cli
+
 // colors.go — named color lookup and display for --color / --color2 flags.
 //
 // Names are matched case-insensitively. Hex strings (with or without #) are
 // passed through to ParseColor unchanged.
-package cli
 
 import (
 	"fmt"
@@ -79,8 +80,12 @@ func ColorDisplay(s string) string {
 }
 
 // hexToRGB converts a 6-digit lowercase hex string to R, G, B bytes.
+// Returns 0, 0, 0 for malformed input (callers always pass validated hex).
 func hexToRGB(hex string) (r, g, b uint8) {
-	v, _ := strconv.ParseUint(hex, 16, 32)
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, 0, 0
+	}
 	return uint8(v >> 16), uint8(v >> 8), uint8(v)
 }
 
