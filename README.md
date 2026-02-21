@@ -62,7 +62,7 @@ somewhere on your `PATH`.
 **From source:**
 
 ```sh
-git clone https://github.com/YOUR_ORG/z13ctl
+git clone https://github.com/dahui/z13ctl
 cd z13ctl
 make build
 sudo cp z13ctl /usr/local/bin/
@@ -213,7 +213,7 @@ significant change so the approach can be discussed first.
 **Setup:**
 
 ```sh
-git clone https://github.com/YOUR_ORG/z13ctl
+git clone https://github.com/dahui/z13ctl
 cd z13ctl
 go mod download
 ```
