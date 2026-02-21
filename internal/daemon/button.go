@@ -2,41 +2,40 @@ package daemon
 
 // button.go — Armoury Crate button watcher via Linux evdev.
 //
-// Scans /dev/input/event* for a device capable of KEY_PROG1 (the ASUS ROG
-// Armoury Crate side button), grabs it exclusively, and forwards key-down
-// events to a channel. Retries automatically after device loss (e.g. suspend).
+// Finds the "Asus WMI hotkeys" input device by sysfs name, grabs it exclusively,
+// and forwards KEY_PROG1 key-down events to a channel. Retries automatically
+// after device loss (e.g. suspend/resume).
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/holoplot/go-evdev"
 )
 
-// findButtonDevice scans /dev/input for an input device capable of KEY_PROG1
-// (the ASUS Armoury Crate side button). Returns the device path or "".
+// findButtonDevice returns the /dev/input/eventN path for the "Asus WMI hotkeys"
+// input device by scanning sysfs device names. Sysfs reads require no device-open
+// permissions, so this works even when most /dev/input/event* nodes are restricted.
 func findButtonDevice() string {
-	entries, err := os.ReadDir("/dev/input")
+	entries, err := os.ReadDir("/sys/class/input")
 	if err != nil {
 		return ""
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if !strings.HasPrefix(e.Name(), "event") {
 			continue
 		}
-		path := "/dev/input/" + e.Name()
-		d, err := evdev.OpenWithFlags(path, os.O_RDONLY)
+		namePath := "/sys/class/input/" + e.Name() + "/device/name"
+		nameBytes, err := os.ReadFile(namePath)
 		if err != nil {
 			continue
 		}
-		codes := d.CapableEvents(evdev.EV_KEY)
-		_ = d.Close()
-		for _, c := range codes {
-			if c == evdev.KEY_PROG1 {
-				return path
-			}
+		if strings.TrimSpace(string(nameBytes)) == "Asus WMI hotkeys" {
+			return "/dev/input/" + e.Name()
 		}
 	}
 	return ""
@@ -78,7 +77,11 @@ func runButtonLoop(ctx context.Context, path string, ch chan<- struct{}) error {
 		return err
 	}
 	if err := dev.Grab(); err != nil {
-		slog.Warn("could not grab button device exclusively; other apps may also see presses", "err", err)
+		// If grab fails (e.g. EBUSY: another process holds an exclusive grab),
+		// the kernel routes all events to that process and our reads would block
+		// forever. Return an error so watchButton retries after a delay.
+		_ = dev.Close()
+		return fmt.Errorf("exclusive grab failed: %w", err)
 	}
 	slog.Info("watching Armoury Crate button", "path", path)
 
@@ -102,7 +105,8 @@ func runButtonLoop(ctx context.Context, path string, ch chan<- struct{}) error {
 			return err
 		}
 		// Value 1 = key-down; ignore auto-repeat (2) and key-up (0).
-		if evt.Type == evdev.EV_KEY && evt.Code == evdev.KEY_PROG1 && evt.Value == 1 {
+		// KEY_PROG3 (202) is the Armoury Crate button on the 2025 ROG Flow Z13.
+		if evt.Type == evdev.EV_KEY && evt.Value == 1 && evt.Code == evdev.KEY_PROG3 {
 			slog.Info("Armoury Crate button pressed")
 			select {
 			case ch <- struct{}{}:

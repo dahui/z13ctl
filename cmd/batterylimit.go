@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -15,19 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 )
-
-const batteryThresholdGlob = "/sys/class/power_supply/BAT*/charge_control_end_threshold"
-
-// findBatteryThresholdPath returns the writable sysfs path for the battery
-// charge end threshold. It globs the power_supply class to avoid hardcoding
-// BAT0 vs BAT1.
-func findBatteryThresholdPath() string {
-	matches, err := filepath.Glob(batteryThresholdGlob)
-	if err == nil && len(matches) > 0 {
-		return matches[0]
-	}
-	return "/sys/class/power_supply/BAT0/charge_control_end_threshold"
-}
 
 var (
 	batteryGetFlag bool
@@ -69,7 +55,7 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 				return nil
 			}
 
-			path := findBatteryThresholdPath()
+			path := cli.FindBatteryThresholdPath()
 			if err := os.WriteFile(path, []byte(strconv.Itoa(limit)+"\n"), 0o644); err != nil {
 				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 			}
@@ -78,7 +64,7 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 		}
 
 		// --get
-		data, err := os.ReadFile(findBatteryThresholdPath())
+		data, err := os.ReadFile(cli.FindBatteryThresholdPath())
 		if err != nil {
 			return fmt.Errorf("reading battery limit: %w", err)
 		}

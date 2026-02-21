@@ -34,7 +34,7 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="18c6", MODE="06
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", MODE="0660", GROUP="%s"
 ACTION=="add", SUBSYSTEM=="platform-profile", RUN+="/usr/bin/chgrp %s /sys%%p/profile", RUN+="/usr/bin/chmod g+w /sys%%p/profile"
 ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr/bin/chgrp %s /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"
-ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0640", GROUP="%s"
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="%s"
 `, group, group, group, group, group, group)
 }
 
@@ -103,7 +103,7 @@ func applySysfsPerms(group string, dryRun bool) {
 				continue
 			}
 			if strings.TrimSpace(string(nameBytes)) == "Asus WMI hotkeys" {
-				chgrpChmod("/dev/input/"+e.Name(), "g+r")
+				chgrpChmod("/dev/input/"+e.Name(), "g+rw")
 			}
 		}
 	}

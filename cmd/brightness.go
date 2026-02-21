@@ -40,7 +40,7 @@ Levels:
 			return nil
 		}
 
-		handled, err := daemon.SendBrightness(int(level))
+		handled, err := daemon.SendBrightness(deviceFlag, int(level))
 		if handled {
 			if err != nil {
 				return err

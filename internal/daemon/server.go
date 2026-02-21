@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
+	"strings"
 
 	"z13ctl/internal/aura"
 	"z13ctl/internal/cli"
@@ -21,11 +21,12 @@ import (
 type request struct {
 	Cmd        string   `json:"cmd"`
 	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
+	Color      string   `json:"color,omitempty"`   // "RRGGBB" hex
+	Color2     string   `json:"color2,omitempty"`  // "RRGGBB" hex
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
+	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", or /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
 }
 
@@ -71,13 +72,17 @@ func (d *Daemon) dispatch(req request) response {
 	case "apply":
 		return d.handleApply(req)
 	case "off":
-		return d.handleOff()
+		return d.handleOff(req)
 	case "brightness":
 		return d.handleBrightness(req)
 	case "profile":
 		return d.handleProfile(req)
+	case "profile-get":
+		return handleProfileGet()
 	case "batterylimit":
 		return d.handleBatteryLimit(req)
+	case "batterylimit-get":
+		return handleBatteryLimitGet()
 	case "get-state":
 		d.mu.Lock()
 		s := d.state
@@ -86,6 +91,26 @@ func (d *Daemon) dispatch(req request) response {
 	default:
 		return response{OK: false, Error: "unknown command: " + req.Cmd}
 	}
+}
+
+// handleProfileGet reads the current performance profile from sysfs.
+// Reading from sysfs (not daemon state) ensures accurate values even if
+// the profile was changed by another process.
+func handleProfileGet() response {
+	data, err := os.ReadFile(cli.FindProfilePath())
+	if err != nil {
+		return response{OK: false, Error: "reading profile: " + err.Error()}
+	}
+	return response{OK: true, Value: strings.TrimSpace(string(data))}
+}
+
+// handleBatteryLimitGet reads the current battery charge limit from sysfs.
+func handleBatteryLimitGet() response {
+	data, err := os.ReadFile(cli.FindBatteryThresholdPath())
+	if err != nil {
+		return response{OK: false, Error: "reading battery limit: " + err.Error()}
+	}
+	return response{OK: true, Value: strings.TrimSpace(string(data))}
 }
 
 func (d *Daemon) handleApply(req request) response {
@@ -115,10 +140,19 @@ func (d *Daemon) handleApply(req request) response {
 	if d.dev == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	if err := aura.Apply(d.dev, mode, r, g, b, r2, g2, b2, speed, uint8(req.Brightness)); err != nil {
+	target, err := d.dev.FilteredView(req.Device)
+	if err != nil {
+		return response{OK: false, Error: err.Error()}
+	}
+	if err := aura.Apply(target, mode, r, g, b, r2, g2, b2, speed, uint8(req.Brightness)); err != nil {
 		return response{OK: false, Error: "apply: " + err.Error()}
 	}
-	d.state.Lighting = LightingState{
+	device := req.Device
+	if device == "" {
+		device = "all"
+	}
+	slog.Info("apply", "device", device, "mode", req.Mode, "color", req.Color, "brightness", req.Brightness)
+	ls := LightingState{
 		Enabled:    true,
 		Mode:       req.Mode,
 		Color:      req.Color,
@@ -126,25 +160,59 @@ func (d *Daemon) handleApply(req request) response {
 		Speed:      req.Speed,
 		Brightness: req.Brightness,
 	}
-	if err := saveState(d.state); err != nil {
-		slog.Warn("failed to save state", "err", err)
+	if req.Device == "" {
+		// All-device apply: update canonical state and clear per-device overrides.
+		d.state.Lighting = ls
+		d.state.Devices = nil
+	} else if !strings.HasPrefix(req.Device, "/") {
+		// Named per-device apply (keyboard/lightbar): save as a per-device override.
+		if d.state.Devices == nil {
+			d.state.Devices = make(map[string]LightingState)
+		}
+		d.state.Devices[req.Device] = ls
+	}
+	// Raw /dev/hidrawN paths are transient; not persisted.
+	if req.Device == "" || !strings.HasPrefix(req.Device, "/") {
+		if err := saveState(d.state); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
 	}
 	return response{OK: true}
 }
 
-func (d *Daemon) handleOff() response {
+func (d *Daemon) handleOff(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.dev == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	if err := aura.TurnOff(d.dev); err != nil {
+	target, err := d.dev.FilteredView(req.Device)
+	if err != nil {
+		return response{OK: false, Error: err.Error()}
+	}
+	if err := aura.TurnOff(target); err != nil {
 		return response{OK: false, Error: "off: " + err.Error()}
 	}
-	d.state.Lighting.Enabled = false
-	if err := saveState(d.state); err != nil {
-		slog.Warn("failed to save state", "err", err)
+	if req.Device != "" {
+		slog.Info("off", "device", req.Device)
+		if !strings.HasPrefix(req.Device, "/") {
+			// Named per-device off: save disabled state for this zone.
+			if d.state.Devices == nil {
+				d.state.Devices = make(map[string]LightingState)
+			}
+			d.state.Devices[req.Device] = LightingState{Enabled: false}
+			if err := saveState(d.state); err != nil {
+				slog.Warn("failed to save state", "err", err)
+			}
+		}
+	} else {
+		slog.Info("off")
+		d.state.Lighting.Enabled = false
+		d.state.Devices = nil
+		if err := saveState(d.state); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
 	}
 	return response{OK: true}
 }
@@ -160,20 +228,46 @@ func (d *Daemon) handleBrightness(req request) response {
 	if d.dev == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	if err := aura.Init(d.dev); err != nil {
+	target, err := d.dev.FilteredView(req.Device)
+	if err != nil {
+		return response{OK: false, Error: err.Error()}
+	}
+	if err := aura.Init(target); err != nil {
 		return response{OK: false, Error: "init: " + err.Error()}
 	}
 	on := req.Brightness > 0
-	if err := aura.SetPower(d.dev, on); err != nil {
+	if err := aura.SetPower(target, on); err != nil {
 		return response{OK: false, Error: "setpower: " + err.Error()}
 	}
-	if err := aura.SetBrightness(d.dev, uint8(req.Brightness)); err != nil {
+	if err := aura.SetBrightness(target, uint8(req.Brightness)); err != nil {
 		return response{OK: false, Error: "brightness: " + err.Error()}
 	}
-	d.state.Lighting.Brightness = req.Brightness
-	d.state.Lighting.Enabled = on
-	if err := saveState(d.state); err != nil {
-		slog.Warn("failed to save state", "err", err)
+	logArgs := []any{"level", req.Brightness}
+	if req.Device != "" {
+		logArgs = append(logArgs, "device", req.Device)
+	}
+	slog.Info("brightness", logArgs...)
+	if req.Device == "" {
+		d.state.Lighting.Brightness = req.Brightness
+		d.state.Lighting.Enabled = on
+		if err := saveState(d.state); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
+	} else if !strings.HasPrefix(req.Device, "/") {
+		// Named per-device brightness: update or create entry, preserving other fields.
+		if d.state.Devices == nil {
+			d.state.Devices = make(map[string]LightingState)
+		}
+		ls := d.state.Lighting // base: fall back to all-device state
+		if existing, ok := d.state.Devices[req.Device]; ok {
+			ls = existing
+		}
+		ls.Brightness = req.Brightness
+		ls.Enabled = on
+		d.state.Devices[req.Device] = ls
+		if err := saveState(d.state); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
 	}
 	return response{OK: true}
 }
@@ -182,9 +276,10 @@ func (d *Daemon) handleProfile(req request) response {
 	if req.Set == "" {
 		return response{OK: false, Error: "profile requires a set field"}
 	}
-	if err := os.WriteFile(findProfilePathD(), []byte(req.Set+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cli.FindProfilePath(), []byte(req.Set+"\n"), 0o644); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
+	slog.Info("profile", "set", req.Set)
 	d.mu.Lock()
 	d.state.Profile = req.Set
 	s := d.state
@@ -200,9 +295,10 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	if err != nil || limit < 40 || limit > 100 {
 		return response{OK: false, Error: "battery limit must be an integer 40–100"}
 	}
-	if err := os.WriteFile(findBatteryPathD(), []byte(req.Set+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cli.FindBatteryThresholdPath(), []byte(req.Set+"\n"), 0o644); err != nil {
 		return response{OK: false, Error: "batterylimit: " + err.Error()}
 	}
+	slog.Info("batterylimit", "set", limit)
 	d.mu.Lock()
 	d.state.Battery = limit
 	s := d.state
@@ -218,25 +314,3 @@ func writeResponse(conn net.Conn, r response) {
 	_, _ = fmt.Fprintf(conn, "%s\n", data)
 }
 
-// findProfilePathD mirrors findProfilePath from cmd/profile.go.
-func findProfilePathD() string {
-	entries, err := os.ReadDir("/sys/class/platform-profile")
-	if err == nil {
-		for _, e := range entries {
-			p := "/sys/class/platform-profile/" + e.Name() + "/profile"
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-	}
-	return "/sys/firmware/acpi/platform_profile"
-}
-
-// findBatteryPathD mirrors findBatteryThresholdPath from cmd/batterylimit.go.
-func findBatteryPathD() string {
-	matches, err := filepath.Glob("/sys/class/power_supply/BAT*/charge_control_end_threshold")
-	if err == nil && len(matches) > 0 {
-		return matches[0]
-	}
-	return "/sys/class/power_supply/BAT0/charge_control_end_threshold"
-}

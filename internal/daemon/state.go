@@ -11,9 +11,10 @@ import (
 // State holds the last-applied settings for all controllable subsystems.
 // It is written to disk on every successful command and restored on startup.
 type State struct {
-	Lighting LightingState `json:"lighting"`
-	Profile  string        `json:"profile,omitempty"`
-	Battery  int           `json:"battery_limit,omitempty"`
+	Lighting LightingState            `json:"lighting"`
+	Devices  map[string]LightingState `json:"devices,omitempty"` // per-device overrides keyed by name
+	Profile  string                   `json:"profile,omitempty"`
+	Battery  int                      `json:"battery_limit,omitempty"`
 }
 
 // LightingState captures all parameters needed to reproduce the last Apply call.

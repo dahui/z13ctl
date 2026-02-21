@@ -68,13 +68,13 @@ func DryRunOff() {
 // DryRunBatteryLimit prints the sysfs write that would be performed for a battery limit change.
 func DryRunBatteryLimit(limit int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to /sys/class/power_supply/BAT*/charge_control_end_threshold\n", limit)
+	fmt.Printf("Would write %d to %s\n", limit, FindBatteryThresholdPath())
 }
 
 // DryRunProfile prints the sysfs write that would be performed for a profile change.
 func DryRunProfile(profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %q to /sys/firmware/acpi/platform_profile\n", profile)
+	fmt.Printf("Would write %q to %s\n", profile, FindProfilePath())
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

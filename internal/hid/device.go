@@ -110,6 +110,27 @@ func (d *Device) Descriptions() []string {
 	return descs
 }
 
+// FilteredView returns a Device that writes only to the node matching nameOrPath.
+// nameOrPath may be "keyboard", "lightbar", or a /dev/hidrawN path.
+// If nameOrPath is empty, d itself is returned.
+// If nameOrPath is non-empty but matches no node, an error is returned.
+// The returned *Device shares file descriptors with d; do not call Close on it.
+func (d *Device) FilteredView(nameOrPath string) (*Device, error) {
+	if nameOrPath == "" {
+		return d, nil
+	}
+	var matched []hidrawNode
+	for _, n := range d.nodes {
+		if n.name == nameOrPath || n.path == nameOrPath {
+			matched = append(matched, n)
+		}
+	}
+	if len(matched) == 0 {
+		return nil, fmt.Errorf("device %q not found (available: keyboard, lightbar)", nameOrPath)
+	}
+	return &Device{nodes: matched}, nil
+}
+
 // Close releases all open nodes.
 func (d *Device) Close() {
 	for _, n := range d.nodes {

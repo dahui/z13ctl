@@ -54,9 +54,10 @@ func sendCommand(req request) (bool, *response, error) {
 }
 
 // SendApply sends an apply command to the daemon. color and color2 must be
-// "RRGGBB" hex strings. Returns (true, nil) on success, (false, nil) if the
-// daemon is not running (caller should fall back to direct HID access).
-func SendApply(color, color2, mode, speed string, brightness int) (bool, error) {
+// "RRGGBB" hex strings. device may be "keyboard", "lightbar", a /dev/hidrawN
+// path, or "" to target all devices. Returns (true, nil) on success, (false,
+// nil) if the daemon is not running (caller should fall back to direct HID access).
+func SendApply(device, color, color2, mode, speed string, brightness int) (bool, error) {
 	handled, resp, err := sendCommand(request{
 		Cmd:        "apply",
 		Mode:       mode,
@@ -64,6 +65,7 @@ func SendApply(color, color2, mode, speed string, brightness int) (bool, error) 
 		Color2:     color2,
 		Speed:      speed,
 		Brightness: brightness,
+		Device:     device,
 	})
 	if !handled || err != nil {
 		return handled, err
@@ -74,9 +76,10 @@ func SendApply(color, color2, mode, speed string, brightness int) (bool, error) 
 	return true, nil
 }
 
-// SendOff sends an off command to the daemon.
-func SendOff() (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "off"})
+// SendOff sends an off command to the daemon. device may be "keyboard",
+// "lightbar", a /dev/hidrawN path, or "" to target all devices.
+func SendOff(device string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "off", Device: device})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -86,9 +89,10 @@ func SendOff() (bool, error) {
 	return true, nil
 }
 
-// SendBrightness sends a brightness-only command to the daemon.
-func SendBrightness(level int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "brightness", Brightness: level})
+// SendBrightness sends a brightness-only command to the daemon. device may be
+// "keyboard", "lightbar", a /dev/hidrawN path, or "" to target all devices.
+func SendBrightness(device string, level int) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "brightness", Brightness: level, Device: device})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -96,6 +100,39 @@ func SendBrightness(level int) (bool, error) {
 		return true, fmt.Errorf("%s", resp.Error)
 	}
 	return true, nil
+}
+
+// SendProfileGet queries the daemon for the current performance profile by
+// reading sysfs (not cached daemon state). Intended for GUI/plugin callers.
+// Returns (false, "", nil) if the daemon is not running.
+func SendProfileGet() (handled bool, profile string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "profile-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendBatteryLimitGet queries the daemon for the current battery charge limit by
+// reading sysfs (not cached daemon state). Intended for GUI/plugin callers.
+// Returns (false, 0, nil) if the daemon is not running.
+func SendBatteryLimitGet() (handled bool, limit int, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "batterylimit-get"})
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	if !resp.OK {
+		return true, 0, fmt.Errorf("%s", resp.Error)
+	}
+	if _, scanErr := fmt.Sscan(resp.Value, &limit); scanErr != nil {
+		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, scanErr)
+	}
+	return true, limit, nil
 }
 
 // SendProfileSet sends a profile set command to the daemon.

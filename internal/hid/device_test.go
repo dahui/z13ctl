@@ -128,3 +128,55 @@ func TestClose_Safe(t *testing.T) {
 	dev.Close()
 	dev.Close()
 }
+
+func TestFilteredView_EmptyReturnsAll(t *testing.T) {
+	t.Parallel()
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := hid.NewTestDevice(w)
+	defer dev.Close()
+
+	view, err := dev.FilteredView("")
+	if err != nil {
+		t.Fatalf("FilteredView(\"\") error: %v", err)
+	}
+	if view != dev {
+		t.Error("FilteredView(\"\") should return the device itself")
+	}
+}
+
+func TestFilteredView_MatchByName(t *testing.T) {
+	t.Parallel()
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := hid.NewTestDevice(w) // name = "test", path = "test"
+	defer dev.Close()
+
+	view, err := dev.FilteredView("test")
+	if err != nil {
+		t.Fatalf("FilteredView(\"test\") error: %v", err)
+	}
+	paths := view.Paths()
+	if len(paths) != 1 || paths[0] != "test" {
+		t.Errorf("FilteredView(\"test\").Paths() = %v, want [\"test\"]", paths)
+	}
+}
+
+func TestFilteredView_NoMatch(t *testing.T) {
+	t.Parallel()
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := hid.NewTestDevice(w)
+	defer dev.Close()
+
+	_, err = dev.FilteredView("lightbar")
+	if err == nil {
+		t.Error("FilteredView(\"lightbar\") should return error when no match")
+	}
+}

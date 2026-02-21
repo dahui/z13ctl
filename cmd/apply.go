@@ -69,13 +69,29 @@ var applyCmd = &cobra.Command{
 
 		color := fmt.Sprintf("%02X%02X%02X", r, g, b)
 		color2 := fmt.Sprintf("%02X%02X%02X", r2, g2, b2)
-		handled, err := daemon.SendApply(color, color2, modeFlag, speedFlag, int(brightness))
+		handled, err := daemon.SendApply(deviceFlag, color, color2, modeFlag, speedFlag, int(brightness))
 		if handled {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Applied: mode=%s color=%s brightness=%s\n",
-				modeFlag, cli.ColorDisplay(colorFlag), brightnessFlag)
+			var parts []string
+			if deviceFlag != "" {
+				parts = append(parts, "Applied: "+deviceFlag)
+			} else {
+				parts = append(parts, "Applied:")
+			}
+			parts = append(parts, "mode="+modeFlag)
+			if mode != aura.ModeCycle && mode != aura.ModeRainbow {
+				parts = append(parts, "color="+cli.ColorDisplay(colorFlag))
+			}
+			if mode == aura.ModeBreathe {
+				parts = append(parts, "color2="+cli.ColorDisplay(color2Flag))
+			}
+			if mode != aura.ModeStatic {
+				parts = append(parts, "speed="+speedFlag)
+			}
+			parts = append(parts, "brightness="+brightnessFlag)
+			fmt.Println(strings.Join(parts, " "))
 			return nil
 		}
 

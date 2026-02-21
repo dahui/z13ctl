@@ -50,7 +50,7 @@ func TestDryRunProfile(t *testing.T) {
 
 	for _, want := range []string{
 		"DRY RUN",
-		"platform_profile",
+		"profile", // matches both /sys/class/platform-profile/.../profile and /sys/firmware/acpi/platform_profile
 		"performance",
 	} {
 		if !strings.Contains(out, want) {

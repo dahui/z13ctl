@@ -22,7 +22,7 @@ var offCmd = &cobra.Command{
 			return nil
 		}
 
-		if handled, err := daemon.SendOff(); handled {
+		if handled, err := daemon.SendOff(deviceFlag); handled {
 			if err != nil {
 				return err
 			}

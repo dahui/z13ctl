@@ -58,7 +58,12 @@ func Run(ctx context.Context) error {
 		if applyErr := d.applyLightingState(); applyErr != nil {
 			slog.Warn("failed to restore lighting state", "err", applyErr)
 		} else {
-			slog.Info("lighting state restored")
+			ls := d.state.Lighting
+			if ls.Enabled {
+				slog.Info("lighting state restored", "mode", ls.Mode, "brightness", ls.Brightness)
+			} else {
+				slog.Info("lighting state restored (off)")
+			}
 		}
 	}
 
@@ -159,11 +164,10 @@ func (d *Daemon) addSubscriber(conn net.Conn) {
 	d.subMu.Unlock()
 }
 
-// applyLightingState restores lighting from the saved state. d.dev must be non-nil.
-func (d *Daemon) applyLightingState() error {
-	ls := d.state.Lighting
+// applyZone applies a LightingState to a specific HID device or zone.
+func applyZone(dev *hid.Device, ls LightingState) error {
 	if !ls.Enabled {
-		return aura.TurnOff(d.dev)
+		return aura.TurnOff(dev)
 	}
 	mode, err := aura.ModeFromString(ls.Mode)
 	if err != nil {
@@ -181,5 +185,28 @@ func (d *Daemon) applyLightingState() error {
 	if err != nil {
 		return err
 	}
-	return aura.Apply(d.dev, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness))
+	return aura.Apply(dev, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness))
+}
+
+// applyLightingState restores lighting from the saved state. d.dev must be non-nil.
+// If per-device states are saved (d.state.Devices), each zone is restored independently;
+// otherwise the all-device state (d.state.Lighting) is applied to all zones.
+func (d *Daemon) applyLightingState() error {
+	if len(d.state.Devices) > 0 {
+		for _, name := range []string{"keyboard", "lightbar"} {
+			ls := d.state.Lighting
+			if dl, ok := d.state.Devices[name]; ok {
+				ls = dl
+			}
+			target, ferr := d.dev.FilteredView(name)
+			if ferr != nil {
+				continue // zone not present on this system
+			}
+			if err := applyZone(target, ls); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return applyZone(d.dev, d.state.Lighting)
 }
