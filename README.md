@@ -4,6 +4,22 @@ RGB lighting control for the 2025 ASUS ROG Flow Z13 via Linux hidraw.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
+## Table of Contents
+
+- [Background](#background)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+  - [apply](#apply)
+  - [brightness](#brightness)
+  - [list](#list)
+  - [off](#off)
+  - [setup](#setup)
+- [Global Flags](#global-flags)
+- [Colors](#colors)
+- [Contributing](#contributing)
+
 ## Background
 
 Linux support for RGB control on the 2025 ASUS ROG Flow Z13 is frustratingly
@@ -28,22 +44,6 @@ protocol was reverse-engineered from
 [g-helper](https://github.com/seerge/g-helper) (MIT license), which documents
 it in `app/USB/AsusHid.cs` and `app/USB/Aura.cs`. A detailed technical
 description of the protocol is available in [PROTOCOL.md](PROTOCOL.md).
-
-## Table of Contents
-
-- [Background](#background)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Commands](#commands)
-  - [apply](#apply)
-  - [brightness](#brightness)
-  - [list](#list)
-  - [off](#off)
-  - [setup](#setup)
-- [Global Flags](#global-flags)
-- [Colors](#colors)
-- [Contributing](#contributing)
 
 ## Requirements
 
