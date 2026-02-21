@@ -1,0 +1,14 @@
+[Unit]
+Description=z13ctl battery charge limit sysfs permissions
+# charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
+# after all observable udev child-device events. udev RUN+= cannot catch it.
+# This oneshot only runs 'chgrp users' and 'chmod g+w' on BAT*/charge_control_end_threshold.
+After=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
+
+[Install]
+WantedBy=multi-user.target

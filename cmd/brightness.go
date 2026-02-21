@@ -9,6 +9,7 @@ import (
 
 	"z13ctl/internal/aura"
 	"z13ctl/internal/cli"
+	"z13ctl/internal/daemon"
 	"z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
@@ -36,6 +37,15 @@ Levels:
 
 		if dryRunFlag {
 			cli.DryRunBrightness(level)
+			return nil
+		}
+
+		handled, err := daemon.SendBrightness(int(level))
+		if handled {
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Brightness set to %s\n", args[0])
 			return nil
 		}
 

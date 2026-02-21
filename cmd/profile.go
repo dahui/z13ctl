@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"z13ctl/internal/cli"
+	"z13ctl/internal/daemon"
 
 	"github.com/spf13/cobra"
 )
@@ -61,6 +62,14 @@ Profiles:
 
 			if dryRunFlag {
 				cli.DryRunProfile(profile)
+				return nil
+			}
+
+			if handled, err := daemon.SendProfileSet(profile); handled {
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Performance profile set to %s\n", profile)
 				return nil
 			}
 

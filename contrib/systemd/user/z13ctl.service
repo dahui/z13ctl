@@ -1,0 +1,14 @@
+[Unit]
+Description=z13ctl device daemon
+Requires=z13ctl.socket
+After=z13ctl.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/z13ctl daemon
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

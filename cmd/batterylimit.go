@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"z13ctl/internal/cli"
+	"z13ctl/internal/daemon"
 
 	"github.com/spf13/cobra"
 )
@@ -57,6 +58,14 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 
 			if dryRunFlag {
 				cli.DryRunBatteryLimit(limit)
+				return nil
+			}
+
+			if handled, err := daemon.SendBatteryLimitSet(limit); handled {
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Battery charge limit set to %d%%\n", limit)
 				return nil
 			}
 

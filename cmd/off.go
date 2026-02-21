@@ -7,6 +7,7 @@ import (
 
 	"z13ctl/internal/aura"
 	"z13ctl/internal/cli"
+	"z13ctl/internal/daemon"
 	"z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,14 @@ var offCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if dryRunFlag {
 			cli.DryRunOff()
+			return nil
+		}
+
+		if handled, err := daemon.SendOff(); handled {
+			if err != nil {
+				return err
+			}
+			fmt.Println("Lighting off.")
 			return nil
 		}
 

@@ -15,7 +15,6 @@ builds:
       - linux
     goarch:
       - amd64
-      - arm64
 
 archives:
   - id: z13ctl
@@ -23,6 +22,7 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
+      - contrib/systemd/system/z13ctl-perms.service
 
 checksum:
   name_template: "checksums.txt"

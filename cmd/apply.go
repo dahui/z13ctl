@@ -8,6 +8,7 @@ import (
 
 	"z13ctl/internal/aura"
 	"z13ctl/internal/cli"
+	"z13ctl/internal/daemon"
 	"z13ctl/internal/hid"
 
 	"github.com/spf13/cobra"
@@ -63,6 +64,18 @@ var applyCmd = &cobra.Command{
 
 		if dryRunFlag {
 			cli.DryRunApply(r, g, b, r2, g2, b2, mode, speed, brightness)
+			return nil
+		}
+
+		color := fmt.Sprintf("%02X%02X%02X", r, g, b)
+		color2 := fmt.Sprintf("%02X%02X%02X", r2, g2, b2)
+		handled, err := daemon.SendApply(color, color2, modeFlag, speedFlag, int(brightness))
+		if handled {
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Applied: mode=%s color=%s brightness=%s\n",
+				modeFlag, cli.ColorDisplay(colorFlag), brightnessFlag)
 			return nil
 		}
 

@@ -13,11 +13,13 @@ RGB lighting and system control for the 2025 ASUS ROG Flow Z13 via Linux.
 - [Commands](#commands)
   - [apply](#apply)
   - [brightness](#brightness)
+  - [daemon](#daemon)
   - [list](#list)
   - [off](#off)
   - [profile](#profile)
   - [batterylimit](#batterylimit)
   - [setup](#setup)
+- [Daemon Mode](#daemon-mode)
 - [Global Flags](#global-flags)
 - [Colors](#colors)
 - [Contributing](#contributing)
@@ -61,7 +63,7 @@ performance profile switching and battery charge limiting.
 
 **Pre-built binaries** are available on the
 [Releases](../../releases) page. Download the archive for your
-architecture (`amd64` or `arm64`), extract it, and place the binary
+the `amd64` archive, extract it, and place the binary
 somewhere on your `PATH`.
 
 **From source:**
@@ -154,6 +156,26 @@ z13ctl brightness medium
 z13ctl brightness off
 ```
 
+### daemon
+
+Start the z13ctl daemon. The daemon holds the HID devices open, persists
+lighting state across reboots, and watches the Armoury Crate button.
+
+```
+z13ctl daemon
+```
+
+Normally started automatically by the systemd socket unit — see
+[Daemon Mode](#daemon-mode). You can also start it directly for testing:
+
+```sh
+z13ctl daemon
+```
+
+When the daemon is running, all other commands (`apply`, `brightness`, `off`,
+`profile`, `batterylimit`) route through the daemon socket automatically. If
+the daemon is not running they fall back to direct hardware access.
+
 ### list
 
 List all matching hidraw devices and show whether each one has Aura support.
@@ -215,9 +237,8 @@ z13ctl batterylimit --set 80
 
 ### setup
 
-Install udev rules granting a group read/write access to the ASUS HID devices,
-the performance profile, and the battery charge limit. Then reload and trigger
-udev so rules take effect immediately.
+Install udev rules and a small boot service granting a group read/write access to
+the ASUS HID devices, the performance profile, and the battery charge limit.
 
 ```
 sudo z13ctl setup [--group <group>]
@@ -227,9 +248,7 @@ sudo z13ctl setup [--group <group>]
 |------|---------|-------------|
 | `--group` | `users` | Group to grant access to the devices |
 
-The rule is written to `/etc/udev/rules.d/99-z13ctl.rules`. Use `--dry-run`
-first to preview exactly which files would be modified on your system — no
-root required:
+Use `--dry-run` to preview exactly what would be written — no root required:
 
 ```sh
 z13ctl --dry-run setup           # preview (no root needed)
@@ -239,10 +258,63 @@ sudo z13ctl setup                # apply
 After running setup, log out and back in (or run `newgrp <group>`) for the
 group membership to take effect in your current session.
 
-Setup covers:
-- RGB control (HID hidraw devices)
-- Performance profile (`platform_profile`)
-- Battery charge limit (`charge_control_end_threshold`)
+`setup` does four things:
+
+1. Writes `/etc/udev/rules.d/99-z13ctl.rules` — grants group `MODE=`/`GROUP=` on HID
+   and input device nodes; uses `RUN+=chgrp/chmod` to set permissions on the
+   platform-profile attribute when the driver loads.
+2. Reloads udev and applies permissions immediately to all currently present files.
+3. Writes `/etc/systemd/system/z13ctl-perms.service` and enables it.
+4. Starts the service immediately so battery limit works right away.
+
+**Why the service?** The `charge_control_end_threshold` sysfs attribute on `BAT0` is
+added by the `asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
+observable udev child-device events have already fired. There is no udev hook that can
+reliably target it. The service is a self-contained systemd oneshot (`Type=oneshot`,
+`After=sysinit.target`) that runs exactly two commands:
+`chgrp <group>` and `chmod g+w` on `BAT*/charge_control_end_threshold`. It has no
+dependency on the z13ctl binary and can be inspected at any time:
+
+```sh
+systemctl cat z13ctl-perms.service
+```
+
+## Daemon Mode
+
+The daemon holds HID devices open, persists lighting state to
+`~/.local/state/z13ctl/state.json`, restores it on boot, and watches the
+Armoury Crate button. All CLI commands route through the daemon automatically
+when it is running.
+
+**Install as a systemd user service** (recommended):
+
+```sh
+sudo z13ctl setup     # install udev rules + boot service (one-time, requires sudo)
+make install-service  # build, install binary, enable daemon socket unit
+```
+
+`make install-service` installs `z13ctl` to `/usr/local/bin/`, copies the
+systemd unit files to `~/.config/systemd/user/`, and enables
+`z13ctl.socket`. The daemon starts automatically on the first CLI command
+via systemd socket activation.
+
+```sh
+# Check service status
+systemctl --user status z13ctl.socket
+systemctl --user status z13ctl.service
+
+# View daemon logs
+journalctl --user -u z13ctl -f
+
+# Remove the service
+make uninstall-service
+```
+
+**Run directly** (without systemd, for testing):
+
+```sh
+z13ctl daemon
+```
 
 ## Global Flags
 
