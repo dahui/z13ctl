@@ -24,6 +24,14 @@ func printPacket(label string, data []byte) {
 	fmt.Printf("  %-22s  %X\n", label+":", buf)
 }
 
+// printInitPackets prints the four Aura init packets sent before every device operation.
+func printInitPackets() {
+	printPacket("Init 1", []byte{auraReportID, 0xB9})
+	printPacket("Init 2", []byte("]ASUS Tech.Inc."))
+	printPacket("Init 3", []byte{auraReportID, 0x05, 0x20, 0x31, 0x00, 0x1A})
+	printPacket("Init 4 (Z13)", []byte{auraReportID, 0xC0, 0x03, 0x01})
+}
+
 // DryRunApply prints the packet sequence for an apply operation.
 // All values must be pre-parsed by the caller.
 func DryRunApply(r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, brightness uint8) {
@@ -35,10 +43,7 @@ func DryRunApply(r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, br
 	}
 
 	fmt.Println("=== DRY RUN (no device access) ===")
-	printPacket("Init 1", []byte{auraReportID, 0xB9})
-	printPacket("Init 2", []byte("]ASUS Tech.Inc."))
-	printPacket("Init 3", []byte{auraReportID, 0x05, 0x20, 0x31, 0x00, 0x1A})
-	printPacket("Init 4 (Z13)", []byte{auraReportID, 0xC0, 0x03, 0x01})
+	printInitPackets()
 	printPacket("Power ON", []byte{auraReportID, 0xBD, 0x01, 0xFF, 0x1F, 0xFF, 0xFF, 0xFF})
 	printPacket("Brightness", []byte{auraReportID, 0xBA, 0xC5, 0xC4, brightness})
 	for _, z := range []uint8{0, 1} { // z13Zones: keyboard=0, lightbar=1
@@ -55,10 +60,7 @@ func DryRunApply(r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, br
 // DryRunOff prints the packet sequence for turning lighting off.
 func DryRunOff() {
 	fmt.Println("=== DRY RUN (no device access) ===")
-	printPacket("Init 1", []byte{auraReportID, 0xB9})
-	printPacket("Init 2", []byte("]ASUS Tech.Inc."))
-	printPacket("Init 3", []byte{auraReportID, 0x05, 0x20, 0x31, 0x00, 0x1A})
-	printPacket("Init 4 (Z13)", []byte{auraReportID, 0xC0, 0x03, 0x01})
+	printInitPackets()
 	printPacket("Power OFF", []byte{auraReportID, 0xBD, 0x01, 0x00, 0x00, 0x00, 0x00, 0xFF})
 	printPacket("Brightness 0", []byte{auraReportID, 0xBA, 0xC5, 0xC4, 0x00})
 }
@@ -83,10 +85,7 @@ func DryRunBrightness(level uint8) {
 	}
 	fmt.Println("=== DRY RUN (no device access) ===")
 	fmt.Printf("Would send: brightness (level %d)\n", level)
-	printPacket("Init 1", []byte{auraReportID, 0xB9})
-	printPacket("Init 2", []byte("]ASUS Tech.Inc."))
-	printPacket("Init 3", []byte{auraReportID, 0x05, 0x20, 0x31, 0x00, 0x1A})
-	printPacket("Init 4 (Z13)", []byte{auraReportID, 0xC0, 0x03, 0x01})
+	printInitPackets()
 	printPacket("Power", []byte{auraReportID, 0xBD, 0x01, keyb, bar, lid, rear, 0xFF})
 	printPacket("Brightness", []byte{auraReportID, 0xBA, 0xC5, 0xC4, level})
 }

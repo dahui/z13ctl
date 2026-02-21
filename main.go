@@ -1,13 +1,13 @@
-// z13ctl — ROG Flow Z13 RGB lighting control
+// z13ctl — system control for the 2025 ASUS ROG Flow Z13
 //
-// Controls keyboard and lightbar RGB on the 2025 ASUS ROG Flow Z13 (USB 0b05:18c6)
-// via Linux hidraw, using the Aura HID protocol reverse-engineered from g-helper.
+// Controls keyboard and lightbar RGB (via Linux hidraw), performance profile,
+// and battery charge limit (via asus-wmi sysfs interfaces).
 //
 // Usage:
 //
 //	z13ctl [--device keyboard|lightbar|PATH] [--dry-run] <command>
 //
-// Commands: apply  brightness  list  off  setup
+// Commands: apply  brightness  list  off  profile  batterylimit  setup
 package main
 
 import (

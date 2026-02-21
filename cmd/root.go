@@ -22,11 +22,11 @@ var (
 var rootCmd = &cobra.Command{
 	Use:     "z13ctl",
 	Version: Version,
-	Short:   "ROG Flow Z13 RGB lighting control",
-	Long: `z13ctl — ROG Flow Z13 RGB lighting control
+	Short:   "System control for the ASUS ROG Flow Z13",
+	Long: `z13ctl — system control for the 2025 ASUS ROG Flow Z13
 
-Controls keyboard and lightbar RGB on the 2025 ASUS ROG Flow Z13 (USB 0b05:18c6)
-via Linux hidraw, using the Aura HID protocol reverse-engineered from g-helper.`,
+Controls keyboard and lightbar RGB via Linux hidraw, performance profile and
+battery charge limit via asus-wmi sysfs interfaces.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -38,5 +38,5 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target device: keyboard, lightbar, or a hidraw path (default: all)")
-	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Print packets without sending to device")
+	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
 }
