@@ -30,9 +30,6 @@ go.work.sum
 # env file
 .env
 
-# Generated documentation (produced by goreleaser / go generate)
-# docs/
-
 # Editor/IDE
 # .idea/
 .vscode/

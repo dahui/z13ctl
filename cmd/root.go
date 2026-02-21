@@ -5,8 +5,6 @@
 // root.go — Cobra root command for z13ctl.
 package cmd
 
-//go:generate go run ../tools/gendocs ../docs
-
 import (
 	"github.com/spf13/cobra"
 )
@@ -36,11 +34,6 @@ via Linux hidraw, using the Aura HID protocol reverse-engineered from g-helper.`
 // Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
-}
-
-// GetRootCmd returns the root Cobra command, for use by documentation generators.
-func GetRootCmd() *cobra.Command {
-	return rootCmd
 }
 
 func init() {

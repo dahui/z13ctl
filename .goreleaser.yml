@@ -5,7 +5,6 @@ project_name: z13ctl
 before:
   hooks:
     - go mod tidy
-    - go run ./tools/gendocs docs
 
 builds:
   - id: z13ctl
@@ -24,7 +23,6 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
-      - docs/*.md
 
 checksum:
   name_template: "checksums.txt"

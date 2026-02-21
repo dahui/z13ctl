@@ -1,7 +1,7 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS  := -s -w -X z13ctl/cmd.Version=$(VERSION)
 
-.PHONY: build test cover lint docs generate snapshot release clean help
+.PHONY: build test cover lint snapshot release clean help
 
 ## build: compile z13ctl with version from git tags
 build:
@@ -20,14 +20,6 @@ cover:
 lint:
 	golangci-lint run ./...
 
-## docs: generate Markdown command documentation into docs/
-docs:
-	go run ./tools/gendocs docs
-
-## generate: run go generate (regenerates docs and any other generated files)
-generate:
-	go generate ./...
-
 ## snapshot: build a local snapshot release via goreleaser (no publish)
 snapshot:
 	goreleaser release --snapshot --clean
@@ -36,10 +28,10 @@ snapshot:
 release:
 	goreleaser release --clean
 
-## clean: remove all generated build, test, and documentation artifacts
+## clean: remove all generated build and test artifacts
 clean:
 	rm -f z13ctl
-	rm -rf dist/ docs/
+	rm -rf dist/
 	find . -name '*.test' -delete
 	find . -name 'coverage.out' -o -name 'coverage.*' -o -name '*.coverprofile' -o -name 'profile.cov' | xargs rm -f
 

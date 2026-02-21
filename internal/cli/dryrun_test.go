@@ -31,6 +31,34 @@ func captureStdout(t *testing.T, f func()) string {
 	return string(out)
 }
 
+func TestDryRunBatteryLimit(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunBatteryLimit(80) })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"charge_control_end_threshold",
+		"80",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunBatteryLimit output missing %q", want)
+		}
+	}
+}
+
+func TestDryRunProfile(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunProfile("performance") })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"platform_profile",
+		"performance",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunProfile output missing %q", want)
+		}
+	}
+}
+
 func TestDryRunOff(t *testing.T) {
 	out := captureStdout(t, cli.DryRunOff)
 
