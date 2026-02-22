@@ -18,11 +18,7 @@ func TestModeFromString(t *testing.T) {
 		{"breathe", aura.ModeBreathe, false},
 		{"cycle", aura.ModeCycle, false},
 		{"rainbow", aura.ModeRainbow, false},
-		{"star", aura.ModeStar, false},
-		{"rain", aura.ModeRain, false},
 		{"strobe", aura.ModeStrobe, false},
-		{"comet", aura.ModeComet, false},
-		{"flash", aura.ModeFlash, false},
 		// ModeFromString is case-sensitive (matches CLI flag exactly)
 		{"STATIC", 0, true},
 		{"Static", 0, true},
@@ -92,11 +88,7 @@ func TestModeByteValues(t *testing.T) {
 		aura.ModeBreathe: 1,
 		aura.ModeCycle:   2,
 		aura.ModeRainbow: 3,
-		aura.ModeStar:    4,
-		aura.ModeRain:    5,
 		aura.ModeStrobe:  10,
-		aura.ModeComet:   11,
-		aura.ModeFlash:   12,
 	}
 	for mode, want := range modeWant {
 		if byte(mode) != want {

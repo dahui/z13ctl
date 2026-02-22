@@ -326,11 +326,11 @@ Offset  Byte      Meaning
 | `breathe` | `01` | Pulse between two colors |
 | `cycle` | `02` | Cycle through spectrum |
 | `rainbow` | `03` | Rainbow wave |
-| `star` | `04` | Random pixels blink |
-| `rain` | `05` | Dripping color |
+| *(star)* | `04` | Random pixels blink — not supported on Z13 2025 |
+| *(rain)* | `05` | Dripping color — not supported on Z13 2025 |
 | `strobe` | `0a` | Rapid flash |
-| `comet` | `0b` | Trailing comet |
-| `flash` | `0c` | Flash burst |
+| *(comet)* | `0b` | Trailing comet — not supported on Z13 2025 |
+| *(flash)* | `0c` | Flash burst — not supported on Z13 2025 |
 
 **Speed values:**
 

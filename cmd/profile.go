@@ -55,7 +55,7 @@ Profiles:
 				return nil
 			}
 
-			if err := os.WriteFile(cli.FindProfilePath(), []byte(profile+"\n"), 0o644); err != nil {
+			if err := cli.SetProfile(profile); err != nil {
 				return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Performance profile set to %s\n", profile)

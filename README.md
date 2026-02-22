@@ -126,11 +126,7 @@ z13ctl apply [flags]
 | `breathe` | Fade in and out. Uses `--color2` as the second color if set. |
 | `cycle` | Cycle through the full color spectrum |
 | `rainbow` | Rainbow wave across zones |
-| `star` | Random pixels blink on and off |
-| `rain` | Color drips down the keyboard |
 | `strobe` | Rapid flash |
-| `comet` | Trailing comet effect |
-| `flash` | Single-color flash burst |
 
 **Examples:**
 

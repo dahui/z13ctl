@@ -13,11 +13,7 @@ const (
 	ModeBreathe Mode = 1
 	ModeCycle   Mode = 2
 	ModeRainbow Mode = 3
-	ModeStar    Mode = 4
-	ModeRain    Mode = 5
 	ModeStrobe  Mode = 10
-	ModeComet   Mode = 11
-	ModeFlash   Mode = 12
 )
 
 // Speed corresponds to g-helper's AuraSpeed enum speed byte values.
@@ -41,18 +37,10 @@ func ModeFromString(s string) (Mode, error) {
 		return ModeCycle, nil
 	case "rainbow":
 		return ModeRainbow, nil
-	case "star":
-		return ModeStar, nil
-	case "rain":
-		return ModeRain, nil
 	case "strobe":
 		return ModeStrobe, nil
-	case "comet":
-		return ModeComet, nil
-	case "flash":
-		return ModeFlash, nil
 	}
-	return 0, fmt.Errorf("unknown mode %q (valid: static breathe cycle rainbow star rain strobe comet flash)", s)
+	return 0, fmt.Errorf("unknown mode %q (valid: static breathe cycle rainbow strobe)", s)
 }
 
 // SpeedFromString parses a user-supplied speed name.

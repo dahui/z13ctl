@@ -7,6 +7,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/hid"
@@ -71,10 +72,37 @@ func DryRunBatteryLimit(limit int) {
 	fmt.Printf("Would write %d to %s\n", limit, FindBatteryThresholdPath())
 }
 
-// DryRunProfile prints the sysfs write that would be performed for a profile change.
+// DryRunProfile prints the sysfs writes that would be performed for a profile change,
+// including mapped names for secondary devices (e.g. amd-pmf uses "low-power" not "quiet").
 func DryRunProfile(profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %q to %s\n", profile, FindProfilePath())
+	primary := FindProfilePath()
+	fmt.Printf("Would write %q to %s\n", profile, primary)
+	const dir = "/sys/class/platform-profile"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		base := dir + "/" + e.Name()
+		p := base + "/profile"
+		if p == primary {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		name := profileNameForDevice(base, profile)
+		fmt.Printf("Would write %q to %s\n", name, p)
+	}
+	ppd := map[string]string{
+		"quiet":       "power-saver",
+		"balanced":    "balanced",
+		"performance": "performance",
+	}[profile]
+	if ppd != "" {
+		fmt.Printf("Would run: powerprofilesctl set %s\n", ppd)
+	}
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

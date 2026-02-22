@@ -133,7 +133,7 @@ func init() {
 	applyCmd.Flags().StringVar(&color2Flag, "color2", "000000",
 		"Secondary color for breathe mode: hex (RRGGBB) or name. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&modeFlag, "mode", "static",
-		"Lighting mode: static|breathe|cycle|rainbow|star|rain|strobe|comet|flash")
+		"Lighting mode: static|breathe|cycle|rainbow|strobe")
 	applyCmd.Flags().StringVar(&speedFlag, "speed", "normal",
 		"Animation speed: slow|normal|fast")
 	applyCmd.Flags().StringVar(&brightnessFlag, "brightness", "high",

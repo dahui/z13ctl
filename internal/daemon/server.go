@@ -277,7 +277,7 @@ func (d *Daemon) handleProfile(req request) response {
 	if req.Set == "" {
 		return response{OK: false, Error: "profile requires a set field"}
 	}
-	if err := os.WriteFile(cli.FindProfilePath(), []byte(req.Set+"\n"), 0o644); err != nil {
+	if err := cli.SetProfile(req.Set); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
 	slog.Info("profile", "set", req.Set)

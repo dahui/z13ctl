@@ -4,16 +4,29 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
-// FindProfilePath returns the writable sysfs path for the platform-profile attribute.
-// It prefers the class device path (where udev applies group permissions) over the
-// ACPI alias, which is a separate kernel object.
+// FindProfilePath returns the writable sysfs path for the ASUS platform-profile attribute.
+// It prefers the device whose choices file contains "quiet" (the asus-wmi device), falling
+// back to the first device with a profile file, then the ACPI alias.
 func FindProfilePath() string {
 	const dir = "/sys/class/platform-profile"
 	entries, err := os.ReadDir(dir)
 	if err == nil {
+		// First pass: prefer the ASUS device (choices includes "quiet").
+		for _, e := range entries {
+			base := dir + "/" + e.Name()
+			if profileDeviceSupports(base, "quiet") {
+				p := base + "/profile"
+				if _, err := os.Stat(p); err == nil {
+					return p
+				}
+			}
+		}
+		// Fallback: first device with a profile file.
 		for _, e := range entries {
 			p := dir + "/" + e.Name() + "/profile"
 			if _, err := os.Stat(p); err == nil {
@@ -22,6 +35,85 @@ func FindProfilePath() string {
 		}
 	}
 	return "/sys/firmware/acpi/platform_profile"
+}
+
+// SetProfile writes the given ASUS profile (quiet/balanced/performance) to all
+// platform_profile sysfs devices, mapping "quiet" to "low-power" for devices that
+// do not support that name. Returns an error only if the primary ASUS device write
+// fails; secondary device errors are ignored.
+func SetProfile(profile string) error {
+	const dir = "/sys/class/platform-profile"
+	primaryPath := FindProfilePath()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return os.WriteFile(primaryPath, []byte(profile+"\n"), 0o644)
+	}
+	var primaryErr error
+	for _, e := range entries {
+		base := dir + "/" + e.Name()
+		p := base + "/profile"
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		name := profileNameForDevice(base, profile)
+		werr := os.WriteFile(p, []byte(name+"\n"), 0o644)
+		if p == primaryPath {
+			primaryErr = werr
+		}
+	}
+	if primaryErr == nil {
+		setPPD(profile)
+	}
+	return primaryErr
+}
+
+// setPPD updates the power-profiles-daemon active profile to match the given
+// ASUS profile. No-op if powerprofilesctl is not installed. Silently ignores
+// errors if PPD is installed but not currently running.
+func setPPD(asusProfile string) {
+	ppd := map[string]string{
+		"quiet":       "power-saver",
+		"balanced":    "balanced",
+		"performance": "performance",
+	}[asusProfile]
+	if ppd == "" {
+		return
+	}
+	bin, err := exec.LookPath("powerprofilesctl")
+	if err != nil {
+		return
+	}
+	_ = exec.Command(bin, "set", ppd).Run()
+}
+
+// profileDeviceSupports reports whether the platform_profile device at base
+// lists name in its choices file.
+func profileDeviceSupports(base, name string) bool {
+	data, err := os.ReadFile(base + "/choices")
+	if err != nil {
+		return false
+	}
+	for _, p := range strings.Fields(string(data)) {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
+// profileNameForDevice returns the appropriate profile name for a given device,
+// mapping the ASUS-specific "quiet" to "low-power" for devices that don't support it.
+func profileNameForDevice(base, asusProfile string) string {
+	if asusProfile != "quiet" {
+		return asusProfile // "balanced" and "performance" are universal
+	}
+	if profileDeviceSupports(base, "quiet") {
+		return "quiet"
+	}
+	if profileDeviceSupports(base, "low-power") {
+		return "low-power"
+	}
+	return asusProfile
 }
 
 // FindBatteryThresholdPath returns the writable sysfs path for the battery charge
