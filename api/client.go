@@ -189,6 +189,64 @@ func SendBatteryLimitSet(limit int) (bool, error) {
 	return true, nil
 }
 
+// SendBootSoundSet sends a boot sound set command to the daemon.
+func SendBootSoundSet(value int) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "bootsound", Set: fmt.Sprintf("%d", value)})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendPanelOverdriveSet sends a panel overdrive set command to the daemon.
+func SendPanelOverdriveSet(value int) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "paneloverdrive", Set: fmt.Sprintf("%d", value)})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendBootSoundGet queries the daemon for the current boot sound setting by
+// reading sysfs. Returns (false, 0, nil) if the daemon is not running.
+func SendBootSoundGet() (handled bool, value int, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "bootsound-get"})
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	if !resp.OK {
+		return true, 0, fmt.Errorf("%s", resp.Error)
+	}
+	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
+		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, scanErr)
+	}
+	return true, value, nil
+}
+
+// SendPanelOverdriveGet queries the daemon for the current panel overdrive
+// setting by reading sysfs. Returns (false, 0, nil) if the daemon is not running.
+func SendPanelOverdriveGet() (handled bool, value int, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "paneloverdrive-get"})
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	if !resp.OK {
+		return true, 0, fmt.Errorf("%s", resp.Error)
+	}
+	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
+		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, scanErr)
+	}
+	return true, value, nil
+}
+
 // SendGetState fetches the daemon's full cached state for GUI initialization.
 // Returns (false, nil, nil) if the daemon is not running.
 func SendGetState() (bool, *State, error) {

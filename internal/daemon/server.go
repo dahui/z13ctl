@@ -84,10 +84,21 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleBatteryLimit(req)
 	case "batterylimit-get":
 		return handleBatteryLimitGet()
+	case "bootsound":
+		return handleBootSound(req)
+	case "bootsound-get":
+		return handleBootSoundGet()
+	case "paneloverdrive":
+		return handlePanelOverdrive(req)
+	case "paneloverdrive-get":
+		return handlePanelOverdriveGet()
 	case "get-state":
 		d.mu.Lock()
 		s := d.state
 		d.mu.Unlock()
+		// Populate firmware-managed fields from sysfs (not cached in daemon state).
+		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
+		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
 		return response{OK: true, State: &s}
 	default:
 		return response{OK: false, Error: "unknown command: " + req.Cmd}
@@ -308,6 +319,60 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 		slog.Warn("failed to save state", "err", err)
 	}
 	return response{OK: true}
+}
+
+func handleBootSoundGet() response {
+	data, err := os.ReadFile(cli.FindBootSoundPath())
+	if err != nil {
+		return response{OK: false, Error: "reading boot sound: " + err.Error()}
+	}
+	return response{OK: true, Value: strings.TrimSpace(string(data))}
+}
+
+func handleBootSound(req request) response {
+	value, err := strconv.Atoi(req.Set)
+	if err != nil || (value != 0 && value != 1) {
+		return response{OK: false, Error: "boot sound must be 0 or 1"}
+	}
+	if err := cli.SetBootSound(value); err != nil {
+		return response{OK: false, Error: "bootsound: " + err.Error()}
+	}
+	slog.Info("bootsound", "set", value)
+	return response{OK: true}
+}
+
+func handlePanelOverdriveGet() response {
+	data, err := os.ReadFile(cli.FindPanelOverdrivePath())
+	if err != nil {
+		return response{OK: false, Error: "reading panel overdrive: " + err.Error()}
+	}
+	return response{OK: true, Value: strings.TrimSpace(string(data))}
+}
+
+func handlePanelOverdrive(req request) response {
+	value, err := strconv.Atoi(req.Set)
+	if err != nil || (value != 0 && value != 1) {
+		return response{OK: false, Error: "panel overdrive must be 0 or 1"}
+	}
+	if err := cli.SetPanelOverdrive(value); err != nil {
+		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
+	}
+	slog.Info("paneloverdrive", "set", value)
+	return response{OK: true}
+}
+
+// readIntSysfs reads a sysfs file, trims whitespace, and parses it as an int.
+// Returns 0 on any error (file missing, unreadable, or non-numeric content).
+func readIntSysfs(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func writeResponse(conn net.Conn, r response) {

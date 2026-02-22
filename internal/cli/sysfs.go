@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -125,4 +126,24 @@ func FindBatteryThresholdPath() string {
 		return matches[0]
 	}
 	return "/sys/class/power_supply/BAT0/charge_control_end_threshold"
+}
+
+// FindBootSoundPath returns the sysfs path for the boot sound firmware attribute.
+func FindBootSoundPath() string {
+	return "/sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
+}
+
+// FindPanelOverdrivePath returns the sysfs path for the panel overdrive firmware attribute.
+func FindPanelOverdrivePath() string {
+	return "/sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
+}
+
+// SetBootSound writes the given boot sound value (0 or 1) to the firmware attribute.
+func SetBootSound(value int) error {
+	return os.WriteFile(FindBootSoundPath(), []byte(strconv.Itoa(value)+"\n"), 0o644)
+}
+
+// SetPanelOverdrive writes the given panel overdrive value (0 or 1) to the firmware attribute.
+func SetPanelOverdrive(value int) error {
+	return os.WriteFile(FindPanelOverdrivePath(), []byte(strconv.Itoa(value)+"\n"), 0o644)
 }

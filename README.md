@@ -18,6 +18,8 @@ RGB lighting and system control for the 2025 ASUS ROG Flow Z13 via Linux.
   - [off](#off)
   - [profile](#profile)
   - [batterylimit](#batterylimit)
+  - [bootsound](#bootsound)
+  - [paneloverdrive](#paneloverdrive)
   - [setup](#setup)
 - [Daemon Mode](#daemon-mode)
 - [Global Flags](#global-flags)
@@ -50,7 +52,9 @@ it in `app/USB/AsusHid.cs` and `app/USB/Aura.cs`. A detailed technical
 description of the protocol is available in [PROTOCOL.md](PROTOCOL.md).
 
 Beyond RGB, `z13ctl` also exposes the asus-wmi sysfs interfaces for
-performance profile switching and battery charge limiting.
+performance profile switching and battery charge limiting, and the
+`asus-armoury` firmware-attributes interface for boot sound and panel
+overdrive control.
 
 ## Requirements
 
@@ -189,8 +193,9 @@ z13ctl daemon
 ```
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
-`profile`, `batterylimit`) route through the daemon socket automatically. If
-the daemon is not running they fall back to direct hardware access.
+`profile`, `batterylimit`, `bootsound`, `paneloverdrive`) route through the
+daemon socket automatically. If the daemon is not running they fall back to
+direct hardware/sysfs access.
 
 ### list
 
@@ -251,10 +256,50 @@ z13ctl batterylimit --get
 z13ctl batterylimit --set 80
 ```
 
+### bootsound
+
+Get or set the POST boot sound via the `asus-armoury` firmware-attributes sysfs
+interface. Root or group access required; see [setup](#setup).
+
+```
+z13ctl bootsound [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the current boot sound setting |
+| `--set <value>` | Set boot sound (0=off, 1=on) |
+
+```sh
+z13ctl bootsound --get
+z13ctl bootsound --set 0
+```
+
+### paneloverdrive
+
+Get or set the display panel refresh overdrive via the `asus-armoury`
+firmware-attributes sysfs interface. Root or group access required; see
+[setup](#setup).
+
+```
+z13ctl paneloverdrive [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the current panel overdrive setting |
+| `--set <value>` | Set panel overdrive (0=off, 1=on) |
+
+```sh
+z13ctl paneloverdrive --get
+z13ctl paneloverdrive --set 1
+```
+
 ### setup
 
 Install udev rules and a small boot service granting a group read/write access to
-the ASUS HID devices, the performance profile, and the battery charge limit.
+the ASUS HID devices, the performance profile, the battery charge limit, and
+firmware-attributes (boot sound, panel overdrive).
 
 ```
 sudo z13ctl setup [--group <group>]

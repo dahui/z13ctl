@@ -105,6 +105,18 @@ func DryRunProfile(profile string) {
 	}
 }
 
+// DryRunBootSound prints the sysfs write that would be performed for a boot sound change.
+func DryRunBootSound(value int) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would write %d to %s\n", value, FindBootSoundPath())
+}
+
+// DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
+func DryRunPanelOverdrive(value int) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would write %d to %s\n", value, FindPanelOverdrivePath())
+}
+
 // DryRunBrightness prints the packet sequence for a brightness-only change.
 func DryRunBrightness(level uint8) {
 	var keyb, bar, lid, rear byte
