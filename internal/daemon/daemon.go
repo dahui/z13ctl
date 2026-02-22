@@ -68,6 +68,25 @@ func Run(ctx context.Context) error {
 		}
 	}
 
+	// Restore profile if saved.
+	if d.state.Profile != "" {
+		if profileErr := cli.SetProfile(d.state.Profile); profileErr != nil {
+			slog.Warn("failed to restore profile", "err", profileErr)
+		} else {
+			slog.Info("profile restored", "profile", d.state.Profile)
+		}
+	}
+
+	// Restore battery charge limit if saved.
+	if d.state.Battery > 0 {
+		path := cli.FindBatteryThresholdPath()
+		if batErr := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", d.state.Battery)), 0o644); batErr != nil {
+			slog.Warn("failed to restore battery limit", "err", batErr)
+		} else {
+			slog.Info("battery limit restored", "limit", d.state.Battery)
+		}
+	}
+
 	go watchButton(ctx, d.buttonCh)
 
 	ln, err := d.getListener()
