@@ -15,8 +15,9 @@ import (
 var Version = "1.0.0-beta"
 
 var (
-	deviceFlag string
-	dryRunFlag bool
+	deviceFlag   string
+	dryRunFlag   bool
+	noButtonFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -39,4 +40,5 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target device: keyboard, lightbar, or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
+	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the Armoury Crate button watcher (daemon only)")
 }

@@ -347,6 +347,13 @@ The daemon holds HID devices open, persists lighting state to
 Armoury Crate button. All CLI commands route through the daemon automatically
 when it is running.
 
+If another tool needs exclusive access to the Armoury Crate button, disable the
+button watcher with `--no-button`:
+
+```sh
+z13ctl --no-button daemon
+```
+
 The daemon starts automatically at login and restores your last lighting,
 profile, and battery limit settings. If you installed from a release archive, the systemd units are
 set up during [Installation](#installation). If you built from source, use
@@ -383,6 +390,7 @@ These flags apply to every command.
 |------|-------------|
 | `--device <name\|path>` | Target a single device: `keyboard`, `lightbar`, or a `/dev/hidrawN` path. Without this flag, commands are sent to all matching devices. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
+| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use this when another tool needs exclusive access to the button device. |
 
 ## Colors
 

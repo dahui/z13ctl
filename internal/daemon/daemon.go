@@ -43,7 +43,7 @@ type Daemon struct {
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
 // restores the last-saved state, starts the button watcher, and serves the
 // Unix socket.
-func Run(ctx context.Context) error {
+func Run(ctx context.Context, watchBtn bool) error {
 	d := &Daemon{
 		buttonCh: make(chan struct{}, 4),
 	}
@@ -58,13 +58,6 @@ func Run(ctx context.Context) error {
 		defer dev.Close()
 		if applyErr := d.applyLightingState(); applyErr != nil {
 			slog.Warn("failed to restore lighting state", "err", applyErr)
-		} else {
-			ls := d.state.Lighting
-			if ls.Enabled {
-				slog.Info("lighting state restored", "mode", ls.Mode, "brightness", ls.Brightness)
-			} else {
-				slog.Info("lighting state restored (off)")
-			}
 		}
 	}
 
@@ -87,7 +80,11 @@ func Run(ctx context.Context) error {
 		}
 	}
 
-	go watchButton(ctx, d.buttonCh)
+	if watchBtn {
+		go watchButton(ctx, d.buttonCh)
+	} else {
+		slog.Info("Armoury Crate button watcher disabled")
+	}
 
 	ln, err := d.getListener()
 	if err != nil {
@@ -225,8 +222,21 @@ func (d *Daemon) applyLightingState() error {
 			if err := applyZone(target, ls); err != nil {
 				return err
 			}
+			if ls.Enabled {
+				slog.Info("lighting restored", "zone", name, "mode", ls.Mode, "brightness", ls.Brightness)
+			} else {
+				slog.Info("lighting restored (off)", "zone", name)
+			}
 		}
 		return nil
 	}
-	return applyZone(d.dev, d.state.Lighting)
+	if err := applyZone(d.dev, d.state.Lighting); err != nil {
+		return err
+	}
+	if d.state.Lighting.Enabled {
+		slog.Info("lighting restored", "zone", "all", "mode", d.state.Lighting.Mode, "brightness", d.state.Lighting.Brightness)
+	} else {
+		slog.Info("lighting restored (off)", "zone", "all")
+	}
+	return nil
 }

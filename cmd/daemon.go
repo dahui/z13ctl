@@ -43,7 +43,7 @@ The contrib/systemd/user/ directory contains ready-to-use unit files.`,
 		defer cancel()
 
 		slog.Info("starting z13ctl daemon")
-		if err := daemon.Run(ctx); err != nil {
+		if err := daemon.Run(ctx, !noButtonFlag); err != nil {
 			return err
 		}
 		slog.Info("z13ctl daemon stopped")
