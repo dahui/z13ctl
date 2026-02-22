@@ -42,8 +42,8 @@ install-service: build
 	install -Dm644 contrib/systemd/user/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.socket
 	install -Dm644 contrib/systemd/user/z13ctl.service $(SYSTEMD_USER_DIR)/z13ctl.service
 	systemctl --user daemon-reload
-	systemctl --user enable --now z13ctl.socket
-	@echo "Service installed. Run 'systemctl --user status z13ctl.socket' to verify."
+	systemctl --user enable --now z13ctl.socket z13ctl.service
+	@echo "Service installed. Run 'systemctl --user status z13ctl.service' to verify."
 
 ## uninstall-service: stop and remove the z13ctl systemd user service
 uninstall-service:

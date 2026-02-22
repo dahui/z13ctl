@@ -81,7 +81,7 @@ sudo z13ctl setup
 install -Dm644 contrib/systemd/user/z13ctl.socket ~/.config/systemd/user/z13ctl.socket
 install -Dm644 contrib/systemd/user/z13ctl.service ~/.config/systemd/user/z13ctl.service
 systemctl --user daemon-reload
-systemctl --user enable --now z13ctl.socket
+systemctl --user enable --now z13ctl.socket z13ctl.service
 ```
 
 **From source:**
@@ -302,8 +302,8 @@ The daemon holds HID devices open, persists lighting state to
 Armoury Crate button. All CLI commands route through the daemon automatically
 when it is running.
 
-The daemon starts automatically on the first CLI command via systemd socket
-activation. If you installed from a release archive, the systemd units are
+The daemon starts automatically at login and restores your last lighting
+settings. If you installed from a release archive, the systemd units are
 set up during [Installation](#installation). If you built from source, use
 `make install-service` instead.
 
