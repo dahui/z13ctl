@@ -62,9 +62,27 @@ performance profile switching and battery charge limiting.
 ## Installation
 
 **Pre-built binaries** are available on the
-[Releases](../../releases) page. Download the archive for your
-the `amd64` archive, extract it, and place the binary
-somewhere on your `PATH`.
+[Releases](../../releases) page. Download the `amd64` archive and extract it:
+
+```sh
+tar xzf z13ctl_*_linux_amd64.tar.gz
+```
+
+Install the binary and systemd units:
+
+```sh
+# Binary
+sudo install -Dm755 z13ctl /usr/local/bin/z13ctl
+
+# Permissions and udev rules (one-time, requires root)
+sudo z13ctl setup
+
+# User service for the daemon (socket activation)
+install -Dm644 contrib/systemd/user/z13ctl.socket ~/.config/systemd/user/z13ctl.socket
+install -Dm644 contrib/systemd/user/z13ctl.service ~/.config/systemd/user/z13ctl.service
+systemctl --user daemon-reload
+systemctl --user enable --now z13ctl.socket
+```
 
 **From source:**
 
@@ -120,19 +138,21 @@ z13ctl apply [flags]
 
 **Modes:**
 
-| Mode | Description |
-|------|-------------|
-| `static` | Solid color |
-| `breathe` | Fade in and out. Uses `--color2` as the second color if set. |
-| `cycle` | Cycle through the full color spectrum |
-| `rainbow` | Rainbow wave across zones |
-| `strobe` | Rapid flash |
+| Mode | Description | `--color` | `--color2` | `--speed` |
+|------|-------------|:---------:|:----------:|:---------:|
+| `static` | Solid color | yes | - | - |
+| `breathe` | Fade between two colors | yes | yes | yes |
+| `cycle` | Auto-cycle full spectrum | - | - | yes |
+| `rainbow` | Rainbow wave across zones | - | - | yes |
+| `strobe` | Rapid flash | yes | - | yes |
+
+All modes accept `--brightness`.
 
 **Examples:**
 
 ```sh
 z13ctl apply --color cyan --brightness high
-z13ctl apply --color 00FF88 --mode rainbow --speed slow
+z13ctl apply --mode rainbow --speed slow
 z13ctl apply --mode breathe --color hotpink --color2 blue
 z13ctl apply --list-colors
 ```
@@ -282,17 +302,10 @@ The daemon holds HID devices open, persists lighting state to
 Armoury Crate button. All CLI commands route through the daemon automatically
 when it is running.
 
-**Install as a systemd user service** (recommended):
-
-```sh
-sudo z13ctl setup     # install udev rules + boot service (one-time, requires sudo)
-make install-service  # build, install binary, enable daemon socket unit
-```
-
-`make install-service` installs `z13ctl` to `/usr/local/bin/`, copies the
-systemd unit files to `~/.config/systemd/user/`, and enables
-`z13ctl.socket`. The daemon starts automatically on the first CLI command
-via systemd socket activation.
+The daemon starts automatically on the first CLI command via systemd socket
+activation. If you installed from a release archive, the systemd units are
+set up during [Installation](#installation). If you built from source, use
+`make install-service` instead.
 
 ```sh
 # Check service status
@@ -301,9 +314,14 @@ systemctl --user status z13ctl.service
 
 # View daemon logs
 journalctl --user -u z13ctl -f
+```
 
-# Remove the service
-make uninstall-service
+**Remove the user service:**
+
+```sh
+systemctl --user disable --now z13ctl.socket z13ctl.service
+rm -f ~/.config/systemd/user/z13ctl.socket ~/.config/systemd/user/z13ctl.service
+systemctl --user daemon-reload
 ```
 
 **Run directly** (without systemd, for testing):

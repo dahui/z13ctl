@@ -27,7 +27,7 @@ var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply a lighting effect",
 	Example: `  z13ctl apply --color cyan --brightness high
-  z13ctl apply --color 00FF88 --mode rainbow --speed slow
+  z13ctl apply --mode rainbow --speed slow
   z13ctl apply --mode breathe --color hotpink --color2 blue
   z13ctl apply --list-colors`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -129,13 +129,13 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().StringVar(&colorFlag, "color", "FF0000",
-		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Use --list-colors for all names.")
+		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Ignored by cycle and rainbow. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&color2Flag, "color2", "000000",
 		"Secondary color for breathe mode: hex (RRGGBB) or name. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&modeFlag, "mode", "static",
 		"Lighting mode: static|breathe|cycle|rainbow|strobe")
 	applyCmd.Flags().StringVar(&speedFlag, "speed", "normal",
-		"Animation speed: slow|normal|fast")
+		"Animation speed: slow|normal|fast. Ignored by static.")
 	applyCmd.Flags().StringVar(&brightnessFlag, "brightness", "high",
 		"Brightness level: off|low|medium|high")
 	applyCmd.Flags().BoolVar(&listColorsFlag, "list-colors", false,
