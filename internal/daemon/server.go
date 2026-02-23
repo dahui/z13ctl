@@ -64,6 +64,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	}
 
 	resp := d.dispatch(req)
+	if !resp.OK {
+		slog.Warn("command failed", "cmd", req.Cmd, "err", resp.Error)
+	}
 	writeResponse(conn, resp)
 	_ = conn.Close()
 }
