@@ -28,9 +28,12 @@ The daemon opens and holds the ASUS HID devices, restores the last-applied
 lighting state on startup, watches the Armoury Crate button, and serves a
 Unix socket at $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock.
 
-CLI commands (apply, off, brightness, profile, batterylimit) will
-automatically use the socket if the daemon is running, falling back to
-direct hardware access when it is not.
+CLI commands (apply, off, brightness, profile, batterylimit, bootsound,
+paneloverdrive) will automatically use the socket if the daemon is running,
+falling back to direct hardware access when it is not.
+
+Use --no-button to disable the Armoury Crate button watcher, allowing other
+tools to exclusively grab the button device.
 
 The daemon is intended to be managed by systemd:
 

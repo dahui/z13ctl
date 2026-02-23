@@ -27,7 +27,8 @@ var rootCmd = &cobra.Command{
 	Long: `z13ctl — system control for the 2025 ASUS ROG Flow Z13
 
 Controls keyboard and lightbar RGB via Linux hidraw, performance profile and
-battery charge limit via asus-wmi sysfs interfaces.`,
+battery charge limit via asus-wmi sysfs, and boot sound and panel overdrive
+via asus-armoury firmware-attributes.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

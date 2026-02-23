@@ -3,7 +3,7 @@ package daemon
 // button.go — Armoury Crate button watcher via Linux evdev.
 //
 // Finds the "Asus WMI hotkeys" input device by sysfs name, grabs it exclusively,
-// and forwards KEY_PROG1 key-down events to a channel. Retries automatically
+// and forwards KEY_PROG3 key-down events to a channel. Retries automatically
 // after device loss (e.g. suspend/resume).
 
 import (
