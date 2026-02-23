@@ -94,7 +94,7 @@ systemctl --user enable --now z13ctl.socket z13ctl.service
 git clone https://github.com/dahui/z13ctl
 cd z13ctl
 make build
-sudo cp z13ctl /usr/local/bin/
+sudo make install
 ```
 
 ## Quick Start
@@ -355,9 +355,11 @@ z13ctl --no-button daemon
 ```
 
 The daemon starts automatically at login and restores your last lighting,
-profile, and battery limit settings. If you installed from a release archive, the systemd units are
-set up during [Installation](#installation). If you built from source, use
-`make install-service` instead.
+profile, and battery limit settings. The systemd unit targets
+`graphical-session.target`, so it works in both desktop (KDE, GNOME, etc.)
+and Steam Gaming Mode (gamescope session). If you installed from a release
+archive, the systemd units are set up during [Installation](#installation).
+If you built from source, use `make install-service` instead.
 
 ```sh
 # Check service status

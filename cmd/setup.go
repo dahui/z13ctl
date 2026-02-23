@@ -36,8 +36,8 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", MODE="06
 ACTION=="add", SUBSYSTEM=="platform-profile", RUN+="/usr/bin/chgrp %s /sys%%p/profile", RUN+="/usr/bin/chmod g+w /sys%%p/profile"
 ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr/bin/chgrp %s /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="%s"
-ACTION=="add", SUBSYSTEM=="wmi_bus", DRIVER=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
-ACTION=="add", SUBSYSTEM=="wmi_bus", DRIVER=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
 `, group, group, group, group, group, group, group, group)
 }
 

@@ -4,7 +4,7 @@ LDFLAGS  := -s -w -X github.com/dahui/z13ctl/cmd.Version=$(VERSION)
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
 SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 
-.PHONY: build test cover lint mod-tidy snapshot release install-service uninstall-service install-perms-service uninstall-perms-service clean help
+.PHONY: build test cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service clean help
 
 ## build: compile z13ctl with version from git tags
 build:
@@ -36,8 +36,12 @@ snapshot:
 release:
 	goreleaser release --clean
 
+## install: install z13ctl binary to /usr/local/bin (requires sudo, build first)
+install:
+	install -Dm755 z13ctl /usr/local/bin/z13ctl
+
 ## install-service: install and enable the z13ctl systemd user service
-install-service: build
+install-service:
 	install -Dm644 contrib/systemd/user/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.socket
 	install -Dm644 contrib/systemd/user/z13ctl.service $(SYSTEMD_USER_DIR)/z13ctl.service
 	systemctl --user daemon-reload
