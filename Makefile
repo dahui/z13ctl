@@ -38,7 +38,6 @@ release:
 
 ## install-service: install and enable the z13ctl systemd user service
 install-service: build
-	install -Dm755 z13ctl $(DESTDIR)/usr/local/bin/z13ctl
 	install -Dm644 contrib/systemd/user/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.socket
 	install -Dm644 contrib/systemd/user/z13ctl.service $(SYSTEMD_USER_DIR)/z13ctl.service
 	systemctl --user daemon-reload
