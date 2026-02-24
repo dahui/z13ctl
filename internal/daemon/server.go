@@ -17,6 +17,12 @@ import (
 	"github.com/dahui/z13ctl/internal/cli"
 )
 
+// request and response mirror the unexported types in api/client.go.
+// They are intentionally duplicated: the api module is a separate Go module
+// (stdlib-only), so the daemon cannot share types with it across the module
+// boundary without making them public. Both sides must stay in sync with the
+// JSON wire protocol.
+
 // request is a command sent by a client over the socket.
 // One JSON object per newline-terminated message.
 type request struct {

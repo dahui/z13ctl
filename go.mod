@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.1.0 // indirect
 )
 
-replace github.com/dahui/z13ctl/api v0.0.0-local => ./api
+replace github.com/dahui/z13ctl/api v1.0.0-beta => ./api

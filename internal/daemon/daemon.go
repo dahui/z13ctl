@@ -6,6 +6,9 @@
 //   - z13ctl.service — Type=notify, Restart=on-failure
 //
 // Can also be run directly for development: z13ctl daemon.
+//
+// The daemon socket client (Send*, Subscribe, SocketPath) lives in the public
+// api package: github.com/dahui/z13ctl/api.
 package daemon
 
 // daemon.go — Daemon struct, Run function, socket listener, and subscriber management.
@@ -17,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -127,7 +131,7 @@ func (d *Daemon) getListener() (net.Listener, error) {
 	}
 
 	sock := api.SocketPath()
-	if mkdirErr := os.MkdirAll(sock[:len(sock)-len("z13ctl.sock")-1], 0o750); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(sock), 0o750); mkdirErr != nil {
 		return nil, mkdirErr
 	}
 	_ = os.Remove(sock)

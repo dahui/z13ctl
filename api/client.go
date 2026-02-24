@@ -21,11 +21,6 @@ import (
 
 // SocketPath returns the runtime path for the daemon's Unix socket.
 func SocketPath() string {
-	return socketPath()
-}
-
-// socketPath returns the runtime path for the daemon's Unix socket.
-func socketPath() string {
 	runtime := os.Getenv("XDG_RUNTIME_DIR")
 	if runtime == "" {
 		runtime = "/tmp"
@@ -58,7 +53,7 @@ type response struct {
 // sendCommand connects to the daemon and sends req, returning the response.
 // Returns (false, nil, nil) if the daemon is not running.
 func sendCommand(req request) (bool, *response, error) {
-	conn, err := net.DialTimeout("unix", socketPath(), time.Second)
+	conn, err := net.DialTimeout("unix", SocketPath(), time.Second)
 	if err != nil {
 		return false, nil, nil // daemon not running
 	}
@@ -266,7 +261,7 @@ func SendGetState() (bool, *State, error) {
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
 func Subscribe(events []string) (<-chan string, func(), error) {
-	conn, err := net.DialTimeout("unix", socketPath(), time.Second)
+	conn, err := net.DialTimeout("unix", SocketPath(), time.Second)
 	if err != nil {
 		return nil, nil, nil // daemon not running
 	}
