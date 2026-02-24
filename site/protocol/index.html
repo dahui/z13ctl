@@ -1,0 +1,1872 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="RGB lighting and system control for the 2025 ASUS ROG Flow Z13 on Linux.">
+      
+      
+      
+        <link rel="canonical" href="https://dahui.github.io/z13ctl/protocol/">
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../contributing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+    
+    
+      
+        <title>Protocol - z13ctl</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#aura-hid-protocol-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="z13ctl" class="md-header__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            z13ctl
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Protocol
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../commands/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Protocol
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="z13ctl" class="md-nav__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    z13ctl
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../daemon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Protocol
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Devices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-hidraw-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The hidraw Interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discovering-devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovering Devices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Discovering Devices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#confirming-aura-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confirming Aura Support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#packet-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packet Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protocol-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protocol Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Init
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setpower" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetPower
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setbrightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetBrightness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setmode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetMode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#annotated-packet-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotated Packet Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Annotated Packet Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#static-red-on-both-zones-full-brightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Static red on both zones, full brightness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#breathe-between-cyan-and-blue-slow-speed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breathe between cyan and blue, slow speed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cycle-mode-with-device-chosen-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cycle mode with device-chosen colors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Devices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-hidraw-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The hidraw Interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discovering-devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovering Devices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Discovering Devices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#confirming-aura-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confirming Aura Support
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#packet-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packet Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protocol-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protocol Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Init
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setpower" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetPower
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setbrightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetBrightness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setmode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SetMode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#annotated-packet-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotated Packet Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Annotated Packet Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#static-red-on-both-zones-full-brightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Static red on both zones, full brightness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#breathe-between-cyan-and-blue-slow-speed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breathe between cyan and blue, slow speed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cycle-mode-with-device-chosen-colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cycle mode with device-chosen colors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="aura-hid-protocol-reference">Aura HID Protocol Reference</h1>
+<p>This document describes the HID protocol used by the 2025 ASUS ROG Flow Z13
+for RGB lighting control. It is intended for developers who want to understand
+or reimplement this functionality.</p>
+<p>The protocol was reverse-engineered from
+<a href="https://github.com/seerge/g-helper">g-helper</a> (MIT license), specifically
+<code>app/USB/AsusHid.cs</code> (device I/O) and <code>app/USB/Aura.cs</code> (packet construction).</p>
+<hr />
+<h2 id="devices">Devices</h2>
+<p>The 2025 ROG Flow Z13 exposes two separate HID devices for lighting:</p>
+<table>
+<thead>
+<tr>
+<th>Device</th>
+<th>USB Product ID</th>
+<th>Role</th>
+<th>Controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keyboard</td>
+<td><code>0b05:1a30</code></td>
+<td><code>keyboard</code></td>
+<td>Key backlight</td>
+</tr>
+<tr>
+<td>Lightbar</td>
+<td><code>0b05:18c6</code></td>
+<td><code>lightbar</code></td>
+<td>Edge light strip</td>
+</tr>
+</tbody>
+</table>
+<p>Both devices use the same Aura protocol and accept the same packet format.
+Commands are sent independently to each device; there is no broadcast shortcut
+that addresses both at once. Each device responds only to the zone byte that
+matches its own zone (keyboard = zone 0, lightbar = zone 1) and silently
+ignores commands for the other zone.</p>
+<hr />
+<h2 id="the-hidraw-interface">The hidraw Interface</h2>
+<p>Linux exposes raw HID devices at <code>/dev/hidraw0</code>, <code>/dev/hidraw1</code>, etc.
+Writing to these files sends an output report directly to the device,
+bypassing any input subsystem drivers.</p>
+<p><strong>Access</strong>: The files require read/write permission. By default this means
+root. A udev rule can grant a specific group access without requiring
+privilege escalation for each command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>SUBSYSTEM==&quot;hidraw&quot;, ATTRS{idVendor}==&quot;0b05&quot;, ATTRS{idProduct}==&quot;18c6&quot;, \
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    GROUP=&quot;users&quot;, MODE=&quot;0660&quot;
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>SUBSYSTEM==&quot;hidraw&quot;, ATTRS{idVendor}==&quot;0b05&quot;, ATTRS{idProduct}==&quot;1a30&quot;, \
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    GROUP=&quot;users&quot;, MODE=&quot;0660&quot;
+</code></pre></div>
+<p><strong>Write size</strong>: The Aura protocol uses 64-byte output reports. Every write
+must be exactly 64 bytes. Shorter packets must be zero-padded to fill the
+buffer before writing.</p>
+<p><strong>Report ID</strong>: The first byte of every write is the HID report ID. For Aura,
+this is always <code>0x5d</code>. The hidraw interface includes the report ID in the
+write buffer (unlike some HID APIs that strip it). This means byte 0 of every
+packet you write is <code>0x5d</code>, and the actual command byte is at offset 1.</p>
+<hr />
+<h2 id="discovering-devices">Discovering Devices</h2>
+<p>The kernel creates sysfs entries for every hidraw device under
+<code>/sys/class/hidraw/</code>. Each device has an associated <code>uevent</code> file that
+contains the HID_ID, which encodes the bus type, vendor, and product IDs
+in a fixed format.</p>
+<p><strong>Path pattern</strong>: <code>/sys/class/hidraw/hidraw*/device/uevent</code></p>
+<p><strong>HID_ID format</strong>: <code>HID_ID=BUSTYPE:VENDORID:PRODUCTID</code> (all hex, zero-padded to 8 digits)</p>
+<p>Example for the lightbar:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>HID_ID=0003:00000B05:000018C6
+</code></pre></div></p>
+<ul>
+<li>Bus <code>0003</code> = USB HID</li>
+<li>Vendor <code>00000B05</code> = ASUS (0x0b05)</li>
+<li>Product <code>000018C6</code> = N-KEY device (lightbar, 0x18c6)</li>
+</ul>
+<p>To convert a sysfs uevent path to the corresponding <code>/dev/hidrawN</code> path,
+extract the <code>hidrawN</code> component from position 4 of the path split by <code>/</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/sys/class/hidraw/hidraw3/device/uevent  -&gt;  /dev/hidraw3
+</code></pre></div>
+<h3 id="confirming-aura-support">Confirming Aura Support</h3>
+<p>Not every hidraw node with a matching USB ID actually supports the Aura
+report. Multiple HID interfaces are present on each USB device, and only one
+of them carries Report ID <code>0x5d</code>. You can confirm support by reading the HID
+report descriptor via ioctl and scanning for the two-byte sequence
+<code>[0x85, 0x5d]</code>:</p>
+<ul>
+<li><code>0x85</code> is the HID short-form item tag for "Report ID"</li>
+<li><code>0x5d</code> is the Aura report ID value</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1">// Get descriptor size</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kt">int</span><span class="w"> </span><span class="n">size</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">ioctl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">HIDIOCGRDESCSIZE</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">size</span><span class="p">);</span><span class="w">  </span><span class="c1">// ioctl 0x80044801</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1">// Read descriptor</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">size</span><span class="p">;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="kt">uint8_t</span><span class="w">  </span><span class="n">value</span><span class="p">[</span><span class="mi">4096</span><span class="p">];</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span><span class="w"> </span><span class="n">desc</span><span class="p">;</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">desc</span><span class="p">.</span><span class="n">size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">size</span><span class="p">;</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">ioctl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">HIDIOCGRDESC</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">desc</span><span class="p">);</span><span class="w">      </span><span class="c1">// ioctl 0x90044802</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1">// Scan for Report ID 0x5d</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">size</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">desc</span><span class="p">.</span><span class="n">value</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mh">0x85</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">desc</span><span class="p">.</span><span class="n">value</span><span class="p">[</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mh">0x5d</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">        </span><span class="c1">// This device supports Aura report 0x5d</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="p">}</span>
+</code></pre></div>
+<p>ioctl numbers (Linux, 64-bit):</p>
+<ul>
+<li><code>HIDIOCGRDESCSIZE</code> = <code>0x80044801</code></li>
+<li><code>HIDIOCGRDESC</code> = <code>0x90044802</code></li>
+</ul>
+<hr />
+<h2 id="packet-format">Packet Format</h2>
+<p>All Aura packets follow this structure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Offset  Len  Field
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>------  ---  -----
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>0       1    Report ID (always 0x5d)
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>1       1    Command byte
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>2+      N    Command-specific payload
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>(end)   ...  Zero padding to reach 64 bytes total
+</code></pre></div>
+<p>The full 64-byte buffer is always written to the hidraw device, regardless
+of how many payload bytes the command actually uses. Any unused bytes must
+be set to zero.</p>
+<hr />
+<h2 id="protocol-flow">Protocol Flow</h2>
+<p>A complete lighting update requires this sequence of packets:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Init()           -- 4 packets: wake device, identify, configure, activate lightbar
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>SetPower(on)     -- 1 packet:  enable power to all lighting zones
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>SetBrightness()  -- 1 packet:  set brightness level (0-3)
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>SetMode(zone 0)  -- 1 packet:  set color/mode for keyboard
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Commit()         -- 2 packets: latch the zone 0 change
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>SetMode(zone 1)  -- 1 packet:  set color/mode for lightbar
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>Commit()         -- 2 packets: latch the zone 1 change
+</code></pre></div>
+<p>Total: 11 packets per full update. Init and SetPower/SetBrightness are sent
+once per session. SetMode and Commit must be sent once for each zone you want
+to update.</p>
+<hr />
+<h2 id="commands">Commands</h2>
+<h3 id="init">Init</h3>
+<p>Sent once before any other command to wake the device and activate the
+lightbar. All four packets must be sent in order.</p>
+<p><strong>Packet 1 — Wake</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>------  ----  -------
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>0       5d    Report ID
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>1       b9    Init command
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>2-63    00    Zero padding
+</code></pre></div>
+<p><strong>Packet 2 — ASUS Identification String</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Offset  Bytes                            Meaning
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>------  -----                            -------
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>0-14    5d 41 53 55 53 20 54 65          ASCII: ]ASUS Tech.Inc.
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>        63 68 2e 49 6e 63 2e
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>15-63   00                               Zero padding
+</code></pre></div>
+<p>The string <code>]ASUS Tech.Inc.</code> is sent as raw ASCII. The first character <code>]</code>
+has ASCII value <code>0x5d</code>, which is also the report ID — so the first byte of
+this packet doubles as both the <code>]</code> character and the report ID. Do not
+prepend an additional <code>0x5d</code> byte.</p>
+<p><strong>Packet 3 — Mode Config Header</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>------  ----  -------
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>0       5d    Report ID
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>1       05    Command
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>2       20    Config byte
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>3       31    Config byte
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>4       00    Config byte
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>5       1a    Config byte
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>6-63    00    Zero padding
+</code></pre></div>
+<p><strong>Packet 4 — Z13 Dynamic Lighting Init</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>------  ----  -------
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>0       5d    Report ID
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>1       c0    Command
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>2       03    Subcommand
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>3       01    Enable flag
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>4-63    00    Zero padding
+</code></pre></div>
+<p>This packet is required for the 2025 ROG Flow Z13 lightbar. Without it, the
+lightbar will not respond to SetMode commands. It is safe to send to the
+keyboard device as well; it is simply ignored there.</p>
+<h3 id="setpower">SetPower</h3>
+<p>Enables or disables power to all lighting zones simultaneously.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>------  ----  -------
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>0       5d    Report ID
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>1       bd    Command
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>2       01    Subcommand
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>3       keyb  Keyboard power flags
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>4       bar   Lightbar power flags
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>5       lid   Lid power flags
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>6       rear  Rear power flags
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>7       ff    Terminator (always 0xff)
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>8-63    00    Zero padding
+</code></pre></div>
+<p><strong>Power-on values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>keyb</td>
+<td><code>ff</code></td>
+<td>All power states enabled</td>
+</tr>
+<tr>
+<td>bar</td>
+<td><code>1f</code></td>
+<td>Bits 0-4 set: Awake, Boot, Awake(dup), Sleep, Shutdown</td>
+</tr>
+<tr>
+<td>lid</td>
+<td><code>ff</code></td>
+<td>All power states enabled</td>
+</tr>
+<tr>
+<td>rear</td>
+<td><code>ff</code></td>
+<td>All power states enabled</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Power-off values:</strong> all four fields set to <code>00</code>. The terminator byte <code>ff</code>
+at offset 7 is present regardless of power state.</p>
+<p>The <code>bar</code> byte uses a bitmask to select which power states the lightbar is
+active in:</p>
+<table>
+<thead>
+<tr>
+<th>Bit</th>
+<th>Power state</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Awake</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Boot</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Awake (duplicate)</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Sleep</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Shutdown</td>
+</tr>
+</tbody>
+</table>
+<p><code>0x1f</code> (binary <code>00011111</code>) enables all five states.</p>
+<h3 id="setbrightness">SetBrightness</h3>
+<p>Sets the keyboard backlight brightness level.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Offset  Byte   Meaning
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>------  ----   -------
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>0       5d     Report ID
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>1       ba     Command
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>2       c5     Config byte
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>3       c4     Config byte
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>4       level  Brightness level (0x00-0x03)
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>5-63    00     Zero padding
+</code></pre></div>
+<p><strong>Level values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Byte</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Off</td>
+<td><code>00</code></td>
+<td>Backlight disabled</td>
+</tr>
+<tr>
+<td>Low</td>
+<td><code>01</code></td>
+<td>Minimum brightness</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td><code>02</code></td>
+<td>Mid brightness</td>
+</tr>
+<tr>
+<td>High</td>
+<td><code>03</code></td>
+<td>Maximum brightness</td>
+</tr>
+</tbody>
+</table>
+<p>Values above <code>0x03</code> should be clamped to <code>0x03</code> before sending.</p>
+<h3 id="setmode">SetMode</h3>
+<p>Sets the color and animation mode for a single zone. Must always be followed
+by a <a href="#commit">Commit</a> sequence.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Offset  Byte      Meaning
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>------  ----      -------
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>0       5d        Report ID
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>1       b3        Command
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>2       zone      Zone number (00 = keyboard, 01 = lightbar)
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>3       mode      Animation mode
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>4       r         Primary color, red channel (0x00-0xff)
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>5       g         Primary color, green channel
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>6       b         Primary color, blue channel
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>7       speed     Animation speed
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>8       dir       Direction (0x00 = default)
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>9       randFlag  Color selection flag
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>10      r2        Secondary color, red channel (breathe mode only)
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>11      g2        Secondary color, green channel
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>12      b2        Secondary color, blue channel
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>13-63   00        Zero padding
+</code></pre></div>
+<p><strong>Mode values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Byte</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>static</code></td>
+<td><code>00</code></td>
+<td>Solid color, no animation</td>
+</tr>
+<tr>
+<td><code>breathe</code></td>
+<td><code>01</code></td>
+<td>Pulse between two colors</td>
+</tr>
+<tr>
+<td><code>cycle</code></td>
+<td><code>02</code></td>
+<td>Cycle through spectrum</td>
+</tr>
+<tr>
+<td><code>rainbow</code></td>
+<td><code>03</code></td>
+<td>Rainbow wave</td>
+</tr>
+<tr>
+<td><em>(star)</em></td>
+<td><code>04</code></td>
+<td>Random pixels blink — not supported on Z13 2025</td>
+</tr>
+<tr>
+<td><em>(rain)</em></td>
+<td><code>05</code></td>
+<td>Dripping color — not supported on Z13 2025</td>
+</tr>
+<tr>
+<td><code>strobe</code></td>
+<td><code>0a</code></td>
+<td>Rapid flash</td>
+</tr>
+<tr>
+<td><em>(comet)</em></td>
+<td><code>0b</code></td>
+<td>Trailing comet — not supported on Z13 2025</td>
+</tr>
+<tr>
+<td><em>(flash)</em></td>
+<td><code>0c</code></td>
+<td>Flash burst — not supported on Z13 2025</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Speed values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Byte</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Slow</td>
+<td><code>e1</code></td>
+</tr>
+<tr>
+<td>Normal</td>
+<td><code>eb</code></td>
+</tr>
+<tr>
+<td>Fast</td>
+<td><code>f5</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>randFlag values and when to use them:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>00</code></td>
+<td>Use primary color (r, g, b)</td>
+<td>Any mode with a non-zero color</td>
+</tr>
+<tr>
+<td><code>01</code></td>
+<td>Dual-color mode</td>
+<td><code>breathe</code> with a non-zero primary color</td>
+</tr>
+<tr>
+<td><code>ff</code></td>
+<td>Device selects color</td>
+<td>When r, g, and b are all zero</td>
+</tr>
+</tbody>
+</table>
+<p>The logic for choosing randFlag:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>if r == 0 and g == 0 and b == 0:
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    randFlag = 0xff   # all-zero color signals &quot;random&quot;
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>elif mode == breathe:
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    randFlag = 0x01   # enables use of the r2/g2/b2 secondary color
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>else:
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    randFlag = 0x00   # use r/g/b directly
+</code></pre></div>
+<p>For modes other than <code>breathe</code>, the r2/g2/b2 fields are unused and should
+be set to zero.</p>
+<h3 id="commit">Commit</h3>
+<p>Two packets that must be sent after every SetMode to latch the pending state.
+Without them, the mode change is accepted by the device but not applied to the
+lighting output.</p>
+<p><strong>MESSAGE_SET</strong> (send first):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>------  ----  -------
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>0       5d    Report ID
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>1       b5    MESSAGE_SET command
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>2-63    00    Zero padding
+</code></pre></div>
+<p><strong>MESSAGE_APPLY</strong> (send second):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Offset  Byte  Meaning
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>------  ----  -------
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>0       5d    Report ID
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>1       b4    MESSAGE_APPLY command
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>2-63    00    Zero padding
+</code></pre></div>
+<p>Always send MESSAGE_SET (<code>b5</code>) before MESSAGE_APPLY (<code>b4</code>). The order matters.</p>
+<hr />
+<h2 id="zones">Zones</h2>
+<p>The Z13 has two lighting zones that must be addressed separately:</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Byte</th>
+<th>USB Product</th>
+<th>Physical location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keyboard</td>
+<td><code>00</code></td>
+<td><code>0b05:1a30</code></td>
+<td>Key backlight</td>
+</tr>
+<tr>
+<td>Lightbar</td>
+<td><code>01</code></td>
+<td><code>0b05:18c6</code></td>
+<td>Edge light strip</td>
+</tr>
+</tbody>
+</table>
+<p>Each physical USB device responds only to its own zone byte. If you send a
+SetMode with zone <code>00</code> (keyboard) to the lightbar hidraw node, the packet
+is silently ignored. The same applies in reverse.</p>
+<p>In practice, you can send all packets to both devices and let each device
+filter by zone — this matches how g-helper operates. Alternatively, look
+up each device separately and send each zone's packets only to the matching
+device.</p>
+<hr />
+<h2 id="annotated-packet-examples">Annotated Packet Examples</h2>
+<h3 id="static-red-on-both-zones-full-brightness">Static red on both zones, full brightness</h3>
+<p>The complete packet sequence for setting both the keyboard and lightbar to
+solid red at maximum brightness:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>// Init packet 1: wake device
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>5d b9 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>// Init packet 2: ASUS identification string &quot;]ASUS Tech.Inc.&quot;
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>5d 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e 00
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>// Init packet 3: mode config header
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>5d 05 20 31 00 1a 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>00 ... (zero-padded to 64 bytes)
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>// Init packet 4: Z13 dynamic lighting (required for lightbar)
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>5d c0 03 01 00 00 00 00 00 00 00 00 00 00 00 00
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a>00 ... (zero-padded to 64 bytes)
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>// SetPower: all zones on
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a>// [id] [cmd] [sub] [keyb] [bar] [lid] [rear] [term]
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a>5d     bd     01    ff     1f    ff    ff     ff    00 ...
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a>// SetBrightness: level 3 (high)
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a>// [id] [cmd] [c5] [c4] [level]
+<a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a>5d     ba     c5   c4   03     00 ...
+<a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a>
+<a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a>// SetMode: zone 0 (keyboard), static, red (#FF0000), normal speed
+<a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a>// [id] [cmd] [zone] [mode] [r ] [g ] [b ] [spd] [dir] [flag] [r2] [g2] [b2]
+<a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a>5d     b3     00     00     ff   00   00   eb    00    00     00   00   00  00 ...
+<a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a>
+<a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a>// MESSAGE_SET (latch zone 0)
+<a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a>5d b5 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ... (64 bytes)
+<a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a>
+<a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a>// MESSAGE_APPLY (apply zone 0)
+<a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a>5d b4 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ... (64 bytes)
+<a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a>
+<a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a>// SetMode: zone 1 (lightbar), static, red (#FF0000), normal speed
+<a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a>// [id] [cmd] [zone] [mode] [r ] [g ] [b ] [spd] [dir] [flag] [r2] [g2] [b2]
+<a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a>5d     b3     01     00     ff   00   00   eb    00    00     00   00   00  00 ...
+<a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a>
+<a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a>// MESSAGE_SET (latch zone 1)
+<a id="__codelineno-16-44" name="__codelineno-16-44" href="#__codelineno-16-44"></a>5d b5 00 00 ... (64 bytes)
+<a id="__codelineno-16-45" name="__codelineno-16-45" href="#__codelineno-16-45"></a>
+<a id="__codelineno-16-46" name="__codelineno-16-46" href="#__codelineno-16-46"></a>// MESSAGE_APPLY (apply zone 1)
+<a id="__codelineno-16-47" name="__codelineno-16-47" href="#__codelineno-16-47"></a>5d b4 00 00 ... (64 bytes)
+</code></pre></div>
+<h3 id="breathe-between-cyan-and-blue-slow-speed">Breathe between cyan and blue, slow speed</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>// SetMode: zone 0, breathe, cyan (#00FFFF) primary, blue (#0000FF) secondary
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>// [id] [cmd] [zone] [mode] [r ] [g ] [b ] [spd] [dir] [flag] [r2] [g2] [b2]
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>5d     b3     00     01     00   ff   ff   e1    00    01     00   00   ff  00 ...
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>//                   ^breathe    ^---cyan---  ^slow       ^dual    ^---blue---
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>// randFlag = 0x01 because mode is breathe and primary color is non-zero.
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>// The device animates between the two colors.
+</code></pre></div>
+<h3 id="cycle-mode-with-device-chosen-colors">Cycle mode with device-chosen colors</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>// SetMode: zone 0, cycle, black primary (device picks color), normal speed
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>// [id] [cmd] [zone] [mode] [r ] [g ] [b ] [spd] [dir] [flag] [r2] [g2] [b2]
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>5d     b3     00     02     00   00   00   eb    00    ff     00   00   00  00 ...
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>//                   ^cycle      ^all zero   ^normal   ^random
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>// randFlag = 0xff because r, g, and b are all 0x00.
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>// The device cycles through its own color sequence.
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

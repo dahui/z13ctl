@@ -1,0 +1,55 @@
+site_name: z13ctl
+site_url: https://dahui.github.io/z13ctl
+site_description: RGB lighting and system control for the 2025 ASUS ROG Flow Z13 on Linux.
+
+repo_url: https://github.com/dahui/z13ctl
+repo_name: dahui/z13ctl
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - tables
+  - attr_list
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: installation.md
+    - Quick Start: getting-started.md
+  - Reference:
+    - Commands: commands.md
+    - Daemon: daemon.md
+    - API: api.md
+    - API Reference: api-reference.md
+  - Protocol: protocol.md
+  - Contributing: contributing.md
