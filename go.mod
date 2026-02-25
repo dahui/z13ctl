@@ -9,10 +9,10 @@ require (
 )
 
 require (
-	github.com/dahui/z13ctl/api v1.0.0-beta2
+	github.com/dahui/z13ctl/api v1.0.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	golang.org/x/sys v0.1.0 // indirect
 )
 
-replace github.com/dahui/z13ctl/api v1.0.0-beta2 => ./api
+replace github.com/dahui/z13ctl/api v1.0.0 => ./api
