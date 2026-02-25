@@ -9,6 +9,10 @@ on:
       tag:
         description: 'Release tag (e.g. v1.0.0)'
         required: true
+      release:
+        description: 'Run goreleaser build + publish'
+        type: boolean
+        default: false
       aur:
         description: 'Publish to AUR'
         type: boolean
@@ -28,11 +32,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release)
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
