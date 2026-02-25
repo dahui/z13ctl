@@ -55,24 +55,6 @@ nfpms:
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
 
-homebrew_casks:
-  - name: z13ctl
-    repository:
-      owner: dahui
-      name: homebrew-z13ctl
-      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
-    homepage: https://github.com/dahui/z13ctl
-    description: CLI and daemon for ASUS ROG Flow Z13 hardware control
-    skip_upload: auto
-    caveats: |
-      This tool is Linux-only and targets the ASUS ROG Flow Z13.
-
-      After installation, run setup to configure device access rules:
-        sudo z13ctl setup
-
-      Then enable the daemon for your user:
-        systemctl --user enable --now z13ctl.socket z13ctl.service
-
 release:
   draft: false
   prerelease: auto
