@@ -23,9 +23,55 @@ archives:
     files:
       - LICENSE
       - contrib/systemd/**/*
+      - contrib/udev/**/*
 
 checksum:
   name_template: "checksums.txt"
+
+nfpms:
+  - id: z13ctl-pkg
+    package_name: z13ctl
+    formats:
+      - archlinux
+    homepage: https://github.com/dahui/z13ctl
+    maintainer: "Jeff Hagadorn <noreply@github.com>"
+    description: CLI and daemon for ASUS ROG Flow Z13 hardware control
+    license: Apache-2.0
+    provides:
+      - z13ctl
+    scripts:
+      postinstall: contrib/nfpm/postinstall.sh
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/z13ctl/LICENSE
+      - src: contrib/systemd/user/z13ctl.socket
+        dst: /usr/lib/systemd/user/z13ctl.socket
+      - src: contrib/systemd/user/z13ctl.service
+        dst: /usr/lib/systemd/user/z13ctl.service
+      - src: contrib/systemd/system/z13ctl-perms.service
+        dst: /usr/lib/systemd/system/z13ctl-perms.service
+      - src: contrib/udev/99-z13ctl.rules
+        dst: /usr/lib/udev/rules.d/99-z13ctl.rules
+    archlinux:
+      packager: "Jeff Hagadorn <noreply@github.com>"
+
+homebrew_casks:
+  - name: z13ctl
+    repository:
+      owner: dahui
+      name: homebrew-z13ctl
+      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
+    homepage: https://github.com/dahui/z13ctl
+    description: CLI and daemon for ASUS ROG Flow Z13 hardware control
+    skip_upload: auto
+    caveats: |
+      This tool is Linux-only and targets the ASUS ROG Flow Z13.
+
+      After installation, run setup to configure device access rules:
+        sudo z13ctl setup
+
+      Then enable the daemon for your user:
+        systemctl --user enable --now z13ctl.socket z13ctl.service
 
 release:
   draft: false

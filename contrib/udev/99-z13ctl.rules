@@ -1,0 +1,17 @@
+# 99-z13ctl.rules — ASUS ROG Flow Z13 device access
+#
+# Grants members of the users group read/write access to:
+#   - ASUS HID devices used for keyboard and lightbar RGB control
+#   - asus-wmi platform-profile attribute for performance profile control
+#   - asus-nb-wmi battery charge_control_end_threshold for battery limit control
+#   - Armoury Crate button input device for daemon button watcher
+#   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
+#
+# To use a different group, run: sudo z13ctl setup --group=<group>
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="18c6", MODE="0660", GROUP="users"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", MODE="0660", GROUP="users"
+ACTION=="add", SUBSYSTEM=="platform-profile", RUN+="/usr/bin/chgrp users /sys%p/profile", RUN+="/usr/bin/chmod g+w /sys%p/profile"
+ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr/bin/chgrp users /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="users"
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
