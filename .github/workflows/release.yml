@@ -7,8 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to publish (e.g. v1.0.0)'
+        description: 'Release tag (e.g. v1.0.0)'
         required: true
+      aur:
+        description: 'Publish to AUR'
+        type: boolean
+        default: true
+      homebrew:
+        description: 'Publish to Homebrew'
+        type: boolean
+        default: true
+      docs:
+        description: 'Deploy documentation'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -36,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       always() &&
-      (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') &&
+      (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.aur)) &&
       !contains(github.event.inputs.tag || github.ref_name, '-')
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +68,7 @@ jobs:
           sed -i "s/PKGVER_PLACEHOLDER/${{ steps.meta.outputs.version }}/" contrib/aur/PKGBUILD
           sed -i "s/SHA256_PLACEHOLDER/${{ steps.meta.outputs.sha256 }}/"  contrib/aur/PKGBUILD
 
-      - uses: KSXGitHub/github-actions-deploy-aur@v4
+      - uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
         with:
           pkgname: z13ctl-bin
           pkgbuild: contrib/aur/PKGBUILD
@@ -72,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       always() &&
-      (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') &&
+      (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.homebrew)) &&
       !contains(github.event.inputs.tag || github.ref_name, '-')
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +116,7 @@ jobs:
   docs:
     needs: release
     runs-on: ubuntu-latest
-    if: always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
+    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.docs))
     steps:
       - uses: actions/checkout@v4
 
