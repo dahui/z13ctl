@@ -40,6 +40,55 @@
     systemctl --user enable --now z13ctl.socket z13ctl.service
     ```
 
+=== "Arch Linux (AUR)"
+
+    Install the [z13ctl-bin](https://aur.archlinux.org/packages/z13ctl-bin)
+    package with your preferred AUR helper:
+
+    ```sh
+    yay -S z13ctl-bin
+    ```
+
+    The package installs the binary, udev rules, systemd units, and the
+    battery permissions service automatically. After installing, add your user
+    to the `users` group if not already a member:
+
+    ```sh
+    sudo usermod -aG users $USER
+    ```
+
+    Then log out and back in for the group membership to take effect.
+
+=== "Homebrew (Linuxbrew)"
+
+    ```sh
+    brew install dahui/z13ctl/z13ctl
+    ```
+
+    Homebrew installs only the binary. You still need to run the one-time
+    permissions setup:
+
+    ```sh
+    sudo z13ctl setup
+    ```
+
+    Then log out and back in (or run `newgrp users`) for the group membership
+    to take effect in your current session.
+
+    **Install the systemd user service** (socket activation):
+
+    Download the systemd unit files from the
+    [latest release](https://github.com/dahui/z13ctl/releases) archive, then:
+
+    ```sh
+    install -Dm644 contrib/systemd/user/z13ctl.socket \
+        ~/.config/systemd/user/z13ctl.socket
+    install -Dm644 contrib/systemd/user/z13ctl.service \
+        ~/.config/systemd/user/z13ctl.service
+    systemctl --user daemon-reload
+    systemctl --user enable --now z13ctl.socket z13ctl.service
+    ```
+
 === "From source"
 
     Requires Go 1.23 or later.

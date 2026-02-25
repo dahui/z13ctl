@@ -13,10 +13,14 @@ and watches the Armoury Crate button.
 
 ## Install
 
-Download the latest `linux_amd64` archive from the
-[Releases](../../releases) page:
-
 ```sh
+# Arch Linux (AUR)
+yay -S z13ctl-bin
+
+# Homebrew (Linuxbrew)
+brew install dahui/z13ctl/z13ctl
+
+# Manual (from release tarball)
 tar xzf z13ctl_*_linux_amd64.tar.gz
 sudo install -Dm755 z13ctl /usr/local/bin/z13ctl
 sudo z13ctl setup
