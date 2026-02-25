@@ -41,7 +41,7 @@ z13ctl apply --mode rainbow --speed normal
 z13ctl off
 
 # Set performance profile
-z13ctl profile --set performance
+z13ctl profile --set balanced
 
 # Cap battery charge at 80%
 z13ctl batterylimit --set 80
