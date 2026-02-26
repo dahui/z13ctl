@@ -21,10 +21,6 @@ on:
         description: 'Publish to Homebrew'
         type: boolean
         default: true
-      pkgrel:
-        description: 'AUR pkgrel (increment for same-version republish)'
-        type: string
-        default: '1'
       docs:
         description: 'Deploy documentation'
         type: boolean
@@ -62,32 +58,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version and sha256
+      - name: Get version, sha256, and pkgrel
         id: meta
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
           URL="https://github.com/dahui/z13ctl/releases/download/${TAG}/z13ctl_${VERSION}_linux_amd64.tar.gz"
           SHA256=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
+
+          # Compute pkgrel: increment if same version already on AUR, else 1
+          PKGREL=1
+          AUR_VER=$(curl -fsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=z13ctl-bin" \
+            | jq -r '.results[0].Version // empty')
+          if [ -n "$AUR_VER" ]; then
+            AUR_PKGVER="${AUR_VER%-*}"
+            AUR_PKGREL="${AUR_VER##*-}"
+            if [ "$AUR_PKGVER" = "$VERSION" ] && [ -n "$AUR_PKGREL" ]; then
+              PKGREL=$((AUR_PKGREL + 1))
+            fi
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256"   >> "$GITHUB_OUTPUT"
+          echo "pkgrel=$PKGREL"   >> "$GITHUB_OUTPUT"
 
       - name: Patch PKGBUILD
         run: |
           sed -i "s/PKGVER_PLACEHOLDER/${{ steps.meta.outputs.version }}/" contrib/aur/PKGBUILD
+          sed -i "s/PKGREL_PLACEHOLDER/${{ steps.meta.outputs.pkgrel }}/"  contrib/aur/PKGBUILD
           sed -i "s/SHA256_PLACEHOLDER/${{ steps.meta.outputs.sha256 }}/"  contrib/aur/PKGBUILD
-          sed -i "s/pkgrel=1/pkgrel=${{ inputs.pkgrel || '1' }}/"         contrib/aur/PKGBUILD
 
-      - uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
-        with:
-          pkgname: z13ctl-bin
-          pkgbuild: contrib/aur/PKGBUILD
-          assets: contrib/aur/z13ctl-bin.install
-          commit_username: "z13ctl Release Bot"
-          commit_email: "noreply@github.com"
-          ssh_private_key: ${{ secrets.AUR_KEY }}
-          commit_message: "Update to ${{ github.event.inputs.tag || github.ref_name }}"
-          force_push: true
+      - name: Generate .SRCINFO
+        run: |
+          docker run --rm -v "$PWD/contrib/aur:/pkg" archlinux:latest \
+            bash -c "pacman -Sy --noconfirm pacman-contrib && useradd -m builder && chown -R builder /pkg && su builder -c 'cd /pkg && makepkg --printsrcinfo > .SRCINFO'"
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          for i in 1 2 3; do
+            ssh-keyscan -t ed25519,ecdsa,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null && break
+            echo "Keyscan attempt $i failed, retrying in ${i}0s..."
+            sleep $((i * 10))
+          done
+          cat >> ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+
+      - name: Push to AUR
+        run: |
+          for i in 1 2 3; do
+            git clone ssh://aur@aur.archlinux.org/z13ctl-bin.git /tmp/aur-repo && break
+            echo "Clone attempt $i failed, retrying in ${i}0s..."
+            rm -rf /tmp/aur-repo
+            sleep $((i * 10))
+          done
+          cp contrib/aur/PKGBUILD contrib/aur/.SRCINFO /tmp/aur-repo/
+          [ -f contrib/aur/z13ctl-bin.install ] && cp contrib/aur/z13ctl-bin.install /tmp/aur-repo/
+          cd /tmp/aur-repo
+          git config user.name "z13ctl Release Bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes to push" && exit 0
+          git commit -m "Update to ${{ github.event.inputs.tag || github.ref_name }}"
+          for i in 1 2 3; do
+            git push && exit 0
+            echo "Push attempt $i failed, retrying in ${i}0s..."
+            sleep $((i * 10))
+          done
+          echo "All push attempts failed"
+          exit 1
 
   homebrew:
     needs: release
