@@ -21,6 +21,10 @@ on:
         description: 'Publish to Homebrew'
         type: boolean
         default: true
+      pkgrel:
+        description: 'AUR pkgrel (increment for same-version republish)'
+        type: string
+        default: '1'
       docs:
         description: 'Deploy documentation'
         type: boolean
@@ -72,6 +76,7 @@ jobs:
         run: |
           sed -i "s/PKGVER_PLACEHOLDER/${{ steps.meta.outputs.version }}/" contrib/aur/PKGBUILD
           sed -i "s/SHA256_PLACEHOLDER/${{ steps.meta.outputs.sha256 }}/"  contrib/aur/PKGBUILD
+          sed -i "s/pkgrel=1/pkgrel=${{ inputs.pkgrel || '1' }}/"         contrib/aur/PKGBUILD
 
       - uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
         with:

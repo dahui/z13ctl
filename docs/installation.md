@@ -59,6 +59,14 @@
 
     Then log out and back in for the group membership to take effect.
 
+    Alternatively, download the `.pkg.tar.zst` package directly from the
+    [Releases](https://github.com/dahui/z13ctl/releases) page and install with
+    pacman:
+
+    ```sh
+    sudo pacman -U z13ctl-*.pkg.tar.zst
+    ```
+
 === "Homebrew (Linuxbrew)"
 
     ```sh
