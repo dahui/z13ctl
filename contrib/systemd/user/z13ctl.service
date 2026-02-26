@@ -5,7 +5,7 @@ After=z13ctl.socket
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/z13ctl daemon
+ExecStart=z13ctl daemon
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal
