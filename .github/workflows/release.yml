@@ -98,10 +98,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.AUR_KEY }}" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          for i in 1 2 3; do
+          for i in $(seq 1 100); do
             ssh-keyscan -t ed25519,ecdsa,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null && break
-            echo "Keyscan attempt $i failed, retrying in ${i}0s..."
-            sleep $((i * 10))
+            DELAY=$((i < 30 ? i : 30))
+            echo "Keyscan attempt $i failed, retrying in ${DELAY}s..."
+            sleep "$DELAY"
           done
           cat >> ~/.ssh/config <<'EOF'
           Host aur.archlinux.org
@@ -111,11 +112,12 @@ jobs:
 
       - name: Push to AUR
         run: |
-          for i in 1 2 3; do
+          for i in $(seq 1 100); do
             git clone ssh://aur@aur.archlinux.org/z13ctl-bin.git /tmp/aur-repo && break
-            echo "Clone attempt $i failed, retrying in ${i}0s..."
+            DELAY=$((i < 30 ? i : 30))
+            echo "Clone attempt $i failed, retrying in ${DELAY}s..."
             rm -rf /tmp/aur-repo
-            sleep $((i * 10))
+            sleep "$DELAY"
           done
           cp contrib/aur/PKGBUILD contrib/aur/.SRCINFO /tmp/aur-repo/
           [ -f contrib/aur/z13ctl-bin.install ] && cp contrib/aur/z13ctl-bin.install /tmp/aur-repo/
@@ -125,10 +127,11 @@ jobs:
           git add -A
           git diff --cached --quiet && echo "No changes to push" && exit 0
           git commit -m "Update to ${{ github.event.inputs.tag || github.ref_name }}"
-          for i in 1 2 3; do
+          for i in $(seq 1 100); do
             git push && exit 0
-            echo "Push attempt $i failed, retrying in ${i}0s..."
-            sleep $((i * 10))
+            DELAY=$((i < 30 ? i : 30))
+            echo "Push attempt $i failed, retrying in ${DELAY}s..."
+            sleep "$DELAY"
           done
           echo "All push attempts failed"
           exit 1
