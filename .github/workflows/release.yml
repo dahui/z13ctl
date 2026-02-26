@@ -68,7 +68,7 @@ jobs:
 
           # Compute pkgrel: increment if same version already on AUR, else 1
           PKGREL=1
-          AUR_VER=$(curl -fsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=z13ctl-bin" \
+          AUR_VER=$(curl -gfsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=z13ctl-bin" \
             | jq -r '.results[0].Version // empty')
           if [ -n "$AUR_VER" ]; then
             AUR_PKGVER="${AUR_VER%-*}"
