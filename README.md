@@ -17,6 +17,12 @@ and watches the Armoury Crate button.
 # Arch Linux (AUR)
 yay -S z13ctl-bin
 
+# Debian / Ubuntu
+sudo apt install ./z13ctl_*.deb
+
+# Fedora / RHEL
+sudo dnf install ./z13ctl_*.rpm
+
 # Homebrew (Linuxbrew)
 brew install dahui/z13ctl/z13ctl
 

@@ -33,6 +33,8 @@ nfpms:
     package_name: z13ctl
     formats:
       - archlinux
+      - deb
+      - rpm
     homepage: https://github.com/dahui/z13ctl
     maintainer: "Jeff Hagadorn <noreply@github.com>"
     description: CLI and daemon for ASUS ROG Flow Z13 hardware control
@@ -41,6 +43,8 @@ nfpms:
       - z13ctl
     scripts:
       postinstall: contrib/nfpm/postinstall.sh
+      preremove: contrib/nfpm/preremove.sh
+      postremove: contrib/nfpm/postremove.sh
     contents:
       - src: LICENSE
         dst: /usr/share/licenses/z13ctl/LICENSE
@@ -54,6 +58,10 @@ nfpms:
         dst: /usr/lib/udev/rules.d/99-z13ctl.rules
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
+    deb:
+      section: utils
+    rpm:
+      group: Applications/System
 
 release:
   draft: false

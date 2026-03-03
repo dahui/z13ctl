@@ -67,6 +67,44 @@
     sudo pacman -U z13ctl-*.pkg.tar.zst
     ```
 
+=== "Debian / Ubuntu"
+
+    Download the `.deb` package from the
+    [Releases](https://github.com/dahui/z13ctl/releases) page, then install:
+
+    ```sh
+    sudo apt install ./z13ctl_*.deb
+    ```
+
+    The package installs the binary, udev rules, systemd units, and the
+    battery permissions service automatically. After installing, add your user
+    to the `users` group if not already a member:
+
+    ```sh
+    sudo usermod -aG users $USER
+    ```
+
+    Then log out and back in for the group membership to take effect.
+
+=== "Fedora / RHEL"
+
+    Download the `.rpm` package from the
+    [Releases](https://github.com/dahui/z13ctl/releases) page, then install:
+
+    ```sh
+    sudo dnf install ./z13ctl_*.rpm
+    ```
+
+    The package installs the binary, udev rules, systemd units, and the
+    battery permissions service automatically. After installing, add your user
+    to the `users` group if not already a member:
+
+    ```sh
+    sudo usermod -aG users $USER
+    ```
+
+    Then log out and back in for the group membership to take effect.
+
 === "Homebrew (Linuxbrew)"
 
     ```sh
