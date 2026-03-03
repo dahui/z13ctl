@@ -31,6 +31,8 @@ checksum:
 nfpms:
   - id: z13ctl-pkg
     package_name: z13ctl
+    section: utils
+    group: Applications/System
     formats:
       - archlinux
       - deb
@@ -58,10 +60,6 @@ nfpms:
         dst: /usr/lib/udev/rules.d/99-z13ctl.rules
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
-    deb:
-      section: utils
-    rpm:
-      group: Applications/System
 
 release:
   draft: false
