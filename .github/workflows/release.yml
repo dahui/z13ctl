@@ -17,10 +17,6 @@ on:
         description: 'Publish to AUR'
         type: boolean
         default: true
-      homebrew:
-        description: 'Publish to Homebrew'
-        type: boolean
-        default: true
       docs:
         description: 'Deploy documentation'
         type: boolean
@@ -135,40 +131,6 @@ jobs:
           done
           echo "All push attempts failed"
           exit 1
-
-  homebrew:
-    needs: release
-    runs-on: ubuntu-latest
-    if: >-
-      always() &&
-      (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.homebrew)) &&
-      !contains(github.event.inputs.tag || github.ref_name, '-')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version and sha256
-        id: meta
-        run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
-          URL="https://github.com/dahui/z13ctl/releases/download/${TAG}/z13ctl_${VERSION}_linux_amd64.tar.gz"
-          SHA256=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "sha256=$SHA256"   >> "$GITHUB_OUTPUT"
-
-      - name: Push formula to tap
-        run: |
-          git clone "https://x-access-token:${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}@github.com/dahui/homebrew-z13ctl.git" tap
-          mkdir -p tap/Formula
-          cp contrib/homebrew/z13ctl.rb tap/Formula/z13ctl.rb
-          sed -i "s/VERSION_PLACEHOLDER/${{ steps.meta.outputs.version }}/g" tap/Formula/z13ctl.rb
-          sed -i "s/SHA256_PLACEHOLDER/${{ steps.meta.outputs.sha256 }}/"    tap/Formula/z13ctl.rb
-          cd tap
-          git config user.name  "z13ctl Release Bot"
-          git config user.email "noreply@github.com"
-          git add Formula/z13ctl.rb
-          git commit -m "Update z13ctl to ${{ github.event.inputs.tag || github.ref_name }}"
-          git push
 
   docs:
     needs: release

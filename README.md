@@ -23,9 +23,6 @@ sudo apt install ./z13ctl_*.deb
 # Fedora / RHEL
 sudo dnf install ./z13ctl_*.rpm
 
-# Homebrew (Linuxbrew)
-brew install dahui/z13ctl/z13ctl
-
 # Manual (from release tarball)
 tar xzf z13ctl_*_linux_amd64.tar.gz
 sudo install -Dm755 z13ctl /usr/local/bin/z13ctl
