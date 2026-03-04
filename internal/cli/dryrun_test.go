@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/cli"
 )
@@ -148,6 +149,111 @@ func TestDryRunApply_Breathe(t *testing.T) {
 	}
 	if !strings.Contains(out, "SetMode z0") {
 		t.Error("DryRunApply breathe: missing SetMode z0")
+	}
+}
+
+func TestDryRunFanCurve(t *testing.T) {
+	points := []api.FanCurvePoint{
+		{Temp: 48, PWM: 2}, {Temp: 53, PWM: 22}, {Temp: 57, PWM: 30}, {Temp: 60, PWM: 43},
+		{Temp: 63, PWM: 56}, {Temp: 65, PWM: 68}, {Temp: 70, PWM: 89}, {Temp: 76, PWM: 102},
+	}
+	out := captureStdout(t, func() { cli.DryRunFanCurve("cpu", points) })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"pwm1_auto_point1_temp",
+		"pwm1_auto_point8_pwm",
+		"48",
+		"102",
+		"custom",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunFanCurve output missing %q", want)
+		}
+	}
+}
+
+func TestDryRunFanCurveReset(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunFanCurveReset("") })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"pwm1_enable",
+		"pwm2_enable",
+		"auto",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunFanCurveReset output missing %q", want)
+		}
+	}
+}
+
+func TestDryRunFanCurveReset_SingleFan(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunFanCurveReset("gpu") })
+
+	if !strings.Contains(out, "pwm2_enable") {
+		t.Error("DryRunFanCurveReset(gpu) missing pwm2_enable")
+	}
+	if strings.Contains(out, "pwm1_enable") {
+		t.Error("DryRunFanCurveReset(gpu) should not mention pwm1_enable")
+	}
+}
+
+func TestDryRunTdp(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 0, 0, 0, false) })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"ppt_pl1_spl",
+		"ppt_pl2_sppt",
+		"ppt_fppt",
+		"ppt_apu_sppt",
+		"ppt_platform_sppt",
+		"50",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunTdp output missing %q", want)
+		}
+	}
+	if strings.Contains(out, "full speed") {
+		t.Error("DryRunTdp(50W) should not mention full speed")
+	}
+}
+
+func TestDryRunTdp_Force(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
+
+	if !strings.Contains(out, "full speed") {
+		t.Error("DryRunTdp(80W, force) should mention full speed")
+	}
+}
+
+func TestDryRunTdp_PLOverrides(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 45, 55, 60, false) })
+
+	if !strings.Contains(out, "45") {
+		t.Error("DryRunTdp PL overrides: missing pl1=45")
+	}
+	if !strings.Contains(out, "55") {
+		t.Error("DryRunTdp PL overrides: missing pl2=55")
+	}
+	if !strings.Contains(out, "60") {
+		t.Error("DryRunTdp PL overrides: missing pl3=60")
+	}
+}
+
+func TestDryRunTdpReset(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunTdpReset() })
+
+	for _, want := range []string{
+		"DRY RUN",
+		"ppt_pl1_spl",
+		"ppt_fppt",
+		"5", // firmware default
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunTdpReset output missing %q", want)
+		}
 	}
 }
 

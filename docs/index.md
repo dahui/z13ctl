@@ -1,7 +1,7 @@
 # z13ctl
 
-RGB lighting, performance profiles, battery limit, and display control for the
-**2025 ASUS ROG Flow Z13** on Linux.
+RGB lighting, performance profiles, battery limit, fan curves, TDP control, and
+display settings for the **2025 ASUS ROG Flow Z13** on Linux.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/dahui/z13ctl/blob/main/LICENSE)
 
@@ -15,6 +15,10 @@ RGB lighting, performance profiles, battery limit, and display control for the
   via the asus-wmi sysfs interface
 - **Battery charge limit** — cap charging at any percentage (40–100) to extend
   long-term battery health
+- **Fan curves** — set custom 8-point fan curves for the CPU and GPU fans via the
+  asus-wmi hwmon interface
+- **TDP control** — set CPU/GPU power limits (5–93W) via asus-nb-wmi PPT attributes,
+  with automatic fan safety above 75W
 - **Boot sound** — enable or disable the POST beep via the asus-armoury firmware
   attributes interface
 - **Panel overdrive** — toggle display overdrive for reduced motion blur

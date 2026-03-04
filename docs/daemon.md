@@ -3,9 +3,9 @@
 The z13ctl daemon is a long-running background process that provides three things
 ordinary one-shot CLI invocations cannot:
 
-- **State persistence** — saves your last-applied lighting, profile, and battery
-  settings to `~/.local/state/z13ctl/state.json` and restores them automatically
-  at every boot.
+- **State persistence** — saves your last-applied lighting, profile, battery,
+  fan curve, and TDP settings to `~/.local/state/z13ctl/state.json` and restores
+  them automatically at every boot.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -13,8 +13,8 @@ ordinary one-shot CLI invocations cannot:
   (see [API](api.md)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`) automatically route through the daemon socket when
-it is running. If the daemon is not running they fall back to direct hardware or
+`bootsound`, `paneloverdrive`, `fancurve`, `tdp`) automatically route through the
+daemon socket when it is running. If the daemon is not running they fall back to direct hardware or
 sysfs access transparently — there is no user-visible difference other than
 persistence.
 
@@ -115,9 +115,12 @@ The file is written atomically after every successful command. It stores:
 - `devices` — per-device overrides (keyboard/lightbar can have independent state)
 - `profile` — last-set performance profile
 - `battery_limit` — last-set charge limit
+- `fan_curves` — per-fan custom curve points and mode (cpu/gpu)
+- `tdp` — PL1, PL2, and PL3 power limits in watts
 
 On startup the daemon reads this file and restores all saved settings before
-accepting any connections.
+accepting any connections. If the last profile was `custom`, saved fan curves
+and TDP values are re-applied to the hardware.
 
 !!! note "Raw hidrawN paths are not persisted"
     Commands sent with `--device /dev/hidraw2` (a raw path) are applied but

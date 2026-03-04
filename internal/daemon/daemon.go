@@ -84,6 +84,32 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
+	// Restore fan curves + TDP if last profile was "custom".
+	if d.state.Profile == "custom" {
+		for fan, fc := range d.state.FanCurves {
+			if fc.Mode == 1 && len(fc.Points) == 8 {
+				if fcErr := cli.SetFanCurve(fan, fc.Points); fcErr != nil {
+					slog.Warn("failed to restore fan curve", "fan", fan, "err", fcErr)
+				} else {
+					slog.Info("fan curve restored", "fan", fan)
+				}
+			}
+		}
+		if t := d.state.TDP; t != nil {
+			// Force fans to full speed if any value exceeds safe max.
+			if t.PL1SPL > cli.TDPMaxSafe || t.PL2SPPT > cli.TDPMaxSafe || t.FPPT > cli.TDPMaxSafe {
+				if fsErr := cli.SetAllFansFullSpeed(); fsErr != nil {
+					slog.Warn("failed to set fans to full speed for TDP restore", "err", fsErr)
+				}
+			}
+			if tdpErr := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); tdpErr != nil {
+				slog.Warn("failed to restore TDP", "err", tdpErr)
+			} else {
+				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
+			}
+		}
+	}
+
 	if watchBtn {
 		go watchButton(ctx, d.buttonCh)
 	} else {

@@ -13,6 +13,8 @@ type State struct {
 	Battery        int                      `json:"battery_limit,omitempty"`
 	BootSound      int                      `json:"boot_sound,omitempty"`
 	PanelOverdrive int                      `json:"panel_overdrive,omitempty"`
+	FanCurves      map[string]FanCurveState `json:"fan_curves,omitempty"` // keyed by "cpu"/"gpu"
+	TDP            *TDPState                `json:"tdp,omitempty"`
 }
 
 // LightingState captures all parameters needed to reproduce one lighting zone.
@@ -23,4 +25,25 @@ type LightingState struct {
 	Color2     string `json:"color2"` // "RRGGBB" hex
 	Speed      string `json:"speed"`
 	Brightness int    `json:"brightness"` // 0–3
+}
+
+// FanCurvePoint represents one point on an 8-point fan curve.
+type FanCurvePoint struct {
+	Temp int `json:"temp"` // degrees Celsius
+	PWM  int `json:"pwm"`  // 0–255 duty cycle
+}
+
+// FanCurveState captures the fan curve and mode for one fan (cpu or gpu).
+type FanCurveState struct {
+	Mode   int             `json:"mode"`   // pwm_enable: 0=full-speed, 1=custom, 2=auto
+	Points []FanCurvePoint `json:"points"` // 8 points
+}
+
+// TDPState captures all PPT (Package Power Tracking) values in watts.
+type TDPState struct {
+	PL1SPL       int `json:"pl1_spl"`       // Sustained Power Limit
+	PL2SPPT      int `json:"pl2_sppt"`      // Short Boost
+	FPPT         int `json:"fppt"`          // Fast Boost
+	APUSPPT      int `json:"apu_sppt"`      // APU Short PPT
+	PlatformSPPT int `json:"platform_sppt"` // Platform Short PPT
 }

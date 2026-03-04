@@ -160,6 +160,90 @@ func ExampleSendPanelOverdriveGet() {
 	fmt.Println("panel overdrive:", value)
 }
 
+func ExampleSendFanCurveGet() {
+	// Read the fan curve for the CPU fan via the daemon.
+	handled, value, err := api.SendFanCurveGet("cpu")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curve:", value)
+}
+
+func ExampleSendFanCurveSet() {
+	// Set a custom 8-point fan curve for the CPU fan.
+	handled, err := api.SendFanCurveSet("cpu", "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curve set")
+}
+
+func ExampleSendFanCurveReset() {
+	// Reset both fans to firmware auto mode.
+	handled, err := api.SendFanCurveReset("")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curves reset")
+}
+
+func ExampleSendTdpGet() {
+	// Read current TDP/PPT values via the daemon.
+	handled, value, err := api.SendTdpGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp:", value)
+}
+
+func ExampleSendTdpSet() {
+	// Set TDP to 50W (all PPT values equal).
+	handled, err := api.SendTdpSet("50", "", "", "", false)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp set")
+}
+
+func ExampleSendTdpReset() {
+	// Reset TDP to firmware defaults.
+	handled, err := api.SendTdpReset()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp reset")
+}
+
 func ExampleSendGetState() {
 	// Fetch the daemon's full cached state for GUI initialization.
 	handled, state, err := api.SendGetState()

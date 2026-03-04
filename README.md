@@ -1,15 +1,15 @@
 # z13ctl
 
-RGB lighting, performance profiles, battery limit, and display control for the
-2025 ASUS ROG Flow Z13 on Linux.
+RGB lighting, performance profiles, battery limit, fan curves, TDP control, and
+display settings for the 2025 ASUS ROG Flow Z13 on Linux.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 `z13ctl` implements the Aura HID protocol directly against the Linux `hidraw`
 interface — no kernel patches, no external daemons. System settings (profiles,
-battery limit, boot sound, panel overdrive) use the standard asus-wmi and
-asus-armoury sysfs interfaces. A background daemon persists state across reboots
-and watches the Armoury Crate button.
+battery limit, boot sound, panel overdrive, fan curves, TDP) use the standard
+asus-wmi and asus-armoury sysfs interfaces. A background daemon persists state
+across reboots and watches the Armoury Crate button.
 
 ## Install
 
@@ -52,6 +52,12 @@ z13ctl profile --set balanced
 
 # Cap battery charge at 80%
 z13ctl batterylimit --set 80
+
+# Custom fan curve (8-point, temp:pwm pairs)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+
+# Set TDP to 50W
+z13ctl tdp --set 50
 ```
 
 ## Documentation

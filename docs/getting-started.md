@@ -75,6 +75,62 @@ z13ctl batterylimit --set 100
 
 ---
 
+## Fan curves
+
+```sh
+# Check current CPU fan curve
+z13ctl fancurve --get --fan cpu
+
+# Set a custom CPU fan curve (8 temp:pwm pairs)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+
+# Reset both fans to firmware auto mode
+z13ctl fancurve --reset
+```
+
+---
+
+## TDP control
+
+```sh
+# Check current TDP/PPT values
+z13ctl tdp --get
+
+# Set all PPT limits to 50W
+z13ctl tdp --set 50
+
+# Set with individual PL overrides
+z13ctl tdp --set 45 --pl2 55 --pl3 60
+
+# Force high TDP (above 75W, fans forced to full speed)
+z13ctl tdp --set 85 --force
+
+# Reset to firmware defaults
+z13ctl tdp --reset
+```
+
+---
+
+## Custom profile
+
+The `custom` profile recalls previously saved fan curves and TDP settings from
+the daemon's state. At least one custom fan curve or TDP value must have been
+set before switching to `custom`.
+
+```sh
+# Set up a custom configuration
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+z13ctl tdp --set 50
+
+# Recall it later with custom profile
+z13ctl profile --set custom
+
+# Switch back to a stock profile (resets fan curves and TDP)
+z13ctl profile --set balanced
+```
+
+---
+
 ## Per-device control
 
 Use `--device` to target only the keyboard or lightbar:

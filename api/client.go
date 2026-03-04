@@ -37,8 +37,12 @@ type request struct {
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", or /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", "cpu", "gpu", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
+	PL1        string   `json:"pl1,omitempty"`
+	PL2        string   `json:"pl2,omitempty"`
+	PL3        string   `json:"pl3,omitempty"`
+	Force      bool     `json:"force,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -240,6 +244,89 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, scanErr)
 	}
 	return true, value, nil
+}
+
+// SendFanCurveGet queries the daemon for current fan curve data.
+// fan is "cpu", "gpu", or "" (both). Returns JSON value string.
+func SendFanCurveGet(fan string) (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "fancurve-get", Device: fan})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendFanCurveSet sends a fan curve set command to the daemon.
+func SendFanCurveSet(fan, curve string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve", Set: curve, Device: fan})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendFanCurveReset sends a fan curve reset command to the daemon.
+func SendFanCurveReset(fan string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve-reset", Device: fan})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendTdpGet queries the daemon for current TDP/PPT values.
+// Returns JSON value string.
+func SendTdpGet() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "tdp-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendTdpSet sends a TDP set command to the daemon.
+func SendTdpSet(watts string, pl1, pl2, pl3 string, force bool) (bool, error) {
+	handled, resp, err := sendCommand(request{
+		Cmd:   "tdp",
+		Set:   watts,
+		PL1:   pl1,
+		PL2:   pl2,
+		PL3:   pl3,
+		Force: force,
+	})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendTdpReset sends a TDP reset command to the daemon.
+func SendTdpReset() (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "tdp-reset"})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
 }
 
 // SendGetState fetches the daemon's full cached state for GUI initialization.

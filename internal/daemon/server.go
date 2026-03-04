@@ -33,8 +33,12 @@ type request struct {
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", or /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", "cpu", "gpu", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
+	PL1        string   `json:"pl1,omitempty"`
+	PL2        string   `json:"pl2,omitempty"`
+	PL3        string   `json:"pl3,omitempty"`
+	Force      bool     `json:"force,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -101,6 +105,18 @@ func (d *Daemon) dispatch(req request) response {
 		return handlePanelOverdrive(req)
 	case "paneloverdrive-get":
 		return handlePanelOverdriveGet()
+	case "fancurve":
+		return d.handleFanCurve(req)
+	case "fancurve-get":
+		return handleFanCurveGet(req)
+	case "fancurve-reset":
+		return d.handleFanCurveReset(req)
+	case "tdp":
+		return d.handleTDP(req)
+	case "tdp-get":
+		return handleTDPGet()
+	case "tdp-reset":
+		return d.handleTDPReset()
 	case "get-state":
 		d.mu.Lock()
 		s := d.state
@@ -108,6 +124,12 @@ func (d *Daemon) dispatch(req request) response {
 		// Populate firmware-managed fields from sysfs (not cached in daemon state).
 		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
 		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
+		// Populate fan curves from sysfs for ground truth.
+		s.FanCurves = readFanCurvesFromSysfs()
+		// Populate TDP from sysfs.
+		if tdp, err := cli.ReadAllPPT(); err == nil {
+			s.TDP = &tdp
+		}
 		return response{OK: true, State: &s}
 	default:
 		return response{OK: false, Error: "unknown command: " + req.Cmd}
@@ -297,12 +319,56 @@ func (d *Daemon) handleProfile(req request) response {
 	if req.Set == "" {
 		return response{OK: false, Error: "profile requires a set field"}
 	}
-	if err := cli.SetProfile(req.Set); err != nil {
+
+	profile := strings.ToLower(req.Set)
+
+	// "custom" is a virtual profile: re-apply saved fan curves + TDP.
+	if profile == "custom" {
+		d.mu.Lock()
+		if len(d.state.FanCurves) == 0 && d.state.TDP == nil {
+			d.mu.Unlock()
+			return response{OK: false, Error: "no custom fan curves or TDP saved; set fan curves or TDP first"}
+		}
+		d.state.Profile = "custom"
+		// Re-apply saved fan curves.
+		for fan, fc := range d.state.FanCurves {
+			if fc.Mode == 1 && len(fc.Points) == 8 {
+				if err := cli.SetFanCurve(fan, fc.Points); err != nil {
+					slog.Warn("failed to reapply fan curve", "fan", fan, "err", err)
+				}
+			}
+		}
+		// Re-apply saved TDP.
+		if t := d.state.TDP; t != nil {
+			if err := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); err != nil {
+				slog.Warn("failed to reapply TDP", "err", err)
+			}
+			if t.PL1SPL > cli.TDPMaxSafe || t.PL2SPPT > cli.TDPMaxSafe || t.FPPT > cli.TDPMaxSafe {
+				_ = cli.SetAllFansFullSpeed()
+			}
+		}
+		s := d.state
+		d.mu.Unlock()
+		slog.Info("profile", "set", "custom")
+		if err := saveState(s); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
+		return response{OK: true}
+	}
+
+	// Stock profile: write to sysfs and reset fan curves + TDP to firmware defaults.
+	if err := cli.SetProfile(profile); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
-	slog.Info("profile", "set", req.Set)
+
+	// Reset fan curves to auto (firmware manages for stock profiles).
+	_ = cli.ResetAllFanCurves()
+	// Reset TDP to firmware defaults.
+	_ = cli.ResetTDP()
+
+	slog.Info("profile", "set", profile)
 	d.mu.Lock()
-	d.state.Profile = req.Set
+	d.state.Profile = profile
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
@@ -382,6 +448,183 @@ func readIntSysfs(path string) int {
 		return 0
 	}
 	return v
+}
+
+// handleFanCurveGet reads the current fan curve(s) from sysfs.
+func handleFanCurveGet(req request) response {
+	curves := readFanCurvesFromSysfs()
+	if req.Device != "" {
+		fc, ok := curves[req.Device]
+		if !ok {
+			return response{OK: false, Error: "unknown fan: " + req.Device}
+		}
+		single := map[string]api.FanCurveState{req.Device: fc}
+		data, _ := json.Marshal(single)
+		return response{OK: true, Value: string(data)}
+	}
+	data, _ := json.Marshal(curves)
+	return response{OK: true, Value: string(data)}
+}
+
+// readFanCurvesFromSysfs reads fan curves and modes for both fans from sysfs.
+func readFanCurvesFromSysfs() map[string]api.FanCurveState {
+	curves := make(map[string]api.FanCurveState)
+	for _, fan := range []string{"cpu", "gpu"} {
+		mode, modeErr := cli.ReadFanMode(fan)
+		points, curveErr := cli.ReadFanCurve(fan)
+		if modeErr != nil && curveErr != nil {
+			continue
+		}
+		fc := api.FanCurveState{Mode: mode, Points: points}
+		curves[fan] = fc
+	}
+	return curves
+}
+
+func (d *Daemon) handleFanCurve(req request) response {
+	if req.Device == "" {
+		return response{OK: false, Error: "fancurve requires a device field (cpu or gpu)"}
+	}
+	points, err := cli.ParseFanCurve(req.Set)
+	if err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
+	}
+	if err := cli.SetFanCurve(req.Device, points); err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
+	}
+	slog.Info("fancurve", "fan", req.Device)
+	d.mu.Lock()
+	if d.state.FanCurves == nil {
+		d.state.FanCurves = make(map[string]api.FanCurveState)
+	}
+	d.state.FanCurves[req.Device] = api.FanCurveState{Mode: 1, Points: points}
+	d.state.Profile = "custom"
+	s := d.state
+	d.mu.Unlock()
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
+	return response{OK: true}
+}
+
+func (d *Daemon) handleFanCurveReset(req request) response {
+	fan := req.Device
+	if fan == "" {
+		if err := cli.ResetAllFanCurves(); err != nil {
+			return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+		}
+		slog.Info("fancurve-reset", "fan", "all")
+		d.mu.Lock()
+		d.state.FanCurves = nil
+		s := d.state
+		d.mu.Unlock()
+		if err := saveState(s); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
+		return response{OK: true}
+	}
+	if err := cli.ResetFanCurve(fan); err != nil {
+		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+	}
+	slog.Info("fancurve-reset", "fan", fan)
+	d.mu.Lock()
+	delete(d.state.FanCurves, fan)
+	s := d.state
+	d.mu.Unlock()
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
+	return response{OK: true}
+}
+
+func handleTDPGet() response {
+	tdp, err := cli.ReadAllPPT()
+	if err != nil {
+		return response{OK: false, Error: "reading TDP: " + err.Error()}
+	}
+	data, _ := json.Marshal(tdp)
+	return response{OK: true, Value: string(data)}
+}
+
+func (d *Daemon) handleTDP(req request) response {
+	watts, err := strconv.Atoi(req.Set)
+	if err != nil {
+		return response{OK: false, Error: "TDP value must be an integer"}
+	}
+
+	pl1, pl2, pl3 := watts, watts, watts
+	if req.PL1 != "" {
+		if pl1, err = strconv.Atoi(req.PL1); err != nil {
+			return response{OK: false, Error: "invalid pl1 value"}
+		}
+	}
+	if req.PL2 != "" {
+		if pl2, err = strconv.Atoi(req.PL2); err != nil {
+			return response{OK: false, Error: "invalid pl2 value"}
+		}
+	}
+	if req.PL3 != "" {
+		if pl3, err = strconv.Atoi(req.PL3); err != nil {
+			return response{OK: false, Error: "invalid pl3 value"}
+		}
+	}
+
+	tdpMax := cli.TDPMaxSafe
+	if req.Force {
+		tdpMax = cli.TDPMaxForced
+	}
+	for _, v := range []int{pl1, pl2, pl3} {
+		if v < cli.TDPMin || v > tdpMax {
+			if v > cli.TDPMaxSafe && !req.Force {
+				return response{OK: false, Error: fmt.Sprintf("TDP %dW exceeds safe max (%dW); use force flag", v, cli.TDPMaxSafe)}
+			}
+			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, cli.TDPMin, tdpMax)}
+		}
+	}
+
+	// Safety: force fans to full speed when any value exceeds safe max.
+	if req.Force && (pl1 > cli.TDPMaxSafe || pl2 > cli.TDPMaxSafe || pl3 > cli.TDPMaxSafe) {
+		if err := cli.SetAllFansFullSpeed(); err != nil {
+			return response{OK: false, Error: "cannot set fans to full speed: " + err.Error()}
+		}
+		slog.Warn("fans forced to full speed for high TDP", "max_ppt", tdpMax)
+	}
+
+	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
+		return response{OK: false, Error: "tdp: " + err.Error()}
+	}
+	slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3)
+
+	d.mu.Lock()
+	d.state.TDP = &api.TDPState{
+		PL1SPL:       pl1,
+		PL2SPPT:      pl2,
+		FPPT:         pl3,
+		APUSPPT:      pl2,
+		PlatformSPPT: pl2,
+	}
+	d.state.Profile = "custom"
+	s := d.state
+	d.mu.Unlock()
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
+	return response{OK: true}
+}
+
+func (d *Daemon) handleTDPReset() response {
+	if err := cli.ResetTDP(); err != nil {
+		return response{OK: false, Error: "tdp-reset: " + err.Error()}
+	}
+	slog.Info("tdp-reset")
+	d.mu.Lock()
+	d.state.TDP = nil
+	s := d.state
+	d.mu.Unlock()
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
+	return response{OK: true}
 }
 
 func writeResponse(conn net.Conn, r response) {

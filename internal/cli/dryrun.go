@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/hid"
 )
@@ -115,6 +116,75 @@ func DryRunBootSound(value int) {
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	fmt.Printf("Would write %d to %s\n", value, FindPanelOverdrivePath())
+}
+
+// DryRunFanCurve prints the sysfs writes for a fan curve set operation.
+func DryRunFanCurve(fan string, points []api.FanCurvePoint) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	idx, _ := FanIndex(fan)
+	curveDir := FindFanCurveHwmonPath()
+	if curveDir == "" {
+		curveDir = "<hwmon not found>"
+	}
+	for i, p := range points {
+		fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, idx, i+1)
+		fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, idx, i+1)
+	}
+	fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, idx)
+}
+
+// DryRunFanCurveReset prints the sysfs writes for a fan curve reset.
+func DryRunFanCurveReset(fan string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if fan == "" {
+		for _, f := range []string{"cpu", "gpu"} {
+			idx, _ := FanIndex(f)
+			curveDir := FindFanCurveHwmonPath()
+			if curveDir == "" {
+				curveDir = "<hwmon not found>"
+			}
+			fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
+		}
+		return
+	}
+	idx, _ := FanIndex(fan)
+	curveDir := FindFanCurveHwmonPath()
+	if curveDir == "" {
+		curveDir = "<hwmon not found>"
+	}
+	fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
+}
+
+// DryRunTdp prints the sysfs writes for a TDP set operation.
+func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if pl1 == 0 {
+		pl1 = watts
+	}
+	if pl2 == 0 {
+		pl2 = watts
+	}
+	if pl3 == 0 {
+		pl3 = watts
+	}
+	if force && (pl1 > TDPMaxSafe || pl2 > TDPMaxSafe || pl3 > TDPMaxSafe) {
+		fmt.Println("Would set all fans to full speed (pwm_enable=0) for thermal safety")
+	}
+	base := FindPPTBasePath()
+	fmt.Printf("Would write %d to %s/ppt_pl1_spl\n", pl1, base)
+	fmt.Printf("Would write %d to %s/ppt_pl2_sppt\n", pl2, base)
+	fmt.Printf("Would write %d to %s/ppt_fppt\n", pl3, base)
+	fmt.Printf("Would write %d to %s/ppt_apu_sppt\n", pl2, base)
+	fmt.Printf("Would write %d to %s/ppt_platform_sppt\n", pl2, base)
+}
+
+// DryRunTdpReset prints the sysfs writes for a TDP reset.
+func DryRunTdpReset() {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	base := FindPPTBasePath()
+	for _, attr := range pptAttributes {
+		fmt.Printf("Would write %d to %s/%s\n", TDPFirmwareDefault, base, attr)
+	}
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

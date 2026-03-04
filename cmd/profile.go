@@ -27,7 +27,8 @@ var profileCmd = &cobra.Command{
 Profiles:
   quiet        — Silent/Eco mode (low power, low noise)
   balanced     — Balanced mode   (default)
-  performance  — Turbo mode      (maximum performance)`,
+  performance  — Turbo mode      (maximum performance)
+  custom       — Re-apply saved custom fan curves and TDP from state`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !profileGetFlag && profileSetFlag == "" {
@@ -37,9 +38,9 @@ Profiles:
 		if profileSetFlag != "" {
 			profile := strings.ToLower(profileSetFlag)
 			switch profile {
-			case "quiet", "balanced", "performance":
+			case "quiet", "balanced", "performance", "custom":
 			default:
-				return fmt.Errorf("unknown profile %q: must be quiet, balanced, or performance", profileSetFlag)
+				return fmt.Errorf("unknown profile %q: must be quiet, balanced, performance, or custom", profileSetFlag)
 			}
 
 			if dryRunFlag {
@@ -47,6 +48,7 @@ Profiles:
 				return nil
 			}
 
+			// All profiles (including custom) go through the daemon if running.
 			if handled, err := api.SendProfileSet(profile); handled {
 				if err != nil {
 					return err
@@ -55,8 +57,18 @@ Profiles:
 				return nil
 			}
 
-			if err := cli.SetProfile(profile); err != nil {
-				return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+			// Direct path (no daemon): stock profiles write to sysfs and reset fan/TDP.
+			if profile != "custom" {
+				if err := cli.SetProfile(profile); err != nil {
+					return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+				}
+				// Reset fan curves and TDP to firmware defaults for stock profiles.
+				_ = cli.ResetAllFanCurves()
+				_ = cli.ResetTDP()
+			}
+			// "custom" without daemon: can't recall state, error out.
+			if profile == "custom" {
+				return fmt.Errorf("custom profile requires the daemon to recall saved settings; start the daemon first")
 			}
 			fmt.Printf("Performance profile set to %s\n", profile)
 			return nil

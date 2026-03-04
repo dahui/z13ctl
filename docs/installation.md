@@ -144,8 +144,9 @@ If it prints nothing, see [Troubleshooting](#troubleshooting) below.
 
 1. Writes `/etc/udev/rules.d/99-z13ctl.rules` — grants the `users` group
    `MODE=0660` / `GROUP=users` on the ASUS HID and input device nodes; uses
-   `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute
-   when the driver loads.
+   `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute,
+   hwmon fan curve attributes (`asus_custom_fan_curve` + `asus` pwm_enable),
+   and asus-nb-wmi PPT power limit attributes when the drivers load.
 2. Reloads udev and applies permissions immediately to all currently present files.
 3. Writes `/etc/systemd/system/z13ctl-perms.service` and enables it — a
    `Type=oneshot` service that runs `chgrp` + `chmod g+w` on

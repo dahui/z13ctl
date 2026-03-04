@@ -81,6 +81,16 @@ handled, err          := api.SendProfileSet("performance")
 // Boot sound and panel overdrive
 handled, err := api.SendBootSoundSet(0)
 handled, err := api.SendPanelOverdriveSet(1)
+
+// Fan curves
+handled, value, err := api.SendFanCurveGet("cpu")
+handled, err         := api.SendFanCurveSet("cpu", "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+handled, err         := api.SendFanCurveReset("")   // both fans
+
+// TDP (PPT power limits)
+handled, value, err := api.SendTdpGet()
+handled, err         := api.SendTdpSet("50", "", "", "", false)  // all PPTs to 50W
+handled, err         := api.SendTdpReset()
 ```
 
 **Full state snapshot (for GUI initialization):**
@@ -91,6 +101,8 @@ if handled && err == nil {
     fmt.Println("lighting mode:", state.Lighting.Mode)
     fmt.Println("profile:", state.Profile)
     fmt.Println("battery limit:", state.Battery)
+    fmt.Println("fan curves:", state.FanCurves)
+    fmt.Println("tdp:", state.TDP)
 }
 ```
 
