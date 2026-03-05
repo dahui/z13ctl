@@ -13,7 +13,7 @@ type State struct {
 	Battery        int                      `json:"battery_limit,omitempty"`
 	BootSound      int                      `json:"boot_sound,omitempty"`
 	PanelOverdrive int                      `json:"panel_overdrive,omitempty"`
-	FanCurves      map[string]FanCurveState `json:"fan_curves,omitempty"` // keyed by "cpu"/"gpu"
+	FanCurve       *FanCurveState           `json:"fan_curve,omitempty"`
 	TDP            *TDPState                `json:"tdp,omitempty"`
 }
 
@@ -33,7 +33,7 @@ type FanCurvePoint struct {
 	PWM  int `json:"pwm"`  // 0–255 duty cycle
 }
 
-// FanCurveState captures the fan curve and mode for one fan (cpu or gpu).
+// FanCurveState captures the fan curve and mode applied to both fans.
 type FanCurveState struct {
 	Mode   int             `json:"mode"`   // pwm_enable: 0=full-speed, 1=custom, 2=auto
 	Points []FanCurvePoint `json:"points"` // 8 points

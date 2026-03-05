@@ -84,15 +84,13 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
-	// Restore fan curves + TDP if last profile was "custom".
+	// Restore fan curve + TDP if last profile was "custom".
 	if d.state.Profile == "custom" {
-		for fan, fc := range d.state.FanCurves {
-			if fc.Mode == 1 && len(fc.Points) == 8 {
-				if fcErr := cli.SetFanCurve(fan, fc.Points); fcErr != nil {
-					slog.Warn("failed to restore fan curve", "fan", fan, "err", fcErr)
-				} else {
-					slog.Info("fan curve restored", "fan", fan)
-				}
+		if fc := d.state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+			if fcErr := cli.SetBothFanCurves(fc.Points); fcErr != nil {
+				slog.Warn("failed to restore fan curve", "err", fcErr)
+			} else {
+				slog.Info("fan curve restored")
 			}
 		}
 		if t := d.state.TDP; t != nil {

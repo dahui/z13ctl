@@ -53,8 +53,8 @@ z13ctl profile --set balanced
 # Cap battery charge at 80%
 z13ctl batterylimit --set 80
 
-# Custom fan curve (8-point, temp:pwm pairs)
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+# Custom fan curve (8-point, temp:pwm pairs — both fans)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Set TDP to 50W
 z13ctl tdp --set 50

@@ -119,40 +119,32 @@ func DryRunPanelOverdrive(value int) {
 }
 
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
-func DryRunFanCurve(fan string, points []api.FanCurvePoint) {
+// The same curve is written to both fans.
+func DryRunFanCurve(points []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	idx, _ := FanIndex(fan)
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	for i, p := range points {
-		fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, idx, i+1)
-		fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, idx, i+1)
+	for _, f := range fanNames {
+		for i, p := range points {
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, f.index, i+1)
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, f.index, i+1)
+		}
+		fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, f.index)
 	}
-	fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, idx)
 }
 
-// DryRunFanCurveReset prints the sysfs writes for a fan curve reset.
-func DryRunFanCurveReset(fan string) {
+// DryRunFanCurveReset prints the sysfs writes for a fan curve reset (both fans).
+func DryRunFanCurveReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	if fan == "" {
-		for _, f := range []string{"cpu", "gpu"} {
-			idx, _ := FanIndex(f)
-			curveDir := FindFanCurveHwmonPath()
-			if curveDir == "" {
-				curveDir = "<hwmon not found>"
-			}
-			fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
-		}
-		return
-	}
-	idx, _ := FanIndex(fan)
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
+	for _, f := range fanNames {
+		fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, f.index)
+	}
 }
 
 // DryRunTdp prints the sysfs writes for a TDP set operation.

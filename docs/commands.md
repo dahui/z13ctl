@@ -188,7 +188,8 @@ z13ctl paneloverdrive --set 1
 ## fancurve
 
 Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
-Root or group access required; see [setup](#setup).
+Both physical fans cool the same APU, so the same curve is always applied to
+both fans simultaneously. Root or group access required; see [setup](#setup).
 
 ```
 z13ctl fancurve [flags]
@@ -196,10 +197,9 @@ z13ctl fancurve [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current fan curve and mode for the specified fan |
-| `--set <curve>` | Set a custom 8-point fan curve |
-| `--reset` | Reset fan(s) to firmware auto mode |
-| `--fan <fan>` | Target fan: `cpu` or `gpu` (default: `cpu` for get/set, both for reset) |
+| `--get` | Print the current fan curve, mode, and RPM for both fans |
+| `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
+| `--reset` | Reset both fans to firmware auto mode |
 
 **Curve format:** 8 comma-separated `temp:pwm` pairs, e.g.
 `"48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"`
@@ -211,20 +211,14 @@ z13ctl fancurve [flags]
 - PWM values must be non-decreasing (0–255)
 
 ```sh
-# Read current CPU fan curve
-z13ctl fancurve --get --fan cpu
+# Read current fan curves
+z13ctl fancurve --get
 
-# Set a custom CPU fan curve
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
-
-# Set a custom GPU fan curve
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan gpu
+# Set a custom fan curve (both fans)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Reset both fans to auto mode
 z13ctl fancurve --reset
-
-# Reset only the CPU fan
-z13ctl fancurve --reset --fan cpu
 ```
 
 ---

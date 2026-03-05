@@ -82,10 +82,10 @@ handled, err          := api.SendProfileSet("performance")
 handled, err := api.SendBootSoundSet(0)
 handled, err := api.SendPanelOverdriveSet(1)
 
-// Fan curves
-handled, value, err := api.SendFanCurveGet("cpu")
-handled, err         := api.SendFanCurveSet("cpu", "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
-handled, err         := api.SendFanCurveReset("")   // both fans
+// Fan curves (applied to both fans simultaneously)
+handled, value, err := api.SendFanCurveGet()
+handled, err         := api.SendFanCurveSet("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+handled, err         := api.SendFanCurveReset()
 
 // TDP (PPT power limits)
 handled, value, err := api.SendTdpGet()
@@ -101,7 +101,7 @@ if handled && err == nil {
     fmt.Println("lighting mode:", state.Lighting.Mode)
     fmt.Println("profile:", state.Profile)
     fmt.Println("battery limit:", state.Battery)
-    fmt.Println("fan curves:", state.FanCurves)
+    fmt.Println("fan curve:", state.FanCurve)
     fmt.Println("tdp:", state.TDP)
 }
 ```

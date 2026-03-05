@@ -2,6 +2,9 @@ package cli
 
 // fan.go — hwmon sysfs path discovery and I/O helpers for ASUS fan curves.
 // Discovers hwmon devices by name attribute (not by number, which is unstable).
+//
+// The 2025 ROG Flow Z13 has an APU with two physical fans but no discrete GPU.
+// Both fans cool the same chip, so the same curve is always applied to both.
 
 import (
 	"fmt"
@@ -20,18 +23,16 @@ const (
 	hwmonNameCurves   = "asus_custom_fan_curve" // 8-point curves + pwm_enable
 
 	fanCurvePoints = 8
+	fanCount       = 2 // fan 1 (pwm1) and fan 2 (pwm2)
 )
 
-// FanIndex returns the hwmon fan index (1 or 2) for the given fan name.
-func FanIndex(fan string) (int, error) {
-	switch strings.ToLower(fan) {
-	case "cpu":
-		return 1, nil
-	case "gpu":
-		return 2, nil
-	default:
-		return 0, fmt.Errorf("unknown fan %q: must be cpu or gpu", fan)
-	}
+// fanNames maps internal fan names to their hwmon index (1 or 2).
+var fanNames = [fanCount]struct {
+	name  string
+	index int
+}{
+	{"fan1", 1},
+	{"fan2", 2},
 }
 
 // FindFanHwmonPath returns the sysfs hwmon directory whose name attribute
@@ -65,64 +66,70 @@ func FindFanCurveHwmonPath() string {
 	return FindFanHwmonPath(hwmonNameCurves)
 }
 
-// ReadFanRPM reads the current RPM for the given fan ("cpu" or "gpu").
-func ReadFanRPM(fan string) (int, error) {
-	idx, err := FanIndex(fan)
-	if err != nil {
-		return 0, err
-	}
+// ReadBothFanRPM reads the current RPM for both fans.
+// Returns [2]int with fan1 and fan2 RPM values.
+func ReadBothFanRPM() ([fanCount]int, error) {
 	dir := FindFanReadingsHwmonPath()
 	if dir == "" {
-		return 0, fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
+		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
 	}
-	return readIntFile(dir + "/" + fmt.Sprintf("fan%d_input", idx))
+	var rpms [fanCount]int
+	for i, f := range fanNames {
+		v, err := readIntFile(dir + "/" + fmt.Sprintf("fan%d_input", f.index))
+		if err != nil {
+			return rpms, fmt.Errorf("reading fan%d RPM: %w", f.index, err)
+		}
+		rpms[i] = v
+	}
+	return rpms, nil
 }
 
-// ReadFanMode reads the pwm_enable value for the given fan from the curve
+// ReadBothFanModes reads the pwm_enable value for both fans from the curve
 // hwmon device. Returns 0 (full-speed), 1 (custom), or 2 (auto/firmware).
-func ReadFanMode(fan string) (int, error) {
-	idx, err := FanIndex(fan)
-	if err != nil {
-		return 0, err
-	}
+func ReadBothFanModes() ([fanCount]int, error) {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
-		return 0, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	return readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", idx))
+	var modes [fanCount]int
+	for i, f := range fanNames {
+		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", f.index))
+		if err != nil {
+			return modes, fmt.Errorf("reading fan%d mode: %w", f.index, err)
+		}
+		modes[i] = v
+	}
+	return modes, nil
 }
 
-// ReadFanCurve reads the 8-point fan curve for the given fan.
-func ReadFanCurve(fan string) ([]api.FanCurvePoint, error) {
-	idx, err := FanIndex(fan)
-	if err != nil {
-		return nil, err
-	}
+// ReadBothFanCurves reads the 8-point fan curve for both fans.
+func ReadBothFanCurves() ([fanCount][]api.FanCurvePoint, error) {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
-		return nil, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+		return [fanCount][]api.FanCurvePoint{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	points := make([]api.FanCurvePoint, fanCurvePoints)
-	for i := range fanCurvePoints {
-		temp, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_temp", idx, i+1))
-		if err != nil {
-			return nil, fmt.Errorf("reading curve point %d temp: %w", i+1, err)
+	var curves [fanCount][]api.FanCurvePoint
+	for fi, f := range fanNames {
+		points := make([]api.FanCurvePoint, fanCurvePoints)
+		for i := range fanCurvePoints {
+			temp, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_temp", f.index, i+1))
+			if err != nil {
+				return curves, fmt.Errorf("reading fan%d curve point %d temp: %w", f.index, i+1, err)
+			}
+			pwm, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_pwm", f.index, i+1))
+			if err != nil {
+				return curves, fmt.Errorf("reading fan%d curve point %d pwm: %w", f.index, i+1, err)
+			}
+			points[i] = api.FanCurvePoint{Temp: temp, PWM: pwm}
 		}
-		pwm, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_pwm", idx, i+1))
-		if err != nil {
-			return nil, fmt.Errorf("reading curve point %d pwm: %w", i+1, err)
-		}
-		points[i] = api.FanCurvePoint{Temp: temp, PWM: pwm}
+		curves[fi] = points
 	}
-	return points, nil
+	return curves, nil
 }
 
-// SetFanCurve writes an 8-point fan curve and enables custom mode (pwm_enable=1).
-func SetFanCurve(fan string, points []api.FanCurvePoint) error {
-	idx, err := FanIndex(fan)
-	if err != nil {
-		return err
-	}
+// SetBothFanCurves writes the same 8-point fan curve to both fans and enables
+// custom mode (pwm_enable=1) on both.
+func SetBothFanCurves(points []api.FanCurvePoint) error {
 	if len(points) != fanCurvePoints {
 		return fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(points))
 	}
@@ -130,27 +137,23 @@ func SetFanCurve(fan string, points []api.FanCurvePoint) error {
 	if dir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	for i, p := range points {
-		if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_temp", idx, i+1), p.Temp); err != nil {
-			return fmt.Errorf("writing curve point %d temp: %w", i+1, err)
-		}
-		if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_pwm", idx, i+1), p.PWM); err != nil {
-			return fmt.Errorf("writing curve point %d pwm: %w", i+1, err)
+	for _, f := range fanNames {
+		for i, p := range points {
+			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_temp", f.index, i+1), p.Temp); err != nil {
+				return fmt.Errorf("writing fan%d curve point %d temp: %w", f.index, i+1, err)
+			}
+			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_pwm", f.index, i+1), p.PWM); err != nil {
+				return fmt.Errorf("writing fan%d curve point %d pwm: %w", f.index, i+1, err)
+			}
 		}
 	}
-	return SetFanMode(fan, 1) // enable custom mode
+	return setAllFanModes(1) // enable custom mode on both
 }
 
-// SetFanMode writes pwm_enable for the given fan on both hwmon devices
-// (the kernel requires both to agree). mode: 0=full-speed, 1=custom, 2=auto.
-func SetFanMode(fan string, mode int) error {
-	idx, err := FanIndex(fan)
-	if err != nil {
-		return err
-	}
+// setFanMode writes pwm_enable for a single fan (by index) on both hwmon devices.
+func setFanMode(idx, mode int) error {
 	file := fmt.Sprintf("pwm%d_enable", idx)
 
-	// Write to the curve hwmon device (primary).
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
@@ -159,8 +162,6 @@ func SetFanMode(fan string, mode int) error {
 		return fmt.Errorf("setting fan mode on %s: %w", hwmonNameCurves, err)
 	}
 
-	// Write to the readings hwmon device (secondary). Errors are non-fatal
-	// since the curve device is the primary control.
 	readDir := FindFanReadingsHwmonPath()
 	if readDir != "" {
 		_ = writeIntFile(readDir+"/"+file, mode)
@@ -168,26 +169,25 @@ func SetFanMode(fan string, mode int) error {
 	return nil
 }
 
-// ResetFanCurve restores firmware auto mode for the given fan.
-func ResetFanCurve(fan string) error {
-	return SetFanMode(fan, 2) // auto/firmware
-}
-
-// ResetAllFanCurves restores firmware auto mode for both CPU and GPU fans.
-func ResetAllFanCurves() error {
-	if err := ResetFanCurve("cpu"); err != nil {
-		return err
+// setAllFanModes writes pwm_enable for both fans.
+func setAllFanModes(mode int) error {
+	for _, f := range fanNames {
+		if err := setFanMode(f.index, mode); err != nil {
+			return err
+		}
 	}
-	return ResetFanCurve("gpu")
+	return nil
 }
 
-// SetAllFansFullSpeed sets pwm_enable=0 for both CPU and GPU fans.
+// ResetAllFanCurves restores firmware auto mode for both fans.
+func ResetAllFanCurves() error {
+	return setAllFanModes(2) // auto/firmware
+}
+
+// SetAllFansFullSpeed sets pwm_enable=0 for both fans.
 // Used by the TDP >75W safety mechanism.
 func SetAllFansFullSpeed() error {
-	if err := SetFanMode("cpu", 0); err != nil {
-		return err
-	}
-	return SetFanMode("gpu", 0)
+	return setAllFanModes(0)
 }
 
 // ParseFanCurve parses a fan curve string "temp:pwm,temp:pwm,..." into a

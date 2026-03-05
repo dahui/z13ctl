@@ -157,12 +157,14 @@ func TestDryRunFanCurve(t *testing.T) {
 		{Temp: 48, PWM: 2}, {Temp: 53, PWM: 22}, {Temp: 57, PWM: 30}, {Temp: 60, PWM: 43},
 		{Temp: 63, PWM: 56}, {Temp: 65, PWM: 68}, {Temp: 70, PWM: 89}, {Temp: 76, PWM: 102},
 	}
-	out := captureStdout(t, func() { cli.DryRunFanCurve("cpu", points) })
+	out := captureStdout(t, func() { cli.DryRunFanCurve(points) })
 
 	for _, want := range []string{
 		"DRY RUN",
 		"pwm1_auto_point1_temp",
 		"pwm1_auto_point8_pwm",
+		"pwm2_auto_point1_temp",
+		"pwm2_auto_point8_pwm",
 		"48",
 		"102",
 		"custom",
@@ -174,7 +176,7 @@ func TestDryRunFanCurve(t *testing.T) {
 }
 
 func TestDryRunFanCurveReset(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunFanCurveReset("") })
+	out := captureStdout(t, func() { cli.DryRunFanCurveReset() })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -185,17 +187,6 @@ func TestDryRunFanCurveReset(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("DryRunFanCurveReset output missing %q", want)
 		}
-	}
-}
-
-func TestDryRunFanCurveReset_SingleFan(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunFanCurveReset("gpu") })
-
-	if !strings.Contains(out, "pwm2_enable") {
-		t.Error("DryRunFanCurveReset(gpu) missing pwm2_enable")
-	}
-	if strings.Contains(out, "pwm1_enable") {
-		t.Error("DryRunFanCurveReset(gpu) should not mention pwm1_enable")
 	}
 }
 

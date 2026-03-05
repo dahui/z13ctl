@@ -33,7 +33,7 @@ type request struct {
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", "cpu", "gpu", /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
 	PL1        string   `json:"pl1,omitempty"`
 	PL2        string   `json:"pl2,omitempty"`
@@ -108,9 +108,9 @@ func (d *Daemon) dispatch(req request) response {
 	case "fancurve":
 		return d.handleFanCurve(req)
 	case "fancurve-get":
-		return handleFanCurveGet(req)
+		return handleFanCurveGet()
 	case "fancurve-reset":
-		return d.handleFanCurveReset(req)
+		return d.handleFanCurveReset()
 	case "tdp":
 		return d.handleTDP(req)
 	case "tdp-get":
@@ -124,8 +124,8 @@ func (d *Daemon) dispatch(req request) response {
 		// Populate firmware-managed fields from sysfs (not cached in daemon state).
 		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
 		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
-		// Populate fan curves from sysfs for ground truth.
-		s.FanCurves = readFanCurvesFromSysfs()
+		// Populate fan curve from sysfs for ground truth.
+		s.FanCurve = readFanCurveFromSysfs()
 		// Populate TDP from sysfs.
 		if tdp, err := cli.ReadAllPPT(); err == nil {
 			s.TDP = &tdp
@@ -322,20 +322,18 @@ func (d *Daemon) handleProfile(req request) response {
 
 	profile := strings.ToLower(req.Set)
 
-	// "custom" is a virtual profile: re-apply saved fan curves + TDP.
+	// "custom" is a virtual profile: re-apply saved fan curve + TDP.
 	if profile == "custom" {
 		d.mu.Lock()
-		if len(d.state.FanCurves) == 0 && d.state.TDP == nil {
+		if d.state.FanCurve == nil && d.state.TDP == nil {
 			d.mu.Unlock()
-			return response{OK: false, Error: "no custom fan curves or TDP saved; set fan curves or TDP first"}
+			return response{OK: false, Error: "no custom fan curve or TDP saved; set fan curve or TDP first"}
 		}
 		d.state.Profile = "custom"
-		// Re-apply saved fan curves.
-		for fan, fc := range d.state.FanCurves {
-			if fc.Mode == 1 && len(fc.Points) == 8 {
-				if err := cli.SetFanCurve(fan, fc.Points); err != nil {
-					slog.Warn("failed to reapply fan curve", "fan", fan, "err", err)
-				}
+		// Re-apply saved fan curve to both fans.
+		if fc := d.state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+			if err := cli.SetBothFanCurves(fc.Points); err != nil {
+				slog.Warn("failed to reapply fan curve", "err", err)
 			}
 		}
 		// Re-apply saved TDP.
@@ -450,54 +448,46 @@ func readIntSysfs(path string) int {
 	return v
 }
 
-// handleFanCurveGet reads the current fan curve(s) from sysfs.
-func handleFanCurveGet(req request) response {
-	curves := readFanCurvesFromSysfs()
-	if req.Device != "" {
-		fc, ok := curves[req.Device]
-		if !ok {
-			return response{OK: false, Error: "unknown fan: " + req.Device}
-		}
-		single := map[string]api.FanCurveState{req.Device: fc}
-		data, _ := json.Marshal(single)
-		return response{OK: true, Value: string(data)}
+// handleFanCurveGet reads the current fan curve from sysfs (both fans).
+func handleFanCurveGet() response {
+	fc := readFanCurveFromSysfs()
+	if fc == nil {
+		return response{OK: false, Error: "failed to read fan curve from sysfs"}
 	}
-	data, _ := json.Marshal(curves)
+	data, _ := json.Marshal(fc)
 	return response{OK: true, Value: string(data)}
 }
 
-// readFanCurvesFromSysfs reads fan curves and modes for both fans from sysfs.
-func readFanCurvesFromSysfs() map[string]api.FanCurveState {
-	curves := make(map[string]api.FanCurveState)
-	for _, fan := range []string{"cpu", "gpu"} {
-		mode, modeErr := cli.ReadFanMode(fan)
-		points, curveErr := cli.ReadFanCurve(fan)
-		if modeErr != nil && curveErr != nil {
-			continue
-		}
-		fc := api.FanCurveState{Mode: mode, Points: points}
-		curves[fan] = fc
+// readFanCurveFromSysfs reads the fan curve and mode from sysfs.
+// Returns fan 1's curve (both fans share the same curve).
+func readFanCurveFromSysfs() *api.FanCurveState {
+	modes, modeErr := cli.ReadBothFanModes()
+	curves, curveErr := cli.ReadBothFanCurves()
+	if modeErr != nil && curveErr != nil {
+		return nil
 	}
-	return curves
+	mode := 0
+	if modeErr == nil {
+		mode = modes[0]
+	}
+	var points []api.FanCurvePoint
+	if curveErr == nil {
+		points = curves[0]
+	}
+	return &api.FanCurveState{Mode: mode, Points: points}
 }
 
 func (d *Daemon) handleFanCurve(req request) response {
-	if req.Device == "" {
-		return response{OK: false, Error: "fancurve requires a device field (cpu or gpu)"}
-	}
 	points, err := cli.ParseFanCurve(req.Set)
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
-	if err := cli.SetFanCurve(req.Device, points); err != nil {
+	if err := cli.SetBothFanCurves(points); err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
-	slog.Info("fancurve", "fan", req.Device)
+	slog.Info("fancurve", "fans", "both")
 	d.mu.Lock()
-	if d.state.FanCurves == nil {
-		d.state.FanCurves = make(map[string]api.FanCurveState)
-	}
-	d.state.FanCurves[req.Device] = api.FanCurveState{Mode: 1, Points: points}
+	d.state.FanCurve = &api.FanCurveState{Mode: 1, Points: points}
 	d.state.Profile = "custom"
 	s := d.state
 	d.mu.Unlock()
@@ -507,28 +497,13 @@ func (d *Daemon) handleFanCurve(req request) response {
 	return response{OK: true}
 }
 
-func (d *Daemon) handleFanCurveReset(req request) response {
-	fan := req.Device
-	if fan == "" {
-		if err := cli.ResetAllFanCurves(); err != nil {
-			return response{OK: false, Error: "fancurve-reset: " + err.Error()}
-		}
-		slog.Info("fancurve-reset", "fan", "all")
-		d.mu.Lock()
-		d.state.FanCurves = nil
-		s := d.state
-		d.mu.Unlock()
-		if err := saveState(s); err != nil {
-			slog.Warn("failed to save state", "err", err)
-		}
-		return response{OK: true}
-	}
-	if err := cli.ResetFanCurve(fan); err != nil {
+func (d *Daemon) handleFanCurveReset() response {
+	if err := cli.ResetAllFanCurves(); err != nil {
 		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 	}
-	slog.Info("fancurve-reset", "fan", fan)
+	slog.Info("fancurve-reset", "fans", "both")
 	d.mu.Lock()
-	delete(d.state.FanCurves, fan)
+	d.state.FanCurve = nil
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {

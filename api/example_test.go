@@ -161,8 +161,8 @@ func ExampleSendPanelOverdriveGet() {
 }
 
 func ExampleSendFanCurveGet() {
-	// Read the fan curve for the CPU fan via the daemon.
-	handled, value, err := api.SendFanCurveGet("cpu")
+	// Read the current fan curve for both fans via the daemon.
+	handled, value, err := api.SendFanCurveGet()
 	if !handled {
 		fmt.Println("daemon not running")
 		return
@@ -175,8 +175,8 @@ func ExampleSendFanCurveGet() {
 }
 
 func ExampleSendFanCurveSet() {
-	// Set a custom 8-point fan curve for the CPU fan.
-	handled, err := api.SendFanCurveSet("cpu", "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+	// Set a custom 8-point fan curve (applied to both fans).
+	handled, err := api.SendFanCurveSet("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
 	if !handled {
 		fmt.Println("daemon not running")
 		return
@@ -190,7 +190,7 @@ func ExampleSendFanCurveSet() {
 
 func ExampleSendFanCurveReset() {
 	// Reset both fans to firmware auto mode.
-	handled, err := api.SendFanCurveReset("")
+	handled, err := api.SendFanCurveReset()
 	if !handled {
 		fmt.Println("daemon not running")
 		return

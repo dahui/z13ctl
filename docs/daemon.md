@@ -115,7 +115,7 @@ The file is written atomically after every successful command. It stores:
 - `devices` — per-device overrides (keyboard/lightbar can have independent state)
 - `profile` — last-set performance profile
 - `battery_limit` — last-set charge limit
-- `fan_curves` — per-fan custom curve points and mode (cpu/gpu)
+- `fan_curve` — custom curve points and mode (applied to both fans)
 - `tdp` — PL1, PL2, and PL3 power limits in watts
 
 On startup the daemon reads this file and restores all saved settings before

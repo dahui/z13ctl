@@ -67,29 +67,6 @@ func TestParseFanCurve_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestFanIndex(t *testing.T) {
-	tests := []struct {
-		fan     string
-		want    int
-		wantErr bool
-	}{
-		{"cpu", 1, false},
-		{"CPU", 1, false},
-		{"gpu", 2, false},
-		{"GPU", 2, false},
-		{"other", 0, true},
-	}
-	for _, tt := range tests {
-		got, err := cli.FanIndex(tt.fan)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("FanIndex(%q): err=%v, wantErr=%v", tt.fan, err, tt.wantErr)
-		}
-		if got != tt.want {
-			t.Errorf("FanIndex(%q) = %d, want %d", tt.fan, got, tt.want)
-		}
-	}
-}
-
 func TestFanModeName(t *testing.T) {
 	tests := []struct {
 		mode int

@@ -77,12 +77,15 @@ z13ctl batterylimit --set 100
 
 ## Fan curves
 
-```sh
-# Check current CPU fan curve
-z13ctl fancurve --get --fan cpu
+Both physical fans cool the same APU, so the same curve is always applied to
+both fans simultaneously.
 
-# Set a custom CPU fan curve (8 temp:pwm pairs)
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+```sh
+# Check current fan curves
+z13ctl fancurve --get
+
+# Set a custom fan curve (8 temp:pwm pairs, applied to both fans)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Reset both fans to firmware auto mode
 z13ctl fancurve --reset
