@@ -130,6 +130,13 @@ func (d *Daemon) dispatch(req request) response {
 		if tdp, err := cli.ReadAllPPT(); err == nil {
 			s.TDP = &tdp
 		}
+		// Populate APU temperature and fan RPM from sysfs.
+		if temp, err := cli.ReadAPUTemperature(); err == nil {
+			s.Temperature = temp
+		}
+		if rpms, err := cli.ReadBothFanRPM(); err == nil {
+			s.FanRPM = rpms[0]
+		}
 		return response{OK: true, State: &s}
 	default:
 		return response{OK: false, Error: "unknown command: " + req.Cmd}

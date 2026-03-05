@@ -29,7 +29,7 @@ var fancurveCmd = &cobra.Command{
 Both physical fans cool the same APU, so the same curve is always applied to
 both fans simultaneously.
 
-With --get, prints the current 8-point fan curve, fan mode, and RPM for both fans.
+With --get, prints the current 8-point fan curve, fan mode, and RPM.
 
 With --set, writes a custom 8-point fan curve to both fans. The curve must be
 specified as 8 comma-separated temp:pwm pairs where temp is in Celsius and
@@ -54,31 +54,33 @@ With --reset, restores firmware auto mode (pwm_enable=2) for both fans.`,
 }
 
 func runFanCurveGet() error {
+	// Display fan1 only — the Z13 APU has two physical fans but they share a
+	// single hwmon control channel (pwm1). The kernel exposes a phantom fan2
+	// channel (0 RPM, pwm2_enable returns EIO) intended for GPU-fan SKUs.
 	rpms, rpmErr := cli.ReadBothFanRPM()
 	modes, modeErr := cli.ReadBothFanModes()
 	curves, curveErr := cli.ReadBothFanCurves()
 
-	for i := range 2 {
-		if i > 0 {
-			fmt.Println()
-		}
-		rpmStr := "N/A"
-		if rpmErr == nil {
-			rpmStr = fmt.Sprintf("%d RPM", rpms[i])
-		}
-		modeStr := "N/A"
-		if modeErr == nil {
-			modeStr = cli.FanModeName(modes[i])
-		}
-		fmt.Printf("fan%d: %s, mode: %s\n", i+1, rpmStr, modeStr)
-		if curveErr != nil {
-			fmt.Printf("  error reading curve: %v\n", curveErr)
-			continue
-		}
-		for _, p := range curves[i] {
-			pct := p.PWM * 100 / 255
-			fmt.Printf("  %3d°C: %3d/255 (%2d%%)\n", p.Temp, p.PWM, pct)
-		}
+	rpmStr := "N/A"
+	if rpmErr == nil {
+		rpmStr = fmt.Sprintf("%d RPM", rpms[0])
+	}
+	modeStr := "N/A"
+	if modeErr == nil {
+		modeStr = cli.FanModeName(modes[0])
+	}
+	tempStr := ""
+	if temp, err := cli.ReadAPUTemperature(); err == nil {
+		tempStr = fmt.Sprintf(", APU: %d°C", temp)
+	}
+	fmt.Printf("Fans: %s, mode: %s%s\n", rpmStr, modeStr, tempStr)
+	if curveErr != nil {
+		fmt.Printf("  error reading curve: %v\n", curveErr)
+		return nil
+	}
+	for _, p := range curves[0] {
+		pct := p.PWM * 100 / 255
+		fmt.Printf("  %3d°C: %3d/255 (%2d%%)\n", p.Temp, p.PWM, pct)
 	}
 	return nil
 }
@@ -130,7 +132,7 @@ func runFanCurveReset() error {
 }
 
 func init() {
-	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curves and RPM")
+	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curve, mode, and RPM")
 	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm,...)")
 	fancurveCmd.Flags().BoolVar(&fanCurveResetFlag, "reset", false, "Restore firmware auto fan mode")
 	rootCmd.AddCommand(fancurveCmd)

@@ -42,11 +42,21 @@ above 75W, fans are automatically set to full speed for thermal safety.
 With --reset, restores firmware default PPT values.
 
 PPT attributes:
-  PL1/SPL          — Sustained Power Limit (base TDP)
-  PL2/sPPT         — Short Power Package Tracking (short boost)
-  PL3/fPPT         — Fast Boost (instantaneous boost)
-  APU sPPT         — APU Short PPT (follows PL2)
-  Platform sPPT    — Platform Short PPT (follows PL2)`,
+  PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
+                     can draw indefinitely. This is your effective base TDP.
+  PL2/sPPT         — Short-term boost: the APU can draw this much power for
+                     several seconds before throttling back to PL1.
+  PL3/fPPT         — Fast boost: the maximum instantaneous power the APU can
+                     draw for millisecond-scale spikes (e.g. launching an app).
+  APU sPPT         — APU-specific short-term limit (automatically set to PL2).
+  Platform sPPT    — Platform-level short-term limit (automatically set to PL2).
+
+When using --set, all three limits are set to the same value by default. Use
+--pl1, --pl2, and --pl3 to set them independently — for example, --set 45
+--pl2 55 --pl3 65 allows short bursts up to 65W while sustaining 45W.
+
+Stock profiles (quiet/balanced/performance) let the firmware manage TDP
+dynamically. Setting a custom TDP switches to the "custom" profile.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !tdpGetFlag && tdpSetFlag == "" && !tdpResetFlag {

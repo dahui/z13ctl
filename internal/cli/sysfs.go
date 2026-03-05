@@ -3,6 +3,7 @@ package cli
 // sysfs.go — sysfs path discovery helpers shared by cmd/ and internal/daemon/.
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,4 +147,38 @@ func SetBootSound(value int) error {
 // SetPanelOverdrive writes the given panel overdrive value (0 or 1) to the firmware attribute.
 func SetPanelOverdrive(value int) error {
 	return os.WriteFile(FindPanelOverdrivePath(), []byte(strconv.Itoa(value)+"\n"), 0o644)
+}
+
+// FindAPUTemperaturePath returns the sysfs path for the APU temperature sensor.
+// Uses the k10temp hwmon device (AMD Ryzen thermal sensor, label "Tctl").
+func FindAPUTemperaturePath() string {
+	dir := FindFanHwmonPath("k10temp")
+	if dir == "" {
+		return ""
+	}
+	return dir + "/temp1_input"
+}
+
+// ReadAPUTemperature reads the current APU die temperature in degrees Celsius.
+// The k10temp driver reports millidegrees; this function converts to whole degrees.
+func ReadAPUTemperature() (int, error) {
+	path := FindAPUTemperaturePath()
+	if path == "" {
+		return 0, fmt.Errorf("k10temp hwmon device not found")
+	}
+	milli, err := readIntFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("reading APU temperature: %w", err)
+	}
+	return milli / 1000, nil
+}
+
+// FindBatteryCapacityPath returns the sysfs path for the current battery charge level.
+func FindBatteryCapacityPath() string {
+	const glob = "/sys/class/power_supply/BAT*/capacity"
+	matches, _ := filepath.Glob(glob)
+	if len(matches) > 0 {
+		return matches[0]
+	}
+	return "/sys/class/power_supply/BAT0/capacity"
 }

@@ -54,6 +54,7 @@ A full protocol specification is available in the [Protocol Reference](protocol.
 
 ## Next steps
 
-- [**Installation**](installation.md) — download the binary or build from source
-- [**Quick Start**](getting-started.md) — get running in five minutes
-- [**Commands**](commands.md) — full CLI reference
+Head to the [Installation](installation.md) guide to get z13ctl on your system,
+then follow the [Quick Start](getting-started.md) to configure lighting, fan
+curves, and performance profiles. For the full CLI reference, see
+[Commands](commands.md).

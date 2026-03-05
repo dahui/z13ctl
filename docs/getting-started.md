@@ -95,6 +95,16 @@ z13ctl fancurve --reset
 
 ## TDP control
 
+TDP (Thermal Design Power) controls how much power the APU can draw. There are
+three limits that form a hierarchy: PL1 is the sustained (continuous) limit,
+PL2 allows short-term bursts above PL1 for several seconds, and PL3 allows
+instantaneous spikes for milliseconds. Setting all three to the same value gives
+a flat power cap; setting PL2 and PL3 higher allows bursty workloads to
+temporarily exceed PL1.
+
+Stock profiles (quiet/balanced/performance) manage TDP automatically. Custom TDP
+values override this and switch to the `custom` profile.
+
 ```sh
 # Check current TDP/PPT values
 z13ctl tdp --get
@@ -122,7 +132,7 @@ set before switching to `custom`.
 
 ```sh
 # Set up a custom configuration
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102" --fan cpu
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 z13ctl tdp --set 50
 
 # Recall it later with custom profile

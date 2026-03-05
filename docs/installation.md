@@ -138,6 +138,13 @@ If it prints nothing, see [Troubleshooting](#troubleshooting) below.
 
 ---
 
+## Next steps
+
+You're installed and ready to go. Head to the [Quick Start](getting-started.md)
+guide to set your first lighting effect, fan curve, and performance profile.
+
+---
+
 ## What `setup` does
 
 `sudo z13ctl setup` performs four steps:

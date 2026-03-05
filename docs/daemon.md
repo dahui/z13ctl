@@ -13,7 +13,7 @@ ordinary one-shot CLI invocations cannot:
   (see [API](api.md)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`, `fancurve`, `tdp`) automatically route through the
+`bootsound`, `paneloverdrive`, `fancurve`, `tdp`, `status`) automatically route through the
 daemon socket when it is running. If the daemon is not running they fall back to direct hardware or
 sysfs access transparently — there is no user-visible difference other than
 persistence.
@@ -117,6 +117,10 @@ The file is written atomically after every successful command. It stores:
 - `battery_limit` — last-set charge limit
 - `fan_curve` — custom curve points and mode (applied to both fans)
 - `tdp` — PL1, PL2, and PL3 power limits in watts
+
+On `get-state` requests the daemon also populates `temperature` (APU die
+temperature in °C) and `fan_rpm` (fan speed in RPM) from live sysfs reads.
+These are not persisted — they are real-time sensor values.
 
 On startup the daemon reads this file and restores all saved settings before
 accepting any connections. If the last profile was `custom`, saved fan curves

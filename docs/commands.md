@@ -197,7 +197,7 @@ z13ctl fancurve [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current fan curve, mode, and RPM for both fans |
+| `--get` | Print the current fan curve, mode, RPM, and APU temperature |
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
 | `--reset` | Reset both fans to firmware auto mode |
 
@@ -245,13 +245,23 @@ z13ctl tdp [flags]
 
 **PPT attributes:**
 
-| Attribute | Description |
-|-----------|-------------|
-| `ppt_pl1_spl` | PL1 — Sustained Power Limit |
-| `ppt_pl2_sppt` | PL2 — Slow Package Power Tracking |
-| `ppt_fppt` | PL3 — Fast Package Power Tracking |
-| `ppt_apu_sppt` | APU Slow PPT (mirrors PL2) |
-| `ppt_platform_sppt` | Platform Slow PPT (mirrors PL2) |
+| Attribute | Limit | Description |
+|-----------|-------|-------------|
+| `ppt_pl1_spl` | PL1 — Sustained | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
+| `ppt_pl2_sppt` | PL2 — Short-term boost | Power the APU can draw for several seconds before throttling to PL1. |
+| `ppt_fppt` | PL3 — Fast boost | Maximum instantaneous power for millisecond-scale spikes. |
+| `ppt_apu_sppt` | APU short-term | APU-specific short-term limit; automatically mirrors PL2. |
+| `ppt_platform_sppt` | Platform short-term | Platform-level short-term limit; automatically mirrors PL2. |
+
+With `--set`, all three limits default to the same value. Use `--pl1`, `--pl2`,
+and `--pl3` to set them independently — a stepped configuration like
+`--set 45 --pl2 55 --pl3 65` sustains 45W with short bursts to 55W and
+instantaneous peaks to 65W.
+
+Stock profiles (quiet/balanced/performance) let the firmware manage TDP
+dynamically. When `--get` shows "firmware-managed," the actual limits are
+controlled internally and may be higher than the displayed values. Setting a
+custom TDP switches to the `custom` profile.
 
 **Safety:**
 
@@ -275,6 +285,30 @@ z13ctl tdp --set 85 --force
 
 # Reset to firmware defaults
 z13ctl tdp --reset
+```
+
+---
+
+## status
+
+Display a summary of all system metrics in a single view: APU temperature, fan
+speed and mode, performance profile, TDP power limits, and battery charge level
+with charge limit.
+
+```
+z13ctl status
+```
+
+This command is read-only and takes no flags. All values are read directly from
+sysfs.
+
+```sh
+z13ctl status
+# APU:     62°C
+# Fans:    4200 RPM, mode: auto
+# Profile: balanced
+# TDP:     firmware-managed (balanced profile)
+# Battery: 74% (limit: 80%)
 ```
 
 ---
@@ -337,7 +371,8 @@ z13ctl --no-button daemon   # without button watcher
 ```
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
-`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `fancurve`, `tdp`)
+`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `fancurve`, `tdp`,
+`status`)
 route through the daemon socket automatically. If the daemon is not running
 they fall back to direct hardware or sysfs access.
 

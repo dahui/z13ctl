@@ -150,10 +150,24 @@ func SetBothFanCurves(points []api.FanCurvePoint) error {
 	return setAllFanModes(1) // enable custom mode on both
 }
 
-// setFanMode writes pwm_enable for a single fan (by index) on both hwmon devices.
+// setFanMode writes pwm_enable for a single fan (by index).
+// Mode 0 (full-speed) is only supported by the base "asus" hwmon device;
+// the "asus_custom_fan_curve" device rejects it with EINVAL.
+// Modes 1 (custom) and 2 (auto) are written to the curve device first,
+// then synced to the readings device.
 func setFanMode(idx, mode int) error {
 	file := fmt.Sprintf("pwm%d_enable", idx)
 
+	if mode == 0 {
+		// Full-speed: only the base "asus" hwmon device supports pwm_enable=0.
+		readDir := FindFanReadingsHwmonPath()
+		if readDir == "" {
+			return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
+		}
+		return writeIntFile(readDir+"/"+file, mode)
+	}
+
+	// Custom (1) or auto (2): write to curve device first, then sync readings.
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
@@ -161,7 +175,6 @@ func setFanMode(idx, mode int) error {
 	if err := writeIntFile(curveDir+"/"+file, mode); err != nil {
 		return fmt.Errorf("setting fan mode on %s: %w", hwmonNameCurves, err)
 	}
-
 	readDir := FindFanReadingsHwmonPath()
 	if readDir != "" {
 		_ = writeIntFile(readDir+"/"+file, mode)
@@ -184,10 +197,16 @@ func ResetAllFanCurves() error {
 	return setAllFanModes(2) // auto/firmware
 }
 
-// SetAllFansFullSpeed sets pwm_enable=0 for both fans.
-// Used by the TDP >75W safety mechanism.
+// SetAllFansFullSpeed forces both fans to maximum speed.
+// Only the base "asus" hwmon device supports pwm_enable=0, and only pwm1_enable
+// is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
+// is sufficient to force both physical fans to full speed.
 func SetAllFansFullSpeed() error {
-	return setAllFanModes(0)
+	readDir := FindFanReadingsHwmonPath()
+	if readDir == "" {
+		return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
+	}
+	return writeIntFile(readDir+"/pwm1_enable", 0)
 }
 
 // ParseFanCurve parses a fan curve string "temp:pwm,temp:pwm,..." into a

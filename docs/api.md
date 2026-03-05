@@ -103,6 +103,8 @@ if handled && err == nil {
     fmt.Println("battery limit:", state.Battery)
     fmt.Println("fan curve:", state.FanCurve)
     fmt.Println("tdp:", state.TDP)
+    fmt.Println("APU temp:", state.Temperature, "°C")
+    fmt.Println("fan RPM:", state.FanRPM)
 }
 ```
 
