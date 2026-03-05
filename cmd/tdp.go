@@ -5,7 +5,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -66,6 +68,21 @@ func runTdpGet() error {
 	if err != nil {
 		return fmt.Errorf("reading TDP: %w", err)
 	}
+
+	// When all values are at firmware default, show a summary instead of
+	// the raw table — the 5W sentinel is confusing without context.
+	if tdp.PL1SPL == cli.TDPFirmwareDefault &&
+		tdp.PL2SPPT == cli.TDPFirmwareDefault &&
+		tdp.FPPT == cli.TDPFirmwareDefault &&
+		tdp.APUSPPT == cli.TDPFirmwareDefault &&
+		tdp.PlatformSPPT == cli.TDPFirmwareDefault {
+		profile := readCurrentProfile()
+		fmt.Printf("TDP Power Limits: firmware-managed (%s profile)\n", profile)
+		fmt.Println("  Actual limits are controlled by firmware;")
+		fmt.Println("  use 'z13ctl tdp --set <watts>' to override.")
+		return nil
+	}
+
 	fmt.Println("TDP Power Limits (watts):")
 	fmt.Printf("  PL1 (SPL):          %d\n", tdp.PL1SPL)
 	fmt.Printf("  PL2 (sPPT):         %d\n", tdp.PL2SPPT)
@@ -73,6 +90,14 @@ func runTdpGet() error {
 	fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
 	fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
 	return nil
+}
+
+func readCurrentProfile() string {
+	data, err := os.ReadFile(cli.FindProfilePath())
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func runTdpSet() error {
