@@ -123,5 +123,5 @@ for event := range ch {
 
 ## Full API reference
 
-See the [API Reference](api-reference.md) page for auto-generated documentation
+See the [API Reference](api-reference.md) page for full documentation
 of all exported types and functions.
