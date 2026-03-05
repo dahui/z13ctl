@@ -14,21 +14,11 @@ import (
 // TDP safety limits in watts, derived from G-Helper's model config for the
 // 2025 ROG Flow Z13 (GZ302E) and Armoury Crate custom mode limits.
 const (
-	TDPMin             = 5  // absolute minimum
-	TDPMaxSafe         = 75 // max in Armoury Crate custom mode
-	TDPMaxForced       = 93 // absolute max for GZ302E (G-Helper)
-	TDPDefault         = 50 // G-Helper default for Z13
-	TDPFirmwareDefault = 5  // value written by firmware when managing PPT
+	TDPMin       = 5  // absolute minimum
+	TDPMaxSafe   = 75 // max in Armoury Crate custom mode
+	TDPMaxForced = 93 // absolute max for GZ302E (G-Helper)
+	TDPDefault   = 50 // G-Helper default for Z13
 )
-
-// PPT attribute names on the asus-nb-wmi platform device.
-var pptAttributes = []string{
-	"ppt_pl1_spl",
-	"ppt_pl2_sppt",
-	"ppt_fppt",
-	"ppt_apu_sppt",
-	"ppt_platform_sppt",
-}
 
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.
 func FindPPTBasePath() string {
@@ -106,7 +96,4 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 	return nil
 }
 
-// ResetTDP writes the firmware default value to all PPT attributes.
-func ResetTDP() error {
-	return SetTDP(TDPFirmwareDefault, 0, 0, 0)
-}
+

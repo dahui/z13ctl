@@ -361,15 +361,15 @@ func (d *Daemon) handleProfile(req request) response {
 		return response{OK: true}
 	}
 
-	// Stock profile: write to sysfs and reset fan curves + TDP to firmware defaults.
+	// Stock profile: reset fan curves to auto first so firmware has fan control,
+	// then write to platform_profile. The firmware sets per-profile PPT values
+	// and fan curves automatically.
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves to auto", "err", err)
+	}
 	if err := cli.SetProfile(profile); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
-
-	// Reset fan curves to auto (firmware manages for stock profiles).
-	_ = cli.ResetAllFanCurves()
-	// Reset TDP to firmware defaults.
-	_ = cli.ResetTDP()
 
 	slog.Info("profile", "set", profile)
 	d.mu.Lock()
@@ -608,17 +608,20 @@ func (d *Daemon) handleTDP(req request) response {
 }
 
 func (d *Daemon) handleTDPReset() response {
-	if err := cli.ResetTDP(); err != nil {
-		return response{OK: false, Error: "tdp-reset: " + err.Error()}
-	}
-	// Reset fans to auto mode (undo any full-speed override from high TDP).
+	// Reset fans to auto mode (undo any full-speed override from high TDP),
+	// then switch to balanced profile. The firmware sets per-profile PPT
+	// values and fan curves automatically on profile change.
 	if err := cli.ResetAllFanCurves(); err != nil {
 		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
 	}
-	slog.Info("tdp-reset")
+	if err := cli.SetProfile("balanced"); err != nil {
+		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
+	}
+	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
 	d.state.TDP = nil
 	d.state.FanCurve = nil
+	d.state.Profile = "balanced"
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {

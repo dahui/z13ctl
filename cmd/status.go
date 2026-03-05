@@ -55,19 +55,10 @@ func runStatus() error {
 
 	// TDP power limits.
 	tdp, tdpErr := cli.ReadAllPPT()
-	isFirmwareManaged := tdpErr == nil &&
-		tdp.PL1SPL == cli.TDPFirmwareDefault &&
-		tdp.PL2SPPT == cli.TDPFirmwareDefault &&
-		tdp.FPPT == cli.TDPFirmwareDefault &&
-		tdp.APUSPPT == cli.TDPFirmwareDefault &&
-		tdp.PlatformSPPT == cli.TDPFirmwareDefault
-	switch {
-	case isFirmwareManaged:
-		fmt.Printf("TDP:     firmware-managed (%s profile)\n", profile)
-	case tdpErr == nil:
+	if tdpErr == nil {
 		fmt.Printf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 			tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
-	default:
+	} else {
 		fmt.Println("TDP:     N/A")
 	}
 

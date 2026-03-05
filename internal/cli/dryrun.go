@@ -170,13 +170,11 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 	fmt.Printf("Would write %d to %s/ppt_platform_sppt\n", pl2, base)
 }
 
-// DryRunTdpReset prints the sysfs writes for a TDP reset.
+// DryRunTdpReset prints the actions for a TDP reset.
 func DryRunTdpReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	base := FindPPTBasePath()
-	for _, attr := range pptAttributes {
-		fmt.Printf("Would write %d to %s/%s\n", TDPFirmwareDefault, base, attr)
-	}
+	fmt.Println("Would reset fan curves to auto mode")
+	fmt.Println("Would switch profile to balanced (firmware sets per-profile PPT and fan curves)")
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

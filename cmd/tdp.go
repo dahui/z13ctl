@@ -79,20 +79,6 @@ func runTdpGet() error {
 		return fmt.Errorf("reading TDP: %w", err)
 	}
 
-	// When all values are at firmware default, show a summary instead of
-	// the raw table — the 5W sentinel is confusing without context.
-	if tdp.PL1SPL == cli.TDPFirmwareDefault &&
-		tdp.PL2SPPT == cli.TDPFirmwareDefault &&
-		tdp.FPPT == cli.TDPFirmwareDefault &&
-		tdp.APUSPPT == cli.TDPFirmwareDefault &&
-		tdp.PlatformSPPT == cli.TDPFirmwareDefault {
-		profile := readCurrentProfile()
-		fmt.Printf("TDP Power Limits: firmware-managed (%s profile)\n", profile)
-		fmt.Println("  Actual limits are controlled by firmware;")
-		fmt.Println("  use 'z13ctl tdp --set <watts>' to override.")
-		return nil
-	}
-
 	fmt.Println("TDP Power Limits (watts):")
 	fmt.Printf("  PL1 (SPL):          %d\n", tdp.PL1SPL)
 	fmt.Printf("  PL2 (sPPT):         %d\n", tdp.PL2SPPT)
@@ -178,16 +164,19 @@ func runTdpReset() error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("TDP reset to firmware defaults")
+		fmt.Println("TDP reset: switched to balanced profile (firmware manages PPT)")
 		return nil
 	}
 
-	if err := cli.ResetTDP(); err != nil {
-		return fmt.Errorf("resetting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+	// Direct path (no daemon): reset fans to auto, then switch to balanced
+	// profile. The firmware sets per-profile PPT and fan curves automatically.
+	if err := cli.ResetAllFanCurves(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
 	}
-	// Reset fans to auto mode (undo any full-speed override from high TDP).
-	_ = cli.ResetAllFanCurves()
-	fmt.Println("TDP reset to firmware defaults")
+	if err := cli.SetProfile("balanced"); err != nil {
+		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+	}
+	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
 }
 

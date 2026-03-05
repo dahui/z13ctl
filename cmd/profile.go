@@ -57,14 +57,16 @@ Profiles:
 				return nil
 			}
 
-			// Direct path (no daemon): stock profiles write to sysfs and reset fan/TDP.
+			// Direct path (no daemon): reset fans to auto first so firmware has
+			// fan control, then write to platform_profile. The firmware sets
+			// per-profile PPT values and fan curves automatically.
 			if profile != "custom" {
+				if err := cli.ResetAllFanCurves(); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+				}
 				if err := cli.SetProfile(profile); err != nil {
 					return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 				}
-				// Reset fan curves and TDP to firmware defaults for stock profiles.
-				_ = cli.ResetAllFanCurves()
-				_ = cli.ResetTDP()
 			}
 			// "custom" without daemon: can't recall state, error out.
 			if profile == "custom" {

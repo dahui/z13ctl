@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -65,12 +66,23 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
-	// Restore profile if saved.
-	if d.state.Profile != "" {
-		if profileErr := cli.SetProfile(d.state.Profile); profileErr != nil {
-			slog.Warn("failed to restore profile", "err", profileErr)
-		} else {
-			slog.Info("profile restored", "profile", d.state.Profile)
+	// Restore stock profile if saved, but only if it differs from the
+	// kernel's current profile. Writing the same value to platform_profile
+	// still triggers a WMI call that resets the fan controller, briefly
+	// stopping fans — harmful on daemon restart where the profile hasn't
+	// changed. Skip "custom" — it's a virtual profile that the kernel
+	// rejects; custom fan curves and TDP are restored separately below.
+	if d.state.Profile != "" && d.state.Profile != "custom" {
+		current := ""
+		if data, readErr := os.ReadFile(cli.FindProfilePath()); readErr == nil {
+			current = strings.TrimSpace(string(data))
+		}
+		if current != d.state.Profile {
+			if profileErr := cli.SetProfile(d.state.Profile); profileErr != nil {
+				slog.Warn("failed to restore profile", "err", profileErr)
+			} else {
+				slog.Info("profile restored", "profile", d.state.Profile)
+			}
 		}
 	}
 

@@ -238,9 +238,8 @@ func TestDryRunTdpReset(t *testing.T) {
 
 	for _, want := range []string{
 		"DRY RUN",
-		"ppt_pl1_spl",
-		"ppt_fppt",
-		"5", // firmware default
+		"fan curves",
+		"balanced",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("DryRunTdpReset output missing %q", want)
