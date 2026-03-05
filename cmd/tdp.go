@@ -39,7 +39,8 @@ Safety: Maximum safe TDP is 75W. Use --force to allow up to 93W (the absolute
 hardware maximum for the ROG Flow Z13 GZ302E). When --force is used with values
 above 75W, fans are automatically set to full speed for thermal safety.
 
-With --reset, restores firmware default PPT values.
+With --reset, switches to the balanced profile and resets fan curves to auto mode.
+The firmware then manages PPT and fan curves automatically.
 
 PPT attributes:
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
@@ -208,7 +209,7 @@ func parsePLOverrides(watts int) (pl1, pl2, pl3 int, err error) {
 func init() {
 	tdpCmd.Flags().BoolVar(&tdpGetFlag, "get", false, "Print current TDP power limits")
 	tdpCmd.Flags().StringVar(&tdpSetFlag, "set", "", "Set TDP power limit in watts")
-	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Restore firmware default TDP")
+	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile (firmware manages PPT)")
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")

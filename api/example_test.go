@@ -231,7 +231,7 @@ func ExampleSendTdpSet() {
 }
 
 func ExampleSendTdpReset() {
-	// Reset TDP to firmware defaults.
+	// Reset to balanced profile (firmware manages PPT and fan curves).
 	handled, err := api.SendTdpReset()
 	if !handled {
 		fmt.Println("daemon not running")

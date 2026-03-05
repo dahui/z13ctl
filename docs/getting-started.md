@@ -118,7 +118,7 @@ z13ctl tdp --set 45 --pl2 55 --pl3 60
 # Force high TDP (above 75W, fans forced to full speed)
 z13ctl tdp --set 85 --force
 
-# Reset to firmware defaults
+# Reset to balanced profile (firmware manages PPT)
 z13ctl tdp --reset
 ```
 

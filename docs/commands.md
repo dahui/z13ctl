@@ -237,7 +237,7 @@ z13ctl tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Reset all PPT limits to firmware defaults |
+| `--reset` | Switch to balanced profile (firmware manages PPT and fan curves) |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -259,9 +259,13 @@ and `--pl3` to set them independently — a stepped configuration like
 instantaneous peaks to 65W.
 
 Stock profiles (quiet/balanced/performance) let the firmware manage TDP
-dynamically. When `--get` shows "firmware-managed," the actual limits are
-controlled internally and may be higher than the displayed values. Setting a
-custom TDP switches to the `custom` profile.
+dynamically — the firmware sets per-profile PPT values automatically on profile
+change. Setting a custom TDP switches to the `custom` profile.
+
+!!! note "PPT readback values"
+    The values shown by `--get` are the kernel driver's cached values, which may
+    not reflect the actual EC limits (especially after a fresh boot or profile
+    change). Use `ryzenadj -i` if you need ground-truth PPT readings.
 
 **Safety:**
 
@@ -283,7 +287,7 @@ z13ctl tdp --set 45 --pl2 55 --pl3 60
 # Force high TDP (fans will be set to full speed)
 z13ctl tdp --set 85 --force
 
-# Reset to firmware defaults
+# Reset to balanced profile (firmware manages PPT)
 z13ctl tdp --reset
 ```
 
@@ -307,7 +311,7 @@ z13ctl status
 # APU:     62°C
 # Fans:    4200 RPM, mode: auto
 # Profile: balanced
-# TDP:     firmware-managed (balanced profile)
+# TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
 # Battery: 74% (limit: 80%)
 ```
 
