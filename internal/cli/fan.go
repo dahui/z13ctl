@@ -24,6 +24,10 @@ const (
 
 	fanCurvePoints = 8
 	fanCount       = 2 // fan 1 (pwm1) and fan 2 (pwm2)
+
+	// HighTDPMinPWM is the minimum PWM value (80% of 255) enforced when
+	// sustained TDP exceeds TDPMaxSafe. Users can set fans higher but not lower.
+	HighTDPMinPWM = 204
 )
 
 // fanNames maps internal fan names to their hwmon index (1 or 2).
@@ -209,10 +213,28 @@ func SetAllFansFullSpeed() error {
 	return writeIntFile(readDir+"/pwm1_enable", 0)
 }
 
+// HighTDPFanCurve returns an 8-point fan curve with a minimum PWM of 80%,
+// suitable for sustained TDP above 75W. Users can replace this with a custom
+// curve as long as all PWM values stay at or above HighTDPMinPWM.
+func HighTDPFanCurve() []api.FanCurvePoint {
+	return []api.FanCurvePoint{
+		{Temp: 30, PWM: HighTDPMinPWM},
+		{Temp: 40, PWM: HighTDPMinPWM},
+		{Temp: 50, PWM: 215},
+		{Temp: 60, PWM: 225},
+		{Temp: 65, PWM: 235},
+		{Temp: 70, PWM: 240},
+		{Temp: 75, PWM: 250},
+		{Temp: 80, PWM: 255},
+	}
+}
+
 // ParseFanCurve parses a fan curve string "temp:pwm,temp:pwm,..." into a
 // slice of FanCurvePoint. Requires exactly 8 points. Temps must be
 // monotonically increasing (0–120°C). PWM values must be monotonically
-// non-decreasing (0–255).
+// non-decreasing (0–255). PWM values may use a % suffix for percentage
+// (0–100%), which is converted to PWM (e.g. 80% = 204). Both formats
+// can be mixed in the same curve string.
 func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
 	parts := strings.Split(s, ",")
 	if len(parts) != fanCurvePoints {
@@ -222,20 +244,30 @@ func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
 	for i, part := range parts {
 		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
 		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid curve point %q: expected temp:pwm", part)
+			return nil, fmt.Errorf("invalid curve point %q: expected temp:pwm or temp:pct%%", part)
 		}
 		temp, err := strconv.Atoi(strings.TrimSpace(kv[0]))
 		if err != nil {
 			return nil, fmt.Errorf("invalid temp in point %d: %w", i+1, err)
 		}
-		pwm, err := strconv.Atoi(strings.TrimSpace(kv[1]))
+		pwmStr := strings.TrimSpace(kv[1])
+		isPercent := strings.HasSuffix(pwmStr, "%")
+		if isPercent {
+			pwmStr = strings.TrimSuffix(pwmStr, "%")
+		}
+		pwm, err := strconv.Atoi(pwmStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid pwm in point %d: %w", i+1, err)
 		}
 		if temp < 0 || temp > 120 {
 			return nil, fmt.Errorf("temp %d in point %d out of range 0–120", temp, i+1)
 		}
-		if pwm < 0 || pwm > 255 {
+		if isPercent {
+			if pwm < 0 || pwm > 100 {
+				return nil, fmt.Errorf("percentage %d in point %d out of range 0–100", pwm, i+1)
+			}
+			pwm = pwm * 255 / 100
+		} else if pwm < 0 || pwm > 255 {
 			return nil, fmt.Errorf("pwm %d in point %d out of range 0–255", pwm, i+1)
 		}
 		if i > 0 && temp <= points[i-1].Temp {

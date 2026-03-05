@@ -20,6 +20,32 @@ const (
 	TDPDefault   = 50 // G-Helper default for Z13
 )
 
+// StockProfilePPT maps stock platform_profile names to their actual PPT values
+// as measured with ryzenadj on the 2025 Z13. The kernel's sysfs PPT attributes
+// are a stale cache (initialized to 5W on module load) and do not reflect the
+// EC's actual per-profile limits unless explicitly written.
+var StockProfilePPT = map[string]api.TDPState{
+	"quiet":       {PL1SPL: 40, PL2SPPT: 55, FPPT: 55, APUSPPT: 70, PlatformSPPT: 70},
+	"balanced":    {PL1SPL: 52, PL2SPPT: 71, FPPT: 70, APUSPPT: 70, PlatformSPPT: 70},
+	"performance": {PL1SPL: 70, PL2SPPT: 86, FPPT: 86, APUSPPT: 70, PlatformSPPT: 70},
+}
+
+// ReadEffectivePPT returns the current PPT values. If sysfs returns the stale
+// kernel cache (PL1 == 5) and the active profile is a known stock profile,
+// the measured per-profile defaults are returned instead.
+func ReadEffectivePPT(profile string) (api.TDPState, error) {
+	s, err := ReadAllPPT()
+	if err != nil {
+		return s, err
+	}
+	if s.PL1SPL == TDPMin {
+		if stock, ok := StockProfilePPT[profile]; ok {
+			return stock, nil
+		}
+	}
+	return s, nil
+}
+
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.
 func FindPPTBasePath() string {
 	const path = "/sys/devices/platform/asus-nb-wmi"

@@ -35,9 +35,11 @@ With --get, prints all current PPT (Package Power Tracking) values.
 With --set, writes power limits in watts. By default, all PPT values are set to
 the same value. Use --pl1, --pl2, --pl3 to override individual limits.
 
-Safety: Maximum safe TDP is 75W. Use --force to allow up to 93W (the absolute
-hardware maximum for the ROG Flow Z13 GZ302E). When --force is used with values
-above 75W, fans are automatically set to full speed for thermal safety.
+Safety: The sustained power limit (PL1) is capped at 75W by default. Use --force
+to allow PL1 up to 93W (the absolute hardware maximum for the ROG Flow Z13
+GZ302E). When PL1 exceeds 75W, fans are automatically set to full speed for
+thermal safety. Burst limits (PL2/PL3) are allowed up to 93W without --force
+since short bursts are thermally safe.
 
 With --reset, switches to the balanced profile and resets fan curves to auto mode.
 The firmware then manages PPT and fan curves automatically.
@@ -75,7 +77,8 @@ dynamically. Setting a custom TDP switches to the "custom" profile.`,
 }
 
 func runTdpGet() error {
-	tdp, err := cli.ReadAllPPT()
+	profile := readCurrentProfile()
+	tdp, err := cli.ReadEffectivePPT(profile)
 	if err != nil {
 		return fmt.Errorf("reading TDP: %w", err)
 	}
@@ -108,22 +111,27 @@ func runTdpSet() error {
 		return err
 	}
 
-	tdpMax := cli.TDPMaxSafe
+	// PL1 (sustained) requires --force above 75W. PL2/PL3 (burst) are allowed
+	// up to the hardware max without --force since short bursts are thermally safe.
+	pl1Max := cli.TDPMaxSafe
 	if tdpForceFlag {
-		tdpMax = cli.TDPMaxForced
+		pl1Max = cli.TDPMaxForced
+	}
+	if pl1 < cli.TDPMin || pl1 > pl1Max {
+		if pl1 > cli.TDPMaxSafe && !tdpForceFlag {
+			return fmt.Errorf("PL1 value %dW exceeds safe sustained maximum (%dW); use --force to allow up to %dW",
+				pl1, cli.TDPMaxSafe, cli.TDPMaxForced)
+		}
+		return fmt.Errorf("PL1 value %dW out of range %d–%d", pl1, cli.TDPMin, pl1Max)
 	}
 	for _, v := range []struct {
 		name  string
 		value int
 	}{
-		{"PL1", pl1}, {"PL2", pl2}, {"PL3", pl3},
+		{"PL2", pl2}, {"PL3", pl3},
 	} {
-		if v.value < cli.TDPMin || v.value > tdpMax {
-			if v.value > cli.TDPMaxSafe && !tdpForceFlag {
-				return fmt.Errorf("%s value %dW exceeds safe maximum (%dW); use --force to allow up to %dW",
-					v.name, v.value, cli.TDPMaxSafe, cli.TDPMaxForced)
-			}
-			return fmt.Errorf("%s value %dW out of range %d–%d", v.name, v.value, cli.TDPMin, tdpMax)
+		if v.value < cli.TDPMin || v.value > cli.TDPMaxForced {
+			return fmt.Errorf("%s value %dW out of range %d–%d", v.name, v.value, cli.TDPMin, cli.TDPMaxForced)
 		}
 	}
 
@@ -132,12 +140,12 @@ func runTdpSet() error {
 		return nil
 	}
 
-	// Safety: force fans to full speed when any value exceeds safe max.
-	if tdpForceFlag && (pl1 > cli.TDPMaxSafe || pl2 > cli.TDPMaxSafe || pl3 > cli.TDPMaxSafe) {
-		if err := cli.SetAllFansFullSpeed(); err != nil {
-			return fmt.Errorf("failed to set fans to full speed: %w (refusing to apply unsafe TDP)", err)
+	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
+	if pl1 > cli.TDPMaxSafe {
+		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
+			return fmt.Errorf("failed to set high-TDP fan curve: %w (refusing to apply unsafe TDP)", err)
 		}
-		fmt.Println("Fans set to full speed for thermal safety")
+		fmt.Println("Fans set to 80%+ curve for thermal safety")
 	}
 
 	if handled, err := api.SendTdpSet(tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
@@ -213,6 +221,6 @@ func init() {
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")
-	tdpCmd.Flags().BoolVar(&tdpForceFlag, "force", false, "Allow TDP above 75W (up to 93W)")
+	tdpCmd.Flags().BoolVar(&tdpForceFlag, "force", false, "Allow sustained TDP (PL1) above 75W (up to 93W)")
 	rootCmd.AddCommand(tdpCmd)
 }

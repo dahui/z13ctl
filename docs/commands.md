@@ -201,21 +201,30 @@ z13ctl fancurve [flags]
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
 | `--reset` | Reset both fans to firmware auto mode |
 
-**Curve format:** 8 comma-separated `temp:pwm` pairs, e.g.
-`"48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"`
+**Curve format:** 8 comma-separated `temp:speed` pairs. Speed can be a PWM
+value (0–255) or a percentage with a `%` suffix (0–100%). Both formats can be
+mixed in the same curve.
+
+```
+"48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"   # PWM values
+"48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"  # percentages
+```
 
 **Validation rules:**
 
 - Exactly 8 points required
 - Temperatures must be monotonically increasing (0–120 &deg;C)
-- PWM values must be non-decreasing (0–255)
+- Speed values must be non-decreasing (0–255 PWM or 0–100%)
 
 ```sh
 # Read current fan curves
 z13ctl fancurve --get
 
-# Set a custom fan curve (both fans)
+# Set a custom fan curve using PWM values (both fans)
 z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
+
+# Set a custom fan curve using percentages
+z13ctl fancurve --set "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
 
 # Reset both fans to auto mode
 z13ctl fancurve --reset
@@ -241,7 +250,7 @@ z13ctl tdp [flags]
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow values above the 75W safety limit (up to 93W max) |
+| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to an 80% minimum curve; custom curves must keep all PWM values at or above 204 (80%). |
 
 **PPT attributes:**
 

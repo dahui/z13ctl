@@ -32,9 +32,10 @@ both fans simultaneously.
 With --get, prints the current 8-point fan curve, fan mode, and RPM.
 
 With --set, writes a custom 8-point fan curve to both fans. The curve must be
-specified as 8 comma-separated temp:pwm pairs where temp is in Celsius and
-pwm is 0–255. Temps must be monotonically increasing; pwm values must be
-non-decreasing.
+specified as 8 comma-separated temp:speed pairs where temp is in Celsius and
+speed is either a PWM value (0–255) or a percentage with a % suffix (0–100%).
+Both formats can be mixed. Temps must be monotonically increasing; speed values
+must be non-decreasing.
 
 With --reset, restores firmware auto mode (pwm_enable=2) for both fans.`,
 	Args: cobra.NoArgs,
@@ -91,6 +92,17 @@ func runFanCurveSet() error {
 		return fmt.Errorf("invalid fan curve: %w", err)
 	}
 
+	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
+	profile := readCurrentProfile()
+	if tdp, tdpErr := cli.ReadEffectivePPT(profile); tdpErr == nil && tdp.PL1SPL > cli.TDPMaxSafe {
+		for _, p := range points {
+			if p.PWM < cli.HighTDPMinPWM {
+				return fmt.Errorf("PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
+					p.PWM, p.Temp, cli.HighTDPMinPWM, cli.TDPMaxSafe)
+			}
+		}
+	}
+
 	if dryRunFlag {
 		cli.DryRunFanCurve(points)
 		return nil
@@ -133,7 +145,7 @@ func runFanCurveReset() error {
 
 func init() {
 	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curve, mode, and RPM")
-	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm,...)")
+	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm or temp:pct%,...)")
 	fancurveCmd.Flags().BoolVar(&fanCurveResetFlag, "reset", false, "Restore firmware auto fan mode")
 	rootCmd.AddCommand(fancurveCmd)
 }

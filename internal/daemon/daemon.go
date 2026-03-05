@@ -106,10 +106,10 @@ func Run(ctx context.Context, watchBtn bool) error {
 			}
 		}
 		if t := d.state.TDP; t != nil {
-			// Force fans to full speed if any value exceeds safe max.
-			if t.PL1SPL > cli.TDPMaxSafe || t.PL2SPPT > cli.TDPMaxSafe || t.FPPT > cli.TDPMaxSafe {
-				if fsErr := cli.SetAllFansFullSpeed(); fsErr != nil {
-					slog.Warn("failed to set fans to full speed for TDP restore", "err", fsErr)
+			// Set fans to 80% minimum if sustained TDP exceeds safe max.
+			if t.PL1SPL > cli.TDPMaxSafe {
+				if fsErr := cli.SetBothFanCurves(cli.HighTDPFanCurve()); fsErr != nil {
+					slog.Warn("failed to set high-TDP fan curve for TDP restore", "err", fsErr)
 				}
 			}
 			if tdpErr := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); tdpErr != nil {

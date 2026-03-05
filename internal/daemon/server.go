@@ -126,8 +126,8 @@ func (d *Daemon) dispatch(req request) response {
 		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
 		// Populate fan curve from sysfs for ground truth.
 		s.FanCurve = readFanCurveFromSysfs()
-		// Populate TDP from sysfs.
-		if tdp, err := cli.ReadAllPPT(); err == nil {
+		// Populate TDP, substituting per-profile defaults if sysfs is stale.
+		if tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs()); err == nil {
 			s.TDP = &tdp
 		}
 		// Populate APU temperature and fan RPM from sysfs.
@@ -348,8 +348,8 @@ func (d *Daemon) handleProfile(req request) response {
 			if err := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); err != nil {
 				slog.Warn("failed to reapply TDP", "err", err)
 			}
-			if t.PL1SPL > cli.TDPMaxSafe || t.PL2SPPT > cli.TDPMaxSafe || t.FPPT > cli.TDPMaxSafe {
-				_ = cli.SetAllFansFullSpeed()
+			if t.PL1SPL > cli.TDPMaxSafe {
+				_ = cli.SetBothFanCurves(cli.HighTDPFanCurve())
 			}
 		}
 		s := d.state
@@ -489,6 +489,19 @@ func (d *Daemon) handleFanCurve(req request) response {
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
+	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
+	d.mu.Lock()
+	tdp := d.state.TDP
+	d.mu.Unlock()
+	if tdp != nil && tdp.PL1SPL > cli.TDPMaxSafe {
+		for _, p := range points {
+			if p.PWM < cli.HighTDPMinPWM {
+				return response{OK: false, Error: fmt.Sprintf(
+					"fancurve: PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
+					p.PWM, p.Temp, cli.HighTDPMinPWM, cli.TDPMaxSafe)}
+			}
+		}
+	}
 	if err := cli.SetBothFanCurves(points); err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
@@ -520,12 +533,21 @@ func (d *Daemon) handleFanCurveReset() response {
 }
 
 func handleTDPGet() response {
-	tdp, err := cli.ReadAllPPT()
+	tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs())
 	if err != nil {
 		return response{OK: false, Error: "reading TDP: " + err.Error()}
 	}
 	data, _ := json.Marshal(tdp)
 	return response{OK: true, Value: string(data)}
+}
+
+// readProfileFromSysfs reads the current platform_profile value.
+func readProfileFromSysfs() string {
+	data, err := os.ReadFile(cli.FindProfilePath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func (d *Daemon) handleTDP(req request) response {
@@ -551,25 +573,29 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	tdpMax := cli.TDPMaxSafe
+	// PL1 (sustained) requires force flag above 75W. PL2/PL3 (burst) allowed up to hardware max.
+	pl1Max := cli.TDPMaxSafe
 	if req.Force {
-		tdpMax = cli.TDPMaxForced
+		pl1Max = cli.TDPMaxForced
 	}
-	for _, v := range []int{pl1, pl2, pl3} {
-		if v < cli.TDPMin || v > tdpMax {
-			if v > cli.TDPMaxSafe && !req.Force {
-				return response{OK: false, Error: fmt.Sprintf("TDP %dW exceeds safe max (%dW); use force flag", v, cli.TDPMaxSafe)}
-			}
-			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, cli.TDPMin, tdpMax)}
+	if pl1 < cli.TDPMin || pl1 > pl1Max {
+		if pl1 > cli.TDPMaxSafe && !req.Force {
+			return response{OK: false, Error: fmt.Sprintf("PL1 %dW exceeds safe sustained max (%dW); use force flag", pl1, cli.TDPMaxSafe)}
+		}
+		return response{OK: false, Error: fmt.Sprintf("PL1 %dW out of range %d–%d", pl1, cli.TDPMin, pl1Max)}
+	}
+	for _, v := range []int{pl2, pl3} {
+		if v < cli.TDPMin || v > cli.TDPMaxForced {
+			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, cli.TDPMin, cli.TDPMaxForced)}
 		}
 	}
 
-	// Safety: force fans to full speed when any value exceeds safe max.
-	if req.Force && (pl1 > cli.TDPMaxSafe || pl2 > cli.TDPMaxSafe || pl3 > cli.TDPMaxSafe) {
-		if err := cli.SetAllFansFullSpeed(); err != nil {
-			return response{OK: false, Error: "cannot set fans to full speed: " + err.Error()}
+	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
+	if pl1 > cli.TDPMaxSafe {
+		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
+			return response{OK: false, Error: "cannot set high-TDP fan curve: " + err.Error()}
 		}
-		slog.Warn("fans forced to full speed for high TDP", "max_ppt", tdpMax)
+		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
 	}
 
 	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
@@ -593,8 +619,8 @@ func (d *Daemon) handleTDP(req request) response {
 		slog.Warn("failed to save state", "err", err)
 	}
 
-	// If all values are now safe, restore saved fan curve (undo full-speed override).
-	if pl1 <= cli.TDPMaxSafe && pl2 <= cli.TDPMaxSafe && pl3 <= cli.TDPMaxSafe {
+	// If sustained TDP is now safe, restore saved fan curve (undo high-TDP curve).
+	if pl1 <= cli.TDPMaxSafe {
 		if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
 			if err := cli.SetBothFanCurves(fc.Points); err != nil {
 				slog.Warn("failed to restore fan curve after TDP change", "err", err)

@@ -84,8 +84,11 @@ both fans simultaneously.
 # Check current fan curves
 z13ctl fancurve --get
 
-# Set a custom fan curve (8 temp:pwm pairs, applied to both fans)
+# Set a custom fan curve using PWM values (8 temp:speed pairs, both fans)
 z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
+
+# Or use percentages (0–100%)
+z13ctl fancurve --set "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
 
 # Reset both fans to firmware auto mode
 z13ctl fancurve --reset
@@ -115,7 +118,7 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (above 75W, fans forced to full speed)
+# Force high TDP (above 75W, fans set to 80% minimum)
 z13ctl tdp --set 85 --force
 
 # Reset to balanced profile (firmware manages PPT)

@@ -54,7 +54,7 @@ func runStatus() error {
 	fmt.Printf("Profile: %s\n", profile)
 
 	// TDP power limits.
-	tdp, tdpErr := cli.ReadAllPPT()
+	tdp, tdpErr := cli.ReadEffectivePPT(profile)
 	if tdpErr == nil {
 		fmt.Printf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 			tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)

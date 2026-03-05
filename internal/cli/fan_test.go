@@ -67,6 +67,54 @@ func TestParseFanCurve_InvalidFormat(t *testing.T) {
 	}
 }
 
+func TestParseFanCurve_Percentage(t *testing.T) {
+	curve := "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
+	points, err := cli.ParseFanCurve(curve)
+	if err != nil {
+		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
+	}
+	// 1% of 255 = 2 (integer division), 40% of 255 = 102
+	if points[0].PWM != 2 {
+		t.Errorf("point 0 PWM: got %d, want 2 (1%% of 255)", points[0].PWM)
+	}
+	if points[7].PWM != 102 {
+		t.Errorf("point 7 PWM: got %d, want 102 (40%% of 255)", points[7].PWM)
+	}
+}
+
+func TestParseFanCurve_MixedFormats(t *testing.T) {
+	// Mix PWM and percentage in the same curve.
+	curve := "48:1%,53:22,57:12%,60:43,63:22%,65:68,70:35%,76:102"
+	points, err := cli.ParseFanCurve(curve)
+	if err != nil {
+		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
+	}
+	if points[0].PWM != 2 {
+		t.Errorf("point 0 PWM: got %d, want 2 (1%%)", points[0].PWM)
+	}
+	if points[1].PWM != 22 {
+		t.Errorf("point 1 PWM: got %d, want 22 (raw)", points[1].PWM)
+	}
+}
+
+func TestParseFanCurve_PercentageOutOfRange(t *testing.T) {
+	_, err := cli.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:101%")
+	if err == nil {
+		t.Error("expected error for percentage > 100")
+	}
+}
+
+func TestParseFanCurve_Percentage100(t *testing.T) {
+	curve := "30:100%,40:100%,50:100%,60:100%,65:100%,70:100%,75:100%,80:100%"
+	points, err := cli.ParseFanCurve(curve)
+	if err != nil {
+		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
+	}
+	if points[0].PWM != 255 {
+		t.Errorf("100%% should be PWM 255, got %d", points[0].PWM)
+	}
+}
+
 func TestFanModeName(t *testing.T) {
 	tests := []struct {
 		mode int
