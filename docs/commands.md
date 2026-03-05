@@ -302,6 +302,64 @@ z13ctl tdp --reset
 
 ---
 
+## undervolt
+
+Get or set CPU/iGPU Curve Optimizer (CO) offsets via the `ryzen_smu` kernel
+module. Negative values reduce voltage (undervolt), improving efficiency and
+thermals without reducing performance. Root or group access required; see
+[setup](#setup).
+
+```
+z13ctl undervolt [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print current CO offsets (from daemon state) |
+| `--set <value>` | Set all-core CPU CO offset (0 to -40) |
+| `--igpu <value>` | Set iGPU CO offset (0 to -30); used with `--set` |
+| `--reset` | Reset both CPU and iGPU CO to stock (0) |
+
+CO values have no sysfs readback — `--get` returns the last-applied values from
+daemon state. If the daemon is not running, reports "not set".
+
+CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
+them automatically on startup and resume when the custom profile is active.
+
+**Safety limits (matching G-Helper defaults):**
+
+| Parameter | Range |
+|-----------|-------|
+| CPU CO | 0 to -40 |
+| iGPU CO | 0 to -30 |
+
+**Requires:** `ryzen_smu` kernel module. Install via:
+
+- **Arch/CachyOS:** `ryzen_smu-dkms-git` (AUR)
+- **Fedora:** `akmod-ryzen-smu` (COPR)
+- **Ubuntu/Debian:** build from source (`github.com/leogx9r/ryzen_smu`)
+
+If the module is not installed, undervolt commands return a helpful error.
+
+```sh
+# Read current CO values
+z13ctl undervolt --get
+
+# Set CPU CO to -20
+z13ctl undervolt --set -20
+
+# Set CPU CO to -20 and iGPU CO to -15
+z13ctl undervolt --set -20 --igpu -15
+
+# Reset to stock voltage
+z13ctl undervolt --reset
+
+# Preview without applying
+z13ctl --dry-run undervolt --set -20
+```
+
+---
+
 ## status
 
 Display a summary of all system metrics in a single view: APU temperature, fan

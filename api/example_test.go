@@ -244,6 +244,48 @@ func ExampleSendTdpReset() {
 	fmt.Println("tdp reset")
 }
 
+func ExampleSendUndervoltGet() {
+	// Read current Curve Optimizer offsets from daemon state.
+	handled, value, err := api.SendUndervoltGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt:", value)
+}
+
+func ExampleSendUndervoltSet() {
+	// Set CPU Curve Optimizer to -20 and iGPU to -15.
+	handled, err := api.SendUndervoltSet("-20", "-15")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt set")
+}
+
+func ExampleSendUndervoltReset() {
+	// Reset Curve Optimizer to stock (0).
+	handled, err := api.SendUndervoltReset()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt reset")
+}
+
 func ExampleSendGetState() {
 	// Fetch the daemon's full cached state for GUI initialization.
 	handled, state, err := api.SendGetState()

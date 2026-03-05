@@ -177,6 +177,32 @@ func DryRunTdpReset() {
 	fmt.Println("Would switch profile to balanced (firmware sets per-profile PPT and fan curves)")
 }
 
+// DryRunUndervolt prints the SMU commands that would be sent for a Curve Optimizer change.
+func DryRunUndervolt(cpu, igpu int) {
+	fmt.Println("=== DRY RUN (no SMU write) ===")
+	if cpu != 0 {
+		encoded := encodeCOValue(cpu)
+		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO %d)\n", encoded, cpu)
+		fmt.Printf("Would send PSMU cmd 0x5D with arg 0x%X (CPU CO %d)\n", encoded, cpu)
+	}
+	if igpu != 0 {
+		encoded := encodeCOValue(igpu)
+		fmt.Printf("Would send PSMU cmd 0xB7 with arg 0x%X (iGPU CO %d)\n", encoded, igpu)
+	}
+	if cpu == 0 && igpu == 0 {
+		fmt.Println("No changes (both offsets are 0)")
+	}
+}
+
+// DryRunUndervoltReset prints the SMU commands that would be sent to reset CO.
+func DryRunUndervoltReset() {
+	fmt.Println("=== DRY RUN (no SMU write) ===")
+	encoded := encodeCOValue(0)
+	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (reset CPU CO)\n", encoded)
+	fmt.Printf("Would send PSMU cmd 0x5D with arg 0x%X (reset CPU CO)\n", encoded)
+	fmt.Printf("Would send PSMU cmd 0xB7 with arg 0x%X (reset iGPU CO)\n", encoded)
+}
+
 // DryRunBrightness prints the packet sequence for a brightness-only change.
 func DryRunBrightness(level uint8) {
 	var keyb, bar, lid, rear byte

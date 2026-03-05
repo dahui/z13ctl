@@ -118,6 +118,13 @@ func Run(ctx context.Context, watchBtn bool) error {
 				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
 			}
 		}
+		if uv := d.state.Undervolt; uv != nil && cli.SMUAvailable() {
+			if uvErr := cli.SetCurveOptimizer(uv.CPUCO, uv.IGPUCO); uvErr != nil {
+				slog.Warn("failed to restore undervolt", "err", uvErr)
+			} else {
+				slog.Info("undervolt restored", "cpu", uv.CPUCO, "igpu", uv.IGPUCO)
+			}
+		}
 	}
 
 	if watchBtn {
@@ -125,6 +132,8 @@ func Run(ctx context.Context, watchBtn bool) error {
 	} else {
 		slog.Info("Armoury Crate button watcher disabled")
 	}
+
+	go d.watchResume(ctx)
 
 	ln, err := d.getListener()
 	if err != nil {

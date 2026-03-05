@@ -47,21 +47,22 @@ ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'f
 }
 
 // buildServiceContent generates the z13ctl-perms.service unit file content.
-// charge_control_end_threshold is created late in asus_nb_wmi probe() — after all
-// udev child-device events have fired — so udev RUN+= cannot set its permissions.
-// This oneshot runs after sysinit.target and does only: chgrp + chmod g+w.
+// Handles sysfs files that cannot be set by udev rules:
+//   - charge_control_end_threshold: created late in asus_nb_wmi probe()
+//   - ryzen_smu_drv files: kobject under /sys/kernel/, not a udev device
 func buildServiceContent(group string) string {
 	return fmt.Sprintf(`[Unit]
-Description=z13ctl battery charge limit sysfs permissions
+Description=z13ctl sysfs permissions (battery + ryzen_smu)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
-# This oneshot only runs 'chgrp %s' and 'chmod g+w' on BAT*/charge_control_end_threshold.
+# ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 After=sysinit.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 
 [Install]
 WantedBy=multi-user.target
@@ -149,6 +150,17 @@ func applySysfsPerms(group string, dryRun bool) {
 			if strings.HasPrefix(f.Name(), "ppt_") {
 				chgrpChmod("/sys/devices/platform/asus-nb-wmi/"+f.Name(), "g+w")
 			}
+		}
+	}
+
+	// ryzen_smu sysfs files for Curve Optimizer (undervolt).
+	if _, smuErr := os.Stat("/sys/kernel/ryzen_smu_drv"); smuErr == nil {
+		for _, attr := range []string{"smu_args", "mp1_smu_cmd", "rsmu_cmd"} {
+			p := "/sys/kernel/ryzen_smu_drv/" + attr
+			if _, err := os.Stat(p); err != nil {
+				continue
+			}
+			chgrpChmod(p, "g+w")
 		}
 	}
 
@@ -264,7 +276,8 @@ This command must be run with sudo (unless --dry-run is used).`,
 
 		fmt.Printf("\nDone. Members of the '%s' group can now run z13ctl without sudo.\n", setupGroup)
 		fmt.Println("This covers RGB control, performance profiles, battery charge limiting,")
-		fmt.Println("the Armoury Crate button, boot sound, panel overdrive, fan curves, and TDP.")
+		fmt.Println("the Armoury Crate button, boot sound, panel overdrive, fan curves, TDP,")
+		fmt.Println("and undervolt (if ryzen_smu is installed).")
 		fmt.Printf("If your user is not in '%s', add it with:\n", setupGroup)
 		fmt.Printf("  sudo usermod -aG %s $USER\n", setupGroup)
 		fmt.Println("Then log out and back in for the group change to take effect.")

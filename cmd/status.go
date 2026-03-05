@@ -62,6 +62,13 @@ func runStatus() error {
 		fmt.Println("TDP:     N/A")
 	}
 
+	// Undervolt (Curve Optimizer) — only shown if ryzen_smu is available.
+	// CO values have no sysfs readback; this would need daemon state.
+	// For status, just indicate availability.
+	if cli.SMUAvailable() {
+		fmt.Println("UV:      available (use 'undervolt --get' via daemon for current values)")
+	}
+
 	// Battery: current charge level and charge limit.
 	capStr := "N/A"
 	if data, err := os.ReadFile(cli.FindBatteryCapacityPath()); err == nil {
