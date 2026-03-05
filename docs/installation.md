@@ -5,6 +5,27 @@
 - Linux kernel with `hidraw` support (standard on all mainstream distributions)
 - 2025 ASUS ROG Flow Z13 (USB IDs `0b05:18c6` and `0b05:1a30`)
 
+### Optional: ryzen_smu kernel module (for undervolting)
+
+CPU/iGPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
+module. Without it, all other features work normally — undervolt commands will
+return a helpful error explaining how to install the module.
+
+| Distribution | Package | Source |
+|---|---|---|
+| Arch / CachyOS | `ryzen_smu-dkms-git` | AUR |
+| Fedora | `dkms-ryzen_smu` | [birkch/ryzen_smu](https://copr.fedorainfracloud.org/coprs/birkch/ryzen_smu/) Copr |
+| Ubuntu / Debian | build from source | [github.com/leogx9r/ryzen_smu](https://github.com/leogx9r/ryzen_smu) |
+
+```sh
+# Arch / CachyOS
+yay -S ryzen_smu-dkms-git
+
+# Fedora (enable Copr first)
+sudo dnf copr enable birkch/ryzen_smu
+sudo dnf install dkms-ryzen_smu
+```
+
 ---
 
 ## Install
@@ -154,19 +175,23 @@ guide to set your first lighting effect, fan curve, and performance profile.
    `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute,
    hwmon fan curve attributes (`asus_custom_fan_curve` + `asus` pwm_enable),
    and asus-nb-wmi PPT power limit attributes when the drivers load.
-2. Reloads udev and applies permissions immediately to all currently present files.
+2. Reloads udev and applies permissions immediately to all currently present
+   files — including `ryzen_smu` sysfs files for undervolting (if the module
+   is loaded).
 3. Writes `/etc/systemd/system/z13ctl-perms.service` and enables it — a
    `Type=oneshot` service that runs `chgrp` + `chmod g+w` on
-   `BAT*/charge_control_end_threshold` at boot.
-4. Starts the service immediately so battery limit is accessible right away.
+   `BAT*/charge_control_end_threshold` and `ryzen_smu_drv` sysfs files at boot.
+4. Starts the service immediately so battery limit and undervolt are accessible
+   right away.
 
-!!! note "Why a separate oneshot service for battery?"
+!!! note "Why a separate oneshot service for battery and ryzen_smu?"
     The `charge_control_end_threshold` sysfs attribute is added by the
     `asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
-    observable udev child-device events have already fired. There is no udev
-    hook that can reliably target it. The `z13ctl-perms.service` unit is a
-    self-contained workaround that runs at `sysinit.target`. It has no
-    dependency on the z13ctl binary and can be inspected at any time:
+    observable udev child-device events have already fired. The `ryzen_smu`
+    files are kobjects under `/sys/kernel/`, not udev-managed devices. There
+    is no udev hook that can reliably target either. The `z13ctl-perms.service`
+    unit is a self-contained workaround that runs at `sysinit.target`. It has
+    no dependency on the z13ctl binary and can be inspected at any time:
 
     ```sh
     systemctl cat z13ctl-perms.service

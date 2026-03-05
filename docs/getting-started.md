@@ -127,11 +127,38 @@ z13ctl tdp --reset
 
 ---
 
+## Undervolting (Curve Optimizer)
+
+Undervolting reduces CPU and iGPU voltage via AMD Curve Optimizer (CO), lowering
+temperatures and power draw without reducing performance. Requires the
+`ryzen_smu` kernel module (optional — see [Installation](installation.md)).
+
+CO values are volatile — they reset on reboot and sleep. The daemon reapplies
+them automatically on startup and resume when the custom profile is active.
+
+```sh
+# Check current CO values
+z13ctl undervolt --get
+
+# Set CPU CO to -20
+z13ctl undervolt --set -20
+
+# Set CPU CO to -20 and iGPU CO to -15
+z13ctl undervolt --set -20 --igpu -15
+
+# Reset to stock voltage
+z13ctl undervolt --reset
+```
+
+Safety limits (matching G-Helper defaults): CPU 0 to -40, iGPU 0 to -30.
+
+---
+
 ## Custom profile
 
-The `custom` profile recalls previously saved fan curves and TDP settings from
-the daemon's state. At least one custom fan curve or TDP value must have been
-set before switching to `custom`.
+The `custom` profile recalls previously saved fan curves, TDP, and undervolt
+settings from the daemon's state. At least one custom fan curve, TDP value, or
+undervolt offset must have been previously set.
 
 ```sh
 # Set up a custom configuration
@@ -188,5 +215,5 @@ This prints a live swatch table in your terminal. Any 6-digit hex value
 ## Next steps
 
 - [Commands](commands.md) — every flag and option for every command
-- [Daemon](daemon.md) — set up the daemon for state persistence and boot
-  restore
+- [Daemon](daemon.md) — set up the daemon for state persistence, boot
+  restore, and sleep/resume recovery

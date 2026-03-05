@@ -1,7 +1,8 @@
 # z13ctl
 
-RGB lighting, performance profiles, battery limit, fan curves, TDP control, and
-display settings for the **2025 ASUS ROG Flow Z13** on Linux.
+RGB lighting, performance profiles, battery limit, fan curves, TDP control,
+CPU/iGPU undervolting, and display settings for the **2025 ASUS ROG Flow Z13**
+on Linux.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/dahui/z13ctl/blob/main/LICENSE)
 
@@ -19,6 +20,9 @@ display settings for the **2025 ASUS ROG Flow Z13** on Linux.
   (both fans cool the same APU and share one curve)
 - **TDP control** — set CPU/GPU power limits (5–93W) via asus-nb-wmi PPT attributes,
   with automatic fan safety above 75W
+- **CPU/iGPU undervolting** — reduce voltage via AMD Curve Optimizer for lower
+  temperatures and power draw without reducing performance (requires `ryzen_smu`
+  kernel module)
 - **Boot sound** — enable or disable the POST beep via the asus-armoury firmware
   attributes interface
 - **Panel overdrive** — toggle display overdrive for reduced motion blur

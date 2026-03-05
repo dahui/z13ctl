@@ -363,23 +363,25 @@ z13ctl --dry-run undervolt --set -20
 ## status
 
 Display a summary of all system metrics in a single view: APU temperature, fan
-speed and mode, performance profile, TDP power limits, and battery charge level
-with charge limit.
+speed and mode, performance profile, TDP power limits, undervolt status, and
+battery charge level with charge limit.
 
 ```
 z13ctl status
 ```
 
 This command is read-only and takes no flags. All values are read directly from
-sysfs.
+sysfs (except undervolt, which has no sysfs readback — shows `ryzen_smu`
+module availability).
 
 ```sh
 z13ctl status
-# APU:     62°C
-# Fans:    4200 RPM, mode: auto
-# Profile: balanced
-# TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
-# Battery: 74% (limit: 80%)
+# APU:       62°C
+# Fans:      4200 RPM, mode: auto
+# Profile:   balanced
+# TDP:       52W (PL1) / 71W (PL2) / 70W (PL3)
+# Undervolt: available (ryzen_smu loaded)
+# Battery:   74% (limit: 80%)
 ```
 
 ---
@@ -401,8 +403,9 @@ not require the daemon to be running.
 
 Install udev rules and a boot service granting a group read/write access to
 the ASUS HID devices, performance profile, battery charge limit, firmware
-attributes (boot sound, panel overdrive), hwmon fan curve attributes, and
-asus-nb-wmi PPT power limit attributes for TDP control.
+attributes (boot sound, panel overdrive), hwmon fan curve attributes,
+asus-nb-wmi PPT power limit attributes for TDP control, and ryzen_smu sysfs
+files for undervolting (if the module is loaded).
 
 ```
 sudo z13ctl setup [flags]
@@ -443,7 +446,7 @@ z13ctl --no-button daemon   # without button watcher
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
 `profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `fancurve`, `tdp`,
-`status`)
+`undervolt`, `status`)
 route through the daemon socket automatically. If the daemon is not running
 they fall back to direct hardware or sysfs access.
 

@@ -91,6 +91,11 @@ handled, err         := api.SendFanCurveReset()
 handled, value, err := api.SendTdpGet()
 handled, err         := api.SendTdpSet("50", "", "", "", false)  // all PPTs to 50W
 handled, err         := api.SendTdpReset()
+
+// Undervolt (Curve Optimizer — requires ryzen_smu kernel module)
+handled, value, err := api.SendUndervoltGet()
+handled, err         := api.SendUndervoltSet("-20", "-15")  // CPU CO -20, iGPU CO -15
+handled, err         := api.SendUndervoltReset()
 ```
 
 **Full state snapshot (for GUI initialization):**
@@ -103,6 +108,8 @@ if handled && err == nil {
     fmt.Println("battery limit:", state.Battery)
     fmt.Println("fan curve:", state.FanCurve)
     fmt.Println("tdp:", state.TDP)
+    fmt.Println("undervolt:", state.Undervolt)
+    fmt.Println("undervolt available:", state.UndervoltAvailable)
     fmt.Println("APU temp:", state.Temperature, "°C")
     fmt.Println("fan RPM:", state.FanRPM)
 }

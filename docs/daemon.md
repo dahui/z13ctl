@@ -4,8 +4,11 @@ The z13ctl daemon is a long-running background process that provides three thing
 ordinary one-shot CLI invocations cannot:
 
 - **State persistence** — saves your last-applied lighting, profile, battery,
-  fan curve, and TDP settings to `~/.local/state/z13ctl/state.json` and restores
-  them automatically at every boot.
+  fan curve, TDP, and undervolt settings to `~/.local/state/z13ctl/state.json`
+  and restores them automatically at every boot.
+- **Sleep/resume recovery** — watches for system resume events via D-Bus and
+  reapplies volatile settings (fan curves, TDP, undervolt) that are lost during
+  sleep.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -13,7 +16,7 @@ ordinary one-shot CLI invocations cannot:
   (see [API](api.md)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`, `fancurve`, `tdp`, `status`) automatically route through the
+`bootsound`, `paneloverdrive`, `fancurve`, `tdp`, `undervolt`, `status`) automatically route through the
 daemon socket when it is running. If the daemon is not running they fall back to direct hardware or
 sysfs access transparently — there is no user-visible difference other than
 persistence.
@@ -117,19 +120,45 @@ The file is written atomically after every successful command. It stores:
 - `battery_limit` — last-set charge limit
 - `fan_curve` — custom curve points and mode (applied to both fans)
 - `tdp` — PL1, PL2, and PL3 power limits in watts
+- `undervolt` — CPU and iGPU Curve Optimizer offsets
 
 On `get-state` requests the daemon also populates `temperature` (APU die
-temperature in °C) and `fan_rpm` (fan speed in RPM) from live sysfs reads.
+temperature in °C), `fan_rpm` (fan speed in RPM), and `undervolt_available`
+(whether the `ryzen_smu` kernel module is present) from live sysfs reads.
 These are not persisted — they are real-time sensor values.
 
 On startup the daemon reads this file and restores all saved settings before
-accepting any connections. If the last profile was `custom`, saved fan curves
-and TDP values are re-applied to the hardware.
+accepting any connections. If the last profile was `custom`, saved fan curves,
+TDP values, and undervolt offsets are re-applied to the hardware.
 
 !!! note "Raw hidrawN paths are not persisted"
     Commands sent with `--device /dev/hidraw2` (a raw path) are applied but
     not saved — raw device numbers are transient and may change across reboots.
     Use `keyboard` or `lightbar` by name for persistent per-zone settings.
+
+---
+
+## Sleep/resume recovery
+
+Several hardware settings are volatile — they are lost when the system enters
+sleep (suspend/hibernate) and must be reapplied on resume:
+
+- **Fan curves** — custom PWM curves reset to firmware defaults on sleep
+- **TDP (PPT)** — power limits revert to the firmware profile's defaults
+- **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
+
+The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
+signals from systemd-logind. When the system resumes (`PrepareForSleep(false)`),
+the daemon automatically restores all volatile settings from its saved state —
+but only when the `custom` profile is active. Stock profiles (`quiet`,
+`balanced`, `performance`) let the firmware manage these settings.
+
+This happens transparently with no user intervention. You can verify it worked
+by checking the daemon logs after a resume:
+
+```sh
+journalctl --user -u z13ctl --since "5 minutes ago"
+```
 
 ---
 
