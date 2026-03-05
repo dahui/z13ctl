@@ -4,6 +4,7 @@ package cmd
 // offsets via the ryzen_smu kernel module. Requires the ryzen_smu DKMS module.
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/dahui/z13ctl/api"
@@ -63,7 +64,11 @@ func runUndervoltGet() error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(value)
+		var uv api.UndervoltState
+		if jErr := json.Unmarshal([]byte(value), &uv); jErr != nil {
+			return fmt.Errorf("parsing undervolt state: %w", jErr)
+		}
+		printUndervoltState(uv)
 		return nil
 	}
 
@@ -73,6 +78,16 @@ func runUndervoltGet() error {
 	}
 	fmt.Println("Curve Optimizer: not set (daemon not running)")
 	return nil
+}
+
+func printUndervoltState(uv api.UndervoltState) {
+	if uv.CPUCO == 0 && uv.IGPUCO == 0 {
+		fmt.Println("Curve Optimizer: stock (0)")
+		return
+	}
+	fmt.Println("Curve Optimizer offsets:")
+	fmt.Printf("  CPU:  %d\n", uv.CPUCO)
+	fmt.Printf("  iGPU: %d\n", uv.IGPUCO)
 }
 
 func runUndervoltSet() error {
