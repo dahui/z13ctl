@@ -579,11 +579,24 @@ func (d *Daemon) handleTDP(req request) response {
 		PlatformSPPT: pl2,
 	}
 	d.state.Profile = "custom"
+	fc := d.state.FanCurve
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
 	}
+
+	// If all values are now safe, restore saved fan curve (undo full-speed override).
+	if pl1 <= cli.TDPMaxSafe && pl2 <= cli.TDPMaxSafe && pl3 <= cli.TDPMaxSafe {
+		if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+			if err := cli.SetBothFanCurves(fc.Points); err != nil {
+				slog.Warn("failed to restore fan curve after TDP change", "err", err)
+			} else {
+				slog.Info("fan curve restored after TDP reduced to safe levels")
+			}
+		}
+	}
+
 	return response{OK: true}
 }
 
@@ -591,9 +604,14 @@ func (d *Daemon) handleTDPReset() response {
 	if err := cli.ResetTDP(); err != nil {
 		return response{OK: false, Error: "tdp-reset: " + err.Error()}
 	}
+	// Reset fans to auto mode (undo any full-speed override from high TDP).
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+	}
 	slog.Info("tdp-reset")
 	d.mu.Lock()
 	d.state.TDP = nil
+	d.state.FanCurve = nil
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {

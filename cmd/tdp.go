@@ -150,6 +150,8 @@ func runTdpReset() error {
 	if err := cli.ResetTDP(); err != nil {
 		return fmt.Errorf("resetting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
+	// Reset fans to auto mode (undo any full-speed override from high TDP).
+	_ = cli.ResetAllFanCurves()
 	fmt.Println("TDP reset to firmware defaults")
 	return nil
 }
