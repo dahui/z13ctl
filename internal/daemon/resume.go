@@ -3,8 +3,8 @@ package daemon
 // resume.go — sleep/resume watcher via systemd-logind DBus signals.
 //
 // Listens for org.freedesktop.login1.Manager.PrepareForSleep(false) on the
-// system bus. When the system resumes from sleep, all volatile settings
-// (undervolt, TDP, fan curves) are reapplied from daemon state.
+// system bus. When the system resumes from sleep, lighting and all volatile
+// settings (undervolt, TDP, fan curves) are reapplied from daemon state.
 
 import (
 	"context"
@@ -67,11 +67,20 @@ func (d *Daemon) watchResume(ctx context.Context) {
 }
 
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
-// fan curves, TDP, and Curve Optimizer offsets.
+// lighting, fan curves, TDP, and Curve Optimizer offsets.
 func (d *Daemon) restoreVolatileState() {
 	d.mu.Lock()
 	state := d.state
 	d.mu.Unlock()
+
+	// Restore lighting (lost on sleep regardless of profile).
+	if d.dev != nil {
+		if err := d.applyLightingState(); err != nil {
+			slog.Warn("resume: failed to restore lighting", "err", err)
+		} else {
+			slog.Info("resume: lighting restored")
+		}
+	}
 
 	if state.Profile != "custom" {
 		slog.Info("skipping volatile state restore (stock profile active)", "profile", state.Profile)

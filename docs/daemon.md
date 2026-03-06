@@ -7,8 +7,8 @@ ordinary one-shot CLI invocations cannot:
   fan curve, TDP, and undervolt settings to `~/.local/state/z13ctl/state.json`
   and restores them automatically at every boot.
 - **Sleep/resume recovery** — watches for system resume events via D-Bus and
-  reapplies volatile settings (fan curves, TDP, undervolt) that are lost during
-  sleep.
+  reapplies lighting and volatile settings (fan curves, TDP, undervolt) that
+  are lost during sleep.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -145,14 +145,16 @@ TDP values, and undervolt offsets are re-applied to the hardware.
 Several hardware settings are volatile — they are lost when the system enters
 sleep (suspend/hibernate) and must be reapplied on resume:
 
+- **Lighting** — RGB lighting is turned off by the hardware on sleep
 - **Fan curves** — custom PWM curves reset to firmware defaults on sleep
 - **TDP (PPT)** — power limits revert to the firmware profile's defaults
 - **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
 
 The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
 signals from systemd-logind. When the system resumes (`PrepareForSleep(false)`),
-the daemon automatically restores all volatile settings from its saved state —
-but only when the `custom` profile is active. Stock profiles (`quiet`,
+the daemon restores lighting (regardless of profile) and all custom-profile
+volatile settings from its saved state. Fan curves, TDP, and undervolt are only
+restored when the `custom` profile is active — stock profiles (`quiet`,
 `balanced`, `performance`) let the firmware manage these settings.
 
 This happens transparently with no user intervention. You can verify it worked
