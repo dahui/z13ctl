@@ -120,7 +120,9 @@ The file is written atomically after every successful command. It stores:
 - `battery_limit` — last-set charge limit
 - `fan_curve` — custom curve points and mode (applied to both fans)
 - `tdp` — PL1, PL2, and PL3 power limits in watts
-- `undervolt` — CPU and iGPU Curve Optimizer offsets
+- `undervolt` — CPU and iGPU Curve Optimizer offsets (preserved across profile
+  switches for recall; `undervolt-get` includes the current profile so clients
+  can distinguish active vs saved values)
 
 On `get-state` requests the daemon also populates `temperature` (APU die
 temperature in °C), `fan_rpm` (fan speed in RPM), and `undervolt_available`

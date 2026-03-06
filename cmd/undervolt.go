@@ -64,11 +64,14 @@ func runUndervoltGet() error {
 		if err != nil {
 			return err
 		}
-		var uv api.UndervoltState
-		if jErr := json.Unmarshal([]byte(value), &uv); jErr != nil {
+		var resp struct {
+			api.UndervoltState
+			Profile string `json:"profile"`
+		}
+		if jErr := json.Unmarshal([]byte(value), &resp); jErr != nil {
 			return fmt.Errorf("parsing undervolt state: %w", jErr)
 		}
-		printUndervoltState(uv)
+		printUndervoltState(resp.UndervoltState, resp.Profile)
 		return nil
 	}
 
@@ -80,14 +83,23 @@ func runUndervoltGet() error {
 	return nil
 }
 
-func printUndervoltState(uv api.UndervoltState) {
+func printUndervoltState(uv api.UndervoltState, profile string) {
 	if uv.CPUCO == 0 && uv.IGPUCO == 0 {
 		fmt.Println("Curve Optimizer: stock (0)")
 		return
 	}
-	fmt.Println("Curve Optimizer offsets:")
-	fmt.Printf("  CPU:  %d\n", uv.CPUCO)
-	fmt.Printf("  iGPU: %d\n", uv.IGPUCO)
+	active := profile == "" || profile == "custom"
+	if active {
+		fmt.Println("Curve Optimizer offsets:")
+	} else {
+		fmt.Printf("Curve Optimizer offsets (not active — %s profile):\n", profile)
+	}
+	suffix := ""
+	if !active {
+		suffix = "  (saved)"
+	}
+	fmt.Printf("  CPU:  %d%s\n", uv.CPUCO, suffix)
+	fmt.Printf("  iGPU: %d%s\n", uv.IGPUCO, suffix)
 }
 
 func runUndervoltSet() error {

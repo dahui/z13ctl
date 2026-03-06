@@ -681,12 +681,18 @@ func (d *Daemon) handleUndervoltGet() response {
 	}
 	d.mu.Lock()
 	uv := d.state.Undervolt
+	profile := d.state.Profile
 	d.mu.Unlock()
-	if uv == nil {
-		data, _ := json.Marshal(api.UndervoltState{})
-		return response{OK: true, Value: string(data)}
+
+	uvState := api.UndervoltState{}
+	if uv != nil {
+		uvState = *uv
 	}
-	data, _ := json.Marshal(uv)
+	// Include the current profile so the client can tell whether CO is active.
+	data, _ := json.Marshal(struct {
+		api.UndervoltState
+		Profile string `json:"profile"`
+	}{uvState, profile})
 	return response{OK: true, Value: string(data)}
 }
 

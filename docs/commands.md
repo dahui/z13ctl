@@ -321,7 +321,9 @@ z13ctl undervolt [flags]
 | `--reset` | Reset both CPU and iGPU CO to stock (0) |
 
 CO values have no sysfs readback — `--get` returns the last-applied values from
-daemon state. If the daemon is not running, reports "not set".
+daemon state. If a stock profile is active (quiet/balanced/performance), the
+output indicates that the saved offsets are not currently applied. If the daemon
+is not running, reports "not set".
 
 CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
 them automatically on startup and resume when the custom profile is active.
