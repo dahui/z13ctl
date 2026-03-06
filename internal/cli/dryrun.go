@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/hid"
 )
@@ -115,6 +116,91 @@ func DryRunBootSound(value int) {
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	fmt.Printf("Would write %d to %s\n", value, FindPanelOverdrivePath())
+}
+
+// DryRunFanCurve prints the sysfs writes for a fan curve set operation.
+// The same curve is written to both fans.
+func DryRunFanCurve(points []api.FanCurvePoint) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	curveDir := FindFanCurveHwmonPath()
+	if curveDir == "" {
+		curveDir = "<hwmon not found>"
+	}
+	for _, f := range fanNames {
+		for i, p := range points {
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, f.index, i+1)
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, f.index, i+1)
+		}
+		fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, f.index)
+	}
+}
+
+// DryRunFanCurveReset prints the sysfs writes for a fan curve reset (both fans).
+func DryRunFanCurveReset() {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	curveDir := FindFanCurveHwmonPath()
+	if curveDir == "" {
+		curveDir = "<hwmon not found>"
+	}
+	for _, f := range fanNames {
+		fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, f.index)
+	}
+}
+
+// DryRunTdp prints the sysfs writes for a TDP set operation.
+func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if pl1 == 0 {
+		pl1 = watts
+	}
+	if pl2 == 0 {
+		pl2 = watts
+	}
+	if pl3 == 0 {
+		pl3 = watts
+	}
+	if force && (pl1 > TDPMaxSafe || pl2 > TDPMaxSafe || pl3 > TDPMaxSafe) {
+		fmt.Println("Would set all fans to full speed (pwm_enable=0) for thermal safety")
+	}
+	base := FindPPTBasePath()
+	fmt.Printf("Would write %d to %s/ppt_pl1_spl\n", pl1, base)
+	fmt.Printf("Would write %d to %s/ppt_pl2_sppt\n", pl2, base)
+	fmt.Printf("Would write %d to %s/ppt_fppt\n", pl3, base)
+	fmt.Printf("Would write %d to %s/ppt_apu_sppt\n", pl2, base)
+	fmt.Printf("Would write %d to %s/ppt_platform_sppt\n", pl2, base)
+}
+
+// DryRunTdpReset prints the actions for a TDP reset.
+func DryRunTdpReset() {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Println("Would reset fan curves to auto mode")
+	fmt.Println("Would switch profile to balanced (firmware sets per-profile PPT and fan curves)")
+}
+
+// DryRunUndervolt prints the SMU commands that would be sent for a Curve Optimizer change.
+func DryRunUndervolt(cpu, igpu int) {
+	fmt.Println("=== DRY RUN (no SMU write) ===")
+	if cpu != 0 {
+		encoded := encodeCOValue(cpu)
+		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO %d)\n", encoded, cpu)
+		fmt.Printf("Would send PSMU cmd 0x5D with arg 0x%X (CPU CO %d)\n", encoded, cpu)
+	}
+	if igpu != 0 {
+		encoded := encodeCOValue(igpu)
+		fmt.Printf("Would send PSMU cmd 0xB7 with arg 0x%X (iGPU CO %d)\n", encoded, igpu)
+	}
+	if cpu == 0 && igpu == 0 {
+		fmt.Println("No changes (both offsets are 0)")
+	}
+}
+
+// DryRunUndervoltReset prints the SMU commands that would be sent to reset CO.
+func DryRunUndervoltReset() {
+	fmt.Println("=== DRY RUN (no SMU write) ===")
+	encoded := encodeCOValue(0)
+	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (reset CPU CO)\n", encoded)
+	fmt.Printf("Would send PSMU cmd 0x5D with arg 0x%X (reset CPU CO)\n", encoded)
+	fmt.Printf("Would send PSMU cmd 0xB7 with arg 0x%X (reset iGPU CO)\n", encoded)
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

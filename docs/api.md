@@ -81,6 +81,21 @@ handled, err          := api.SendProfileSet("performance")
 // Boot sound and panel overdrive
 handled, err := api.SendBootSoundSet(0)
 handled, err := api.SendPanelOverdriveSet(1)
+
+// Fan curves (applied to both fans simultaneously)
+handled, value, err := api.SendFanCurveGet()
+handled, err         := api.SendFanCurveSet("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+handled, err         := api.SendFanCurveReset()
+
+// TDP (PPT power limits)
+handled, value, err := api.SendTdpGet()
+handled, err         := api.SendTdpSet("50", "", "", "", false)  // all PPTs to 50W
+handled, err         := api.SendTdpReset()
+
+// Undervolt (Curve Optimizer — requires ryzen_smu kernel module)
+handled, value, err := api.SendUndervoltGet()
+handled, err         := api.SendUndervoltSet("-20", "-15")  // CPU CO -20, iGPU CO -15
+handled, err         := api.SendUndervoltReset()
 ```
 
 **Full state snapshot (for GUI initialization):**
@@ -91,6 +106,12 @@ if handled && err == nil {
     fmt.Println("lighting mode:", state.Lighting.Mode)
     fmt.Println("profile:", state.Profile)
     fmt.Println("battery limit:", state.Battery)
+    fmt.Println("fan curve:", state.FanCurve)
+    fmt.Println("tdp:", state.TDP)
+    fmt.Println("undervolt:", state.Undervolt)
+    fmt.Println("undervolt available:", state.UndervoltAvailable)
+    fmt.Println("APU temp:", state.Temperature, "°C")
+    fmt.Println("fan RPM:", state.FanRPM)
 }
 ```
 
@@ -111,5 +132,5 @@ for event := range ch {
 
 ## Full API reference
 
-See the [API Reference](api-reference.md) page for auto-generated documentation
+See the [API Reference](api-reference.md) page for full documentation
 of all exported types and functions.

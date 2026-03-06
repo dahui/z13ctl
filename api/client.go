@@ -37,8 +37,13 @@ type request struct {
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", or /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
+	PL1        string   `json:"pl1,omitempty"`
+	PL2        string   `json:"pl2,omitempty"`
+	PL3        string   `json:"pl3,omitempty"`
+	Force      bool     `json:"force,omitempty"`
+	IGPU       string   `json:"igpu,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -240,6 +245,129 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, scanErr)
 	}
 	return true, value, nil
+}
+
+// SendFanCurveGet queries the daemon for the current fan curve data.
+// Returns JSON value string with both fans' curve and mode.
+func SendFanCurveGet() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "fancurve-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendFanCurveSet sends a fan curve set command to the daemon.
+// The curve is applied to both fans simultaneously.
+func SendFanCurveSet(curve string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve", Set: curve})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendFanCurveReset resets both fans to firmware auto mode.
+func SendFanCurveReset() (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve-reset"})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendTdpGet queries the daemon for current TDP/PPT values.
+// Returns JSON value string.
+func SendTdpGet() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "tdp-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendTdpSet sends a TDP set command to the daemon.
+func SendTdpSet(watts string, pl1, pl2, pl3 string, force bool) (bool, error) {
+	handled, resp, err := sendCommand(request{
+		Cmd:   "tdp",
+		Set:   watts,
+		PL1:   pl1,
+		PL2:   pl2,
+		PL3:   pl3,
+		Force: force,
+	})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendTdpReset sends a TDP reset command to the daemon.
+func SendTdpReset() (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "tdp-reset"})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendUndervoltGet queries the daemon for the current Curve Optimizer offsets.
+// Returns JSON value string. Returns (false, "", nil) if the daemon is not running.
+func SendUndervoltGet() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "undervolt-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendUndervoltSet sends a Curve Optimizer set command to the daemon.
+// cpu and igpu are string representations of the CO offsets (e.g. "-20").
+func SendUndervoltSet(cpu, igpu string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu, IGPU: igpu})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendUndervoltReset resets Curve Optimizer to stock (0) for both CPU and iGPU.
+func SendUndervoltReset() (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset"})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
 }
 
 // SendGetState fetches the daemon's full cached state for GUI initialization.

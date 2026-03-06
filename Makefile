@@ -4,7 +4,7 @@ LDFLAGS  := -s -w -X github.com/dahui/z13ctl/cmd.Version=$(VERSION)
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
 SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 
-.PHONY: build test cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service clean help
+.PHONY: build test cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs clean help
 
 ## build: compile z13ctl with version from git tags
 build:
@@ -68,6 +68,11 @@ uninstall-perms-service:
 	rm -f $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
 	systemctl daemon-reload
 	@echo "Permissions service removed."
+
+## docs: generate API reference and serve mkdocs locally
+docs:
+	go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest ./api/... > docs/api-reference.md
+	mkdocs serve
 
 ## clean: remove all generated build and test artifacts
 clean:

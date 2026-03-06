@@ -40,6 +40,9 @@ nfpms:
     maintainer: "Jeff Hagadorn <noreply@github.com>"
     description: CLI and daemon for ASUS ROG Flow Z13 hardware control
     license: Apache-2.0
+    dependencies:
+      - systemd
+      - dbus
     provides:
       - z13ctl
     scripts:
@@ -59,6 +62,13 @@ nfpms:
         dst: /usr/lib/udev/rules.d/99-z13ctl.rules
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
+    overrides:
+      archlinux:
+        suggests:
+          - "ryzen_smu-dkms-git: CPU/iGPU undervolting via Curve Optimizer"
+      rpm:
+        suggests:
+          - dkms-ryzen_smu
     rpm:
       group: Applications/System
 

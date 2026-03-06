@@ -96,12 +96,21 @@ z13ctl profile [flags]
 | `--get` | Print the active performance profile |
 | `--set <profile>` | Set the performance profile |
 
-Valid profiles: `quiet`, `balanced`, `performance`
+Valid profiles: `quiet`, `balanced`, `performance`, `custom`
+
+The `custom` profile is a virtual profile that recalls saved fan curves and TDP
+settings from the daemon's state file. It does **not** write to `platform_profile`.
+Setting `custom` requires the daemon to be running, and at least one custom fan
+curve or TDP value must have been previously set.
+
+Setting a stock profile (`quiet`, `balanced`, `performance`) resets any active
+custom fan curves and TDP values back to firmware defaults.
 
 ```sh
 z13ctl profile --get
 z13ctl profile --set performance
 z13ctl profile --set balanced
+z13ctl profile --set custom
 ```
 
 !!! note
@@ -176,6 +185,209 @@ z13ctl paneloverdrive --set 1
 
 ---
 
+## fancurve
+
+Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
+Both physical fans cool the same APU, so the same curve is always applied to
+both fans simultaneously. Root or group access required; see [setup](#setup).
+
+```
+z13ctl fancurve [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the current fan curve, mode, RPM, and APU temperature |
+| `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
+| `--reset` | Reset both fans to firmware auto mode |
+
+**Curve format:** 8 comma-separated `temp:speed` pairs. Speed can be a PWM
+value (0–255) or a percentage with a `%` suffix (0–100%). Both formats can be
+mixed in the same curve.
+
+```
+"48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"   # PWM values
+"48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"  # percentages
+```
+
+**Validation rules:**
+
+- Exactly 8 points required
+- Temperatures must be monotonically increasing (0–120 &deg;C)
+- Speed values must be non-decreasing (0–255 PWM or 0–100%)
+
+```sh
+# Read current fan curves
+z13ctl fancurve --get
+
+# Set a custom fan curve using PWM values (both fans)
+z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
+
+# Set a custom fan curve using percentages
+z13ctl fancurve --set "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
+
+# Reset both fans to auto mode
+z13ctl fancurve --reset
+```
+
+---
+
+## tdp
+
+Get, set, or reset TDP (Thermal Design Power) limits via the asus-nb-wmi PPT
+(Package Power Tracking) sysfs attributes. Root or group access required; see
+[setup](#setup).
+
+```
+z13ctl tdp [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print current PPT values |
+| `--set <watts>` | Set all PPT limits to the specified wattage |
+| `--reset` | Switch to balanced profile (firmware manages PPT and fan curves) |
+| `--pl1 <watts>` | Override PL1/SPL independently |
+| `--pl2 <watts>` | Override PL2/sPPT independently |
+| `--pl3 <watts>` | Override PL3/fPPT independently |
+| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to an 80% minimum curve; custom curves must keep all PWM values at or above 204 (80%). |
+
+**PPT attributes:**
+
+| Attribute | Limit | Description |
+|-----------|-------|-------------|
+| `ppt_pl1_spl` | PL1 — Sustained | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
+| `ppt_pl2_sppt` | PL2 — Short-term boost | Power the APU can draw for several seconds before throttling to PL1. |
+| `ppt_fppt` | PL3 — Fast boost | Maximum instantaneous power for millisecond-scale spikes. |
+| `ppt_apu_sppt` | APU short-term | APU-specific short-term limit; automatically mirrors PL2. |
+| `ppt_platform_sppt` | Platform short-term | Platform-level short-term limit; automatically mirrors PL2. |
+
+With `--set`, all three limits default to the same value. Use `--pl1`, `--pl2`,
+and `--pl3` to set them independently — a stepped configuration like
+`--set 45 --pl2 55 --pl3 65` sustains 45W with short bursts to 55W and
+instantaneous peaks to 65W.
+
+Stock profiles (quiet/balanced/performance) let the firmware manage TDP
+dynamically — the firmware sets per-profile PPT values automatically on profile
+change. Setting a custom TDP switches to the `custom` profile.
+
+!!! note "PPT readback values"
+    The values shown by `--get` are the kernel driver's cached values, which may
+    not reflect the actual EC limits (especially after a fresh boot or profile
+    change). Use `ryzenadj -i` if you need ground-truth PPT readings.
+
+**Safety:**
+
+- Default range: 5–75W
+- `--force` extends the range to 5–93W
+- When any PPT value exceeds 75W, **both fans are forced to full speed** before
+  the TDP values are written. If the fan write fails, TDP is not applied.
+
+```sh
+# Read current TDP values
+z13ctl tdp --get
+
+# Set all PPT limits to 50W
+z13ctl tdp --set 50
+
+# Set with individual PL overrides
+z13ctl tdp --set 45 --pl2 55 --pl3 60
+
+# Force high TDP (fans will be set to full speed)
+z13ctl tdp --set 85 --force
+
+# Reset to balanced profile (firmware manages PPT)
+z13ctl tdp --reset
+```
+
+---
+
+## undervolt
+
+Get or set CPU/iGPU Curve Optimizer (CO) offsets via the `ryzen_smu` kernel
+module. Negative values reduce voltage (undervolt), improving efficiency and
+thermals without reducing performance. Root or group access required; see
+[setup](#setup).
+
+```
+z13ctl undervolt [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print current CO offsets (from daemon state) |
+| `--set <value>` | Set all-core CPU CO offset (0 to -40) |
+| `--igpu <value>` | Set iGPU CO offset (0 to -30); used with `--set` |
+| `--reset` | Reset both CPU and iGPU CO to stock (0) |
+
+CO values have no sysfs readback — `--get` returns the last-applied values from
+daemon state. If a stock profile is active (quiet/balanced/performance), the
+output indicates that the saved offsets are not currently applied. If the daemon
+is not running, reports "not set".
+
+CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
+them automatically on startup and resume when the custom profile is active.
+
+**Safety limits (matching G-Helper defaults):**
+
+| Parameter | Range |
+|-----------|-------|
+| CPU CO | 0 to -40 |
+| iGPU CO | 0 to -30 |
+
+**Requires:** `ryzen_smu` kernel module. Install via:
+
+- **Arch/CachyOS:** `ryzen_smu-dkms-git` (AUR)
+- **Fedora:** `akmod-ryzen-smu` (COPR)
+- **Ubuntu/Debian:** build from source (`github.com/leogx9r/ryzen_smu`)
+
+If the module is not installed, undervolt commands return a helpful error.
+
+```sh
+# Read current CO values
+z13ctl undervolt --get
+
+# Set CPU CO to -20
+z13ctl undervolt --set -20
+
+# Set CPU CO to -20 and iGPU CO to -15
+z13ctl undervolt --set -20 --igpu -15
+
+# Reset to stock voltage
+z13ctl undervolt --reset
+
+# Preview without applying
+z13ctl --dry-run undervolt --set -20
+```
+
+---
+
+## status
+
+Display a summary of all system metrics in a single view: APU temperature, fan
+speed and mode, performance profile, TDP power limits, undervolt status, and
+battery charge level with charge limit.
+
+```
+z13ctl status
+```
+
+This command is read-only and takes no flags. All values are read directly from
+sysfs (except undervolt, which has no sysfs readback — shows `ryzen_smu`
+module availability).
+
+```sh
+z13ctl status
+# APU:       62°C
+# Fans:      4200 RPM, mode: auto
+# Profile:   balanced
+# TDP:       52W (PL1) / 71W (PL2) / 70W (PL3)
+# Undervolt: available (ryzen_smu loaded)
+# Battery:   74% (limit: 80%)
+```
+
+---
+
 ## list
 
 List all matching hidraw devices and show whether each has Aura support.
@@ -192,8 +404,10 @@ not require the daemon to be running.
 ## setup
 
 Install udev rules and a boot service granting a group read/write access to
-the ASUS HID devices, performance profile, battery charge limit, and
-firmware attributes (boot sound, panel overdrive).
+the ASUS HID devices, performance profile, battery charge limit, firmware
+attributes (boot sound, panel overdrive), hwmon fan curve attributes,
+asus-nb-wmi PPT power limit attributes for TDP control, and ryzen_smu sysfs
+files for undervolting (if the module is loaded).
 
 ```
 sudo z13ctl setup [flags]
@@ -233,9 +447,10 @@ z13ctl --no-button daemon   # without button watcher
 ```
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
-`profile`, `batterylimit`, `bootsound`, `paneloverdrive`) route through the
-daemon socket automatically. If the daemon is not running they fall back to
-direct hardware or sysfs access.
+`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `fancurve`, `tdp`,
+`undervolt`, `status`)
+route through the daemon socket automatically. If the daemon is not running
+they fall back to direct hardware or sysfs access.
 
 ---
 

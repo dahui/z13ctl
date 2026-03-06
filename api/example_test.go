@@ -160,6 +160,132 @@ func ExampleSendPanelOverdriveGet() {
 	fmt.Println("panel overdrive:", value)
 }
 
+func ExampleSendFanCurveGet() {
+	// Read the current fan curve for both fans via the daemon.
+	handled, value, err := api.SendFanCurveGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curve:", value)
+}
+
+func ExampleSendFanCurveSet() {
+	// Set a custom 8-point fan curve (applied to both fans).
+	handled, err := api.SendFanCurveSet("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curve set")
+}
+
+func ExampleSendFanCurveReset() {
+	// Reset both fans to firmware auto mode.
+	handled, err := api.SendFanCurveReset()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curves reset")
+}
+
+func ExampleSendTdpGet() {
+	// Read current TDP/PPT values via the daemon.
+	handled, value, err := api.SendTdpGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp:", value)
+}
+
+func ExampleSendTdpSet() {
+	// Set TDP to 50W (all PPT values equal).
+	handled, err := api.SendTdpSet("50", "", "", "", false)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp set")
+}
+
+func ExampleSendTdpReset() {
+	// Reset to balanced profile (firmware manages PPT and fan curves).
+	handled, err := api.SendTdpReset()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("tdp reset")
+}
+
+func ExampleSendUndervoltGet() {
+	// Read current Curve Optimizer offsets from daemon state.
+	handled, value, err := api.SendUndervoltGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt:", value)
+}
+
+func ExampleSendUndervoltSet() {
+	// Set CPU Curve Optimizer to -20 and iGPU to -15.
+	handled, err := api.SendUndervoltSet("-20", "-15")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt set")
+}
+
+func ExampleSendUndervoltReset() {
+	// Reset Curve Optimizer to stock (0).
+	handled, err := api.SendUndervoltReset()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt reset")
+}
+
 func ExampleSendGetState() {
 	// Fetch the daemon's full cached state for GUI initialization.
 	handled, state, err := api.SendGetState()
