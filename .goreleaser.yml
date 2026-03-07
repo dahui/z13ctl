@@ -65,10 +65,7 @@ nfpms:
     overrides:
       archlinux:
         suggests:
-          - "ryzen_smu-dkms-git: CPU/iGPU undervolting via Curve Optimizer"
-      rpm:
-        suggests:
-          - dkms-ryzen_smu
+          - "ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer"
     rpm:
       group: Applications/System
 

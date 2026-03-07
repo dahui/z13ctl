@@ -1,6 +1,6 @@
 package cmd
 
-// undervolt.go — "undervolt" subcommand: read or set CPU/iGPU Curve Optimizer
+// undervolt.go — "undervolt" subcommand: read or set CPU Curve Optimizer
 // offsets via the ryzen_smu kernel module. Requires the ryzen_smu DKMS module.
 
 import (
@@ -17,30 +17,29 @@ var (
 	uvGetFlag   bool
 	uvSetFlag   string
 	uvResetFlag bool
-	uvIGPUFlag  string
 )
 
 var undervoltCmd = &cobra.Command{
 	Use:   "undervolt",
-	Short: "Get or set CPU/iGPU Curve Optimizer offsets via ryzen_smu",
-	Long: `Get or set AMD Curve Optimizer (CO) offsets for the CPU and integrated GPU.
+	Short: "Get or set CPU Curve Optimizer offsets via ryzen_smu",
+	Long: `Get or set AMD Curve Optimizer (CO) offsets for all CPU cores.
 
 Curve Optimizer adjusts the voltage-frequency curve — negative values reduce
 voltage (undervolt), improving efficiency and thermals without reducing performance.
 
-With --get, prints the current CO offsets from daemon state. CO values have no
-sysfs readback, so this shows the last-applied values.
+With --get, prints the current CO offset from daemon state. CO values have no
+sysfs readback, so this shows the last-applied value and whether it is active.
 
-With --set, applies an all-core CPU CO offset. Use --igpu to also set the iGPU
-offset. Values must be 0 (stock) or negative (undervolt).
+With --set, applies an all-core CPU CO offset. Values must be 0 (stock) or
+negative (undervolt).
 
-With --reset, resets both CPU and iGPU CO to 0 (stock voltage).
+With --reset, resets CPU CO to 0 (stock voltage).
 
 Safety limits (matching G-Helper defaults):
-  CPU:  0 to -40
-  iGPU: 0 to -30
+  CPU: 0 to -40
 
 Requires the ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR).
+The amkillam fork is required for Strix Halo (Ryzen AI MAX+) support.
 CO values are volatile — they reset on reboot and sleep. The daemon reapplies
 them automatically on startup and resume when the custom profile is active.`,
 	Args: cobra.NoArgs,
@@ -84,22 +83,20 @@ func runUndervoltGet() error {
 }
 
 func printUndervoltState(uv api.UndervoltState, profile string) {
-	if uv.CPUCO == 0 && uv.IGPUCO == 0 {
+	if uv.CPUCO == 0 {
 		fmt.Println("Curve Optimizer: stock (0)")
 		return
 	}
-	active := profile == "" || profile == "custom"
-	if active {
+	if uv.Active {
 		fmt.Println("Curve Optimizer offsets:")
 	} else {
 		fmt.Printf("Curve Optimizer offsets (not active — %s profile):\n", profile)
 	}
 	suffix := ""
-	if !active {
+	if !uv.Active {
 		suffix = "  (saved)"
 	}
-	fmt.Printf("  CPU:  %d%s\n", uv.CPUCO, suffix)
-	fmt.Printf("  iGPU: %d%s\n", uv.IGPUCO, suffix)
+	fmt.Printf("  CPU: %d%s\n", uv.CPUCO, suffix)
 }
 
 func runUndervoltSet() error {
@@ -108,34 +105,27 @@ func runUndervoltSet() error {
 		return fmt.Errorf("invalid CPU undervolt value %q: must be an integer", uvSetFlag)
 	}
 
-	var igpuOffset int
-	if uvIGPUFlag != "" {
-		if _, err := fmt.Sscan(uvIGPUFlag, &igpuOffset); err != nil {
-			return fmt.Errorf("invalid iGPU undervolt value %q: must be an integer", uvIGPUFlag)
-		}
-	}
-
-	if err := cli.ValidateCOValues(cpuOffset, igpuOffset); err != nil {
+	if err := cli.ValidateCOValues(cpuOffset); err != nil {
 		return err
 	}
 
 	if dryRunFlag {
-		cli.DryRunUndervolt(cpuOffset, igpuOffset)
+		cli.DryRunUndervolt(cpuOffset)
 		return nil
 	}
 
-	if handled, err := api.SendUndervoltSet(uvSetFlag, uvIGPUFlag); handled {
+	if handled, err := api.SendUndervoltSet(uvSetFlag); handled {
 		if err != nil {
 			return err
 		}
-		printUndervoltResult(cpuOffset, igpuOffset)
+		fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
 		return nil
 	}
 
-	if err := cli.SetCurveOptimizer(cpuOffset, igpuOffset); err != nil {
+	if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
 		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	printUndervoltResult(cpuOffset, igpuOffset)
+	fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
 	return nil
 }
 
@@ -160,18 +150,9 @@ func runUndervoltReset() error {
 	return nil
 }
 
-func printUndervoltResult(cpu, igpu int) {
-	if igpu != 0 {
-		fmt.Printf("Curve Optimizer set: CPU %d, iGPU %d\n", cpu, igpu)
-	} else {
-		fmt.Printf("Curve Optimizer set: CPU %d\n", cpu)
-	}
-}
-
 func init() {
-	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print current Curve Optimizer offsets")
+	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print current Curve Optimizer offset")
 	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set all-core CPU CO offset (0 to -40)")
 	undervoltCmd.Flags().BoolVar(&uvResetFlag, "reset", false, "Reset CO to stock (0)")
-	undervoltCmd.Flags().StringVar(&uvIGPUFlag, "igpu", "", "Set iGPU CO offset (0 to -30)")
 	rootCmd.AddCommand(undervoltCmd)
 }

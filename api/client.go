@@ -43,7 +43,6 @@ type request struct {
 	PL2        string   `json:"pl2,omitempty"`
 	PL3        string   `json:"pl3,omitempty"`
 	Force      bool     `json:"force,omitempty"`
-	IGPU       string   `json:"igpu,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -346,9 +345,9 @@ func SendUndervoltGet() (handled bool, value string, err error) {
 }
 
 // SendUndervoltSet sends a Curve Optimizer set command to the daemon.
-// cpu and igpu are string representations of the CO offsets (e.g. "-20").
-func SendUndervoltSet(cpu, igpu string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu, IGPU: igpu})
+// cpu is a string representation of the CO offset (e.g. "-20").
+func SendUndervoltSet(cpu string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -358,7 +357,7 @@ func SendUndervoltSet(cpu, igpu string) (bool, error) {
 	return true, nil
 }
 
-// SendUndervoltReset resets Curve Optimizer to stock (0) for both CPU and iGPU.
+// SendUndervoltReset resets Curve Optimizer to stock (0).
 func SendUndervoltReset() (bool, error) {
 	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset"})
 	if !handled || err != nil {

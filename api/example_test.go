@@ -259,8 +259,8 @@ func ExampleSendUndervoltGet() {
 }
 
 func ExampleSendUndervoltSet() {
-	// Set CPU Curve Optimizer to -20 and iGPU to -15.
-	handled, err := api.SendUndervoltSet("-20", "-15")
+	// Set CPU Curve Optimizer to -20.
+	handled, err := api.SendUndervoltSet("-20")
 	if !handled {
 		fmt.Println("daemon not running")
 		return

@@ -39,7 +39,6 @@ type request struct {
 	PL2        string   `json:"pl2,omitempty"`
 	PL3        string   `json:"pl3,omitempty"`
 	Force      bool     `json:"force,omitempty"`
-	IGPU       string   `json:"igpu,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -137,8 +136,8 @@ func (d *Daemon) dispatch(req request) response {
 		if tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs()); err == nil {
 			s.TDP = &tdp
 		}
-		// Indicate whether undervolt is available (ryzen_smu loaded).
-		s.UndervoltAvailable = cli.SMUAvailable()
+		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
+		s.UndervoltAvailable = cli.SMUProbeUndervolt()
 		// Populate APU temperature and fan RPM from sysfs.
 		if temp, err := cli.ReadAPUTemperature(); err == nil {
 			s.Temperature = temp
@@ -362,9 +361,11 @@ func (d *Daemon) handleProfile(req request) response {
 			}
 		}
 		// Re-apply saved undervolt.
-		if uv := d.state.Undervolt; uv != nil && cli.SMUAvailable() {
-			if err := cli.SetCurveOptimizer(uv.CPUCO, uv.IGPUCO); err != nil {
+		if uv := d.state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
+			if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
 				slog.Warn("failed to reapply undervolt", "err", err)
+			} else {
+				d.state.Undervolt.Active = true
 			}
 		}
 		s := d.state
@@ -381,7 +382,7 @@ func (d *Daemon) handleProfile(req request) response {
 	if err := cli.ResetAllFanCurves(); err != nil {
 		slog.Warn("failed to reset fan curves to auto", "err", err)
 	}
-	if cli.SMUAvailable() {
+	if cli.SMUProbeUndervolt() {
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
 		}
@@ -393,6 +394,9 @@ func (d *Daemon) handleProfile(req request) response {
 	slog.Info("profile", "set", profile)
 	d.mu.Lock()
 	d.state.Profile = profile
+	if d.state.Undervolt != nil {
+		d.state.Undervolt.Active = false
+	}
 	s := d.state
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
@@ -676,8 +680,8 @@ func (d *Daemon) handleTDPReset() response {
 }
 
 func (d *Daemon) handleUndervoltGet() response {
-	if !cli.SMUAvailable() {
-		return response{OK: false, Error: "ryzen_smu kernel module not detected"}
+	if !cli.SMUProbeUndervolt() {
+		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 	d.mu.Lock()
 	uv := d.state.Undervolt
@@ -687,6 +691,7 @@ func (d *Daemon) handleUndervoltGet() response {
 	uvState := api.UndervoltState{}
 	if uv != nil {
 		uvState = *uv
+		uvState.Active = uv.Active
 	}
 	// Include the current profile so the client can tell whether CO is active.
 	data, _ := json.Marshal(struct {
@@ -697,8 +702,8 @@ func (d *Daemon) handleUndervoltGet() response {
 }
 
 func (d *Daemon) handleUndervolt(req request) response {
-	if !cli.SMUAvailable() {
-		return response{OK: false, Error: "ryzen_smu kernel module not detected; install ryzen_smu-dkms-git (AUR) or equivalent"}
+	if !cli.SMUProbeUndervolt() {
+		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
 	cpuOffset := 0
@@ -710,26 +715,17 @@ func (d *Daemon) handleUndervolt(req request) response {
 		cpuOffset = v
 	}
 
-	igpuOffset := 0
-	if req.IGPU != "" {
-		v, err := strconv.Atoi(req.IGPU)
-		if err != nil {
-			return response{OK: false, Error: "invalid iGPU undervolt value: must be an integer"}
-		}
-		igpuOffset = v
-	}
-
-	if err := cli.ValidateCOValues(cpuOffset, igpuOffset); err != nil {
+	if err := cli.ValidateCOValues(cpuOffset); err != nil {
 		return response{OK: false, Error: err.Error()}
 	}
 
-	if err := cli.SetCurveOptimizer(cpuOffset, igpuOffset); err != nil {
+	if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
 		return response{OK: false, Error: "undervolt: " + err.Error()}
 	}
 
-	slog.Info("undervolt", "cpu", cpuOffset, "igpu", igpuOffset)
+	slog.Info("undervolt", "cpu", cpuOffset)
 	d.mu.Lock()
-	d.state.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, IGPUCO: igpuOffset}
+	d.state.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, Active: true}
 	d.state.Profile = "custom"
 	s := d.state
 	d.mu.Unlock()
@@ -740,8 +736,8 @@ func (d *Daemon) handleUndervolt(req request) response {
 }
 
 func (d *Daemon) handleUndervoltReset() response {
-	if !cli.SMUAvailable() {
-		return response{OK: false, Error: "ryzen_smu kernel module not detected"}
+	if !cli.SMUProbeUndervolt() {
+		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
 	if err := cli.ResetCurveOptimizer(); err != nil {

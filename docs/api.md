@@ -94,7 +94,7 @@ handled, err         := api.SendTdpReset()
 
 // Undervolt (Curve Optimizer — requires ryzen_smu kernel module)
 handled, value, err := api.SendUndervoltGet()
-handled, err         := api.SendUndervoltSet("-20", "-15")  // CPU CO -20, iGPU CO -15
+handled, err         := api.SendUndervoltSet("-20")  // CPU CO -20
 handled, err         := api.SendUndervoltReset()
 ```
 
