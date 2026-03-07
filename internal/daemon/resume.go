@@ -12,6 +12,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/cli"
 )
 
@@ -58,6 +59,11 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				if d.dev != nil {
+					if err := aura.TurnOff(d.dev); err != nil {
+						slog.Warn("failed to turn off lighting before sleep", "err", err)
+					}
+				}
 				continue
 			}
 			slog.Info("system resumed from sleep, restoring volatile state")
