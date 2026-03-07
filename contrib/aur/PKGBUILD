@@ -9,6 +9,7 @@ license=('Apache-2.0')
 provides=('z13ctl')
 conflicts=('z13ctl')
 depends=('glibc')
+optdepends=('ryzen_smu-dkms-git: CPU/iGPU undervolting via Curve Optimizer')
 install=z13ctl-bin.install
 source=("https://github.com/dahui/z13ctl/releases/download/v${pkgver}/z13ctl_${pkgver}_linux_amd64.tar.gz")
 sha256sums=('SHA256_PLACEHOLDER')
