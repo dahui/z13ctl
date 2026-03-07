@@ -43,11 +43,12 @@ type FanCurveState struct {
 	Points []FanCurvePoint `json:"points"` // 8 points
 }
 
-// UndervoltState captures the AMD Curve Optimizer offsets applied to the CPU
-// and integrated GPU. Values are non-positive integers (0 = stock, negative = undervolt).
+// UndervoltState captures the AMD Curve Optimizer offset applied to the CPU.
+// Values are non-positive integers (0 = stock, negative = undervolt).
+// Active indicates whether the offset is currently applied to hardware.
 type UndervoltState struct {
-	CPUCO  int `json:"cpu_co"`  // all-core CPU Curve Optimizer offset
-	IGPUCO int `json:"igpu_co"` // integrated GPU Curve Optimizer offset
+	CPUCO  int  `json:"cpu_co"` // all-core CPU Curve Optimizer offset
+	Active bool `json:"active"` // true when CO is applied to hardware
 }
 
 // TDPState captures all PPT (Package Power Tracking) values in watts.

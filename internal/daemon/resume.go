@@ -111,11 +111,21 @@ func (d *Daemon) restoreVolatileState() {
 	}
 
 	// Restore undervolt.
-	if uv := state.Undervolt; uv != nil && cli.SMUAvailable() {
-		if err := cli.SetCurveOptimizer(uv.CPUCO, uv.IGPUCO); err != nil {
+	if uv := state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
+		d.mu.Lock()
+		if d.state.Undervolt != nil {
+			d.state.Undervolt.Active = false
+		}
+		d.mu.Unlock()
+		if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
 			slog.Warn("resume: failed to restore undervolt", "err", err)
 		} else {
-			slog.Info("resume: undervolt restored", "cpu", uv.CPUCO, "igpu", uv.IGPUCO)
+			d.mu.Lock()
+			if d.state.Undervolt != nil {
+				d.state.Undervolt.Active = true
+			}
+			d.mu.Unlock()
+			slog.Info("resume: undervolt restored", "cpu", uv.CPUCO)
 		}
 	}
 }

@@ -7,23 +7,31 @@
 
 ### Optional: ryzen_smu kernel module (for undervolting)
 
-CPU/iGPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
+CPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
 module. Without it, all other features work normally — undervolt commands will
 return a helpful error explaining how to install the module.
 
+!!! warning "Strix Halo requires the amkillam fork"
+    The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in
+    the 2025 Z13). You must use the
+    [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork. z13ctl
+    detects the wrong fork at startup via `SMUProbeUndervolt()` and reports
+    undervolt as unavailable.
+
 | Distribution | Package | Source |
 |---|---|---|
-| Arch / CachyOS | `ryzen_smu-dkms-git` | AUR |
-| Fedora | `dkms-ryzen_smu` | [birkch/ryzen_smu](https://copr.fedorainfracloud.org/coprs/birkch/ryzen_smu/) Copr |
-| Ubuntu / Debian | build from source | [github.com/leogx9r/ryzen_smu](https://github.com/leogx9r/ryzen_smu) |
+| Arch / CachyOS | `ryzen_smu-dkms-git` | AUR ([amkillam fork](https://github.com/amkillam/ryzen_smu)) |
+| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) |
 
 ```sh
 # Arch / CachyOS
 yay -S ryzen_smu-dkms-git
 
-# Fedora (enable Copr first)
-sudo dnf copr enable birkch/ryzen_smu
-sudo dnf install dkms-ryzen_smu
+# Other distros (build from amkillam fork)
+git clone https://github.com/amkillam/ryzen_smu.git
+cd ryzen_smu
+make
+sudo make install
 ```
 
 ---

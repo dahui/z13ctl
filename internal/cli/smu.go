@@ -9,6 +9,7 @@ package cli
 import (
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 )
@@ -98,6 +99,33 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	return code, outArgs, nil
 }
 
+// smuProbeOnce ensures the undervolt probe runs only once.
+var (
+	smuProbeOnce sync.Once
+	smuProbeOK   bool
+)
+
+// SMUProbeUndervolt sends a safe no-op CO command (offset 0) to verify that
+// the installed ryzen_smu module supports Curve Optimizer on this platform.
+// Returns true if the command succeeds, false if the module is missing or
+// returns an error (e.g. wrong fork). The result is cached after the first call.
+func SMUProbeUndervolt() bool {
+	if !SMUAvailable() {
+		return false
+	}
+	smuProbeOnce.Do(func() {
+		encoded := encodeCOValue(0)
+		args := [6]uint32{encoded}
+		resp, _, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, args)
+		smuProbeOK = err == nil && resp == SMUReturnOK
+		if !smuProbeOK {
+			slog.Warn("SMU undervolt probe failed — Curve Optimizer will be disabled",
+				"resp", fmt.Sprintf("0x%X", resp), "err", err)
+		}
+	})
+	return smuProbeOK
+}
+
 // smuResponseError returns a human-readable error for a non-OK SMU response.
 func smuResponseError(code uint32) error {
 	switch code {
@@ -106,7 +134,7 @@ func smuResponseError(code uint32) error {
 	case SMUReturnFailed:
 		return fmt.Errorf("SMU command failed (0xFF)")
 	case SMUReturnUnknownCmd:
-		return fmt.Errorf("SMU unknown command (0xFE)")
+		return fmt.Errorf("SMU unknown command (0xFE) — ensure amkillam/ryzen_smu fork is installed (leogx9r fork does not support Strix Halo)")
 	case SMUReturnRejected:
 		return fmt.Errorf("SMU command rejected (0xFD)")
 	case SMUReturnBusy:

@@ -118,11 +118,12 @@ func Run(ctx context.Context, watchBtn bool) error {
 				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
 			}
 		}
-		if uv := d.state.Undervolt; uv != nil && cli.SMUAvailable() {
-			if uvErr := cli.SetCurveOptimizer(uv.CPUCO, uv.IGPUCO); uvErr != nil {
+		if uv := d.state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
+			if uvErr := cli.SetCurveOptimizer(uv.CPUCO); uvErr != nil {
 				slog.Warn("failed to restore undervolt", "err", uvErr)
 			} else {
-				slog.Info("undervolt restored", "cpu", uv.CPUCO, "igpu", uv.IGPUCO)
+				d.state.Undervolt.Active = true
+				slog.Info("undervolt restored", "cpu", uv.CPUCO)
 			}
 		}
 	}
