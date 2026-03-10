@@ -102,7 +102,7 @@ func (d *Daemon) dispatch(req request) response {
 	case "bootsound-get":
 		return handleBootSoundGet()
 	case "paneloverdrive":
-		return handlePanelOverdrive(req)
+		return d.handlePanelOverdrive(req)
 	case "paneloverdrive-get":
 		return handlePanelOverdriveGet()
 	case "fancurve":
@@ -452,7 +452,7 @@ func handlePanelOverdriveGet() response {
 	return response{OK: true, Value: strings.TrimSpace(string(data))}
 }
 
-func handlePanelOverdrive(req request) response {
+func (d *Daemon) handlePanelOverdrive(req request) response {
 	value, err := strconv.Atoi(req.Set)
 	if err != nil || (value != 0 && value != 1) {
 		return response{OK: false, Error: "panel overdrive must be 0 or 1"}
@@ -461,6 +461,13 @@ func handlePanelOverdrive(req request) response {
 		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
 	}
 	slog.Info("paneloverdrive", "set", value)
+	d.mu.Lock()
+	d.state.PanelOverdrive = value
+	s := d.state
+	d.mu.Unlock()
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
 	return response{OK: true}
 }
 

@@ -96,6 +96,15 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
+	// Restore panel overdrive if enabled (firmware may not persist this across reboot).
+	if d.state.PanelOverdrive != 0 {
+		if poErr := cli.SetPanelOverdrive(d.state.PanelOverdrive); poErr != nil {
+			slog.Warn("failed to restore panel overdrive", "err", poErr)
+		} else {
+			slog.Info("panel overdrive restored", "value", d.state.PanelOverdrive)
+		}
+	}
+
 	// Restore fan curve + TDP if last profile was "custom".
 	if d.state.Profile == "custom" {
 		if fc := d.state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {

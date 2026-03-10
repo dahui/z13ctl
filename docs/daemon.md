@@ -180,5 +180,101 @@ ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
 
 See the [API](api.md) page for details.
 
-If another tool needs exclusive access to the button device, start the daemon
-with `--no-button` to skip the button watcher entirely.
+### InputPlumber compatibility
+
+On gaming distributions such as Bazzite and ChimeraOS, [InputPlumber](https://github.com/ShadowBlip/InputPlumber)
+ships a built-in device profile for the ROG Flow Z13 (`50-rog_flow_z13.yaml`)
+that grabs `"Asus WMI hotkeys"` as a managed source device. This creates an
+exclusive evdev conflict: z13ctl cannot open the device and will log:
+
+```
+button watcher stopped; retrying err="open /dev/input/eventN: permission denied"
+```
+
+**Workaround:** Create an override config that marks `"Asus WMI hotkeys"` as
+`ignore: true`. This tells InputPlumber to leave that device unmanaged so z13ctl
+can grab it exclusively, while preserving all other InputPlumber functionality
+(controller emulation, touchpad, etc.).
+
+First, check whether the built-in config exists on your system:
+
+```sh
+cat /usr/share/inputplumber/devices/50-rog_flow_z13.yaml
+```
+
+If found, create the override directory if needed, then save the override file:
+
+```sh
+sudo mkdir -p /etc/inputplumber/devices.d
+```
+
+Create `/etc/inputplumber/devices.d/50-rog_flow_z13.yaml` with `ignore: true` added
+to the keyboard source device:
+
+```yaml
+# /etc/inputplumber/devices.d/50-rog_flow_z13.yaml
+version: 1
+kind: CompositeDevice
+name: ASUS ROG Flow Z13 (2025)
+single_source: false
+
+matches:
+  - dmi_data:
+      board_name: GZ302EA
+      sys_vendor: ASUSTeK COMPUTER INC.
+
+source_devices:
+  - group: keyboard
+    ignore: true        # allow z13ctl to grab this device exclusively
+    evdev:
+      name: Asus WMI hotkeys
+      handler: event*
+
+options:
+  auto_manage: true
+
+target_devices:
+  - xbox-elite
+  - touchpad
+  - keyboard
+
+capability_map_id: flw1
+```
+
+!!! note
+    Always place overrides under `/etc/inputplumber/devices.d/` — never edit files
+    under `/usr/share/inputplumber/devices/` directly, as those are owned by the
+    package and will be overwritten on upgrades.
+
+    If your model's `board_name` differs from `GZ302EA`, verify it with:
+    ```sh
+    cat /sys/class/dmi/id/board_name
+    ```
+
+After saving the file, restart InputPlumber:
+
+```sh
+sudo systemctl restart inputplumber.service
+```
+
+Then restore device permissions that the previous InputPlumber instance may have
+changed (InputPlumber restricts device node access while managing a device, and may
+not fully restore permissions on shutdown):
+
+```sh
+sudo z13ctl setup --perms-only
+```
+
+Then confirm z13ctl can grab the button:
+
+```sh
+journalctl --user -u z13ctl.service -f
+# Should show: watching Armoury Crate button path=/dev/input/eventN
+```
+
+Alternatively, disable the button watcher entirely and let InputPlumber handle
+the button exclusively:
+
+```sh
+z13ctl --no-button daemon
+```
