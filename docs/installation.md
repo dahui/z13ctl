@@ -5,6 +5,13 @@
 - Linux kernel with `hidraw` support (standard on all mainstream distributions)
 - 2025 ASUS ROG Flow Z13 (USB IDs `0b05:18c6` and `0b05:1a30`)
 
+!!! warning "InputPlumber conflict (Bazzite, ChimeraOS, Nobara)"
+    On gaming distributions that ship [InputPlumber](https://github.com/ShadowBlip/InputPlumber),
+    the z13ctl daemon's button watcher will fail to open the Armoury Crate button
+    device. InputPlumber ships a built-in profile for the ROG Flow Z13 that grabs
+    the device exclusively. See [InputPlumber compatibility](daemon.md#inputplumber-compatibility)
+    for the override instructions.
+
 ### Optional: ryzen_smu kernel module (for undervolting)
 
 CPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
@@ -15,7 +22,7 @@ return a helpful error explaining how to install the module.
     The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in
     the 2025 Z13). You must use the
     [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork. z13ctl
-    detects the wrong fork at startup via `SMUProbeUndervolt()` and reports
+    detects the wrong fork at startup and reports
     undervolt as unavailable.
 
 | Distribution | Package | Source |
@@ -262,6 +269,13 @@ Verify with:
 ls -la /dev/hidraw*
 groups
 ```
+
+**Daemon logs "button watcher stopped; retrying … permission denied"**
+
+Another process may be holding an exclusive grab on the Armoury Crate button
+device. On gaming distributions, [InputPlumber](https://github.com/ShadowBlip/InputPlumber)
+is a common cause. See
+[InputPlumber compatibility](daemon.md#inputplumber-compatibility) for the fix.
 
 **Daemon not starting**
 
