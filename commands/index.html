@@ -1,0 +1,1766 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="RGB lighting and system control for the 2025 ASUS ROG Flow Z13 on Linux.">
+      
+      
+      
+        <link rel="canonical" href="https://dahui.github.io/z13ctl/commands/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../daemon/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.3">
+    
+    
+      
+        <title>Commands - z13ctl</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.d7758b05.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#commands" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="z13ctl" class="md-header__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            z13ctl
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Commands
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../protocol/" class="md-tabs__link">
+        
+  
+    
+  
+  Protocol
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="z13ctl" class="md-nav__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    z13ctl
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Getting Started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Installation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Quick Start
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Commands
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Commands
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global Flags
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      apply
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      brightness
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#off" class="md-nav__link">
+    <span class="md-ellipsis">
+      off
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      profile
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batterylimit" class="md-nav__link">
+    <span class="md-ellipsis">
+      batterylimit
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootsound" class="md-nav__link">
+    <span class="md-ellipsis">
+      bootsound
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paneloverdrive" class="md-nav__link">
+    <span class="md-ellipsis">
+      paneloverdrive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fancurve" class="md-nav__link">
+    <span class="md-ellipsis">
+      fancurve
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tdp" class="md-nav__link">
+    <span class="md-ellipsis">
+      tdp
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#undervolt" class="md-nav__link">
+    <span class="md-ellipsis">
+      undervolt
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      status
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list" class="md-nav__link">
+    <span class="md-ellipsis">
+      list
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      daemon
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Colors
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../daemon/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Daemon
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../protocol/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Protocol
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#global-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global Flags
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      apply
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brightness" class="md-nav__link">
+    <span class="md-ellipsis">
+      brightness
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#off" class="md-nav__link">
+    <span class="md-ellipsis">
+      off
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      profile
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batterylimit" class="md-nav__link">
+    <span class="md-ellipsis">
+      batterylimit
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootsound" class="md-nav__link">
+    <span class="md-ellipsis">
+      bootsound
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paneloverdrive" class="md-nav__link">
+    <span class="md-ellipsis">
+      paneloverdrive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fancurve" class="md-nav__link">
+    <span class="md-ellipsis">
+      fancurve
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tdp" class="md-nav__link">
+    <span class="md-ellipsis">
+      tdp
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#undervolt" class="md-nav__link">
+    <span class="md-ellipsis">
+      undervolt
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      status
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list" class="md-nav__link">
+    <span class="md-ellipsis">
+      list
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      daemon
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Colors
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="commands">Commands</h1>
+<h2 id="global-flags">Global Flags</h2>
+<p>These flags apply to every command.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--device &lt;name\|path&gt;</code></td>
+<td>Target a single device: <code>keyboard</code>, <code>lightbar</code>, or a <code>/dev/hidrawN</code> path. Without this flag all matching devices are targeted.</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Preview what would be sent or written without making any changes. Works for all commands including <code>setup</code>.</td>
+</tr>
+<tr>
+<td><code>--no-button</code></td>
+<td>Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the button device.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="apply">apply</h2>
+<p>Apply a lighting effect to the keyboard backlight, the edge lightbar, or both.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>z13ctl apply [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--color</code></td>
+<td><code>FF0000</code></td>
+<td>Primary color: 6-digit hex (<code>RRGGBB</code>) or a <a href="#colors">named color</a></td>
+</tr>
+<tr>
+<td><code>--color2</code></td>
+<td><code>000000</code></td>
+<td>Secondary color for <code>breathe</code> mode: 6-digit hex or name</td>
+</tr>
+<tr>
+<td><code>--mode</code></td>
+<td><code>static</code></td>
+<td>Lighting mode (see table below)</td>
+</tr>
+<tr>
+<td><code>--speed</code></td>
+<td><code>normal</code></td>
+<td>Animation speed: <code>slow</code>, <code>normal</code>, <code>fast</code></td>
+</tr>
+<tr>
+<td><code>--brightness</code></td>
+<td><code>high</code></td>
+<td>Brightness level: <code>off</code>, <code>low</code>, <code>medium</code>, <code>high</code></td>
+</tr>
+<tr>
+<td><code>--list-colors</code></td>
+<td></td>
+<td>Print all named colors with swatches and exit</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Modes:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+<th style="text-align: center;"><code>--color</code></th>
+<th style="text-align: center;"><code>--color2</code></th>
+<th style="text-align: center;"><code>--speed</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>static</code></td>
+<td>Solid color</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td><code>breathe</code></td>
+<td>Fade between two colors</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>cycle</code></td>
+<td>Auto-cycle full spectrum</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>rainbow</code></td>
+<td>Rainbow wave across zones</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">yes</td>
+</tr>
+<tr>
+<td><code>strobe</code></td>
+<td>Rapid flash</td>
+<td style="text-align: center;">yes</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">yes</td>
+</tr>
+</tbody>
+</table>
+<p>All modes accept <code>--brightness</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>z13ctl<span class="w"> </span>apply<span class="w"> </span>--color<span class="w"> </span>cyan<span class="w"> </span>--brightness<span class="w"> </span>high
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>z13ctl<span class="w"> </span>apply<span class="w"> </span>--mode<span class="w"> </span>rainbow<span class="w"> </span>--speed<span class="w"> </span>slow
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>z13ctl<span class="w"> </span>apply<span class="w"> </span>--mode<span class="w"> </span>breathe<span class="w"> </span>--color<span class="w"> </span>hotpink<span class="w"> </span>--color2<span class="w"> </span>blue<span class="w"> </span>--speed<span class="w"> </span>slow
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>z13ctl<span class="w"> </span>apply<span class="w"> </span>--list-colors
+</code></pre></div>
+<hr />
+<h2 id="brightness">brightness</h2>
+<p>Set the brightness level without changing the current lighting mode or color.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>z13ctl brightness &lt;level&gt;
+</code></pre></div>
+<p><code>&lt;level&gt;</code> is one of: <code>off</code>, <code>low</code>, <code>medium</code>, <code>high</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>z13ctl<span class="w"> </span>brightness<span class="w"> </span>medium
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>z13ctl<span class="w"> </span>brightness<span class="w"> </span>off
+</code></pre></div>
+<hr />
+<h2 id="off">off</h2>
+<p>Turn off all lighting zones (or a specific zone with <code>--device</code>).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>z13ctl off
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>z13ctl<span class="w"> </span>off
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>z13ctl<span class="w"> </span>off<span class="w"> </span>--device<span class="w"> </span>lightbar
+</code></pre></div>
+<hr />
+<h2 id="profile">profile</h2>
+<p>Get or set the system performance profile via the asus-wmi <code>platform_profile</code>
+sysfs interface. Root or group access required; see <a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>z13ctl profile [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print the active performance profile</td>
+</tr>
+<tr>
+<td><code>--set &lt;profile&gt;</code></td>
+<td>Set the performance profile</td>
+</tr>
+</tbody>
+</table>
+<p>Valid profiles: <code>quiet</code>, <code>balanced</code>, <code>performance</code>, <code>custom</code></p>
+<p>The <code>custom</code> profile is a virtual profile that recalls saved fan curves and TDP
+settings from the daemon's state file. It does <strong>not</strong> write to <code>platform_profile</code>.
+Setting <code>custom</code> requires the daemon to be running, and at least one custom fan
+curve or TDP value must have been previously set.</p>
+<p>Setting a stock profile (<code>quiet</code>, <code>balanced</code>, <code>performance</code>) resets any active
+custom fan curves and TDP values back to firmware defaults.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>z13ctl<span class="w"> </span>profile<span class="w"> </span>--get
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>z13ctl<span class="w"> </span>profile<span class="w"> </span>--set<span class="w"> </span>performance
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>z13ctl<span class="w"> </span>profile<span class="w"> </span>--set<span class="w"> </span>balanced
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>z13ctl<span class="w"> </span>profile<span class="w"> </span>--set<span class="w"> </span>custom
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>When the daemon is running, setting a profile also updates
+<code>power-profiles-daemon</code> (if installed) to the equivalent PPD profile.</p>
+</div>
+<hr />
+<h2 id="batterylimit">batterylimit</h2>
+<p>Get or set the battery charge limit via the Linux ACPI <code>power_supply</code> sysfs
+interface. Root or group access required; see <a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>z13ctl batterylimit [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print the current battery charge limit (percentage)</td>
+</tr>
+<tr>
+<td><code>--set &lt;percent&gt;</code></td>
+<td>Set the battery charge limit (40–100)</td>
+</tr>
+</tbody>
+</table>
+<p>Writing <code>100</code> removes any limit (charges to full).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>z13ctl<span class="w"> </span>batterylimit<span class="w"> </span>--get
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>z13ctl<span class="w"> </span>batterylimit<span class="w"> </span>--set<span class="w"> </span><span class="m">80</span>
+</code></pre></div>
+<hr />
+<h2 id="bootsound">bootsound</h2>
+<p>Get or set the POST boot sound via the <code>asus-armoury</code> firmware-attributes sysfs
+interface. Root or group access required; see <a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>z13ctl bootsound [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print the current boot sound setting (<code>0</code> or <code>1</code>)</td>
+</tr>
+<tr>
+<td><code>--set &lt;value&gt;</code></td>
+<td>Set boot sound: <code>0</code> = off, <code>1</code> = on</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>z13ctl<span class="w"> </span>bootsound<span class="w"> </span>--get
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>z13ctl<span class="w"> </span>bootsound<span class="w"> </span>--set<span class="w"> </span><span class="m">0</span>
+</code></pre></div>
+<hr />
+<h2 id="paneloverdrive">paneloverdrive</h2>
+<p>Get or set display panel refresh overdrive via the <code>asus-armoury</code>
+firmware-attributes sysfs interface. Root or group access required; see
+<a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>z13ctl paneloverdrive [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print the current panel overdrive setting (<code>0</code> or <code>1</code>)</td>
+</tr>
+<tr>
+<td><code>--set &lt;value&gt;</code></td>
+<td>Set panel overdrive: <code>0</code> = off, <code>1</code> = on</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>z13ctl<span class="w"> </span>paneloverdrive<span class="w"> </span>--get
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>z13ctl<span class="w"> </span>paneloverdrive<span class="w"> </span>--set<span class="w"> </span><span class="m">1</span>
+</code></pre></div>
+<hr />
+<h2 id="fancurve">fancurve</h2>
+<p>Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
+Both physical fans cool the same APU, so the same curve is always applied to
+both fans simultaneously. Root or group access required; see <a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>z13ctl fancurve [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print the current fan curve, mode, RPM, and APU temperature</td>
+</tr>
+<tr>
+<td><code>--set &lt;curve&gt;</code></td>
+<td>Set a custom 8-point fan curve (applied to both fans)</td>
+</tr>
+<tr>
+<td><code>--reset</code></td>
+<td>Reset both fans to firmware auto mode</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Curve format:</strong> 8 comma-separated <code>temp:speed</code> pairs. Speed can be a PWM
+value (0–255) or a percentage with a <code>%</code> suffix (0–100%). Both formats can be
+mixed in the same curve.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>&quot;48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102&quot;   # PWM values
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>&quot;48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%&quot;  # percentages
+</code></pre></div>
+<p><strong>Validation rules:</strong></p>
+<ul>
+<li>Exactly 8 points required</li>
+<li>Temperatures must be monotonically increasing (0–120 &deg;C)</li>
+<li>Speed values must be non-decreasing (0–255 PWM or 0–100%)</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Read current fan curves</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>z13ctl<span class="w"> </span>fancurve<span class="w"> </span>--get
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Set a custom fan curve using PWM values (both fans)</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>z13ctl<span class="w"> </span>fancurve<span class="w"> </span>--set<span class="w"> </span><span class="s2">&quot;48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102&quot;</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Set a custom fan curve using percentages</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>z13ctl<span class="w"> </span>fancurve<span class="w"> </span>--set<span class="w"> </span><span class="s2">&quot;48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%&quot;</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1"># Reset both fans to auto mode</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>z13ctl<span class="w"> </span>fancurve<span class="w"> </span>--reset
+</code></pre></div>
+<hr />
+<h2 id="tdp">tdp</h2>
+<p>Get, set, or reset TDP (Thermal Design Power) limits via the asus-nb-wmi PPT
+(Package Power Tracking) sysfs attributes. Root or group access required; see
+<a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>z13ctl tdp [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print current PPT values</td>
+</tr>
+<tr>
+<td><code>--set &lt;watts&gt;</code></td>
+<td>Set all PPT limits to the specified wattage</td>
+</tr>
+<tr>
+<td><code>--reset</code></td>
+<td>Switch to balanced profile (firmware manages PPT and fan curves)</td>
+</tr>
+<tr>
+<td><code>--pl1 &lt;watts&gt;</code></td>
+<td>Override PL1/SPL independently</td>
+</tr>
+<tr>
+<td><code>--pl2 &lt;watts&gt;</code></td>
+<td>Override PL2/sPPT independently</td>
+</tr>
+<tr>
+<td><code>--pl3 &lt;watts&gt;</code></td>
+<td>Override PL3/fPPT independently</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without <code>--force</code>. When PL1 exceeds 75W, fans are set to an 80% minimum curve; custom curves must keep all PWM values at or above 204 (80%).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>PPT attributes:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Limit</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ppt_pl1_spl</code></td>
+<td>PL1 — Sustained</td>
+<td>Continuous power budget the APU can draw indefinitely. This is your effective base TDP.</td>
+</tr>
+<tr>
+<td><code>ppt_pl2_sppt</code></td>
+<td>PL2 — Short-term boost</td>
+<td>Power the APU can draw for several seconds before throttling to PL1.</td>
+</tr>
+<tr>
+<td><code>ppt_fppt</code></td>
+<td>PL3 — Fast boost</td>
+<td>Maximum instantaneous power for millisecond-scale spikes.</td>
+</tr>
+<tr>
+<td><code>ppt_apu_sppt</code></td>
+<td>APU short-term</td>
+<td>APU-specific short-term limit; automatically mirrors PL2.</td>
+</tr>
+<tr>
+<td><code>ppt_platform_sppt</code></td>
+<td>Platform short-term</td>
+<td>Platform-level short-term limit; automatically mirrors PL2.</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>--set</code>, all three limits default to the same value. Use <code>--pl1</code>, <code>--pl2</code>,
+and <code>--pl3</code> to set them independently — a stepped configuration like
+<code>--set 45 --pl2 55 --pl3 65</code> sustains 45W with short bursts to 55W and
+instantaneous peaks to 65W.</p>
+<p>Stock profiles (quiet/balanced/performance) let the firmware manage TDP
+dynamically — the firmware sets per-profile PPT values automatically on profile
+change. Setting a custom TDP switches to the <code>custom</code> profile.</p>
+<div class="admonition note">
+<p class="admonition-title">PPT readback values</p>
+<p>The values shown by <code>--get</code> are the kernel driver's cached values, which may
+not reflect the actual EC limits (especially after a fresh boot or profile
+change). Use <code>ryzenadj -i</code> if you need ground-truth PPT readings.</p>
+</div>
+<p><strong>Safety:</strong></p>
+<ul>
+<li>Default range: 5–75W</li>
+<li><code>--force</code> extends the range to 5–93W</li>
+<li>When any PPT value exceeds 75W, <strong>both fans are forced to full speed</strong> before
+  the TDP values are written. If the fan write fails, TDP is not applied.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Read current TDP values</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>z13ctl<span class="w"> </span>tdp<span class="w"> </span>--get
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="c1"># Set all PPT limits to 50W</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>z13ctl<span class="w"> </span>tdp<span class="w"> </span>--set<span class="w"> </span><span class="m">50</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="c1"># Set with individual PL overrides</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>z13ctl<span class="w"> </span>tdp<span class="w"> </span>--set<span class="w"> </span><span class="m">45</span><span class="w"> </span>--pl2<span class="w"> </span><span class="m">55</span><span class="w"> </span>--pl3<span class="w"> </span><span class="m">60</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="c1"># Force high TDP (fans will be set to full speed)</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>z13ctl<span class="w"> </span>tdp<span class="w"> </span>--set<span class="w"> </span><span class="m">85</span><span class="w"> </span>--force
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="c1"># Reset to balanced profile (firmware manages PPT)</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>z13ctl<span class="w"> </span>tdp<span class="w"> </span>--reset
+</code></pre></div>
+<hr />
+<h2 id="undervolt">undervolt</h2>
+<p>Get or set CPU Curve Optimizer (CO) offsets via the <code>ryzen_smu</code> kernel
+module. Negative values reduce voltage (undervolt), improving efficiency and
+thermals without reducing performance. Root or group access required; see
+<a href="#setup">setup</a>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>z13ctl undervolt [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--get</code></td>
+<td>Print current CO offset (from daemon state)</td>
+</tr>
+<tr>
+<td><code>--set &lt;value&gt;</code></td>
+<td>Set all-core CPU CO offset (0 to -40)</td>
+</tr>
+<tr>
+<td><code>--reset</code></td>
+<td>Reset CPU CO to stock (0)</td>
+</tr>
+</tbody>
+</table>
+<p>CO values have no sysfs readback — <code>--get</code> returns the last-applied values from
+daemon state. If a stock profile is active (quiet/balanced/performance), the
+output indicates that the saved offsets are not currently applied. If the daemon
+is not running, reports "not set".</p>
+<p>CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
+them automatically on startup and resume when the custom profile is active.</p>
+<p><strong>Safety limits (matching G-Helper defaults):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU CO</td>
+<td>0 to -40</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Requires:</strong> <code>ryzen_smu</code> kernel module. Install via:</p>
+<ul>
+<li><strong>Arch/CachyOS:</strong> <code>ryzen_smu-dkms-git</code> (AUR)</li>
+<li><strong>Other distros:</strong> build from <a href="https://github.com/amkillam/ryzen_smu">amkillam/ryzen_smu</a> source</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Strix Halo requires the amkillam fork</p>
+<p>The original <code>leogx9r/ryzen_smu</code> does not support Strix Halo. Use the
+<a href="https://github.com/amkillam/ryzen_smu">amkillam/ryzen_smu</a> fork instead.</p>
+</div>
+<p>If the module is not installed, undervolt commands return a helpful error.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Read current CO value</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>z13ctl<span class="w"> </span>undervolt<span class="w"> </span>--get
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="c1"># Set CPU CO to -20</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>z13ctl<span class="w"> </span>undervolt<span class="w"> </span>--set<span class="w"> </span>-20
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="c1"># Reset to stock voltage</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>z13ctl<span class="w"> </span>undervolt<span class="w"> </span>--reset
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="c1"># Preview without applying</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>z13ctl<span class="w"> </span>--dry-run<span class="w"> </span>undervolt<span class="w"> </span>--set<span class="w"> </span>-20
+</code></pre></div>
+<hr />
+<h2 id="status">status</h2>
+<p>Display a summary of all system metrics in a single view: APU temperature, fan
+speed and mode, performance profile, TDP power limits, undervolt status, and
+battery charge level with charge limit.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>z13ctl status
+</code></pre></div>
+<p>This command is read-only and takes no flags. All values are read directly from
+sysfs (except undervolt, which has no sysfs readback — shows <code>ryzen_smu</code>
+module availability).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>z13ctl<span class="w"> </span>status
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="c1"># APU:       62°C</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="c1"># Fans:      4200 RPM, mode: auto</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="c1"># Profile:   balanced</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="c1"># TDP:       52W (PL1) / 71W (PL2) / 70W (PL3)</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="c1"># Undervolt: available (ryzen_smu loaded)</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="c1"># Battery:   74% (limit: 80%)</span>
+</code></pre></div>
+<hr />
+<h2 id="list">list</h2>
+<p>List all matching hidraw devices and show whether each has Aura support.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>z13ctl list
+</code></pre></div>
+<p>Useful for diagnosing missing devices or verifying that <code>setup</code> worked. Does
+not require the daemon to be running.</p>
+<hr />
+<h2 id="setup">setup</h2>
+<p>Install udev rules and a boot service granting a group read/write access to
+the ASUS HID devices, performance profile, battery charge limit, firmware
+attributes (boot sound, panel overdrive), hwmon fan curve attributes,
+asus-nb-wmi PPT power limit attributes for TDP control, and ryzen_smu sysfs
+files for undervolting (if the module is loaded).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>sudo z13ctl setup [flags]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--group</code></td>
+<td><code>users</code></td>
+<td>Group to grant device access to</td>
+</tr>
+</tbody>
+</table>
+<p>Use <code>--dry-run</code> to preview exactly what would be written — no root required:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>z13ctl<span class="w"> </span>--dry-run<span class="w"> </span>setup<span class="w">    </span><span class="c1"># preview (no root needed)</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>sudo<span class="w"> </span>z13ctl<span class="w"> </span>setup<span class="w">         </span><span class="c1"># apply</span>
+</code></pre></div>
+<p>After running setup, log out and back in (or run <code>newgrp &lt;group&gt;</code>) for the
+group membership to take effect in your current session.</p>
+<p>For a detailed explanation of what <code>setup</code> installs and why the battery limit
+requires a separate systemd service, see <a href="../installation/#what-setup-does">Installation</a>.</p>
+<hr />
+<h2 id="daemon">daemon</h2>
+<p>Start the z13ctl daemon. Normally started automatically via the systemd socket
+unit — see <a href="../daemon/">Daemon</a>. You can also start it directly for testing.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>z13ctl daemon
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>z13ctl<span class="w"> </span>daemon<span class="w">               </span><span class="c1"># with Armoury Crate button watcher</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>z13ctl<span class="w"> </span>--no-button<span class="w"> </span>daemon<span class="w">   </span><span class="c1"># without button watcher</span>
+</code></pre></div>
+<p>When the daemon is running, all other commands (<code>apply</code>, <code>brightness</code>, <code>off</code>,
+<code>profile</code>, <code>batterylimit</code>, <code>bootsound</code>, <code>paneloverdrive</code>, <code>fancurve</code>, <code>tdp</code>,
+<code>undervolt</code>, <code>status</code>)
+route through the daemon socket automatically. If the daemon is not running
+they fall back to direct hardware or sysfs access.</p>
+<hr />
+<h2 id="colors">Colors</h2>
+<p>Named colors accepted by <code>--color</code> and <code>--color2</code>. Any 6-digit hex value
+(<code>RRGGBB</code>, without <code>#</code>) is also accepted.</p>
+<p>Run <code>z13ctl apply --list-colors</code> to see ANSI true-color swatches in your terminal.</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Hex</th>
+<th>Name</th>
+<th>Hex</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>red</code></td>
+<td><code>FF0000</code></td>
+<td><code>blue</code></td>
+<td><code>0000FF</code></td>
+</tr>
+<tr>
+<td><code>crimson</code></td>
+<td><code>DC143C</code></td>
+<td><code>navy</code></td>
+<td><code>000080</code></td>
+</tr>
+<tr>
+<td><code>orangered</code></td>
+<td><code>FF4500</code></td>
+<td><code>indigo</code></td>
+<td><code>4B0082</code></td>
+</tr>
+<tr>
+<td><code>coral</code></td>
+<td><code>FF7F50</code></td>
+<td><code>blueviolet</code></td>
+<td><code>8A2BE2</code></td>
+</tr>
+<tr>
+<td><code>orange</code></td>
+<td><code>FF8000</code></td>
+<td><code>purple</code></td>
+<td><code>800080</code></td>
+</tr>
+<tr>
+<td><code>gold</code></td>
+<td><code>FFD700</code></td>
+<td><code>magenta</code></td>
+<td><code>FF00FF</code></td>
+</tr>
+<tr>
+<td><code>yellow</code></td>
+<td><code>FFFF00</code></td>
+<td><code>deeppink</code></td>
+<td><code>FF1493</code></td>
+</tr>
+<tr>
+<td><code>chartreuse</code></td>
+<td><code>7FFF00</code></td>
+<td><code>hotpink</code></td>
+<td><code>FF69B4</code></td>
+</tr>
+<tr>
+<td><code>green</code></td>
+<td><code>00FF00</code></td>
+<td><code>violet</code></td>
+<td><code>EE82EE</code></td>
+</tr>
+<tr>
+<td><code>springgreen</code></td>
+<td><code>00FF7F</code></td>
+<td><code>turquoise</code></td>
+<td><code>40E0D0</code></td>
+</tr>
+<tr>
+<td><code>aquamarine</code></td>
+<td><code>7FFFD4</code></td>
+<td><code>brown</code></td>
+<td><code>A52A2A</code></td>
+</tr>
+<tr>
+<td><code>teal</code></td>
+<td><code>008080</code></td>
+<td><code>white</code></td>
+<td><code>FFFFFF</code></td>
+</tr>
+<tr>
+<td><code>cyan</code></td>
+<td><code>00FFFF</code></td>
+<td><code>deepskyblue</code></td>
+<td><code>00BFFF</code></td>
+</tr>
+<tr>
+<td><code>dodgerblue</code></td>
+<td><code>1E90FF</code></td>
+<td><code>royalblue</code></td>
+<td><code>4169E1</code></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.copy"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.f1b6f286.min.js"></script>
+      
+    
+  </body>
+</html>
