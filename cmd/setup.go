@@ -49,12 +49,14 @@ ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'f
 // buildServiceContent generates the z13ctl-perms.service unit file content.
 // Handles sysfs files that cannot be set by udev rules:
 //   - charge_control_end_threshold: created late in asus_nb_wmi probe()
+//   - firmware-attributes current_value: may be created after parent ADD event
 //   - ryzen_smu_drv files: kobject under /sys/kernel/, not a udev device
 func buildServiceContent(group string) string {
 	return fmt.Sprintf(`[Unit]
-Description=z13ctl sysfs permissions (battery + ryzen_smu)
+Description=z13ctl sysfs permissions (battery + firmware-attributes + ryzen_smu)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
+# firmware-attributes current_value files may be created after the parent ADD event.
 # ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 After=sysinit.target
 
@@ -62,11 +64,12 @@ After=sysinit.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f" || true; done'
 
 [Install]
 WantedBy=multi-user.target
-`, group, group)
+`, group, group, group)
 }
 
 // applySysfsPerms scans live sysfs for files managed by z13ctl and either

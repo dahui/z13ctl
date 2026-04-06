@@ -67,7 +67,7 @@ contrib/
     z13ctl.socket            systemd user socket unit (socket activation, %t/z13ctl/z13ctl.sock)
     z13ctl.service           systemd user service unit (Type=notify, Restart=on-failure)
   systemd/system/
-    z13ctl-perms.service     system oneshot unit: chgrp/chmod on BAT*/charge_control_end_threshold at boot
+    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery + firmware-attributes sysfs at boot
 ```
 
 ## Key architectural decisions
@@ -283,10 +283,9 @@ The daemon is fully implemented and passing `make build && make test && make lin
   platform-profile class devices do not have a `name` sysfs attribute file. The rule
   now matches `SUBSYSTEM=="platform-profile"` alone.
 - `z13ctl-perms.service` (system-level oneshot) runs `chmod g+w` on
-  `BAT*/charge_control_end_threshold` after `sysinit.target`. This is necessary because
-  the attribute is created deep inside `asus_nb_wmi` probe() — after all observable
-  udev child-device events — so no udev `RUN+=` hook can catch it. The service is a
-  self-contained shell one-liner with no binary dependency.
+  `BAT*/charge_control_end_threshold` and firmware-attributes `current_value` files
+  after `sysinit.target`. This is necessary because these attributes may be created
+  after observable udev events — so no udev `RUN+=` hook can catch them reliably.
 
 **To activate on this machine (must be done once after each `sudo z13ctl setup`):**
 ```sh

@@ -55,14 +55,14 @@ uninstall-service:
 	systemctl --user daemon-reload
 	@echo "Service removed."
 
-## install-perms-service: install system service to chmod battery sysfs attr on boot (requires sudo)
+## install-perms-service: install system service to chmod battery + firmware-attributes sysfs on boot (requires sudo)
 install-perms-service:
 	install -Dm644 contrib/systemd/system/z13ctl-perms.service $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
 	systemctl daemon-reload
 	systemctl enable --now z13ctl-perms.service
 	@echo "Permissions service installed. Run 'systemctl status z13ctl-perms' to verify."
 
-## uninstall-perms-service: remove the battery sysfs permissions service (requires sudo)
+## uninstall-perms-service: remove the sysfs permissions service (requires sudo)
 uninstall-perms-service:
 	-systemctl disable --now z13ctl-perms.service
 	rm -f $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
