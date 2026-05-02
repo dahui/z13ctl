@@ -174,6 +174,16 @@ If it prints nothing, see [Troubleshooting](#troubleshooting) below.
 
 ---
 
+## GUI Frontend
+
+For a graphical interface, install [z13gui](https://github.com/dahui/z13gui)
+alongside z13ctl. z13gui is a touch-friendly GTK4 overlay that communicates
+with z13ctl through its daemon. See the
+[z13gui README](https://github.com/dahui/z13gui#readme) for installation
+instructions.
+
+---
+
 ## Next steps
 
 You're installed and ready to go. Head to the [Quick Start](getting-started.md)

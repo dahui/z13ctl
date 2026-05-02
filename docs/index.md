@@ -30,6 +30,11 @@ on Linux.
 All features work without root after a one-time `setup` step, and all persist across
 reboots when the daemon is running.
 
+!!! tip "Looking for a GUI?"
+    [z13gui](https://github.com/dahui/z13gui) is a touch-friendly GTK4 overlay
+    that controls all z13ctl features through the daemon. Install both for the
+    full experience.
+
 ---
 
 ## Background

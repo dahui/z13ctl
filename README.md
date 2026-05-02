@@ -77,6 +77,11 @@ Full documentation at **<https://dahui.github.io/z13ctl>**
 - [API](https://dahui.github.io/z13ctl/api/)
 - [Contributing](https://dahui.github.io/z13ctl/contributing/)
 
+## GUI
+
+For a graphical interface, see [z13gui](https://github.com/dahui/z13gui) — a
+touch-friendly GTK4 overlay that controls all z13ctl features via the daemon.
+
 ## License
 
 [Apache 2.0](LICENSE)

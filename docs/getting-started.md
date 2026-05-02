@@ -214,3 +214,5 @@ This prints a live swatch table in your terminal. Any 6-digit hex value
 - [Commands](commands.md) — every flag and option for every command
 - [Daemon](daemon.md) — set up the daemon for state persistence, boot
   restore, and sleep/resume recovery
+- [z13gui](https://github.com/dahui/z13gui) — graphical interface for all
+  z13ctl features (touch-friendly GTK4 overlay)
