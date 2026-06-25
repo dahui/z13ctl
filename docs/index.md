@@ -28,12 +28,17 @@ on Linux.
 - **Panel overdrive** — toggle display overdrive for reduced motion blur
 
 All features work without root after a one-time `setup` step, and all persist across
-reboots when the daemon is running.
+reboots when the daemon is running. The daemon also re-applies keyboard lighting
+automatically when the detachable keyboard is removed and reattached.
 
-!!! tip "Looking for a GUI?"
-    [z13gui](https://github.com/dahui/z13gui) is a touch-friendly GTK4 overlay
-    that controls all z13ctl features through the daemon. Install both for the
-    full experience.
+!!! tip "New to Linux? Use the GUI"
+    Most users — especially those newer to Linux — should install
+    **[z13gui](https://github.com/dahui/z13gui)**, a touch-friendly GTK4 overlay
+    that controls every z13ctl feature (lighting, fan curves, TDP, undervolt,
+    profiles, battery limit) through the daemon — no command line required. The
+    raw `z13ctl` CLI is great for scripting and advanced tuning, but if you're
+    not a Linux veteran you'll have a far smoother experience with the GUI.
+    Install z13gui alongside z13ctl for the full experience.
 
 ---
 

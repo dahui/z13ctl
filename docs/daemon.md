@@ -9,6 +9,9 @@ ordinary one-shot CLI invocations cannot:
 - **Sleep/resume recovery** — watches for system resume events via D-Bus and
   reapplies lighting and volatile settings (fan curves, TDP, undervolt) that
   are lost during sleep.
+- **Keyboard reattach recovery** — detects the detachable keyboard being removed
+  and reattached, reopens the HID device, and re-applies the saved keyboard
+  lighting (the firmware does not restore it on its own).
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -163,6 +166,37 @@ by checking the daemon logs after a resume:
 ```sh
 journalctl --user -u z13ctl --since "5 minutes ago"
 ```
+
+---
+
+## Keyboard reattach recovery
+
+The Z13's keyboard folio is detachable, and it is a separate USB HID device
+(`0b05:1a30`) from the lightbar (`0b05:18c6`), which lives in the tablet body.
+When you detach the keyboard it loses power and its RGB goes dark; when you
+reattach it, the firmware brings it back **unlit** — the previously applied
+effect is not restored.
+
+The daemon opens the hidraw devices once at startup, so a reattached keyboard
+appears as a brand-new device node that the original handle no longer references.
+To recover, the daemon polls sysfs every couple of seconds for the keyboard
+reappearing. On detecting it, the daemon reopens the HID devices and re-applies
+the saved lighting state — honoring per-device overrides, so a keyboard-specific
+color/mode is restored exactly as you last set it.
+
+This requires no user intervention; the keyboard relights within a few seconds of
+reattachment. If your `z13ctl setup` udev rules are in place, the reattached node
+is granted access automatically. You can verify it in the daemon logs:
+
+```sh
+journalctl --user -u z13ctl -f
+# On reattach: keyboard reattached; lighting restored
+```
+
+!!! note "Daemon required"
+    This recovery only happens while the daemon is running. Without it, re-run
+    your `apply` command (or press the Armoury Crate button in z13gui) after
+    reattaching the keyboard.
 
 ---
 

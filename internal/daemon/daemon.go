@@ -60,7 +60,15 @@ func Run(ctx context.Context, watchBtn bool) error {
 		slog.Warn("HID device not found; lighting commands will be unavailable", "err", err)
 	} else {
 		d.dev = dev
-		defer dev.Close()
+		// reopenAndRestore may replace d.dev on keyboard hotplug, so close
+		// whatever the current device is at shutdown rather than the original.
+		defer func() {
+			d.mu.Lock()
+			if d.dev != nil {
+				d.dev.Close()
+			}
+			d.mu.Unlock()
+		}()
 		if applyErr := d.applyLightingState(); applyErr != nil {
 			slog.Warn("failed to restore lighting state", "err", applyErr)
 		}
@@ -144,6 +152,8 @@ func Run(ctx context.Context, watchBtn bool) error {
 	}
 
 	go d.watchResume(ctx)
+
+	go d.watchHotplug(ctx)
 
 	ln, err := d.getListener()
 	if err != nil {
@@ -262,6 +272,33 @@ func applyZone(dev *hid.Device, ls api.LightingState) error {
 		return err
 	}
 	return aura.Apply(dev, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness))
+}
+
+// reopenAndRestore re-enumerates the HID device and re-applies the saved lighting
+// state. It is called after the detachable keyboard is reattached, where the
+// keyboard appears as a new hidraw node that the old d.dev no longer references.
+// Returns true on success; false (with a logged warning) if the device cannot be
+// reopened yet — e.g. udev has not finished applying hidraw permissions — so the
+// caller can retry.
+func (d *Daemon) reopenAndRestore() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	dev, err := hid.FindDevice("")
+	if err != nil {
+		slog.Warn("hotplug: failed to reopen HID device", "err", err)
+		return false
+	}
+	if d.dev != nil {
+		d.dev.Close()
+	}
+	d.dev = dev
+	if err := d.applyLightingState(); err != nil {
+		slog.Warn("hotplug: failed to restore lighting", "err", err)
+		return false
+	}
+	slog.Info("keyboard reattached; lighting restored")
+	return true
 }
 
 // applyLightingState restores lighting from the saved state. d.dev must be non-nil.
