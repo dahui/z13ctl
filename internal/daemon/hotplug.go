@@ -23,22 +23,27 @@ const hotplugPollInterval = 2 * time.Second
 // hidraw permissions), it does not latch the present state, so the next tick
 // retries.
 func (d *Daemon) watchHotplug(ctx context.Context) {
-	present := hid.HasDevice("keyboard") // already restored at startup if present
+	keyboardPresent := func() bool { return hid.HasDevice("keyboard") }
+	present := keyboardPresent() // already restored at startup if present
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(hotplugPollInterval):
 		}
-		now := hid.HasDevice("keyboard")
-		switch {
-		case now && !present:
-			if d.reopenAndRestore() {
-				present = true
-			}
-			// else: leave present=false so the next tick retries.
-		default:
-			present = now
-		}
+		present = hotplugTick(present, keyboardPresent, d.reopenAndRestore)
 	}
+}
+
+// hotplugTick advances the reattach watcher by one observation and returns the
+// new latched-present state. observe reports the keyboard's current presence;
+// onReattach is invoked only on an absent → present transition and returns
+// whether the reopen+restore succeeded. Presence is latched on success only, so
+// a failed reopen (returning false) is retried on the next tick.
+func hotplugTick(present bool, observe, onReattach func() bool) bool {
+	now := observe()
+	if now && !present {
+		return onReattach()
+	}
+	return now
 }

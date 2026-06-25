@@ -138,7 +138,14 @@ func ListDevices() []DeviceInfo {
 // ("keyboard" or "lightbar") is currently present in sysfs. It checks presence
 // only — it does not open the device or verify the Aura report descriptor.
 func HasDevice(name string) bool {
-	entries, _ := filepath.Glob("/sys/class/hidraw/hidraw*/device/uevent")
+	return hasDeviceGlob("/sys/class/hidraw/hidraw*/device/uevent", name)
+}
+
+// hasDeviceGlob reports whether any uevent file matched by glob identifies the
+// device named name. Split out from HasDevice so tests can point glob at a
+// temporary sysfs-shaped tree.
+func hasDeviceGlob(glob, name string) bool {
+	entries, _ := filepath.Glob(glob)
 	for _, ueventPath := range entries {
 		if deviceNameFromUevent(ueventPath) == name {
 			return true

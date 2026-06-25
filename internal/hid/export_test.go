@@ -19,3 +19,6 @@ var UeventToDevPath = ueventToDevPath
 
 // DeviceNameFromUevent is the test-only export of deviceNameFromUevent.
 var DeviceNameFromUevent = deviceNameFromUevent
+
+// HasDeviceGlob is the test-only export of hasDeviceGlob.
+var HasDeviceGlob = hasDeviceGlob
