@@ -53,6 +53,7 @@ internal/
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
     button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13)
+    hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     server.go                JSON request handler; handleConn(), dispatch(), command handlers
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
@@ -197,6 +198,21 @@ contrib/
   On resume (`PrepareForSleep(false)`), restores lighting (regardless of profile)
   and reapplies volatile state: fan curves, TDP, and undervolt (when custom
   profile is active). Uses `github.com/godbus/dbus/v5`.
+- **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
+  detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
+  loses power when detached; on reattach the firmware does not restore the
+  previous RGB effect. The daemon opens the HID device once at startup and holds
+  `d.dev`, so after a detach/reattach cycle the keyboard appears as a *new* hidraw
+  node that the stale `d.dev` never references. `watchHotplug()` polls
+  `hid.HasDevice("keyboard")` (sysfs-only presence check, no device open) every 2s;
+  on an absent → present transition it calls `reopenAndRestore()`, which re-runs
+  `hid.FindDevice("")` under `d.mu`, swaps in the new device (closing the old one),
+  and re-applies saved lighting via the existing `applyLightingState()` (honoring
+  per-device overrides). If the reopen fails — e.g. udev has not yet chmod'd the new
+  hidraw node — the watcher does not latch the present state and retries on the next
+  tick. No action is taken on detach (the keyboard powers off in hardware). Run()'s
+  device-close defer closes whatever `d.dev` currently is, since hotplug may have
+  replaced it.
 
 ## Go conventions established in this project
 

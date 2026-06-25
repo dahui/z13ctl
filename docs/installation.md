@@ -1,5 +1,12 @@
 # Installation
 
+!!! tip "Most users should also install z13gui"
+    z13ctl is the engine; **[z13gui](https://github.com/dahui/z13gui)** is the
+    recommended way to drive it for everyone except command-line veterans. It's
+    a touch-friendly graphical overlay covering every feature — lighting, fan
+    curves, TDP, undervolt, profiles, and battery limit. Install z13ctl first
+    (this page), then add z13gui (see [GUI Frontend](#gui-frontend) below).
+
 ## Prerequisites
 
 - Linux kernel with `hidraw` support (standard on all mainstream distributions)
@@ -28,7 +35,7 @@ return a helpful error explaining how to install the module.
 | Distribution | Package | Source |
 |---|---|---|
 | Arch / CachyOS | `ryzen_smu-dkms-git` | AUR ([amkillam fork](https://github.com/amkillam/ryzen_smu)) |
-| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) |
+| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://gi thub.com/amkillam/ryzen_smu) |
 
 ```sh
 # Arch / CachyOS
@@ -176,11 +183,20 @@ If it prints nothing, see [Troubleshooting](#troubleshooting) below.
 
 ## GUI Frontend
 
-For a graphical interface, install [z13gui](https://github.com/dahui/z13gui)
-alongside z13ctl. z13gui is a touch-friendly GTK4 overlay that communicates
-with z13ctl through its daemon. See the
+**Highly recommended for most users.** Install
+[z13gui](https://github.com/dahui/z13gui) alongside z13ctl — a touch-friendly
+GTK4 overlay that communicates with z13ctl through its daemon and exposes every
+feature graphically. While the raw `z13ctl` CLI is ideal for scripting and
+advanced tuning, beginners and anyone who prefers a point-and-tap interface will
+find the more advanced features (custom fan curves, TDP, undervolting) far
+easier to use through z13gui. See the
 [z13gui README](https://github.com/dahui/z13gui#readme) for installation
 instructions.
+
+!!! note "Requires the daemon"
+    z13gui talks to z13ctl over its daemon socket, so make sure the
+    [systemd user service](daemon.md) is installed and enabled (the AUR, `.deb`,
+    and `.rpm` packages do this for you).
 
 ---
 

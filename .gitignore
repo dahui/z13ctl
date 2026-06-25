@@ -30,6 +30,9 @@ go.work.sum
 # env file
 .env
 
+# Release notes staged for git tag annotation (passed via `git tag -a -F`)
+release-notes.md
+
 # Editor/IDE
 # .idea/
 .vscode/

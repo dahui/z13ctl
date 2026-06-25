@@ -5,6 +5,14 @@ These examples assume you have [installed z13ctl](installation.md) and run
 back to direct hardware access automatically. See [Daemon](daemon.md) for why
 you probably want the daemon running anyway.
 
+!!! tip "Prefer not to use the command line? Use z13gui"
+    Everything below can be done from a graphical interface instead. If you're
+    new to Linux or simply prefer not to type commands, install
+    **[z13gui](https://github.com/dahui/z13gui)** — a touch-friendly overlay
+    that drives all of these features (lighting, fan curves, TDP, undervolt,
+    profiles) through the daemon. The CLI examples here remain useful for
+    scripting and advanced tuning.
+
 ---
 
 ## Lighting

@@ -72,3 +72,9 @@ nfpms:
 release:
   draft: false
   prerelease: auto
+  # The annotated tag's message body becomes the top of the release notes,
+  # followed by the auto-generated commit changelog. Write detailed notes with
+  # `git tag -a vX.Y.Z` (opens an editor) or `git tag -a vX.Y.Z -F notes.md`.
+  # Lightweight tags (no -a/-m) leave this empty and fall back to the changelog.
+  header: |
+    {{ .TagBody }}
