@@ -17,7 +17,7 @@ watches the Armoury Crate button.
 
 > [!TIP]
 > **New to Linux? Install [z13gui](https://github.com/dahui/z13gui).** Most
-> users — especially newcomers — should use **z13gui**, a touch-friendly
+> users (especially newcomers!) should use **z13gui**, a touch-friendly
 > graphical overlay that exposes every z13ctl feature (lighting, fan curves,
 > TDP, undervolt, profiles, battery limit) with no command line required. The
 > raw `z13ctl` CLI shines for scripting and advanced tuning, but if you're not a
@@ -86,15 +86,3 @@ Full documentation at **<https://dahui.github.io/z13ctl>**
 - [API](https://dahui.github.io/z13ctl/api/)
 - [Contributing](https://dahui.github.io/z13ctl/contributing/)
 
-## GUI (recommended for most users)
-
-**[z13gui](https://github.com/dahui/z13gui)** is a touch-friendly GTK4 overlay
-that controls every z13ctl feature through the daemon. Unless you specifically
-want the command line for scripting or advanced tuning, installing z13gui is the
-recommended way to use this project — it makes the more advanced features
-(custom fan curves, TDP, undervolting) approachable without memorizing flags.
-Install it alongside z13ctl and trigger it with the Armoury Crate button.
-
-## License
-
-[Apache 2.0](LICENSE)
