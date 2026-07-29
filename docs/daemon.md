@@ -90,8 +90,9 @@ Start the daemon directly for testing or on systems without systemd:
 z13ctl daemon
 ```
 
-To disable the Armoury Crate button watcher (e.g., when another tool such as
-a Steam controller mapper needs exclusive access to the button device):
+To disable the Armoury Crate button watcher — because another tool needs
+exclusive access to the device, or because you would rather the keypress reach
+only your desktop:
 
 ```sh
 z13ctl --no-button daemon

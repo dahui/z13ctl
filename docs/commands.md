@@ -16,7 +16,7 @@ These flags apply to every command.
 |------|-------------|
 | `--device <name\|path>` | Target a single device: `keyboard`, `lightbar`, or a `/dev/hidrawN` path. Without this flag all matching devices are targeted. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
-| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the button device. |
+| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching z13ctl at all. |
 
 ---
 

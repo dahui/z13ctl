@@ -64,7 +64,7 @@ internal/
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
-    clone_test.go            cloneState deep-copy + saveState race regression
+    clone_test.go            cloneState deep-copy, saveState race regression, broadcast wire shape
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
   hid/
@@ -98,7 +98,7 @@ contrib/
   generates udev rules + the perms unit at runtime, but package installs
   (.rpm/.deb/Arch) ship the static copies in `contrib/udev/99-z13ctl.rules` and
   `contrib/systemd/system/z13ctl-perms.service`. These drifted and cost .rpm users
-  all PPT and fan-curve access on every reboot (issue #14). `cmd/setup_test.go`
+  all PPT and fan-curve access on every reboot (issue #12). `cmd/setup_test.go`
   now asserts every grant appears in both. Escaping differs by file: `%%p` in
   `setup.go` is Sprintf escaping (single `%p` in the packaged file), while `$$f`
   is systemd's *and* udev's literal-dollar escape and stays doubled in **both** —
@@ -174,7 +174,13 @@ contrib/
   | undervolt get | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
   | undervolt reset | `{"cmd":"undervolt-reset"}` | `ok` |
   | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available) |
-  | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams events |
+  | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
+- **Streamed events must set `OK: true`.** `response.OK` has no `omitempty`, so
+  `broadcast(response{Event: ...})` ships `{"ok":false,...}` on a perfectly good
+  event. The Go client keys on the `event` field and never noticed, but the
+  documented protocol says every response carries `ok`, so a Python/Decky client
+  honouring that contract silently dropped every button press (fixed in v1.2.1).
+  `internal/daemon/clone_test.go` pins the wire shape.
 - **Socket I/O must be deadline-bounded on both ends.** `net.DialTimeout` bounds
   only connecting. `api.sendCommand` sets a full-exchange deadline
   (`commandTimeout`, 10s) or a daemon that accepts and never replies hangs the
@@ -231,7 +237,7 @@ contrib/
   performance) resets fan hardware to auto and writes that profile's `StockProfilePPT`
   row to hardware, but preserves custom settings in state for later recall.
   `profile --set custom` returns an error if no custom fan curves or TDP have been saved.
-- **Stock PPT restore is explicit, not firmware-driven** (issue #14): the firmware
+- **Stock PPT restore is explicit, not firmware-driven** (issue #12): the firmware
   does *not* re-apply per-profile PPT on a `platform_profile` write, and the
   `ppt_*` attributes have no "reset to firmware default" operation — writing 5W
   (an earlier attempt) just crippled the machine. `cli.StockProfilePPT` is
@@ -317,7 +323,7 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
   `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
   sysfs tree (see below).
-- Current coverage: ~87% cli, ~78% aura, ~35% hid, ~11% daemon, ~8% cmd.
+- Current coverage: ~87% cli, ~78% aura, ~35% hid, ~19% daemon, ~28% api, ~8% cmd.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
 ### Fake sysfs (`internal/cli`)

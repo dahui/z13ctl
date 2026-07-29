@@ -305,10 +305,20 @@ groups
 
 **Daemon logs "button watcher stopped; retrying … permission denied"**
 
-Another process may be holding an exclusive grab on the Armoury Crate button
-device. On gaming distributions, [InputPlumber](https://github.com/ShadowBlip/InputPlumber)
+Something else is managing the Armoury Crate button device and z13ctl cannot open
+it. On gaming distributions, [InputPlumber](https://github.com/ShadowBlip/InputPlumber)
 is a common cause. See
 [InputPlumber compatibility](daemon.md#inputplumber-compatibility) for the fix.
+
+**Armoury Crate button does nothing, and the log shows no error**
+
+z13ctl reads the button device non-exclusively, so a process holding an exclusive
+`EVIOCGRAB` on it receives every event instead — with nothing for z13ctl to
+report. Check what else has the device open:
+
+```sh
+sudo fuser -v /dev/input/eventN
+```
 
 **Daemon not starting**
 
