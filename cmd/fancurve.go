@@ -122,16 +122,20 @@ func runFanCurveSet() error {
 }
 
 func runFanCurveReset() error {
-	if dryRunFlag {
-		cli.DryRunFanCurveReset()
-		return nil
-	}
-
+	// Checked before the dry-run branch, as in runFanCurveSet: this is a
+	// read-only check, and a dry run that reported success for a reset the real
+	// command would refuse would be worse than useless.
+	//
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the protection the high-TDP curve
 	// provides. "tdp --reset" is the way out — it lowers power first.
 	if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
 		return err
+	}
+
+	if dryRunFlag {
+		cli.DryRunFanCurveReset()
+		return nil
 	}
 
 	if handled, err := api.SendFanCurveReset(); handled {

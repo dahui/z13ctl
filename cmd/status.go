@@ -62,10 +62,13 @@ func runStatus() error {
 		fmt.Println("TDP:     N/A")
 	}
 
-	// Undervolt (Curve Optimizer) — only shown if ryzen_smu is available.
-	// CO values have no sysfs readback; this would need daemon state.
-	// For status, just indicate availability.
-	if cli.SMUAvailable() {
+	// Undervolt (Curve Optimizer) — only shown if Curve Optimizer actually
+	// works here. SMUAvailable() alone only proves the ryzen_smu module is
+	// loaded, which was enough to report "available" with the leogx9r fork that
+	// does not support Strix Halo — contradicting the daemon, which gates on
+	// the probe. CO values have no sysfs readback, so current values still
+	// require daemon state.
+	if cli.SMUProbeUndervolt() {
 		fmt.Println("UV:      available (use 'undervolt --get' via daemon for current values)")
 	}
 

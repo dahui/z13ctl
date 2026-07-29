@@ -338,7 +338,10 @@ func (d *Daemon) handleBrightness(req request) response {
 		}
 		ls := d.state.Lighting // base: fall back to all-device state
 		if existing, ok := d.state.Devices[req.Device]; ok {
-			ls = existing
+			// Normalise: a zone turned off earlier is stored as
+			// {Enabled: false} with no mode or colour, and reusing it verbatim
+			// would persist an enabled state that cannot be re-applied.
+			ls = normalizeLightingState(existing, d.state.Lighting)
 		}
 		ls.Brightness = req.Brightness
 		ls.Enabled = on

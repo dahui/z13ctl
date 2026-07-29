@@ -341,3 +341,48 @@ func readTrimmed(t *testing.T, path string) string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// TestSetProfileWritesPrimaryWhenNoClassDevice is the regression guard for a
+// silent no-op: when no device under sysProfileDir exposes a profile file,
+// FindProfilePath falls back to the ACPI alias, which the write loop never
+// visits. SetProfile then returned nil having written nothing at all — and
+// still told power-profiles-daemon the switch had happened.
+func TestSetProfileWritesPrimaryWhenNoClassDevice(t *testing.T) {
+	f := newFakeSysfs(t)
+
+	// An empty platform-profile directory forces the ACPI-alias fallback.
+	acpi := f.root + "/acpi_platform_profile"
+	swap(t, &sysProfileDir, f.root+"/empty-platform-profile")
+	if err := os.MkdirAll(f.root+"/empty-platform-profile", 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	f.writeFile(t, acpi, "balanced")
+
+	if err := SetProfile("performance"); err != nil {
+		t.Fatalf("SetProfile() = %v, want nil", err)
+	}
+
+	data, err := os.ReadFile(acpi)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) = %v", acpi, err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "performance" {
+		t.Errorf("ACPI alias = %q, want %q — SetProfile reported success without writing", got, "performance")
+	}
+}
+
+// TestSetProfileReportsPrimaryWriteFailure: with nothing writable, the caller
+// must see an error rather than a false success.
+func TestSetProfileReportsPrimaryWriteFailure(t *testing.T) {
+	f := newFakeSysfs(t)
+
+	swap(t, &sysProfileDir, f.root+"/missing-platform-profile")
+	swap(t, &sysProfileACPI, f.root+"/missing-dir/platform_profile")
+
+	if err := SetProfile("quiet"); err == nil {
+		t.Error("SetProfile() = nil, want an error when no profile file can be written")
+	}
+	if calls := *f.ppdCalls; len(calls) != 0 {
+		t.Errorf("powerprofilesctl was called %v after a failed write, want no calls", calls)
+	}
+}

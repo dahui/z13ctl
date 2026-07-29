@@ -51,6 +51,7 @@ func SetProfile(profile string) error {
 		return os.WriteFile(primaryPath, []byte(profile+"\n"), 0o644)
 	}
 	var primaryErr error
+	primaryWritten := false
 	for _, e := range entries {
 		base := dir + "/" + e.Name()
 		p := base + "/profile"
@@ -61,7 +62,16 @@ func SetProfile(profile string) error {
 		werr := os.WriteFile(p, []byte(name+"\n"), 0o644)
 		if p == primaryPath {
 			primaryErr = werr
+			primaryWritten = true
 		}
+	}
+	// The loop may not have covered the primary at all: when no device under
+	// sysProfileDir exposes a profile file, FindProfilePath falls back to the
+	// ACPI alias, which lives outside that directory. Without this the function
+	// returned nil having written nothing — a silent no-op profile switch that
+	// still told power-profiles-daemon the change had happened.
+	if !primaryWritten {
+		primaryErr = os.WriteFile(primaryPath, []byte(profile+"\n"), 0o644)
 	}
 	if primaryErr == nil {
 		setPPD(profile)

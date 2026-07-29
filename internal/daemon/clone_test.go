@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
 func sampleState() api.State {
@@ -191,5 +193,87 @@ func TestBroadcastPrunesDeadSubscribers(t *testing.T) {
 	d.subMu.Unlock()
 	if n != 1 {
 		t.Errorf("subscribers after broadcast = %d, want 1 (dead one not pruned)", n)
+	}
+}
+
+// TestNormalizeLightingState covers the repair applied to partially-populated
+// per-device entries. handleOff stores {Enabled: false} for a named zone, so a
+// later brightness command on that zone produced an enabled state with no mode,
+// colour or speed — which ModeFromString rejects, making every subsequent
+// restore fail.
+func TestNormalizeLightingState(t *testing.T) {
+	fallback := api.LightingState{Mode: "cycle", Color: "00FF00", Color2: "0000FF", Speed: "fast"}
+	def := defaultState().Lighting
+
+	tests := []struct {
+		name     string
+		in       api.LightingState
+		fallback api.LightingState
+		want     api.LightingState
+	}{
+		{
+			name:     "empty entry takes every field from the fallback",
+			in:       api.LightingState{Enabled: true, Brightness: 2},
+			fallback: fallback,
+			want: api.LightingState{
+				Enabled: true, Brightness: 2,
+				Mode: "cycle", Color: "00FF00", Color2: "0000FF", Speed: "fast",
+			},
+		},
+		{
+			name:     "populated fields are preserved",
+			in:       api.LightingState{Enabled: true, Mode: "strobe", Color: "FF0000", Color2: "111111", Speed: "slow"},
+			fallback: fallback,
+			want:     api.LightingState{Enabled: true, Mode: "strobe", Color: "FF0000", Color2: "111111", Speed: "slow"},
+		},
+		{
+			name:     "empty fallback falls through to the defaults",
+			in:       api.LightingState{Enabled: true},
+			fallback: api.LightingState{},
+			want: api.LightingState{
+				Enabled: true,
+				Mode:    def.Mode, Color: def.Color, Color2: def.Color2, Speed: def.Speed,
+			},
+		},
+		{
+			name:     "partial entry only fills the gaps",
+			in:       api.LightingState{Enabled: true, Mode: "breathe"},
+			fallback: fallback,
+			want: api.LightingState{
+				Enabled: true, Mode: "breathe",
+				Color: "00FF00", Color2: "0000FF", Speed: "fast",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeLightingState(tt.in, tt.fallback); got != tt.want {
+				t.Errorf("normalizeLightingState() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNormalizedStateIsAppliable is the regression guard proper: whatever
+// normalizeLightingState returns must survive the parsing applyZone does, or
+// lighting restore fails for every zone on every daemon start, resume, and
+// keyboard hotplug.
+func TestNormalizedStateIsAppliable(t *testing.T) {
+	// The exact state the off-then-brightness sequence used to persist.
+	broken := api.LightingState{Enabled: true, Brightness: 2}
+
+	ls := normalizeLightingState(broken, defaultState().Lighting)
+
+	if _, err := aura.ModeFromString(ls.Mode); err != nil {
+		t.Errorf("ModeFromString(%q) = %v, want nil", ls.Mode, err)
+	}
+	if _, err := aura.SpeedFromString(ls.Speed); err != nil {
+		t.Errorf("SpeedFromString(%q) = %v, want nil", ls.Speed, err)
+	}
+	if _, _, _, err := cli.ParseColor(ls.Color); err != nil {
+		t.Errorf("ParseColor(%q) = %v, want nil", ls.Color, err)
+	}
+	if _, _, _, err := cli.ParseColor(ls.Color2); err != nil {
+		t.Errorf("ParseColor(%q) = %v, want nil", ls.Color2, err)
 	}
 }

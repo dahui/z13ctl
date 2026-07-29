@@ -257,6 +257,35 @@ func (d *Daemon) addSubscriber(conn net.Conn) {
 	d.subMu.Unlock()
 }
 
+// normalizeLightingState fills in any field left empty by a partial update,
+// preferring fallback and then the built-in defaults.
+//
+// A per-device entry can legitimately be stored with only some fields set:
+// handleOff saves {Enabled: false} for a named zone, and a later brightness
+// command on that same zone reuses the entry, so the result is enabled with an
+// empty mode, colour and speed. That state is unappliable — ModeFromString("")
+// is an error — which made every subsequent restore fail, on daemon start, on
+// resume, and on keyboard hotplug. Normalising on the way out repairs the state
+// files users already have on disk, not just newly written ones.
+func normalizeLightingState(ls, fallback api.LightingState) api.LightingState {
+	def := defaultState().Lighting
+	pick := func(vals ...string) string {
+		for _, v := range vals {
+			if v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	ls.Mode = pick(ls.Mode, fallback.Mode, def.Mode)
+	ls.Speed = pick(ls.Speed, fallback.Speed, def.Speed)
+	ls.Color = pick(ls.Color, fallback.Color, def.Color)
+	// Colour 2 only matters for breathe, and "000000" is a meaningful value
+	// there, so fall back to the default rather than treating empty as unset.
+	ls.Color2 = pick(ls.Color2, fallback.Color2, def.Color2)
+	return ls
+}
+
 // applyZone applies a LightingState to a specific HID device or zone.
 func applyZone(dev *hid.Device, ls api.LightingState) error {
 	if !ls.Enabled {
@@ -318,17 +347,25 @@ func (d *Daemon) reopenAndRestore() bool {
 // Go runtime turns into an unrecoverable crash.
 func (d *Daemon) applyLightingState() error {
 	if len(d.state.Devices) > 0 {
+		var firstErr error
 		for _, name := range []string{"keyboard", "lightbar"} {
 			ls := d.state.Lighting
 			if dl, ok := d.state.Devices[name]; ok {
-				ls = dl
+				ls = normalizeLightingState(dl, d.state.Lighting)
 			}
 			target, ferr := d.dev.FilteredView(name)
 			if ferr != nil {
 				continue // zone not present on this system
 			}
+			// Keep going after a failure: the zones are independent, and
+			// returning here meant one bad or unwritable zone silently left the
+			// other one dark.
 			if err := applyZone(target, ls); err != nil {
-				return err
+				slog.Warn("failed to restore lighting", "zone", name, "err", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
 			if ls.Enabled {
 				slog.Info("lighting restored", "zone", name, "mode", ls.Mode, "brightness", ls.Brightness)
@@ -336,9 +373,9 @@ func (d *Daemon) applyLightingState() error {
 				slog.Info("lighting restored (off)", "zone", name)
 			}
 		}
-		return nil
+		return firstErr
 	}
-	if err := applyZone(d.dev, d.state.Lighting); err != nil {
+	if err := applyZone(d.dev, normalizeLightingState(d.state.Lighting, api.LightingState{})); err != nil {
 		return err
 	}
 	if d.state.Lighting.Enabled {

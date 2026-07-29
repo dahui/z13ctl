@@ -10,9 +10,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/dahui/z13ctl/api"
 )
+
+// noHomeWarnOnce keeps the unresolvable-home warning to a single line per
+// process. A var so tests can reset it.
+var noHomeWarnOnce = new(sync.Once)
 
 func defaultState() api.State {
 	return api.State{
@@ -39,7 +44,11 @@ func statePath() string {
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil || home == "" {
-			slog.Warn("cannot determine home directory; state will not persist across reboots", "err", err)
+			// Warn once: statePath is called on every save, so an unconditional
+			// warning here would put a line in the journal for every command.
+			noHomeWarnOnce.Do(func() {
+				slog.Warn("cannot determine home directory; state will not persist across reboots", "err", err)
+			})
 			return filepath.Join(os.TempDir(), "z13ctl", "state.json")
 		}
 		base = filepath.Join(home, ".local", "state")
