@@ -16,6 +16,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,12 +35,12 @@ func SocketPath() string {
 type request struct {
 	Cmd        string   `json:"cmd"`
 	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`   // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"`  // "RRGGBB" hex
+	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
+	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"` // "keyboard", "lightbar", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
 	PL1        string   `json:"pl1,omitempty"`
 	PL2        string   `json:"pl2,omitempty"`
@@ -54,14 +57,29 @@ type response struct {
 	Event string `json:"event,omitempty"`
 }
 
+// dialTimeout bounds establishing the connection; commandTimeout bounds the
+// whole request/response exchange once connected. Without the second one a
+// daemon that accepts but never replies — hung on a sysfs write, or wedged in a
+// handler — blocks the caller forever instead of failing.
+// Declared as vars, not consts, so tests can shorten them; nothing outside
+// tests should assign to them.
+var (
+	dialTimeout    = time.Second
+	commandTimeout = 10 * time.Second
+)
+
 // sendCommand connects to the daemon and sends req, returning the response.
 // Returns (false, nil, nil) if the daemon is not running.
 func sendCommand(req request) (bool, *response, error) {
-	conn, err := net.DialTimeout("unix", SocketPath(), time.Second)
+	conn, err := net.DialTimeout("unix", SocketPath(), dialTimeout)
 	if err != nil {
 		return false, nil, nil // daemon not running
 	}
 	defer func() { _ = conn.Close() }()
+
+	// Generous enough for the slowest command (a TDP change rewrites both fan
+	// curves first), short enough that the CLI cannot hang indefinitely.
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout))
 
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -74,6 +92,9 @@ func sendCommand(req request) (bool, *response, error) {
 	var resp response
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return true, nil, fmt.Errorf("reading daemon response: %w", err)
+		}
 		return true, nil, fmt.Errorf("no response from daemon")
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
@@ -158,8 +179,9 @@ func SendBatteryLimitGet() (handled bool, limit int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &limit); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, scanErr)
+	limit, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, parseErr)
 	}
 	return true, limit, nil
 }
@@ -223,8 +245,9 @@ func SendBootSoundGet() (handled bool, value int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, scanErr)
+	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, parseErr)
 	}
 	return true, value, nil
 }
@@ -240,8 +263,9 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, scanErr)
+	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, parseErr)
 	}
 	return true, value, nil
 }
@@ -300,7 +324,7 @@ func SendTdpGet() (handled bool, value string, err error) {
 }
 
 // SendTdpSet sends a TDP set command to the daemon.
-func SendTdpSet(watts string, pl1, pl2, pl3 string, force bool) (bool, error) {
+func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 	handled, resp, err := sendCommand(request{
 		Cmd:   "tdp",
 		Set:   watts,
@@ -387,11 +411,15 @@ func SendGetState() (bool, *State, error) {
 // The returned cancel func closes the underlying connection and stops the
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
-func Subscribe(events []string) (<-chan string, func(), error) {
-	conn, err := net.DialTimeout("unix", SocketPath(), time.Second)
+func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error) {
+	conn, err := net.DialTimeout("unix", SocketPath(), dialTimeout)
 	if err != nil {
 		return nil, nil, nil // daemon not running
 	}
+
+	// Bound the handshake only. The deadline is cleared before streaming
+	// begins, since a subscription is idle by design between button presses.
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout))
 
 	req := request{Cmd: "subscribe", Events: events}
 	data, err := json.Marshal(req)
@@ -420,17 +448,36 @@ func Subscribe(events []string) (<-chan string, func(), error) {
 		return nil, nil, fmt.Errorf("subscribe: %s", ack.Error)
 	}
 
+	// Streaming is open-ended: clear the handshake deadline.
+	_ = conn.SetDeadline(time.Time{})
+
 	ch := make(chan string, 8)
+	done := make(chan struct{})
 	go func() {
 		defer close(ch)
 		for scanner.Scan() {
 			var ev response
-			if err := json.Unmarshal(scanner.Bytes(), &ev); err == nil && ev.Event != "" {
-				ch <- ev.Event
+			if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil || ev.Event == "" {
+				continue
+			}
+			// Select on done as well as the send. A caller that stops reading
+			// fills the buffer and parks this goroutine in a channel send,
+			// where closing the connection cannot reach it — so cancel() alone
+			// would leak the goroutine and never close ch.
+			select {
+			case ch <- ev.Event:
+			case <-done:
+				return
 			}
 		}
 	}()
 
-	cancel := func() { _ = conn.Close() }
+	var once sync.Once
+	cancel = func() {
+		once.Do(func() {
+			close(done)
+			_ = conn.Close()
+		})
+	}
 	return ch, cancel, nil
 }

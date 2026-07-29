@@ -148,3 +148,39 @@ func TestHasDeviceGlob_NoMatches(t *testing.T) {
 		t.Error("HasDeviceGlob on empty tree = true, want false")
 	}
 }
+
+// TestDescriptorHasAuraReport covers the report-descriptor scan, including the
+// clamp on the kernel-supplied length. The kernel caps it at the buffer size
+// today, so an over-long value is defensive — but an unclamped index would
+// panic during device enumeration, before any command has run.
+func TestDescriptorHasAuraReport(t *testing.T) {
+	t.Parallel()
+
+	buf := make([]byte, 4096)
+	// Report ID item (0x85) followed by the Aura report ID (0x5d).
+	copy(buf[10:], []byte{0x85, 0x5d})
+
+	tests := []struct {
+		name  string
+		value []byte
+		size  uint32
+		want  bool
+	}{
+		{"aura report present", buf, 4096, true},
+		{"size stops before the marker", buf, 10, false},
+		{"size covers only the first marker byte", buf, 11, false},
+		{"no marker", make([]byte, 64), 64, false},
+		{"zero size", buf, 0, false},
+		{"size beyond the buffer is clamped", buf, 1 << 20, true},
+		{"size beyond an empty buffer is clamped", []byte{}, 1 << 20, false},
+		{"marker at the very end", []byte{0x00, 0x85, 0x5d}, 3, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hid.DescriptorHasAuraReport(tt.value, tt.size); got != tt.want {
+				t.Errorf("DescriptorHasAuraReport(size=%d) = %v, want %v", tt.size, got, tt.want)
+			}
+		})
+	}
+}

@@ -92,6 +92,11 @@ func Run(ctx context.Context, watchBtn bool) error {
 				slog.Info("profile restored", "profile", d.state.Profile)
 			}
 		}
+		// Write the profile's stock PPT even when platform_profile already
+		// matches: the kernel's PPT attributes come up holding a stale 5W cache
+		// after boot, and nothing else restores them. Unlike SetProfile this is
+		// not a WMI call, so it does not disturb the fan controller.
+		restoreStockPPT(d.state.Profile)
 	}
 
 	// Restore battery charge limit if saved.
@@ -123,13 +128,11 @@ func Run(ctx context.Context, watchBtn bool) error {
 			}
 		}
 		if t := d.state.TDP; t != nil {
-			// Set fans to 80% minimum if sustained TDP exceeds safe max.
-			if t.PL1SPL > cli.TDPMaxSafe {
-				if fsErr := cli.SetBothFanCurves(cli.HighTDPFanCurve()); fsErr != nil {
-					slog.Warn("failed to set high-TDP fan curve for TDP restore", "err", fsErr)
-				}
-			}
-			if tdpErr := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); tdpErr != nil {
+			// ApplyTDPSafely raises the fans to the 80% floor first when the
+			// sustained limit exceeds the safe max, and declines to apply the
+			// TDP at all if that fails — better to boot at the existing limits
+			// than above the safe sustained max with no thermal floor.
+			if tdpErr := cli.ApplyTDPSafely(*t); tdpErr != nil {
 				slog.Warn("failed to restore TDP", "err", tdpErr)
 			} else {
 				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
@@ -222,7 +225,11 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 			d.subMu.Unlock()
 			return
 		case <-d.buttonCh:
-			d.broadcast(response{Event: "gui-toggle"})
+			// OK must be true: `ok` has no omitempty, so leaving it zero ships
+			// {"ok":false,...} on a perfectly good event, and any client that
+			// checks ok before dispatching — the documented contract — silently
+			// drops every button press.
+			d.broadcast(response{OK: true, Event: "gui-toggle"})
 		}
 	}
 }
@@ -248,6 +255,35 @@ func (d *Daemon) addSubscriber(conn net.Conn) {
 	d.subMu.Lock()
 	d.subscribers = append(d.subscribers, conn)
 	d.subMu.Unlock()
+}
+
+// normalizeLightingState fills in any field left empty by a partial update,
+// preferring fallback and then the built-in defaults.
+//
+// A per-device entry can legitimately be stored with only some fields set:
+// handleOff saves {Enabled: false} for a named zone, and a later brightness
+// command on that same zone reuses the entry, so the result is enabled with an
+// empty mode, colour and speed. That state is unappliable — ModeFromString("")
+// is an error — which made every subsequent restore fail, on daemon start, on
+// resume, and on keyboard hotplug. Normalising on the way out repairs the state
+// files users already have on disk, not just newly written ones.
+func normalizeLightingState(ls, fallback api.LightingState) api.LightingState {
+	def := defaultState().Lighting
+	pick := func(vals ...string) string {
+		for _, v := range vals {
+			if v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	ls.Mode = pick(ls.Mode, fallback.Mode, def.Mode)
+	ls.Speed = pick(ls.Speed, fallback.Speed, def.Speed)
+	ls.Color = pick(ls.Color, fallback.Color, def.Color)
+	// Colour 2 only matters for breathe, and "000000" is a meaningful value
+	// there, so fall back to the default rather than treating empty as unset.
+	ls.Color2 = pick(ls.Color2, fallback.Color2, def.Color2)
+	return ls
 }
 
 // applyZone applies a LightingState to a specific HID device or zone.
@@ -304,19 +340,32 @@ func (d *Daemon) reopenAndRestore() bool {
 // applyLightingState restores lighting from the saved state. d.dev must be non-nil.
 // If per-device states are saved (d.state.Devices), each zone is restored independently;
 // otherwise the all-device state (d.state.Lighting) is applied to all zones.
+//
+// The caller must hold d.mu: this reads d.dev (which the hotplug watcher closes
+// and replaces) and d.state.Devices (which socket handlers mutate). Reading the
+// map unlocked while a handler writes it is a concurrent map access, which the
+// Go runtime turns into an unrecoverable crash.
 func (d *Daemon) applyLightingState() error {
 	if len(d.state.Devices) > 0 {
+		var firstErr error
 		for _, name := range []string{"keyboard", "lightbar"} {
 			ls := d.state.Lighting
 			if dl, ok := d.state.Devices[name]; ok {
-				ls = dl
+				ls = normalizeLightingState(dl, d.state.Lighting)
 			}
 			target, ferr := d.dev.FilteredView(name)
 			if ferr != nil {
 				continue // zone not present on this system
 			}
+			// Keep going after a failure: the zones are independent, and
+			// returning here meant one bad or unwritable zone silently left the
+			// other one dark.
 			if err := applyZone(target, ls); err != nil {
-				return err
+				slog.Warn("failed to restore lighting", "zone", name, "err", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
 			if ls.Enabled {
 				slog.Info("lighting restored", "zone", name, "mode", ls.Mode, "brightness", ls.Brightness)
@@ -324,9 +373,9 @@ func (d *Daemon) applyLightingState() error {
 				slog.Info("lighting restored (off)", "zone", name)
 			}
 		}
-		return nil
+		return firstErr
 	}
-	if err := applyZone(d.dev, d.state.Lighting); err != nil {
+	if err := applyZone(d.dev, normalizeLightingState(d.state.Lighting, api.LightingState{})); err != nil {
 		return err
 	}
 	if d.state.Lighting.Enabled {

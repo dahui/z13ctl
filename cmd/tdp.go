@@ -41,8 +41,9 @@ GZ302E). When PL1 exceeds 75W, fans are automatically set to full speed for
 thermal safety. Burst limits (PL2/PL3) are allowed up to 93W without --force
 since short bursts are thermally safe.
 
-With --reset, switches to the balanced profile and resets fan curves to auto mode.
-The firmware then manages PPT and fan curves automatically.
+With --reset, switches to the balanced profile, resets fan curves to auto mode,
+and writes balanced's stock PPT values back to hardware. The firmware manages
+fan curves for stock profiles but does not restore PPT on its own.
 
 PPT attributes:
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
@@ -58,8 +59,9 @@ When using --set, all three limits are set to the same value by default. Use
 --pl1, --pl2, and --pl3 to set them independently — for example, --set 45
 --pl2 55 --pl3 65 allows short bursts up to 65W while sustaining 45W.
 
-Stock profiles (quiet/balanced/performance) let the firmware manage TDP
-dynamically. Setting a custom TDP switches to the "custom" profile.`,
+Setting a custom TDP switches to the "custom" profile. Switching back to a
+stock profile restores that profile's stock PPT values to hardware while
+keeping the custom values saved, so "custom" stays re-selectable.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !tdpGetFlag && tdpSetFlag == "" && !tdpResetFlag {
@@ -77,8 +79,7 @@ dynamically. Setting a custom TDP switches to the "custom" profile.`,
 }
 
 func runTdpGet() error {
-	profile := readCurrentProfile()
-	tdp, err := cli.ReadEffectivePPT(profile)
+	tdp, err := cli.ReadEffectivePPT(effectiveProfileForTDP())
 	if err != nil {
 		return fmt.Errorf("reading TDP: %w", err)
 	}
@@ -98,6 +99,19 @@ func readCurrentProfile() string {
 		return "unknown"
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// effectiveProfileForTDP returns the profile name to use when interpreting PPT
+// values. It prefers the daemon's own profile because "custom" is a virtual
+// profile that is deliberately never written to platform_profile — so sysfs
+// alone cannot tell a legitimate 5W custom TDP from the kernel's stale 5W cache,
+// and cli.ReadEffectivePPT would substitute the stock table for real values.
+// Falls back to platform_profile when the daemon is not running.
+func effectiveProfileForTDP() string {
+	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil && st.Profile != "" {
+		return st.Profile
+	}
+	return readCurrentProfile()
 }
 
 func runTdpSet() error {
@@ -140,14 +154,8 @@ func runTdpSet() error {
 		return nil
 	}
 
-	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
-	if pl1 > cli.TDPMaxSafe {
-		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
-			return fmt.Errorf("failed to set high-TDP fan curve: %w (refusing to apply unsafe TDP)", err)
-		}
-		fmt.Println("Fans set to 80%+ curve for thermal safety")
-	}
-
+	// The daemon applies the fan floor itself (cli.ApplyTDPSafely), so hand the
+	// whole operation over before touching hardware here.
 	if handled, err := api.SendTdpSet(tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
@@ -156,8 +164,13 @@ func runTdpSet() error {
 		return nil
 	}
 
-	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
+	// Direct path: same helper, so the no-daemon path enforces the 80% fan floor
+	// on the same terms — fans first, and no TDP at all if that write fails.
+	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+	}
+	if pl1 > cli.TDPMaxSafe {
+		fmt.Println("Fans set to 80%+ curve for thermal safety")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil
@@ -173,20 +186,48 @@ func runTdpReset() error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("TDP reset: switched to balanced profile (firmware manages PPT)")
+		fmt.Println("TDP reset: switched to balanced profile (stock PPT restored)")
 		return nil
 	}
 
-	// Direct path (no daemon): reset fans to auto, then switch to balanced
-	// profile. The firmware sets per-profile PPT and fan curves automatically.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	// Direct path (no daemon): switch to balanced, write its stock PPT values
+	// back to hardware, and only then release the fans to firmware auto — so
+	// they are never dropped to auto while a high custom TDP is still in force.
+	// The firmware manages fan curves on a profile change but does not restore
+	// PPT, so that part has to be explicit.
+	// Reset the undervolt as well: this lands on a stock profile, and every
+	// other route to one clears CO. Guarded on SMUAvailable so machines without
+	// ryzen_smu do not get a spurious warning.
+	if cli.SMUAvailable() {
+		if err := cli.ResetCurveOptimizer(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
+		}
 	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
+	restoreStockPPT("balanced")
+	if err := cli.ResetAllFanCurves(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	}
 	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
+}
+
+// restoreStockPPT writes the measured stock PPT values for a stock profile back
+// to hardware on the direct (no-daemon) path. The asus-nb-wmi PPT attributes
+// have no "reset to firmware default" operation and the firmware does not
+// re-apply per-profile limits on a platform_profile change, so without this a
+// custom TDP leaks into every stock profile. Failures warn and continue: a
+// profile switch must not hard-fail because the PPT restore did not take.
+func restoreStockPPT(profile string) {
+	stock, ok := cli.StockProfilePPT[profile]
+	if !ok {
+		return
+	}
+	if err := cli.SetTDPState(stock); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore stock TDP for %s: %v\n", profile, err)
+	}
 }
 
 // parsePLOverrides returns the effective PL1/PL2/PL3 values, applying
@@ -217,7 +258,7 @@ func parsePLOverrides(watts int) (pl1, pl2, pl3 int, err error) {
 func init() {
 	tdpCmd.Flags().BoolVar(&tdpGetFlag, "get", false, "Print current TDP power limits")
 	tdpCmd.Flags().StringVar(&tdpSetFlag, "set", "", "Set TDP power limit in watts")
-	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile (firmware manages PPT)")
+	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and restore its stock PPT values")
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")

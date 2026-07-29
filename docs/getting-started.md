@@ -113,8 +113,9 @@ instantaneous spikes for milliseconds. Setting all three to the same value gives
 a flat power cap; setting PL2 and PL3 higher allows bursty workloads to
 temporarily exceed PL1.
 
-Stock profiles (quiet/balanced/performance) manage TDP automatically. Custom TDP
-values override this and switch to the `custom` profile.
+Setting a custom TDP switches to the `custom` profile. Switching back to a stock
+profile restores that profile's stock PPT values to hardware, while keeping the
+custom values saved so `custom` stays re-selectable.
 
 ```sh
 # Check current TDP/PPT values
@@ -129,7 +130,7 @@ z13ctl tdp --set 45 --pl2 55 --pl3 60
 # Force high TDP (above 75W, fans set to 80% minimum)
 z13ctl tdp --set 85 --force
 
-# Reset to balanced profile (firmware manages PPT)
+# Reset to balanced profile (restores balanced's stock PPT)
 z13ctl tdp --reset
 ```
 

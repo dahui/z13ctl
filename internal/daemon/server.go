@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
@@ -28,12 +29,12 @@ import (
 type request struct {
 	Cmd        string   `json:"cmd"`
 	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`   // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"`  // "RRGGBB" hex
+	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
+	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"` // "keyboard", "lightbar", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
 	PL1        string   `json:"pl1,omitempty"`
 	PL2        string   `json:"pl2,omitempty"`
@@ -43,16 +44,26 @@ type request struct {
 
 // response is the reply to a command or a streamed event notification.
 type response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Value string `json:"value,omitempty"`
+	OK    bool       `json:"ok"`
+	Error string     `json:"error,omitempty"`
+	Value string     `json:"value,omitempty"`
 	State *api.State `json:"state,omitempty"`
-	Event string `json:"event,omitempty"`
+	Event string     `json:"event,omitempty"`
 }
+
+// requestReadTimeout bounds how long a connection may stay open without
+// sending its request line. Declared as a var so tests can shorten it.
+var requestReadTimeout = 30 * time.Second
 
 // handleConn reads one JSON request, dispatches it, and writes one JSON response.
 // For "subscribe" requests the connection is kept open for event streaming.
 func (d *Daemon) handleConn(conn net.Conn) {
+	// Bound how long a connection may sit without sending its request line.
+	// handleConn runs in its own goroutine per connection with no cap, so a
+	// client that connects and stays silent would otherwise pin a goroutine
+	// (and, for a subscribe, a file descriptor) for the daemon's lifetime.
+	_ = conn.SetReadDeadline(time.Now().Add(requestReadTimeout))
+
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		_ = conn.Close()
@@ -67,11 +78,18 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	}
 
 	if req.Cmd == "subscribe" {
-		// Acknowledge and keep connection open for event streaming.
+		// Acknowledge and keep the connection open for event streaming. Clear
+		// the deadline first: a subscription is idle by design between button
+		// presses, and the daemon only ever writes on it from here on.
+		_ = conn.SetReadDeadline(time.Time{})
 		writeResponse(conn, response{OK: true})
 		d.addSubscriber(conn)
 		return
 	}
+
+	// The command is handled synchronously below; clear the read deadline so it
+	// cannot expire mid-write on a slow hardware operation.
+	_ = conn.SetReadDeadline(time.Time{})
 
 	resp := d.dispatch(req)
 	if !resp.OK {
@@ -114,7 +132,7 @@ func (d *Daemon) dispatch(req request) response {
 	case "tdp":
 		return d.handleTDP(req)
 	case "tdp-get":
-		return handleTDPGet()
+		return d.handleTDPGet()
 	case "tdp-reset":
 		return d.handleTDPReset()
 	case "undervolt":
@@ -125,7 +143,7 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleUndervoltReset()
 	case "get-state":
 		d.mu.Lock()
-		s := d.state
+		s := cloneState(d.state)
 		d.mu.Unlock()
 		// Populate firmware-managed fields from sysfs (not cached in daemon state).
 		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
@@ -133,7 +151,9 @@ func (d *Daemon) dispatch(req request) response {
 		// Populate fan curve from sysfs for ground truth.
 		s.FanCurve = readFanCurveFromSysfs()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
-		if tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs()); err == nil {
+		// Pass the daemon's own profile: platform_profile is never "custom", so
+		// using it would report the stock table for a legitimate 5W custom TDP.
+		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
 			s.TDP = &tdp
 		}
 		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
@@ -231,7 +251,7 @@ func (d *Daemon) handleApply(req request) response {
 	}
 	// Raw /dev/hidrawN paths are transient; not persisted.
 	if req.Device == "" || !strings.HasPrefix(req.Device, "/") {
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -260,7 +280,7 @@ func (d *Daemon) handleOff(req request) response {
 				d.state.Devices = make(map[string]api.LightingState)
 			}
 			d.state.Devices[req.Device] = api.LightingState{Enabled: false}
-			if err := saveState(d.state); err != nil {
+			if err := saveState(cloneState(d.state)); err != nil {
 				slog.Warn("failed to save state", "err", err)
 			}
 		}
@@ -268,7 +288,7 @@ func (d *Daemon) handleOff(req request) response {
 		slog.Info("off")
 		d.state.Lighting.Enabled = false
 		d.state.Devices = nil
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -308,7 +328,7 @@ func (d *Daemon) handleBrightness(req request) response {
 	if req.Device == "" {
 		d.state.Lighting.Brightness = req.Brightness
 		d.state.Lighting.Enabled = on
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	} else if !strings.HasPrefix(req.Device, "/") {
@@ -318,12 +338,15 @@ func (d *Daemon) handleBrightness(req request) response {
 		}
 		ls := d.state.Lighting // base: fall back to all-device state
 		if existing, ok := d.state.Devices[req.Device]; ok {
-			ls = existing
+			// Normalise: a zone turned off earlier is stored as
+			// {Enabled: false} with no mode or colour, and reusing it verbatim
+			// would persist an enabled state that cannot be re-applied.
+			ls = normalizeLightingState(existing, d.state.Lighting)
 		}
 		ls.Brightness = req.Brightness
 		ls.Enabled = on
 		d.state.Devices[req.Device] = ls
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -351,13 +374,12 @@ func (d *Daemon) handleProfile(req request) response {
 				slog.Warn("failed to reapply fan curve", "err", err)
 			}
 		}
-		// Re-apply saved TDP.
+		// Re-apply saved TDP. ApplyTDPSafely raises the fans to the 80% floor
+		// before raising power (this branch used to do it the other way round,
+		// and discarded the fan error) and refuses the TDP if that write fails.
 		if t := d.state.TDP; t != nil {
-			if err := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); err != nil {
+			if err := cli.ApplyTDPSafely(*t); err != nil {
 				slog.Warn("failed to reapply TDP", "err", err)
-			}
-			if t.PL1SPL > cli.TDPMaxSafe {
-				_ = cli.SetBothFanCurves(cli.HighTDPFanCurve())
 			}
 		}
 		// Re-apply saved undervolt.
@@ -368,7 +390,7 @@ func (d *Daemon) handleProfile(req request) response {
 				d.state.Undervolt.Active = true
 			}
 		}
-		s := d.state
+		s := cloneState(d.state)
 		d.mu.Unlock()
 		slog.Info("profile", "set", "custom")
 		if err := saveState(s); err != nil {
@@ -377,11 +399,12 @@ func (d *Daemon) handleProfile(req request) response {
 		return response{OK: true}
 	}
 
-	// Stock profile: reset fan curves to auto and UV to stock, then write to
-	// platform_profile. The firmware sets per-profile PPT and fan curves automatically.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves to auto", "err", err)
-	}
+	// Stock profile: reset UV to stock, write platform_profile, restore that
+	// profile's stock PPT, and only then release the fans to firmware auto. The
+	// firmware manages fan curves for stock profiles, but it does NOT re-apply
+	// per-profile PPT, so any custom watts would otherwise persist across the
+	// switch — restoreStockPPT does that explicitly. Fans are released last so
+	// they are never dropped to auto while a high custom TDP is still in force.
 	if cli.SMUProbeUndervolt() {
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
@@ -390,6 +413,10 @@ func (d *Daemon) handleProfile(req request) response {
 	if err := cli.SetProfile(profile); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
+	restoreStockPPT(profile)
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves to auto", "err", err)
+	}
 
 	slog.Info("profile", "set", profile)
 	d.mu.Lock()
@@ -397,12 +424,33 @@ func (d *Daemon) handleProfile(req request) response {
 	if d.state.Undervolt != nil {
 		d.state.Undervolt.Active = false
 	}
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
 	}
 	return response{OK: true}
+}
+
+// restoreStockPPT writes the measured stock PPT values for a stock profile back
+// to hardware. The asus-nb-wmi PPT attributes have no "reset to firmware
+// default" operation and the firmware does not re-apply per-profile limits on a
+// platform_profile change, so without this a custom TDP leaks into every stock
+// profile. Failures are logged and swallowed: a profile switch must not
+// hard-fail because the PPT restore did not take.
+//
+// Callers must not clear the saved custom TDP in daemon state — only the
+// hardware values are reset, so the user can select "custom" again.
+func restoreStockPPT(profile string) {
+	stock, ok := cli.StockProfilePPT[profile]
+	if !ok {
+		return
+	}
+	if err := cli.SetTDPState(stock); err != nil {
+		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
+		return
+	}
+	slog.Info("restored stock PPT", "profile", profile, "pl1", stock.PL1SPL, "pl2", stock.PL2SPPT)
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
@@ -416,7 +464,7 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	slog.Info("batterylimit", "set", limit)
 	d.mu.Lock()
 	d.state.Battery = limit
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -463,7 +511,7 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	slog.Info("paneloverdrive", "set", value)
 	d.mu.Lock()
 	d.state.PanelOverdrive = value
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -519,18 +567,12 @@ func (d *Daemon) handleFanCurve(req request) response {
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
-	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
-	d.mu.Lock()
-	tdp := d.state.TDP
-	d.mu.Unlock()
-	if tdp != nil && tdp.PL1SPL > cli.TDPMaxSafe {
-		for _, p := range points {
-			if p.PWM < cli.HighTDPMinPWM {
-				return response{OK: false, Error: fmt.Sprintf(
-					"fancurve: PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
-					p.PWM, p.Temp, cli.HighTDPMinPWM, cli.TDPMaxSafe)}
-			}
-		}
+	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
+	// This reads hardware rather than the cached d.state.TDP, which can disagree
+	// with it — a TDP set while the daemon was down, or a reset state file — and
+	// silently skipped the guard. Matches the CLI's direct path.
+	if err := cli.CheckFanCurveFloor(d.effectiveProfile(), points); err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
 	if err := cli.SetBothFanCurves(points); err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
@@ -539,7 +581,7 @@ func (d *Daemon) handleFanCurve(req request) response {
 	d.mu.Lock()
 	d.state.FanCurve = &api.FanCurveState{Mode: 1, Points: points}
 	d.state.Profile = "custom"
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -548,13 +590,19 @@ func (d *Daemon) handleFanCurve(req request) response {
 }
 
 func (d *Daemon) handleFanCurveReset() response {
+	// Firmware auto has no PWM floor, so releasing the fans while a high
+	// sustained TDP is still in force removes the very protection the high-TDP
+	// curve provides. "tdp --reset" is the way out — it lowers power first.
+	if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+	}
 	if err := cli.ResetAllFanCurves(); err != nil {
 		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 	}
 	slog.Info("fancurve-reset", "fans", "both")
 	d.mu.Lock()
 	d.state.FanCurve = nil
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -562,13 +610,28 @@ func (d *Daemon) handleFanCurveReset() response {
 	return response{OK: true}
 }
 
-func handleTDPGet() response {
-	tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs())
+func (d *Daemon) handleTDPGet() response {
+	tdp, err := cli.ReadEffectivePPT(d.effectiveProfile())
 	if err != nil {
 		return response{OK: false, Error: "reading TDP: " + err.Error()}
 	}
 	data, _ := json.Marshal(tdp)
 	return response{OK: true, Value: string(data)}
+}
+
+// effectiveProfile returns the profile to use when interpreting PPT values:
+// the daemon's own state when set, falling back to platform_profile. The
+// distinction matters because "custom" is a virtual profile that is never
+// written to platform_profile, so sysfs alone cannot tell a legitimate 5W
+// custom TDP from the kernel's stale 5W cache.
+func (d *Daemon) effectiveProfile() string {
+	d.mu.Lock()
+	p := d.state.Profile
+	d.mu.Unlock()
+	if p != "" {
+		return p
+	}
+	return readProfileFromSysfs()
 }
 
 // readProfileFromSysfs reads the current platform_profile value.
@@ -620,30 +683,22 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
-	if pl1 > cli.TDPMaxSafe {
-		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
-			return response{OK: false, Error: "cannot set high-TDP fan curve: " + err.Error()}
-		}
-		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
-	}
-
-	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
+	// ApplyTDPSafely raises the fans to the 80% floor first when pl1 exceeds the
+	// safe sustained max, and refuses to apply the TDP at all if that fails.
+	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
+	if err := cli.ApplyTDPSafely(tdp); err != nil {
 		return response{OK: false, Error: "tdp: " + err.Error()}
+	}
+	if pl1 > cli.TDPMaxSafe {
+		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
 	}
 	slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3)
 
 	d.mu.Lock()
-	d.state.TDP = &api.TDPState{
-		PL1SPL:       pl1,
-		PL2SPPT:      pl2,
-		FPPT:         pl3,
-		APUSPPT:      pl2,
-		PlatformSPPT: pl2,
-	}
+	d.state.TDP = &tdp
 	d.state.Profile = "custom"
 	fc := d.state.FanCurve
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -664,21 +719,38 @@ func (d *Daemon) handleTDP(req request) response {
 }
 
 func (d *Daemon) handleTDPReset() response {
-	// Reset fans to auto mode (undo any full-speed override from high TDP),
-	// then switch to balanced profile. The firmware sets per-profile PPT
-	// values and fan curves automatically on profile change.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+	// Lower power first, then release the fans: balanced's sustained limit is
+	// below TDPMaxSafe, so by the time the fans drop to firmware auto the limit
+	// that required the 80% floor is gone. Doing it the other way round leaves a
+	// window at full power with no floor, and a failed profile switch would
+	// leave it that way. The firmware manages fan curves on a profile change but
+	// does not restore PPT, so restoreStockPPT has to be explicit.
+	// Reset the undervolt too. This lands on "balanced", a stock profile, and
+	// every other route to a stock profile clears CO — leaving it applied here
+	// would leak a custom setting into a stock profile (the defect class behind
+	// #12) and leave undervolt --get reporting "active" on a stock profile.
+	// Saved values are kept in state so "custom" stays re-selectable.
+	if cli.SMUProbeUndervolt() {
+		if err := cli.ResetCurveOptimizer(); err != nil {
+			slog.Warn("failed to reset undervolt after TDP reset", "err", err)
+		}
 	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
+	}
+	restoreStockPPT("balanced")
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
 	}
 	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
 	d.state.TDP = nil
 	d.state.FanCurve = nil
 	d.state.Profile = "balanced"
-	s := d.state
+	if d.state.Undervolt != nil {
+		d.state.Undervolt.Active = false
+	}
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -698,7 +770,6 @@ func (d *Daemon) handleUndervoltGet() response {
 	uvState := api.UndervoltState{}
 	if uv != nil {
 		uvState = *uv
-		uvState.Active = uv.Active
 	}
 	// Include the current profile so the client can tell whether CO is active.
 	data, _ := json.Marshal(struct {
@@ -734,7 +805,7 @@ func (d *Daemon) handleUndervolt(req request) response {
 	d.mu.Lock()
 	d.state.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, Active: true}
 	d.state.Profile = "custom"
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -754,7 +825,7 @@ func (d *Daemon) handleUndervoltReset() response {
 	slog.Info("undervolt-reset")
 	d.mu.Lock()
 	d.state.Undervolt = nil
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -766,4 +837,3 @@ func writeResponse(conn net.Conn, r response) {
 	data, _ := json.Marshal(r)
 	_, _ = fmt.Fprintf(conn, "%s\n", data)
 }
-

@@ -129,7 +129,7 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().StringVar(&colorFlag, "color", "FF0000",
-		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Ignored by cycle and rainbow. Use --list-colors for all names.")
+		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Ignored by cycle and rainbow. 000000 makes the firmware pick a color — use 'z13ctl off' for no light. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&color2Flag, "color2", "000000",
 		"Secondary color for breathe mode: hex (RRGGBB) or name. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&modeFlag, "mode", "static",

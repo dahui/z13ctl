@@ -10,18 +10,20 @@ SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 build:
 	go build -ldflags "$(LDFLAGS)" -o z13ctl .
 
-## test: run all tests
+## test: run all tests (both modules — api/ is separate, so ./... misses it)
 test:
 	go test ./...
+	cd api && go test ./...
 
 ## cover: run tests with coverage report
 cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
-## lint: run golangci-lint
+## lint: run golangci-lint (both modules)
 lint:
 	golangci-lint run ./...
+	cd api && golangci-lint run ./...
 
 ## mod-tidy: tidy go.mod for all modules in the repo
 mod-tidy:

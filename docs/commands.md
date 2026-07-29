@@ -16,7 +16,7 @@ These flags apply to every command.
 |------|-------------|
 | `--device <name\|path>` | Target a single device: `keyboard`, `lightbar`, or a `/dev/hidrawN` path. Without this flag all matching devices are targeted. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
-| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the button device. |
+| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching z13ctl at all. |
 
 ---
 
@@ -48,6 +48,12 @@ z13ctl apply [flags]
 | `strobe` | Rapid flash | yes | — | yes |
 
 All modes accept `--brightness`.
+
+!!! note "`--color 000000` means \"pick a color\", not black"
+    An all-zero primary color sets the Aura protocol's random-color flag, so the
+    firmware chooses a color itself. This matches the reference implementation
+    the protocol was derived from. To turn lighting off, use
+    [`z13ctl off`](#off) or `--brightness off` — not a black color.
 
 ```sh
 z13ctl apply --color cyan --brightness high
@@ -111,8 +117,13 @@ settings from the daemon's state file. It does **not** write to `platform_profil
 Setting `custom` requires the daemon to be running, and at least one custom fan
 curve or TDP value must have been previously set.
 
-Setting a stock profile (`quiet`, `balanced`, `performance`) resets any active
-custom fan curves and TDP values back to firmware defaults.
+Setting a stock profile (`quiet`, `balanced`, `performance`) resets fan curves to
+firmware auto mode, resets the CPU undervolt to stock, and writes that profile's
+measured stock PPT values back to hardware. The firmware does *not* re-apply
+per-profile power limits on its own, so z13ctl restores them explicitly. Your
+saved custom fan curve, TDP, and undervolt are kept in daemon state, so
+`--set custom` recalls them. [`tdp --reset`](#tdp) behaves the same way, since it
+also lands on a stock profile.
 
 ```sh
 z13ctl profile --get
@@ -224,6 +235,13 @@ mixed in the same curve.
 - Temperatures must be monotonically increasing (0–120 &deg;C)
 - Speed values must be non-decreasing (0–255 PWM or 0–100%)
 
+!!! warning "Fan control is restricted above 75 W sustained TDP"
+    While sustained TDP (PL1) is above 75 W, every curve point must be at least
+    204 PWM (80%), and `--reset` is refused — firmware auto mode has no floor,
+    and dropping to it would remove the cooling the power limit depends on.
+    Lower the limit first with [`z13ctl tdp --reset`](#tdp), which restores the
+    balanced profile before releasing the fans.
+
 ```sh
 # Read current fan curves
 z13ctl fancurve --get
@@ -254,7 +272,7 @@ z13ctl tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile (firmware manages PPT and fan curves) |
+| `--reset` | Switch to balanced profile, reset fan curves to auto and the undervolt to stock, and restore balanced's stock PPT |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -275,21 +293,27 @@ and `--pl3` to set them independently — a stepped configuration like
 `--set 45 --pl2 55 --pl3 65` sustains 45W with short bursts to 55W and
 instantaneous peaks to 65W.
 
-Stock profiles (quiet/balanced/performance) let the firmware manage TDP
-dynamically — the firmware sets per-profile PPT values automatically on profile
-change. Setting a custom TDP switches to the `custom` profile.
+Setting a custom TDP switches to the `custom` profile. Switching back to a stock
+profile writes that profile's measured stock PPT values to hardware — the
+firmware does *not* re-apply them on a `platform_profile` change, so z13ctl
+restores them explicitly. The saved custom values are kept, so `custom` stays
+re-selectable.
 
 !!! note "PPT readback values"
-    The values shown by `--get` are the kernel driver's cached values, which may
-    not reflect the actual EC limits (especially after a fresh boot or profile
-    change). Use `ryzenadj -i` if you need ground-truth PPT readings.
+    The values shown by `--get` are the kernel driver's cached values. After a
+    fresh boot they hold a stale 5W default until something writes them; z13ctl
+    substitutes the measured per-profile table in that case. Use `ryzenadj -i`
+    if you need ground-truth PPT readings.
 
 **Safety:**
 
-- Default range: 5–75W
-- `--force` extends the range to 5–93W
-- When any PPT value exceeds 75W, **both fans are forced to full speed** before
-  the TDP values are written. If the fan write fails, TDP is not applied.
+- Default range: 5–75W for the sustained limit (PL1); `--force` extends it to
+  5–93W. Burst limits (PL2/PL3) may go to 93W without `--force`, since short
+  bursts are thermally safe.
+- When the **sustained** limit exceeds 75W, both fans are held to a minimum of
+  204 PWM (80%) before the TDP values are written. If that fan write fails, the
+  TDP is not applied at all. Burst limits above 75W do not trigger this on their
+  own.
 
 ```sh
 # Read current TDP values
@@ -301,10 +325,10 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (fans will be set to full speed)
+# Force high sustained TDP (fans are held to an 80% floor first)
 z13ctl tdp --set 85 --force
 
-# Reset to balanced profile (firmware manages PPT)
+# Reset to balanced profile (restores balanced's stock PPT and clears the undervolt)
 z13ctl tdp --reset
 ```
 
@@ -378,19 +402,33 @@ battery charge level with charge limit.
 z13ctl status
 ```
 
-This command is read-only and takes no flags. All values are read directly from
-sysfs (except undervolt, which has no sysfs readback — shows `ryzen_smu`
-module availability).
+This command is read-only and takes no flags. Values are read directly from
+sysfs, with two exceptions: undervolt has no sysfs readback, so the line reports
+availability rather than the active offset; and the TDP line asks the daemon
+which profile is active, because a custom TDP of exactly 5 W is otherwise
+indistinguishable from the kernel's stale 5 W boot cache.
 
 ```sh
 z13ctl status
-# APU:       62°C
-# Fans:      4200 RPM, mode: auto
-# Profile:   balanced
-# TDP:       52W (PL1) / 71W (PL2) / 70W (PL3)
-# Undervolt: available (ryzen_smu loaded)
-# Battery:   74% (limit: 80%)
+# APU:     62°C
+# Fans:    4200 RPM, mode: auto
+# Profile: balanced
+# TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
+# UV:      available (use 'undervolt --get' for current values)
+# Battery: 74% (limit: 80%)
 ```
+
+The undervolt line comes from the daemon, which tests Curve Optimizer support
+once at startup. Without a daemon, `status` can only confirm that the module is
+loaded and says so:
+
+```
+# UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)
+```
+
+`status` deliberately does not run that support test itself — it works by writing
+a zero offset, which is the same command as [`undervolt --reset`](#undervolt), so
+a `status` that ran it would clear an active undervolt every time.
 
 ---
 

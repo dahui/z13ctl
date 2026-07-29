@@ -5,6 +5,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
@@ -123,5 +124,131 @@ func TestLoadState_DevicesNilOnAllDeviceState(t *testing.T) {
 	got := loadState()
 	if got.Devices != nil {
 		t.Errorf("Devices should be nil for all-device state, got %v", got.Devices)
+	}
+}
+
+// TestStatePath_WithoutHome covers the fallback for an environment with neither
+// XDG_STATE_HOME nor a resolvable home directory. os.UserHomeDir returns an
+// error and an empty string there, which silently yielded the absolute path
+// "/.local/state/z13ctl/state.json" — unwritable for any non-root user, so
+// every save failed.
+func TestStatePath_WithoutHome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "")
+
+	got := statePath()
+	if strings.HasPrefix(got, "/.local/") {
+		t.Fatalf("statePath() = %q, want a writable fallback rather than a root-relative path", got)
+	}
+	if filepath.Dir(filepath.Dir(got)) != os.TempDir() {
+		t.Errorf("statePath() = %q, want it under %q", got, os.TempDir())
+	}
+}
+
+// TestLoadState_PreservesCorruptFile is the regression guard for a silent data
+// loss: an unparseable state file was discarded with no log line, and the next
+// save overwrote it — taking every saved setting with it and leaving nothing to
+// diagnose.
+func TestLoadState_PreservesCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	path := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// A truncated write — the realistic corruption for an atomic-rename scheme.
+	const truncated = `{"lighting":{"enabled":true,"mode":"stat`
+	if err := os.WriteFile(path, []byte(truncated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, def := loadState(), defaultState(); got.Lighting != def.Lighting {
+		t.Errorf("corrupt file: got Lighting %+v, want default %+v", got.Lighting, def.Lighting)
+	}
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("corrupt state.json is still in place (err = %v); it should have been renamed aside", err)
+	}
+	preserved, err := os.ReadFile(path + ".corrupt")
+	if err != nil {
+		t.Fatalf("reading the preserved copy = %v, want the original content kept for diagnosis", err)
+	}
+	if string(preserved) != truncated {
+		t.Errorf("preserved copy = %q, want the original %q", preserved, truncated)
+	}
+}
+
+// TestSaveState_CleansUpTempOnRenameFailure: a rename that fails tends to keep
+// failing, so leaving the temp file behind means every later save rewrites the
+// same orphan beside the state file.
+func TestSaveState_CleansUpTempOnRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	// A directory at the destination makes os.Rename fail while the temp write
+	// itself still succeeds.
+	path := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := saveState(defaultState()); err == nil {
+		t.Fatal("saveState() = nil, want an error when the destination is a directory")
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("state.json.tmp was left behind (err = %v)", err)
+	}
+}
+
+func TestSaveState_RestrictivePermissions(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	if err := saveState(defaultState()); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+	info, err := os.Stat(statePath())
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("state file mode = %#o, want 0600", perm)
+	}
+}
+
+// TestLoadStateRepairsPartialDeviceEntries: the repair has to happen on load,
+// not only when lighting is applied, or get-state keeps handing clients an entry
+// with an empty mode and colour and the damaged file is never rewritten.
+func TestLoadStateRepairsPartialDeviceEntries(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	path := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly what "off --device keyboard" then "brightness medium" used to write.
+	const broken = `{
+	  "lighting": {"enabled":true,"mode":"static","color":"FF0000","color2":"000000","speed":"normal","brightness":3},
+	  "devices": {"keyboard": {"enabled":true,"mode":"","color":"","color2":"","speed":"","brightness":2}}
+	}`
+	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadState()
+	kb, ok := got.Devices["keyboard"]
+	if !ok {
+		t.Fatal("keyboard entry missing after load")
+	}
+	if kb.Mode == "" || kb.Color == "" || kb.Speed == "" {
+		t.Errorf("keyboard entry still partial after load: %+v", kb)
+	}
+	if kb.Brightness != 2 || !kb.Enabled {
+		t.Errorf("keyboard entry lost its real values: %+v", kb)
+	}
+	// Gaps are filled from the all-device state, not blindly from defaults.
+	if kb.Mode != "static" || kb.Color != "FF0000" {
+		t.Errorf("keyboard entry = %+v, want gaps filled from the all-device state", kb)
 	}
 }

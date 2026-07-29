@@ -76,14 +76,14 @@ func TestNamedColorsMap(t *testing.T) {
 
 	// Spot-check key entries and verify map is populated from the list.
 	cases := map[string]string{
-		"red":      "ff0000",
-		"cyan":     "00ffff",
-		"blue":     "0000ff",
-		"hotpink":  "ff69b4",
-		"white":    "ffffff",
-		"magenta":  "ff00ff",
-		"navy":     "000080",
-		"indigo":   "4b0082",
+		"red":       "ff0000",
+		"cyan":      "00ffff",
+		"blue":      "0000ff",
+		"hotpink":   "ff69b4",
+		"white":     "ffffff",
+		"magenta":   "ff00ff",
+		"navy":      "000080",
+		"indigo":    "4b0082",
 		"turquoise": "40e0d0",
 	}
 	for name, wantHex := range cases {

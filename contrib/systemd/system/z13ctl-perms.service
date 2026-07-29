@@ -1,8 +1,11 @@
 [Unit]
-Description=z13ctl sysfs permissions (battery + firmware-attributes)
+Description=z13ctl sysfs permissions (battery + firmware-attributes + PPT + ryzen_smu)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
 # firmware-attributes current_value files may be created after the parent ADD event.
+# ppt_* on the asus-nb-wmi platform device are created late in the same probe(),
+# so the udev rule for them is best-effort only and this service is the reliable path.
+# ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 After=sysinit.target
 
 [Service]
@@ -10,6 +13,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f" || true; done'
 
 [Install]
 WantedBy=multi-user.target

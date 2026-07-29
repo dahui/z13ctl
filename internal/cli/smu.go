@@ -14,8 +14,6 @@ import (
 	"sync"
 )
 
-const smuDriverPath = "/sys/kernel/ryzen_smu_drv"
-
 // SMU mailbox identifiers. Each corresponds to a sysfs file that accepts
 // binary command IDs and returns binary response codes.
 const (
@@ -30,6 +28,14 @@ const (
 	SMUReturnUnknownCmd uint32 = 0xFE
 	SMUReturnRejected   uint32 = 0xFD
 	SMUReturnBusy       uint32 = 0xFC
+)
+
+// smuReadFile and smuWriteFile indirect the mailbox I/O so tests can supply a
+// fake ryzen_smu driver. The real driver replaces a mailbox file's contents with
+// the firmware response after a command write, which plain files cannot emulate.
+var (
+	smuReadFile  = os.ReadFile
+	smuWriteFile = os.WriteFile
 )
 
 // smuMu serializes all SMU command sequences. The ryzen_smu driver shares a
@@ -64,19 +70,19 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	for i, v := range args {
 		binary.LittleEndian.PutUint32(argsBuf[i*4:], v)
 	}
-	if err := os.WriteFile(argsPath, argsBuf, 0o640); err != nil {
+	if err := smuWriteFile(argsPath, argsBuf, 0o640); err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("writing smu_args: %w", err)
 	}
 
 	// Write command ID (4 bytes, u32 LE).
 	cmdBuf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(cmdBuf, cmdID)
-	if err := os.WriteFile(cmdPath, cmdBuf, 0o640); err != nil {
+	if err := smuWriteFile(cmdPath, cmdBuf, 0o640); err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("writing %s: %w", mailbox, err)
 	}
 
 	// Read response code (4 bytes, u32 LE).
-	respData, err := os.ReadFile(cmdPath)
+	respData, err := smuReadFile(cmdPath)
 	if err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("reading %s response: %w", mailbox, err)
 	}
@@ -86,7 +92,7 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	code = binary.LittleEndian.Uint32(respData[:4])
 
 	// Read response arguments (24 bytes).
-	respArgData, err := os.ReadFile(argsPath)
+	respArgData, err := smuReadFile(argsPath)
 	if err != nil {
 		return code, [6]uint32{}, fmt.Errorf("reading smu_args response: %w", err)
 	}
@@ -101,14 +107,26 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 
 // smuProbeOnce ensures the undervolt probe runs only once.
 var (
-	smuProbeOnce sync.Once
+	smuProbeOnce = new(sync.Once)
 	smuProbeOK   bool
 )
 
-// SMUProbeUndervolt sends a safe no-op CO command (offset 0) to verify that
-// the installed ryzen_smu module supports Curve Optimizer on this platform.
-// Returns true if the command succeeds, false if the module is missing or
-// returns an error (e.g. wrong fork). The result is cached after the first call.
+// SMUProbeUndervolt reports whether the installed ryzen_smu module supports
+// Curve Optimizer on this platform, by sending a CO command with an offset of
+// 0. Returns false if the module is missing or the command errors (e.g. the
+// leogx9r fork, which does not support Strix Halo). Cached after the first call.
+//
+// The probe is NOT read-only. A CO offset of 0 is exactly what
+// ResetCurveOptimizer writes, so probing clears any undervolt currently applied.
+// That is harmless where the caller sets a CO value immediately afterwards
+// (SetCurveOptimizer, ResetCurveOptimizer) or holds the result for the process
+// lifetime (the daemon probes once at startup, before restoring saved offsets).
+//
+// It is NOT safe to call speculatively from a short-lived process just to ask
+// "is undervolting available?" — every invocation would silently wipe the user's
+// undervolt, since the sync.Once cache does not survive the process. Ask the
+// daemon (get-state's undervolt_available) or use SMUAvailable, which only stats
+// the sysfs interface.
 func SMUProbeUndervolt() bool {
 	if !SMUAvailable() {
 		return false

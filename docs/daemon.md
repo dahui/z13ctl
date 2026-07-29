@@ -90,8 +90,9 @@ Start the daemon directly for testing or on systems without systemd:
 z13ctl daemon
 ```
 
-To disable the Armoury Crate button watcher (e.g., when another tool such as
-a Steam controller mapper needs exclusive access to the button device):
+To disable the Armoury Crate button watcher — because another tool needs
+exclusive access to the device, or because you would rather the keypress reach
+only your desktop:
 
 ```sh
 z13ctl --no-button daemon
@@ -104,6 +105,120 @@ $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock
 ```
 
 (falls back to `/tmp/z13ctl/z13ctl.sock` if `XDG_RUNTIME_DIR` is not set).
+
+---
+
+## Socket protocol
+
+The wire format is newline-delimited JSON: one request object per line, one
+response object per line. Every response carries `ok` (bool) and, on failure,
+`error` (string). Commands that return data use `value` (a string, JSON-encoded
+where the payload is structured).
+
+Connections are single-shot — the daemon replies once and closes — except
+`subscribe`, which stays open and streams events.
+
+### Lighting
+
+| Command | Request | Response |
+|---|---|---|
+| Apply an effect | `{"cmd":"apply","mode":"cycle","color":"FF0000","color2":"000000","speed":"normal","brightness":3,"device":"lightbar"}` | `ok` |
+| Turn off | `{"cmd":"off","device":""}` | `ok` |
+| Brightness only | `{"cmd":"brightness","brightness":2,"device":""}` | `ok` |
+
+`device` accepts `"keyboard"`, `"lightbar"`, a `/dev/hidrawN` path, or `""` for
+all zones. `brightness` is 0–3.
+
+### System settings
+
+| Command | Request | Response |
+|---|---|---|
+| Set profile | `{"cmd":"profile","set":"performance"}` | `ok` |
+| Get profile | `{"cmd":"profile-get"}` | `ok`, `value` |
+| Set battery limit | `{"cmd":"batterylimit","set":"80"}` | `ok` |
+| Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
+| Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
+| Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+| Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
+| Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
+
+`profile` accepts `quiet`, `balanced`, `performance`, or the virtual `custom`.
+
+### Fans, TDP, and undervolt
+
+| Command | Request | Response |
+|---|---|---|
+| Set fan curve | `{"cmd":"fancurve","set":"48:2,55:20,..."}` | `ok` |
+| Get fan curve | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |
+| Reset fan curve | `{"cmd":"fancurve-reset"}` | `ok` |
+| Set TDP | `{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}` | `ok` |
+| Get TDP | `{"cmd":"tdp-get"}` | `ok`, `value` (JSON) |
+| Reset TDP | `{"cmd":"tdp-reset"}` | `ok` |
+| Set undervolt | `{"cmd":"undervolt","set":"-20"}` | `ok` |
+| Get undervolt | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
+| Reset undervolt | `{"cmd":"undervolt-reset"}` | `ok` |
+
+The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
+value to all three. `force` is required for a sustained limit (PL1) above 75 W.
+
+!!! warning "Fan commands are restricted above 75 W sustained TDP"
+    While PL1 is above 75 W, both fans are held to a minimum of 204 PWM (80%).
+    `fancurve` is rejected if any point falls below that floor, and
+    `fancurve-reset` is rejected outright — firmware auto mode has no minimum.
+    `tdp-reset` is the way out: it lowers the limit before releasing the fans.
+
+    `tdp` applies the same rule in the other direction. Raising PL1 above 75 W
+    writes the high-TDP curve **first**, and if that write fails the power limit
+    is not applied at all. The same holds for the daemon's own restore paths —
+    startup, resume, and `profile --set custom`.
+
+### State and events
+
+| Command | Request | Response |
+|---|---|---|
+| Full state | `{"cmd":"get-state"}` | `ok`, `state` |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streamed events |
+
+`get-state` merges persisted state with live sysfs reads — see
+[State file](#state-file).
+
+Each streamed event is a full response object with an `event` field:
+
+```json
+{"ok":true,"event":"gui-toggle"}
+```
+
+Discriminate on the presence of `event` — a command reply never carries it.
+(Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate on
+`ok` dropped them.)
+
+!!! note "Timeouts"
+    The daemon closes a connection that does not send its request line within
+    30 seconds, so a client cannot pin a goroutine by connecting and going
+    silent. This deadline is cleared once a `subscribe` is acknowledged, since
+    subscriptions are idle by design between button presses. In the other
+    direction, `api` clients bound a whole command exchange at 10 seconds so a
+    wedged daemon cannot hang the caller indefinitely.
+
+### Minimal client
+
+```python
+import asyncio, json, os
+
+async def send(req):
+    r, w = await asyncio.open_unix_connection(
+        f"/run/user/{os.getuid()}/z13ctl/z13ctl.sock")
+    w.write((json.dumps(req) + "\n").encode())
+    await w.drain()
+    resp = json.loads(await r.readline())
+    w.close()
+    return resp
+
+asyncio.run(send({"cmd": "profile", "set": "quiet"}))
+```
+
+Go callers should use the [`api` module](api.md) rather than speaking the
+protocol directly.
 
 ---
 
@@ -134,7 +249,17 @@ These are not persisted — they are real-time sensor values.
 
 On startup the daemon reads this file and restores all saved settings before
 accepting any connections. If the last profile was `custom`, saved fan curves,
-TDP values, and undervolt offsets are re-applied to the hardware.
+TDP values, and undervolt offsets are re-applied to the hardware. If the last
+profile was a stock one, that profile's measured PPT values are written instead
+— the kernel's `ppt_*` attributes come up holding a stale 5 W default after
+boot, and nothing else restores them.
+
+!!! note "A corrupt state file is kept, not discarded"
+    If `state.json` exists but cannot be parsed, the daemon renames it to
+    `state.json.corrupt`, logs a warning, and starts from defaults. Without
+    that rename the next command would overwrite the damaged file, taking every
+    saved setting with it and leaving nothing to inspect. Repair the `.corrupt`
+    copy and move it back to recover.
 
 !!! note "Raw hidrawN paths are not persisted"
     Commands sent with `--device /dev/hidraw2` (a raw path) are applied but
@@ -150,15 +275,16 @@ sleep (suspend/hibernate) and must be reapplied on resume:
 
 - **Lighting** — RGB lighting is turned off by the hardware on sleep
 - **Fan curves** — custom PWM curves reset to firmware defaults on sleep
-- **TDP (PPT)** — power limits revert to the firmware profile's defaults
+- **TDP (PPT)** — power limits are lost and must be rewritten
 - **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
 
 The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
 signals from systemd-logind. When the system resumes (`PrepareForSleep(false)`),
 the daemon restores lighting (regardless of profile) and all custom-profile
 volatile settings from its saved state. Fan curves, TDP, and undervolt are only
-restored when the `custom` profile is active — stock profiles (`quiet`,
-`balanced`, `performance`) let the firmware manage these settings.
+restored when the `custom` profile is active; under a stock profile the firmware
+manages fan curves, and the profile's stock PPT values were already written to
+hardware when that profile was selected.
 
 This happens transparently with no user intervention. You can verify it worked
 by checking the daemon logs after a resume:
@@ -206,6 +332,23 @@ The daemon watches the ASUS WMI hotkeys input device for `KEY_PROG3` (key code
 202) — the physical Armoury Crate button on the Z13. When pressed, it broadcasts
 a `gui-toggle` event to all connected subscribers.
 
+The device is read **non-exclusively**. It also carries `SW_TABLET_MODE`, and an
+exclusive `EVIOCGRAB` would take those tablet-mode transitions away from
+libinput — leaving the desktop convinced the machine is still a tablet and
+suppressing the detachable cover keyboard when it is attached after login. z13ctl
+grabbed the device up to v1.2.0 and did exactly that; it no longer does.
+
+One consequence of reading shared: the Armoury Crate keypress also reaches your
+desktop. No mainstream desktop binds `KEY_PROG3` by default, but if yours does,
+that binding will fire alongside the `gui-toggle` event — unbind it there, or run
+the daemon with `--no-button`.
+
+!!! note "Silent failure if another process grabs the device"
+    Because z13ctl no longer grabs, a different process holding an exclusive grab
+    will silently receive all events instead, and the watcher will sit idle with
+    nothing to report. If button presses do nothing, check what else has the
+    device open (`sudo fuser -v /dev/input/eventN`).
+
 External tools can subscribe to this event via the API:
 
 ```go
@@ -227,8 +370,8 @@ button watcher stopped; retrying err="open /dev/input/eventN: permission denied"
 
 **Workaround:** Create an override config that marks `"Asus WMI hotkeys"` as
 `ignore: true`. This tells InputPlumber to leave that device unmanaged so z13ctl
-can grab it exclusively, while preserving all other InputPlumber functionality
-(controller emulation, touchpad, etc.).
+can open it, while preserving all other InputPlumber functionality (controller
+emulation, touchpad, etc.).
 
 First, check whether the built-in config exists on your system:
 
@@ -259,7 +402,7 @@ matches:
 
 source_devices:
   - group: keyboard
-    ignore: true        # allow z13ctl to grab this device exclusively
+    ignore: true        # leave unmanaged so z13ctl can read this device
     evdev:
       name: Asus WMI hotkeys
       handler: event*
@@ -299,11 +442,11 @@ not fully restore permissions on shutdown):
 sudo z13ctl setup --perms-only
 ```
 
-Then confirm z13ctl can grab the button:
+Then confirm z13ctl can read the button device:
 
 ```sh
 journalctl --user -u z13ctl.service -f
-# Should show: watching Armoury Crate button path=/dev/input/eventN
+# Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN
 ```
 
 Alternatively, disable the button watcher entirely and let InputPlumber handle

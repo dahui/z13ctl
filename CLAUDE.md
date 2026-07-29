@@ -33,6 +33,8 @@ cmd/                         Cobra subcommands
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
+  setup_test.go              drift guard: generated vs packaged contrib/ artifacts
+  undervolt_test.go          --set parse rejections (CLI/daemon parity; no SMU access)
 internal/
   aura/                      Aura HID protocol implementation
     aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
@@ -43,32 +45,46 @@ internal/
     parse.go                 ParseColor, ParseBrightness
     sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
     fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
-    tdp.go                   PPT sysfs helpers, safety constants (TDPMin/TDPMaxSafe/TDPMaxForced), ReadAllPPT, SetTDP, ResetTDP
+    paths.go                 sysfs roots as vars (injectable by tests); see Testing
+    tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
+                             SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor, CheckFanFloorRelease
     smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
     fan_test.go              ParseFanCurve, FanModeName tests
+    sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
+    fan_sysfs_test.go        fan curve/mode/RPM + profile/battery/firmware-attr tests
+    smu_test.go              SMU mailbox protocol + Curve Optimizer tests
+    tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests +
+                             ApplyTDPSafely fan-floor refusal (the thermal-guard regression test)
     dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve, DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
-    button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13)
+    button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13);
+                             eventDevice seam — no Grab method, see issue #10
+    button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
-    server.go                JSON request handler; handleConn(), dispatch(), command handlers
+    server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
+    server_test.go           request validation + dispatch routing (no hardware access)
+    state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup
+    clone_test.go            cloneState deep-copy, saveState race regression, broadcast wire shape
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
   hid/
-    hid.go                   package doc file only
+    doc.go                   package doc file only
     device.go                Device type, Write, SetFeature, Paths, Descriptions, Close
-    scan.go                  FindDevice, ListDevices, sysfs discovery, hasAuraReport
+    scan.go                  FindDevice, ListDevices, sysfs discovery, hasAuraReport, descriptorHasAuraReport
     export_test.go           test-only exports: NewTestDevice, NewTestDeviceAnon,
-                             UeventToDevPath, DeviceNameFromUevent
+                             UeventToDevPath, DeviceNameFromUevent, HasDeviceGlob,
+                             DescriptorHasAuraReport
 contrib/
   systemd/user/
     z13ctl.socket            systemd user socket unit (socket activation, %t/z13ctl/z13ctl.sock)
     z13ctl.service           systemd user service unit (Type=notify, Restart=on-failure)
   systemd/system/
-    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery + firmware-attributes sysfs at boot
+    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery, firmware-attributes,
+                             PPT, and ryzen_smu sysfs at boot (keep in sync with buildServiceContent)
 ```
 
 ## Key architectural decisions
@@ -83,11 +99,25 @@ contrib/
 - `setup.go` uses a two-part permission strategy: udev rules for boot persistence
   (real ADD events) + direct `chgrp`/`chmod` in Go for immediate effect (systemd 259+
   does not execute `RUN{program}` on synthetic `udevadm trigger` events).
+- **Packaged permission artifacts must match the generated ones.** `z13ctl setup`
+  generates udev rules + the perms unit at runtime, but package installs
+  (.rpm/.deb/Arch) ship the static copies in `contrib/udev/99-z13ctl.rules` and
+  `contrib/systemd/system/z13ctl-perms.service`. These drifted and cost .rpm users
+  all PPT and fan-curve access on every reboot (issue #12). `cmd/setup_test.go`
+  now asserts every grant appears in both. Escaping differs by file: `%%p` in
+  `setup.go` is Sprintf escaping (single `%p` in the packaged file), while `$$f`
+  is systemd's *and* udev's literal-dollar escape and stays doubled in **both** —
+  a bare `$f` expands to empty and the loop silently chmods nothing.
+- **`contrib/nfpm/postinstall.sh` must `systemctl restart z13ctl-perms.service`.**
+  `enable --now` is a no-op on upgrade: the unit is `Type=oneshot` with
+  `RemainAfterExit=yes`, so it is already active and new `ExecStart` lines never
+  run. Without the restart, an upgrade does not apply added grants until reboot.
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.
-  When set, the button watcher goroutine is not started and EVIOCGRAB is not issued,
-  allowing other tools to exclusively grab the Armoury Crate button device.
+  When set, the button watcher goroutine is not started and z13ctl does not open
+  the Armoury Crate button device at all — for users who would rather the keypress
+  reach only their desktop, or who need another tool to manage the device.
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -97,14 +127,32 @@ contrib/
   Logging goes to journald via stdout/stderr.
 - **State persistence**: `$XDG_STATE_HOME/z13ctl/state.json` (atomic write via temp +
   rename). Daemon restores lighting, fan curves, and TDP on start. Fan curves and
-  TDP are only restored when `profile == "custom"` (stock profiles let firmware manage).
+  custom TDP are only restored when `profile == "custom"`; a saved *stock* profile
+  gets its `StockProfilePPT` row written instead, since the kernel's PPT
+  attributes come up holding a stale 5W cache after boot.
+- **Always snapshot state with `cloneState()` before releasing `d.mu`.**
+  `api.State` holds a map and four pointer fields, so the plain `s := d.state`
+  copy still aliases live daemon state. Handlers unlock before calling
+  `saveState`, so marshaling an aliased snapshot races with any handler mutating
+  the map or dereferencing a pointer under the lock — a concurrent map
+  read/write, which Go turns into an unrecoverable crash rather than a catchable
+  panic. `internal/daemon/clone_test.go` guards this under `-race`.
 - **Button watcher**: Finds "Asus WMI hotkeys" input device by sysfs name
-  (`/sys/class/input/*/device/name`), opens it, grabs it exclusively with EVIOCGRAB,
-  and listens for KEY_PROG3 (code 202) key-down events. KEY_PROG3 is the Armoury Crate
-  button keycode on the 2025 ROG Flow Z13 (differs from older ASUS models that use
-  KEY_PROG1). Forwards press events to subscribed GUI connections via long-lived
-  socket connections. Disabled with `--no-button` to allow other tools exclusive
-  access to the button device.
+  (`/sys/class/input/*/device/name`), opens it, and listens for KEY_PROG3 (code 202)
+  key-down events. KEY_PROG3 is the Armoury Crate button keycode on the 2025 ROG
+  Flow Z13 (differs from older ASUS models that use KEY_PROG1). Forwards press
+  events to subscribed GUI connections via long-lived socket connections. Disabled
+  with `--no-button`.
+- **Never call EVIOCGRAB on the button device** (issue #10). The "Asus WMI hotkeys"
+  node carries `SW_TABLET_MODE` as well as KEY_PROG3 (`capabilities/sw = 2` on the
+  Z13). Grabbing it exclusively — which z13ctl did through v1.2.0 — takes the
+  tablet-mode transitions away from libinput, so attaching the detachable cover
+  after login leaves the desktop in tablet mode and the cover keyboard dead until
+  the session restarts. The watcher reads shared; evdev delivers to every
+  non-exclusive reader. This is enforced structurally: `runButtonLoop` takes an
+  `eventDevice` interface that deliberately has no `Grab` method, so reintroducing
+  the grab is a compile error. Trade-off: the keypress also reaches the desktop,
+  and a foreign exclusive grab now fails silently rather than logging EBUSY.
 - **Daemon socket protocol**: Newline-delimited JSON over Unix socket. All responses
   are `{"ok":bool,...}`. CLI `--get` commands read sysfs directly (always ground truth).
   GUI/Decky callers use the daemon socket for all operations including GET. Protocol:
@@ -131,7 +179,29 @@ contrib/
   | undervolt get | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
   | undervolt reset | `{"cmd":"undervolt-reset"}` | `ok` |
   | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available) |
-  | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams events |
+  | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
+- **Streamed events must set `OK: true`.** `response.OK` has no `omitempty`, so
+  `broadcast(response{Event: ...})` ships `{"ok":false,...}` on a perfectly good
+  event. The Go client keys on the `event` field and never noticed, but the
+  documented protocol says every response carries `ok`, so a Python/Decky client
+  honouring that contract silently dropped every button press (fixed in v1.2.1).
+  `internal/daemon/clone_test.go` pins the wire shape.
+- **Socket I/O must be deadline-bounded on both ends.** `net.DialTimeout` bounds
+  only connecting. `api.sendCommand` sets a full-exchange deadline
+  (`commandTimeout`, 10s) or a daemon that accepts and never replies hangs the
+  CLI forever; `handleConn` sets `requestReadTimeout` (30s) on the request line
+  or a client that connects and stays silent pins a goroutine and fd for the
+  daemon's lifetime. Both deadlines are cleared for `subscribe`, which is idle by
+  design. Timeouts are vars so tests can shorten them.
+- **`api.Subscribe`'s cancel func must release the reader goroutine.** The reader
+  parks in a channel send once the 8-slot buffer fills, where closing the
+  connection cannot reach it — so cancel closes a `done` channel that the send
+  selects on, guarded by `sync.Once` for idempotency. Without it, any caller that
+  stops consuming leaks the goroutine and never closes the channel.
+- **`applyLightingState` and `d.dev` require `d.mu`.** The hotplug watcher closes
+  and replaces `d.dev`; `applyLightingState` also reads the `d.state.Devices`
+  map that socket handlers mutate. The resume watcher previously read both
+  unlocked, racing the hotplug watcher over a live HID handle.
 - **IPC library**: Hand-rolled JSON. gRPC/drpc require protobuf code generation;
   `net/rpc` lacks streaming; Twirp is HTTP-only. Decky plugin Python backend connects
   via `asyncio.open_unix_connection()` + `json` — zero extra deps.
@@ -162,16 +232,115 @@ contrib/
   which has empty calibration data). Five attributes: `ppt_pl1_spl` (Sustained),
   `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
   `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
-  (G-Helper absolute max for 2025 Z13 GZ302E). When any PPT value exceeds 75W,
-  all fans are forced to full speed before PPT writes. If fan write fails, TDP
-  write is aborted entirely. APU sPPT and Platform sPPT always follow PL2.
+  (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
+  (PL1) exceeds 75W, both fans are written `HighTDPFanCurve` — an 80% PWM floor
+  with `pwm_enable=1` — before the PPT writes, and the TDP is not applied at all
+  if that fails (see `ApplyTDPSafely`). Burst limits alone do not trigger it.
+  `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
+  calls any more; the docs, the dry-run output, and this file all described it
+  for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
+- **`cli.ApplyTDPSafely` is the only way to apply a custom TDP.** Above
+  `TDPMaxSafe` (75W) the fans must be held to an 80% PWM floor
+  (`HighTDPFanCurve`). Five paths apply a TDP — `handleTDP`, the `handleProfile`
+  "custom" branch, daemon startup, resume, and `cmd/tdp.go`'s no-daemon path —
+  and they previously enforced this four different ways: two warned and applied
+  anyway, one raised power *before* raising the fans and discarded the fan
+  error with `_ =`, and only one refused. They all now call `ApplyTDPSafely`,
+  which fails closed: if the fan write fails the TDP is not written at all.
+  Release order is the mirror image — lower power *first*, then release the
+  fans (`handleTDPReset`, the stock-profile branch, `cmd/tdp.go` reset), so the
+  machine is never at a high limit with no floor. `internal/cli/tdp_test.go`
+  guards this against the fake sysfs; the refusal case is the one that matters.
+- **Fan-floor checks read hardware, not cached state.** `cli.CheckFanCurveFloor`
+  and `cli.CheckFanFloorRelease` both take the *effective* profile and go through
+  `ReadEffectivePPT`. `handleFanCurve` used to gate on `d.state.TDP`, which
+  silently skipped the guard whenever state and hardware disagreed (a TDP set
+  while the daemon was down, a reset state file). `fancurve --reset` is refused
+  above 75W in both the daemon and the CLI: firmware auto has no floor, so
+  dropping to it removes exactly the protection the limit requires. A PPT *read*
+  failure is deliberately not a refusal — it must not make fan control
+  unavailable.
+- **Daemon tests cannot exercise the fan-floor guards.** Whether they refuse
+  depends on the real `ppt_*` values and `internal/cli`'s path vars are
+  unexported, so a daemon test that passes the guard writes the machine's actual
+  fan mode. `internal/daemon/server_test.go` stays on parse-rejection paths; the
+  guards themselves are covered hermetically in `internal/cli/tdp_test.go`.
+- **Per-device lighting states must be normalized before use.** `handleOff`
+  saves a named zone as `{Enabled: false}` with no mode/colour/speed, so
+  `handleBrightness` reusing that entry produced an *enabled* state with empty
+  fields — and `ModeFromString("")` is an error, so every later restore failed
+  (daemon start, resume, hotplug). Worse, `applyLightingState` returned on the
+  first zone error, so a broken keyboard entry also left the lightbar dark.
+  `normalizeLightingState(ls, fallback)` fills gaps from the all-device state
+  then `defaultState()`, and is applied on **both** the write path
+  (`handleBrightness`) and the read path (`applyLightingState`) — the read side
+  is what repairs the state files users already have. `applyLightingState` now
+  continues past a failing zone and returns the first error.
+- **`cli.SetProfile` must write the primary path even when the loop misses it.**
+  It writes every platform-profile class device but only tracks the error for
+  the one `FindProfilePath` picked; when no class device has a `profile` file
+  that path is the ACPI alias, which lives outside `sysProfileDir` and the loop
+  never visits. It returned nil having written nothing, and still called
+  `setPPD`. Guarded by `primaryWritten` + a fallback write.
+- **`SMUProbeUndervolt()` is destructive — never call it speculatively from the
+  CLI.** The "safe no-op probe" sends CO offset 0, which is byte-for-byte what
+  `ResetCurveOptimizer` sends, so probing *clears any active undervolt*. That is
+  fine where the caller writes a CO value immediately afterwards
+  (`SetCurveOptimizer`/`ResetCurveOptimizer`) or caches the result for the
+  process lifetime — the daemon probes once at startup, before restoring saved
+  offsets, and the `sync.Once` covers every later call. It is NOT fine in a
+  short-lived CLI process, where the `sync.Once` is fresh every invocation: a
+  `status` that probed would wipe the user's undervolt every single run. `status`
+  therefore asks the daemon (`get-state`'s `undervolt_available`) and falls back
+  to `SMUAvailable()` — a plain stat — with wording that claims less.
+  `internal/cli/smu_test.go:TestSMUProbeIsDestructive` pins the payload equality;
+  if the probe ever becomes genuinely read-only, that test is the signal to relax
+  these warnings.
+- **Every route to a stock profile must clear the undervolt.** `handleProfile`
+  did; `handleTDPReset` and `cmd/tdp.go`'s `runTdpReset` did not, even though
+  both land on "balanced". That left CO applied in hardware with
+  `Undervolt.Active` still true while the daemon reported a stock profile — the
+  same "custom setting leaks into a stock profile" defect as #12. Saved values
+  are still preserved for recall; only `Active` and the hardware are reset.
+- **A corrupt state file is preserved, not silently replaced.** `loadState`
+  renames an unparseable `state.json` to `state.json.corrupt` and logs before
+  returning defaults; the next `saveState` would otherwise overwrite it, taking
+  every saved setting with it and leaving nothing to diagnose. `statePath` also
+  falls back to `os.TempDir()` when neither `XDG_STATE_HOME` nor a home
+  directory resolves — the old code yielded the root-relative
+  `/.local/state/...`, unwritable for any non-root user.
+- **`make test` and `make lint` must run both modules.** `api/` is a separate Go
+  module, so a bare `go test ./...` / `golangci-lint run ./...` from the root
+  silently skips it — which is how two lint issues sat unnoticed in a *released*
+  module. Both targets now `cd api` as a second step.
+- **`--color 000000` is not black.** `aura.SetMode` sets the random-colour flag
+  (`0xFF`) for an all-zero primary colour, matching g-helper, so the firmware
+  picks a colour. `off` / `--brightness off` is how you get no light. Documented
+  in `docs/commands.md` and the `--color` flag help.
 - **Custom profile**: `profile --set custom` is a virtual profile that re-applies
   saved fan curves and TDP from daemon state. It does NOT write to `platform_profile`
   — the underlying hardware profile stays as-is. Setting any custom curve or TDP
   implicitly sets profile to "custom". Switching to a stock profile (quiet/balanced/
-  performance) resets fan hardware to auto and TDP to firmware defaults, but preserves
-  custom settings in state for later recall. `profile --set custom` returns an error
-  if no custom fan curves or TDP have been saved.
+  performance) resets fan hardware to auto and writes that profile's `StockProfilePPT`
+  row to hardware, but preserves custom settings in state for later recall.
+  `profile --set custom` returns an error if no custom fan curves or TDP have been saved.
+- **Stock PPT restore is explicit, not firmware-driven** (issue #12): the firmware
+  does *not* re-apply per-profile PPT on a `platform_profile` write, and the
+  `ppt_*` attributes have no "reset to firmware default" operation — writing 5W
+  (an earlier attempt) just crippled the machine. `cli.StockProfilePPT` is
+  therefore authoritative **on write**: `restoreStockPPT()` (present in both
+  `internal/daemon/server.go` and `cmd/tdp.go` for the no-daemon path) writes it
+  via `cli.SetTDPState` on every stock-profile switch, on `tdp --reset`, and at
+  daemon startup. Use `SetTDPState` (exact five values) rather than `SetTDP`
+  (mirrors PL2 into APU/Platform) — the measured table has APU/Platform at 70W
+  for all three profiles while PL2 varies. Failures warn and continue; the saved
+  custom TDP is never cleared on a profile switch.
+- **`ReadEffectivePPT` must be passed the *effective* profile**, not
+  `platform_profile`. `platform_profile` is never "custom", so passing it makes a
+  legitimate 5W custom TDP (5W is a legal value — `TDPMin`) indistinguishable
+  from the kernel's stale 5W cache, and the stock table gets reported instead of
+  the real values. The daemon passes `d.effectiveProfile()`; `cmd/` uses
+  `effectiveProfileForTDP()`, which asks the daemon first and falls back to sysfs.
 - **Undervolt (Curve Optimizer)**: CPU voltage reduction via AMD Curve Optimizer,
   using direct SMU communication through the `ryzen_smu` kernel module's sysfs
   interface at `/sys/kernel/ryzen_smu_drv/`. Uses only the MP1 0x4C command for
@@ -239,10 +408,36 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 ## Testing
 
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
-  `os.Pipe()` backed devices via `NewTestDevice`.
-- Current coverage: ~79% aura, ~97% cli, ~27% hid (hardware-bound scan functions
-  are untestable without a device).
+  `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
+  sysfs tree (see below).
+- Current coverage: ~88% cli, ~78% aura, ~40% hid, ~21% daemon, ~38% api, ~9% cmd.
 - aura error branches (write failures) are not covered because mockWriter never errors.
+
+### Fake sysfs (`internal/cli`)
+
+All sysfs roots this package touches live in `paths.go` as package **vars**, not
+consts, purely so tests can redirect them. `sysfs_fake_test.go` provides
+`newFakeSysfs(t)`, which builds a temp-dir tree (hwmon curve + readings +
+k10temp devices, platform-profile devices, PPT, ryzen_smu, battery,
+firmware-attributes) and points every var at it, restoring them on cleanup.
+
+Two seams exist specifically to stop tests from touching the developer's machine
+— both were added after tests did exactly that:
+
+- `ppdRunner` (`sysfs.go`) wraps the `powerprofilesctl` exec. `newFakeSysfs`
+  replaces it with a recorder; without this, exercising `SetProfile` changes the
+  live power-profiles-daemon profile.
+- `smuReadFile` / `smuWriteFile` (`smu.go`) wrap the ryzen_smu mailbox I/O.
+  `fakeSMU` emulates the driver's write-then-read-response protocol, which plain
+  files cannot. `resetSMUProbe(t)` clears the `sync.Once` behind
+  `SMUProbeUndervolt` so each case re-probes.
+
+**Never let a test reach a real sysfs write.** `internal/daemon` handlers call
+`cli` directly and `cli`'s path vars are unexported, so daemon tests must stay on
+validation/rejection paths that return before any hardware access —
+`server_test.go` documents this at `TestHandleTDPForceBoundaryRejections`. A
+daemon test that gets past `handleTDP` validation will change the machine's
+actual power limits.
 
 ## Build / release
 
@@ -278,9 +473,16 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 ## Documentation
 
 - `README.md` — user-facing (installation, commands, colors, contributing).
-- `PROTOCOL.md` — technical HID protocol reference for developers.
-- Per-command docs are not generated separately; `README.md` and `--help` are the
-  authoritative references.
+- `docs/` — the mkdocs site (Material theme), published from `mkdocs.yml`.
+  Build/serve with `make docs`; verify with `mkdocs build --strict`.
+- **`docs/api-reference.md` is generated — do not hand-edit it.** It carries a
+  `Code generated by gomarkdoc. DO NOT EDIT` header and embeds source line
+  links, so it goes stale whenever `api/` changes. Fix the doc comment or the
+  example in `api/*.go` and regenerate:
+  `go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest ./api/... > docs/api-reference.md`
+- `docs/daemon.md` holds the user-facing socket protocol tables; keep them in
+  sync with `dispatch()` in `internal/daemon/server.go`.
+- `docs/protocol.md` — technical HID protocol reference for developers.
 
 ## Current status and next steps
 
