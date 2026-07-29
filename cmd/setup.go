@@ -50,13 +50,21 @@ ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'f
 // Handles sysfs files that cannot be set by udev rules:
 //   - charge_control_end_threshold: created late in asus_nb_wmi probe()
 //   - firmware-attributes current_value: may be created after parent ADD event
+//   - ppt_* PPT attributes: created late in the same asus_nb_wmi probe()
 //   - ryzen_smu_drv files: kobject under /sys/kernel/, not a udev device
+//
+// Keep this in sync with contrib/systemd/system/z13ctl-perms.service, which is
+// what package installs ship; cmd/setup_test.go asserts they do not drift.
+// Note the "$$f" doubling is systemd's escape for a literal dollar sign, not Go
+// or fmt.Sprintf escaping — a bare "$f" expands to the empty string.
 func buildServiceContent(group string) string {
 	return fmt.Sprintf(`[Unit]
-Description=z13ctl sysfs permissions (battery + firmware-attributes + ryzen_smu)
+Description=z13ctl sysfs permissions (battery + firmware-attributes + PPT + ryzen_smu)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
 # firmware-attributes current_value files may be created after the parent ADD event.
+# ppt_* on the asus-nb-wmi platform device are created late in the same probe(),
+# so the udev rule for them is best-effort only and this service is the reliable path.
 # ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 After=sysinit.target
 
@@ -65,11 +73,12 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f" || true; done'
 
 [Install]
 WantedBy=multi-user.target
-`, group, group, group)
+`, group, group, group, group)
 }
 
 // applySysfsPerms scans live sysfs for files managed by z13ctl and either
@@ -196,9 +205,11 @@ attributes, and asus-nb-wmi PPT power limit attributes for TDP control.
 Then reloads and triggers udev so the rules take effect immediately.
 
 Also installs ` + servicePath + `, a small systemd oneshot that
-runs 'chgrp' and 'chmod g+w' on the battery charge threshold attribute at boot.
-This is required because the attribute is created late in the asus_nb_wmi kernel
-driver's probe() sequence, after all udev events have already fired.
+runs 'chgrp' and 'chmod g+w' at boot on the battery charge threshold, the
+asus-armoury firmware-attributes, the PPT power limit attributes, and the
+ryzen_smu files. This is required because those attributes are created late in
+the asus_nb_wmi kernel driver's probe() sequence (after all udev events have
+already fired), or live outside any udev subsystem.
 
 Use --perms-only to skip writing the rules file and only reapply sysfs
 permissions (useful after a group change or kernel module reload).

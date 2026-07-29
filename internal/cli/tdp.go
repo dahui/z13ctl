@@ -24,6 +24,12 @@ const (
 // as measured with ryzenadj on the 2025 Z13. The kernel's sysfs PPT attributes
 // are a stale cache (initialized to 5W on module load) and do not reflect the
 // EC's actual per-profile limits unless explicitly written.
+//
+// This table is authoritative on write: switching to a stock profile writes it
+// to hardware verbatim via SetTDPState, because the asus-nb-wmi PPT attributes
+// have no "reset to firmware default" operation and the firmware does not
+// re-apply per-profile limits on a platform_profile change. Values are measured
+// on the GZ302E and will need a per-model lookup when other models are supported.
 var StockProfilePPT = map[string]api.TDPState{
 	"quiet":       {PL1SPL: 40, PL2SPPT: 55, FPPT: 55, APUSPPT: 70, PlatformSPPT: 70},
 	"balanced":    {PL1SPL: 52, PL2SPPT: 71, FPPT: 70, APUSPPT: 70, PlatformSPPT: 70},
@@ -32,7 +38,9 @@ var StockProfilePPT = map[string]api.TDPState{
 
 // ReadEffectivePPT returns the current PPT values. If sysfs returns the stale
 // kernel cache (PL1 == 5) and the active profile is a known stock profile,
-// the measured per-profile defaults are returned instead.
+// the measured per-profile defaults are returned instead. This fallback still
+// matters after a fresh boot, before any z13ctl profile switch has written real
+// values to the attributes.
 func ReadEffectivePPT(profile string) (api.TDPState, error) {
 	s, err := ReadAllPPT()
 	if err != nil {
@@ -46,13 +54,16 @@ func ReadEffectivePPT(profile string) (api.TDPState, error) {
 	return s, nil
 }
 
+// pptBasePath is the sysfs directory holding the asus-nb-wmi PPT attributes.
+// Declared as a var rather than a const so tests can redirect it to a temp dir.
+var pptBasePath = "/sys/devices/platform/asus-nb-wmi"
+
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.
 func FindPPTBasePath() string {
-	const path = "/sys/devices/platform/asus-nb-wmi"
-	if _, err := os.Stat(path); err == nil {
-		return path
+	if _, err := os.Stat(pptBasePath); err == nil {
+		return pptBasePath
 	}
-	return path // return default even if missing, callers handle errors
+	return pptBasePath // return default even if missing, callers handle errors
 }
 
 // FindPPTPath returns the full sysfs path for a specific PPT attribute.
@@ -92,6 +103,27 @@ func WritePPT(attr string, watts int) error {
 	return writeIntFile(FindPPTPath(attr), watts)
 }
 
+// SetTDPState writes every PPT attribute verbatim from s, with no mirroring or
+// derivation. Use this when the exact five values matter — notably when
+// restoring StockProfilePPT, whose measured APU/Platform sPPT do not equal PL2.
+func SetTDPState(s api.TDPState) error {
+	for _, w := range []struct {
+		attr  string
+		watts int
+	}{
+		{"ppt_pl1_spl", s.PL1SPL},
+		{"ppt_pl2_sppt", s.PL2SPPT},
+		{"ppt_fppt", s.FPPT},
+		{"ppt_apu_sppt", s.APUSPPT},
+		{"ppt_platform_sppt", s.PlatformSPPT},
+	} {
+		if err := WritePPT(w.attr, w.watts); err != nil {
+			return fmt.Errorf("writing %s: %w", w.attr, err)
+		}
+	}
+	return nil
+}
+
 // SetTDP writes all PPT values. pl1/pl2/pl3 override the unified watts value
 // when non-zero. APU sPPT and Platform sPPT always follow PL2.
 func SetTDP(watts, pl1, pl2, pl3 int) error {
@@ -104,22 +136,11 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 	if pl3 == 0 {
 		pl3 = watts
 	}
-	if err := WritePPT("ppt_pl1_spl", pl1); err != nil {
-		return fmt.Errorf("writing ppt_pl1_spl: %w", err)
-	}
-	if err := WritePPT("ppt_pl2_sppt", pl2); err != nil {
-		return fmt.Errorf("writing ppt_pl2_sppt: %w", err)
-	}
-	if err := WritePPT("ppt_fppt", pl3); err != nil {
-		return fmt.Errorf("writing ppt_fppt: %w", err)
-	}
-	if err := WritePPT("ppt_apu_sppt", pl2); err != nil {
-		return fmt.Errorf("writing ppt_apu_sppt: %w", err)
-	}
-	if err := WritePPT("ppt_platform_sppt", pl2); err != nil {
-		return fmt.Errorf("writing ppt_platform_sppt: %w", err)
-	}
-	return nil
+	return SetTDPState(api.TDPState{
+		PL1SPL:       pl1,
+		PL2SPPT:      pl2,
+		FPPT:         pl3,
+		APUSPPT:      pl2,
+		PlatformSPPT: pl2,
+	})
 }
-
-

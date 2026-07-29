@@ -58,8 +58,10 @@ Profiles:
 			}
 
 			// Direct path (no daemon): reset fans to auto first so firmware has
-			// fan control, then write to platform_profile. The firmware sets
-			// per-profile PPT values and fan curves automatically.
+			// fan control, then write to platform_profile and restore that
+			// profile's stock PPT values. The firmware manages fan curves for
+			// stock profiles but does not re-apply PPT, so a previously set
+			// custom TDP would otherwise persist across the switch.
 			if profile != "custom" {
 				if err := cli.ResetAllFanCurves(); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
@@ -67,6 +69,7 @@ Profiles:
 				if err := cli.SetProfile(profile); err != nil {
 					return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 				}
+				restoreStockPPT(profile)
 			}
 			// "custom" without daemon: can't recall state, error out.
 			if profile == "custom" {

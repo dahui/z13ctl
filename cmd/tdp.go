@@ -178,15 +178,33 @@ func runTdpReset() error {
 	}
 
 	// Direct path (no daemon): reset fans to auto, then switch to balanced
-	// profile. The firmware sets per-profile PPT and fan curves automatically.
+	// profile and write its stock PPT values back to hardware. The firmware
+	// manages fan curves on a profile change but does not restore PPT.
 	if err := cli.ResetAllFanCurves(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
 	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
+	restoreStockPPT("balanced")
 	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
+}
+
+// restoreStockPPT writes the measured stock PPT values for a stock profile back
+// to hardware on the direct (no-daemon) path. The asus-nb-wmi PPT attributes
+// have no "reset to firmware default" operation and the firmware does not
+// re-apply per-profile limits on a platform_profile change, so without this a
+// custom TDP leaks into every stock profile. Failures warn and continue: a
+// profile switch must not hard-fail because the PPT restore did not take.
+func restoreStockPPT(profile string) {
+	stock, ok := cli.StockProfilePPT[profile]
+	if !ok {
+		return
+	}
+	if err := cli.SetTDPState(stock); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore stock TDP for %s: %v\n", profile, err)
+	}
 }
 
 // parsePLOverrides returns the effective PL1/PL2/PL3 values, applying

@@ -378,7 +378,9 @@ func (d *Daemon) handleProfile(req request) response {
 	}
 
 	// Stock profile: reset fan curves to auto and UV to stock, then write to
-	// platform_profile. The firmware sets per-profile PPT and fan curves automatically.
+	// platform_profile. The firmware manages fan curves for stock profiles, but
+	// it does NOT re-apply per-profile PPT, so any custom watts would otherwise
+	// persist across the switch — restoreStockPPT does that explicitly below.
 	if err := cli.ResetAllFanCurves(); err != nil {
 		slog.Warn("failed to reset fan curves to auto", "err", err)
 	}
@@ -390,6 +392,7 @@ func (d *Daemon) handleProfile(req request) response {
 	if err := cli.SetProfile(profile); err != nil {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
+	restoreStockPPT(profile)
 
 	slog.Info("profile", "set", profile)
 	d.mu.Lock()
@@ -403,6 +406,27 @@ func (d *Daemon) handleProfile(req request) response {
 		slog.Warn("failed to save state", "err", err)
 	}
 	return response{OK: true}
+}
+
+// restoreStockPPT writes the measured stock PPT values for a stock profile back
+// to hardware. The asus-nb-wmi PPT attributes have no "reset to firmware
+// default" operation and the firmware does not re-apply per-profile limits on a
+// platform_profile change, so without this a custom TDP leaks into every stock
+// profile. Failures are logged and swallowed: a profile switch must not
+// hard-fail because the PPT restore did not take.
+//
+// Callers must not clear the saved custom TDP in daemon state — only the
+// hardware values are reset, so the user can select "custom" again.
+func restoreStockPPT(profile string) {
+	stock, ok := cli.StockProfilePPT[profile]
+	if !ok {
+		return
+	}
+	if err := cli.SetTDPState(stock); err != nil {
+		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
+		return
+	}
+	slog.Info("restored stock PPT", "profile", profile, "pl1", stock.PL1SPL, "pl2", stock.PL2SPPT)
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
@@ -664,15 +688,17 @@ func (d *Daemon) handleTDP(req request) response {
 }
 
 func (d *Daemon) handleTDPReset() response {
-	// Reset fans to auto mode (undo any full-speed override from high TDP),
-	// then switch to balanced profile. The firmware sets per-profile PPT
-	// values and fan curves automatically on profile change.
+	// Reset fans to auto mode (undo any full-speed override from high TDP), then
+	// switch to balanced profile and write its stock PPT values back to hardware.
+	// The firmware manages fan curves on a profile change but does not restore
+	// PPT, so the reset has to be explicit.
 	if err := cli.ResetAllFanCurves(); err != nil {
 		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
 	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
 	}
+	restoreStockPPT("balanced")
 	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
 	d.state.TDP = nil
