@@ -15,7 +15,7 @@ import (
 // It prefers the device whose choices file contains "quiet" (the asus-wmi device), falling
 // back to the first device with a profile file, then the ACPI alias.
 func FindProfilePath() string {
-	const dir = "/sys/class/platform-profile"
+	dir := sysProfileDir
 	entries, err := os.ReadDir(dir)
 	if err == nil {
 		// First pass: prefer the ASUS device (choices includes "quiet").
@@ -36,7 +36,7 @@ func FindProfilePath() string {
 			}
 		}
 	}
-	return "/sys/firmware/acpi/platform_profile"
+	return sysProfileACPI
 }
 
 // SetProfile writes the given ASUS profile (quiet/balanced/performance) to all
@@ -44,7 +44,7 @@ func FindProfilePath() string {
 // do not support that name. Returns an error only if the primary ASUS device write
 // fails; secondary device errors are ignored.
 func SetProfile(profile string) error {
-	const dir = "/sys/class/platform-profile"
+	dir := sysProfileDir
 	primaryPath := FindProfilePath()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -69,6 +69,11 @@ func SetProfile(profile string) error {
 	return primaryErr
 }
 
+// ppdRunner applies a power-profiles-daemon profile name. It is a var so tests
+// can stub it out — otherwise exercising SetProfile would shell out and change
+// the developer's live power profile as a side effect.
+var ppdRunner = execPPD
+
 // setPPD updates the power-profiles-daemon active profile to match the given
 // ASUS profile. No-op if powerprofilesctl is not installed. Silently ignores
 // errors if PPD is installed but not currently running.
@@ -81,6 +86,11 @@ func setPPD(asusProfile string) {
 	if ppd == "" {
 		return
 	}
+	ppdRunner(ppd)
+}
+
+// execPPD invokes powerprofilesctl, if it is installed.
+func execPPD(ppd string) {
 	bin, err := exec.LookPath("powerprofilesctl")
 	if err != nil {
 		return
@@ -121,22 +131,21 @@ func profileNameForDevice(base, asusProfile string) string {
 // FindBatteryThresholdPath returns the writable sysfs path for the battery charge
 // end threshold. It globs BAT* to avoid hardcoding BAT0 vs BAT1.
 func FindBatteryThresholdPath() string {
-	const glob = "/sys/class/power_supply/BAT*/charge_control_end_threshold"
-	matches, _ := filepath.Glob(glob)
+	matches, _ := filepath.Glob(sysPowerSupplyDir + "/BAT*/charge_control_end_threshold")
 	if len(matches) > 0 {
 		return matches[0]
 	}
-	return "/sys/class/power_supply/BAT0/charge_control_end_threshold"
+	return sysPowerSupplyDir + "/BAT0/charge_control_end_threshold"
 }
 
 // FindBootSoundPath returns the sysfs path for the boot sound firmware attribute.
 func FindBootSoundPath() string {
-	return "/sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
+	return sysFirmwareAttrDir + "/boot_sound/current_value"
 }
 
 // FindPanelOverdrivePath returns the sysfs path for the panel overdrive firmware attribute.
 func FindPanelOverdrivePath() string {
-	return "/sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
+	return sysFirmwareAttrDir + "/panel_overdrive/current_value"
 }
 
 // SetBootSound writes the given boot sound value (0 or 1) to the firmware attribute.
@@ -175,10 +184,9 @@ func ReadAPUTemperature() (int, error) {
 
 // FindBatteryCapacityPath returns the sysfs path for the current battery charge level.
 func FindBatteryCapacityPath() string {
-	const glob = "/sys/class/power_supply/BAT*/capacity"
-	matches, _ := filepath.Glob(glob)
+	matches, _ := filepath.Glob(sysPowerSupplyDir + "/BAT*/capacity")
 	if len(matches) > 0 {
 		return matches[0]
 	}
-	return "/sys/class/power_supply/BAT0/capacity"
+	return sysPowerSupplyDir + "/BAT0/capacity"
 }

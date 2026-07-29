@@ -79,7 +79,7 @@ func DryRunProfile(profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	primary := FindProfilePath()
 	fmt.Printf("Would write %q to %s\n", profile, primary)
-	const dir = "/sys/class/platform-profile"
+	dir := sysProfileDir
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -103,6 +103,13 @@ func DryRunProfile(profile string) {
 	}[profile]
 	if ppd != "" {
 		fmt.Printf("Would run: powerprofilesctl set %s\n", ppd)
+	}
+	// Switching to a stock profile also restores that profile's PPT values,
+	// since the firmware does not re-apply them on a platform_profile write.
+	if stock, ok := StockProfilePPT[profile]; ok {
+		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
+		fmt.Printf("Would write stock PPT for %s: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
+			profile, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
 	}
 }
 

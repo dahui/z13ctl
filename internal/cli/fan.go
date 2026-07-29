@@ -16,8 +16,6 @@ import (
 )
 
 const (
-	hwmonDir = "/sys/class/hwmon"
-
 	// hwmon device names exposed by the asus-wmi kernel driver.
 	hwmonNameReadings = "asus"                  // fan RPM + pwm_enable
 	hwmonNameCurves   = "asus_custom_fan_curve" // 8-point curves + pwm_enable
@@ -43,18 +41,18 @@ var fanNames = [fanCount]struct {
 // matches the given value. Returns "" if not found. hwmon numbers are
 // unstable across reboots, so discovery by name is required.
 func FindFanHwmonPath(name string) string {
-	entries, err := os.ReadDir(hwmonDir)
+	entries, err := os.ReadDir(sysHwmonDir)
 	if err != nil {
 		return ""
 	}
 	for _, e := range entries {
-		p := hwmonDir + "/" + e.Name() + "/name"
+		p := sysHwmonDir + "/" + e.Name() + "/name"
 		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
 		if strings.TrimSpace(string(data)) == name {
-			return hwmonDir + "/" + e.Name()
+			return sysHwmonDir + "/" + e.Name()
 		}
 	}
 	return ""

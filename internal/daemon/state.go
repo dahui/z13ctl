@@ -50,6 +50,40 @@ func loadState() api.State {
 	return s
 }
 
+// cloneState returns a deep copy of s that shares no mutable memory with it.
+//
+// api.State holds a map and four pointer fields, so the plain struct copy in
+// "s := d.state" still aliases live daemon state. Handlers release d.mu before
+// calling saveState, so marshaling an aliased snapshot races with any handler
+// that mutates the map or dereferences a pointer under the lock — a concurrent
+// map read/write, which the Go runtime turns into an unrecoverable crash rather
+// than a catchable panic. Always snapshot through this before unlocking.
+func cloneState(s api.State) api.State {
+	c := s
+	if s.Devices != nil {
+		c.Devices = make(map[string]api.LightingState, len(s.Devices))
+		for k, v := range s.Devices {
+			c.Devices[k] = v
+		}
+	}
+	if s.TDP != nil {
+		tdp := *s.TDP
+		c.TDP = &tdp
+	}
+	if s.Undervolt != nil {
+		uv := *s.Undervolt
+		c.Undervolt = &uv
+	}
+	if s.FanCurve != nil {
+		fc := *s.FanCurve
+		if s.FanCurve.Points != nil {
+			fc.Points = append([]api.FanCurvePoint(nil), s.FanCurve.Points...)
+		}
+		c.FanCurve = &fc
+	}
+	return c
+}
+
 // saveState atomically writes state to disk.
 func saveState(s api.State) error {
 	path := statePath()

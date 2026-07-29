@@ -28,12 +28,12 @@ import (
 type request struct {
 	Cmd        string   `json:"cmd"`
 	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`   // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"`  // "RRGGBB" hex
+	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
+	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
 	Speed      string   `json:"speed,omitempty"`
 	Brightness int      `json:"brightness,omitempty"`
 	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"`  // "keyboard", "lightbar", /dev/hidrawN; empty = all
+	Device     string   `json:"device,omitempty"` // "keyboard", "lightbar", /dev/hidrawN; empty = all
 	Events     []string `json:"events,omitempty"`
 	PL1        string   `json:"pl1,omitempty"`
 	PL2        string   `json:"pl2,omitempty"`
@@ -43,11 +43,11 @@ type request struct {
 
 // response is the reply to a command or a streamed event notification.
 type response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Value string `json:"value,omitempty"`
+	OK    bool       `json:"ok"`
+	Error string     `json:"error,omitempty"`
+	Value string     `json:"value,omitempty"`
 	State *api.State `json:"state,omitempty"`
-	Event string `json:"event,omitempty"`
+	Event string     `json:"event,omitempty"`
 }
 
 // handleConn reads one JSON request, dispatches it, and writes one JSON response.
@@ -114,7 +114,7 @@ func (d *Daemon) dispatch(req request) response {
 	case "tdp":
 		return d.handleTDP(req)
 	case "tdp-get":
-		return handleTDPGet()
+		return d.handleTDPGet()
 	case "tdp-reset":
 		return d.handleTDPReset()
 	case "undervolt":
@@ -125,7 +125,7 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleUndervoltReset()
 	case "get-state":
 		d.mu.Lock()
-		s := d.state
+		s := cloneState(d.state)
 		d.mu.Unlock()
 		// Populate firmware-managed fields from sysfs (not cached in daemon state).
 		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
@@ -133,7 +133,9 @@ func (d *Daemon) dispatch(req request) response {
 		// Populate fan curve from sysfs for ground truth.
 		s.FanCurve = readFanCurveFromSysfs()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
-		if tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs()); err == nil {
+		// Pass the daemon's own profile: platform_profile is never "custom", so
+		// using it would report the stock table for a legitimate 5W custom TDP.
+		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
 			s.TDP = &tdp
 		}
 		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
@@ -231,7 +233,7 @@ func (d *Daemon) handleApply(req request) response {
 	}
 	// Raw /dev/hidrawN paths are transient; not persisted.
 	if req.Device == "" || !strings.HasPrefix(req.Device, "/") {
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -260,7 +262,7 @@ func (d *Daemon) handleOff(req request) response {
 				d.state.Devices = make(map[string]api.LightingState)
 			}
 			d.state.Devices[req.Device] = api.LightingState{Enabled: false}
-			if err := saveState(d.state); err != nil {
+			if err := saveState(cloneState(d.state)); err != nil {
 				slog.Warn("failed to save state", "err", err)
 			}
 		}
@@ -268,7 +270,7 @@ func (d *Daemon) handleOff(req request) response {
 		slog.Info("off")
 		d.state.Lighting.Enabled = false
 		d.state.Devices = nil
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -308,7 +310,7 @@ func (d *Daemon) handleBrightness(req request) response {
 	if req.Device == "" {
 		d.state.Lighting.Brightness = req.Brightness
 		d.state.Lighting.Enabled = on
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	} else if !strings.HasPrefix(req.Device, "/") {
@@ -323,7 +325,7 @@ func (d *Daemon) handleBrightness(req request) response {
 		ls.Brightness = req.Brightness
 		ls.Enabled = on
 		d.state.Devices[req.Device] = ls
-		if err := saveState(d.state); err != nil {
+		if err := saveState(cloneState(d.state)); err != nil {
 			slog.Warn("failed to save state", "err", err)
 		}
 	}
@@ -353,7 +355,7 @@ func (d *Daemon) handleProfile(req request) response {
 		}
 		// Re-apply saved TDP.
 		if t := d.state.TDP; t != nil {
-			if err := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); err != nil {
+			if err := cli.SetTDPState(*t); err != nil {
 				slog.Warn("failed to reapply TDP", "err", err)
 			}
 			if t.PL1SPL > cli.TDPMaxSafe {
@@ -368,7 +370,7 @@ func (d *Daemon) handleProfile(req request) response {
 				d.state.Undervolt.Active = true
 			}
 		}
-		s := d.state
+		s := cloneState(d.state)
 		d.mu.Unlock()
 		slog.Info("profile", "set", "custom")
 		if err := saveState(s); err != nil {
@@ -400,7 +402,7 @@ func (d *Daemon) handleProfile(req request) response {
 	if d.state.Undervolt != nil {
 		d.state.Undervolt.Active = false
 	}
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -440,7 +442,7 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	slog.Info("batterylimit", "set", limit)
 	d.mu.Lock()
 	d.state.Battery = limit
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -487,7 +489,7 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	slog.Info("paneloverdrive", "set", value)
 	d.mu.Lock()
 	d.state.PanelOverdrive = value
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -563,7 +565,7 @@ func (d *Daemon) handleFanCurve(req request) response {
 	d.mu.Lock()
 	d.state.FanCurve = &api.FanCurveState{Mode: 1, Points: points}
 	d.state.Profile = "custom"
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -578,7 +580,7 @@ func (d *Daemon) handleFanCurveReset() response {
 	slog.Info("fancurve-reset", "fans", "both")
 	d.mu.Lock()
 	d.state.FanCurve = nil
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -586,13 +588,28 @@ func (d *Daemon) handleFanCurveReset() response {
 	return response{OK: true}
 }
 
-func handleTDPGet() response {
-	tdp, err := cli.ReadEffectivePPT(readProfileFromSysfs())
+func (d *Daemon) handleTDPGet() response {
+	tdp, err := cli.ReadEffectivePPT(d.effectiveProfile())
 	if err != nil {
 		return response{OK: false, Error: "reading TDP: " + err.Error()}
 	}
 	data, _ := json.Marshal(tdp)
 	return response{OK: true, Value: string(data)}
+}
+
+// effectiveProfile returns the profile to use when interpreting PPT values:
+// the daemon's own state when set, falling back to platform_profile. The
+// distinction matters because "custom" is a virtual profile that is never
+// written to platform_profile, so sysfs alone cannot tell a legitimate 5W
+// custom TDP from the kernel's stale 5W cache.
+func (d *Daemon) effectiveProfile() string {
+	d.mu.Lock()
+	p := d.state.Profile
+	d.mu.Unlock()
+	if p != "" {
+		return p
+	}
+	return readProfileFromSysfs()
 }
 
 // readProfileFromSysfs reads the current platform_profile value.
@@ -667,7 +684,7 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 	d.state.Profile = "custom"
 	fc := d.state.FanCurve
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -704,7 +721,7 @@ func (d *Daemon) handleTDPReset() response {
 	d.state.TDP = nil
 	d.state.FanCurve = nil
 	d.state.Profile = "balanced"
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -760,7 +777,7 @@ func (d *Daemon) handleUndervolt(req request) response {
 	d.mu.Lock()
 	d.state.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, Active: true}
 	d.state.Profile = "custom"
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -780,7 +797,7 @@ func (d *Daemon) handleUndervoltReset() response {
 	slog.Info("undervolt-reset")
 	d.mu.Lock()
 	d.state.Undervolt = nil
-	s := d.state
+	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -792,4 +809,3 @@ func writeResponse(conn net.Conn, r response) {
 	data, _ := json.Marshal(r)
 	_, _ = fmt.Fprintf(conn, "%s\n", data)
 }
-

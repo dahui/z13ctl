@@ -14,8 +14,6 @@ import (
 	"sync"
 )
 
-const smuDriverPath = "/sys/kernel/ryzen_smu_drv"
-
 // SMU mailbox identifiers. Each corresponds to a sysfs file that accepts
 // binary command IDs and returns binary response codes.
 const (
@@ -30,6 +28,14 @@ const (
 	SMUReturnUnknownCmd uint32 = 0xFE
 	SMUReturnRejected   uint32 = 0xFD
 	SMUReturnBusy       uint32 = 0xFC
+)
+
+// smuReadFile and smuWriteFile indirect the mailbox I/O so tests can supply a
+// fake ryzen_smu driver. The real driver replaces a mailbox file's contents with
+// the firmware response after a command write, which plain files cannot emulate.
+var (
+	smuReadFile  = os.ReadFile
+	smuWriteFile = os.WriteFile
 )
 
 // smuMu serializes all SMU command sequences. The ryzen_smu driver shares a
@@ -64,19 +70,19 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	for i, v := range args {
 		binary.LittleEndian.PutUint32(argsBuf[i*4:], v)
 	}
-	if err := os.WriteFile(argsPath, argsBuf, 0o640); err != nil {
+	if err := smuWriteFile(argsPath, argsBuf, 0o640); err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("writing smu_args: %w", err)
 	}
 
 	// Write command ID (4 bytes, u32 LE).
 	cmdBuf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(cmdBuf, cmdID)
-	if err := os.WriteFile(cmdPath, cmdBuf, 0o640); err != nil {
+	if err := smuWriteFile(cmdPath, cmdBuf, 0o640); err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("writing %s: %w", mailbox, err)
 	}
 
 	// Read response code (4 bytes, u32 LE).
-	respData, err := os.ReadFile(cmdPath)
+	respData, err := smuReadFile(cmdPath)
 	if err != nil {
 		return 0, [6]uint32{}, fmt.Errorf("reading %s response: %w", mailbox, err)
 	}
@@ -86,7 +92,7 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	code = binary.LittleEndian.Uint32(respData[:4])
 
 	// Read response arguments (24 bytes).
-	respArgData, err := os.ReadFile(argsPath)
+	respArgData, err := smuReadFile(argsPath)
 	if err != nil {
 		return code, [6]uint32{}, fmt.Errorf("reading smu_args response: %w", err)
 	}
@@ -101,7 +107,7 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 
 // smuProbeOnce ensures the undervolt probe runs only once.
 var (
-	smuProbeOnce sync.Once
+	smuProbeOnce = new(sync.Once)
 	smuProbeOK   bool
 )
 

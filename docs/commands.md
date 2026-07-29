@@ -254,7 +254,7 @@ z13ctl tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile (firmware manages PPT and fan curves) |
+| `--reset` | Switch to balanced profile, reset fan curves to auto, and restore balanced's stock PPT |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -275,14 +275,17 @@ and `--pl3` to set them independently — a stepped configuration like
 `--set 45 --pl2 55 --pl3 65` sustains 45W with short bursts to 55W and
 instantaneous peaks to 65W.
 
-Stock profiles (quiet/balanced/performance) let the firmware manage TDP
-dynamically — the firmware sets per-profile PPT values automatically on profile
-change. Setting a custom TDP switches to the `custom` profile.
+Setting a custom TDP switches to the `custom` profile. Switching back to a stock
+profile writes that profile's measured stock PPT values to hardware — the
+firmware does *not* re-apply them on a `platform_profile` change, so z13ctl
+restores them explicitly. The saved custom values are kept, so `custom` stays
+re-selectable.
 
 !!! note "PPT readback values"
-    The values shown by `--get` are the kernel driver's cached values, which may
-    not reflect the actual EC limits (especially after a fresh boot or profile
-    change). Use `ryzenadj -i` if you need ground-truth PPT readings.
+    The values shown by `--get` are the kernel driver's cached values. After a
+    fresh boot they hold a stale 5W default until something writes them; z13ctl
+    substitutes the measured per-profile table in that case. Use `ryzenadj -i`
+    if you need ground-truth PPT readings.
 
 **Safety:**
 
@@ -304,7 +307,7 @@ z13ctl tdp --set 45 --pl2 55 --pl3 60
 # Force high TDP (fans will be set to full speed)
 z13ctl tdp --set 85 --force
 
-# Reset to balanced profile (firmware manages PPT)
+# Reset to balanced profile (restores balanced's stock PPT)
 z13ctl tdp --reset
 ```
 

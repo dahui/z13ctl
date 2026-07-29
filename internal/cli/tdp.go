@@ -41,6 +41,14 @@ var StockProfilePPT = map[string]api.TDPState{
 // the measured per-profile defaults are returned instead. This fallback still
 // matters after a fresh boot, before any z13ctl profile switch has written real
 // values to the attributes.
+//
+// profile must be the *effective* profile, which for daemon callers is the
+// daemon's own state ("custom" when a custom TDP is active) — NOT the raw
+// platform_profile value. platform_profile is never "custom" (it is a virtual
+// profile that is deliberately not written to sysfs), so passing it would make a
+// legitimate 5W custom TDP indistinguishable from the stale cache and report the
+// stock table instead. Any profile name not in StockProfilePPT disables the
+// fallback, which is the desired behaviour for "custom".
 func ReadEffectivePPT(profile string) (api.TDPState, error) {
 	s, err := ReadAllPPT()
 	if err != nil {
@@ -53,10 +61,6 @@ func ReadEffectivePPT(profile string) (api.TDPState, error) {
 	}
 	return s, nil
 }
-
-// pptBasePath is the sysfs directory holding the asus-nb-wmi PPT attributes.
-// Declared as a var rather than a const so tests can redirect it to a temp dir.
-var pptBasePath = "/sys/devices/platform/asus-nb-wmi"
 
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.
 func FindPPTBasePath() string {

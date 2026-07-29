@@ -92,6 +92,11 @@ func Run(ctx context.Context, watchBtn bool) error {
 				slog.Info("profile restored", "profile", d.state.Profile)
 			}
 		}
+		// Write the profile's stock PPT even when platform_profile already
+		// matches: the kernel's PPT attributes come up holding a stale 5W cache
+		// after boot, and nothing else restores them. Unlike SetProfile this is
+		// not a WMI call, so it does not disturb the fan controller.
+		restoreStockPPT(d.state.Profile)
 	}
 
 	// Restore battery charge limit if saved.
@@ -129,7 +134,7 @@ func Run(ctx context.Context, watchBtn bool) error {
 					slog.Warn("failed to set high-TDP fan curve for TDP restore", "err", fsErr)
 				}
 			}
-			if tdpErr := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); tdpErr != nil {
+			if tdpErr := cli.SetTDPState(*t); tdpErr != nil {
 				slog.Warn("failed to restore TDP", "err", tdpErr)
 			} else {
 				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)

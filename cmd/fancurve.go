@@ -93,8 +93,7 @@ func runFanCurveSet() error {
 	}
 
 	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
-	profile := readCurrentProfile()
-	if tdp, tdpErr := cli.ReadEffectivePPT(profile); tdpErr == nil && tdp.PL1SPL > cli.TDPMaxSafe {
+	if tdp, tdpErr := cli.ReadEffectivePPT(effectiveProfileForTDP()); tdpErr == nil && tdp.PL1SPL > cli.TDPMaxSafe {
 		for _, p := range points {
 			if p.PWM < cli.HighTDPMinPWM {
 				return fmt.Errorf("PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",

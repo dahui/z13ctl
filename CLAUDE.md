@@ -33,6 +33,7 @@ cmd/                         Cobra subcommands
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
+  setup_test.go              drift guard: generated vs packaged contrib/ artifacts
 internal/
   aura/                      Aura HID protocol implementation
     aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
@@ -43,18 +44,25 @@ internal/
     parse.go                 ParseColor, ParseBrightness
     sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
     fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
-    tdp.go                   PPT sysfs helpers, safety constants (TDPMin/TDPMaxSafe/TDPMaxForced), ReadAllPPT, SetTDP, ResetTDP
+    paths.go                 sysfs roots as vars (injectable by tests); see Testing
+    tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT, SetTDP, SetTDPState
     smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
     fan_test.go              ParseFanCurve, FanModeName tests
+    sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
+    fan_sysfs_test.go        fan curve/mode/RPM + profile/battery/firmware-attr tests
+    smu_test.go              SMU mailbox protocol + Curve Optimizer tests
+    tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests
     dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve, DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
     button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
-    server.go                JSON request handler; handleConn(), dispatch(), command handlers
+    server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
+    server_test.go           request validation + dispatch routing (no hardware access)
+    clone_test.go            cloneState deep-copy + saveState race regression
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
   hid/
@@ -68,7 +76,8 @@ contrib/
     z13ctl.socket            systemd user socket unit (socket activation, %t/z13ctl/z13ctl.sock)
     z13ctl.service           systemd user service unit (Type=notify, Restart=on-failure)
   systemd/system/
-    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery + firmware-attributes sysfs at boot
+    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery, firmware-attributes,
+                             PPT, and ryzen_smu sysfs at boot (keep in sync with buildServiceContent)
 ```
 
 ## Key architectural decisions
@@ -83,6 +92,19 @@ contrib/
 - `setup.go` uses a two-part permission strategy: udev rules for boot persistence
   (real ADD events) + direct `chgrp`/`chmod` in Go for immediate effect (systemd 259+
   does not execute `RUN{program}` on synthetic `udevadm trigger` events).
+- **Packaged permission artifacts must match the generated ones.** `z13ctl setup`
+  generates udev rules + the perms unit at runtime, but package installs
+  (.rpm/.deb/Arch) ship the static copies in `contrib/udev/99-z13ctl.rules` and
+  `contrib/systemd/system/z13ctl-perms.service`. These drifted and cost .rpm users
+  all PPT and fan-curve access on every reboot (issue #14). `cmd/setup_test.go`
+  now asserts every grant appears in both. Escaping differs by file: `%%p` in
+  `setup.go` is Sprintf escaping (single `%p` in the packaged file), while `$$f`
+  is systemd's *and* udev's literal-dollar escape and stays doubled in **both** —
+  a bare `$f` expands to empty and the loop silently chmods nothing.
+- **`contrib/nfpm/postinstall.sh` must `systemctl restart z13ctl-perms.service`.**
+  `enable --now` is a no-op on upgrade: the unit is `Type=oneshot` with
+  `RemainAfterExit=yes`, so it is already active and new `ExecStart` lines never
+  run. Without the restart, an upgrade does not apply added grants until reboot.
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.
@@ -97,7 +119,16 @@ contrib/
   Logging goes to journald via stdout/stderr.
 - **State persistence**: `$XDG_STATE_HOME/z13ctl/state.json` (atomic write via temp +
   rename). Daemon restores lighting, fan curves, and TDP on start. Fan curves and
-  TDP are only restored when `profile == "custom"` (stock profiles let firmware manage).
+  custom TDP are only restored when `profile == "custom"`; a saved *stock* profile
+  gets its `StockProfilePPT` row written instead, since the kernel's PPT
+  attributes come up holding a stale 5W cache after boot.
+- **Always snapshot state with `cloneState()` before releasing `d.mu`.**
+  `api.State` holds a map and four pointer fields, so the plain `s := d.state`
+  copy still aliases live daemon state. Handlers unlock before calling
+  `saveState`, so marshaling an aliased snapshot races with any handler mutating
+  the map or dereferencing a pointer under the lock — a concurrent map
+  read/write, which Go turns into an unrecoverable crash rather than a catchable
+  panic. `internal/daemon/clone_test.go` guards this under `-race`.
 - **Button watcher**: Finds "Asus WMI hotkeys" input device by sysfs name
   (`/sys/class/input/*/device/name`), opens it, grabs it exclusively with EVIOCGRAB,
   and listens for KEY_PROG3 (code 202) key-down events. KEY_PROG3 is the Armoury Crate
@@ -169,9 +200,26 @@ contrib/
   saved fan curves and TDP from daemon state. It does NOT write to `platform_profile`
   — the underlying hardware profile stays as-is. Setting any custom curve or TDP
   implicitly sets profile to "custom". Switching to a stock profile (quiet/balanced/
-  performance) resets fan hardware to auto and TDP to firmware defaults, but preserves
-  custom settings in state for later recall. `profile --set custom` returns an error
-  if no custom fan curves or TDP have been saved.
+  performance) resets fan hardware to auto and writes that profile's `StockProfilePPT`
+  row to hardware, but preserves custom settings in state for later recall.
+  `profile --set custom` returns an error if no custom fan curves or TDP have been saved.
+- **Stock PPT restore is explicit, not firmware-driven** (issue #14): the firmware
+  does *not* re-apply per-profile PPT on a `platform_profile` write, and the
+  `ppt_*` attributes have no "reset to firmware default" operation — writing 5W
+  (an earlier attempt) just crippled the machine. `cli.StockProfilePPT` is
+  therefore authoritative **on write**: `restoreStockPPT()` (present in both
+  `internal/daemon/server.go` and `cmd/tdp.go` for the no-daemon path) writes it
+  via `cli.SetTDPState` on every stock-profile switch, on `tdp --reset`, and at
+  daemon startup. Use `SetTDPState` (exact five values) rather than `SetTDP`
+  (mirrors PL2 into APU/Platform) — the measured table has APU/Platform at 70W
+  for all three profiles while PL2 varies. Failures warn and continue; the saved
+  custom TDP is never cleared on a profile switch.
+- **`ReadEffectivePPT` must be passed the *effective* profile**, not
+  `platform_profile`. `platform_profile` is never "custom", so passing it makes a
+  legitimate 5W custom TDP (5W is a legal value — `TDPMin`) indistinguishable
+  from the kernel's stale 5W cache, and the stock table gets reported instead of
+  the real values. The daemon passes `d.effectiveProfile()`; `cmd/` uses
+  `effectiveProfileForTDP()`, which asks the daemon first and falls back to sysfs.
 - **Undervolt (Curve Optimizer)**: CPU voltage reduction via AMD Curve Optimizer,
   using direct SMU communication through the `ryzen_smu` kernel module's sysfs
   interface at `/sys/kernel/ryzen_smu_drv/`. Uses only the MP1 0x4C command for
@@ -239,10 +287,36 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 ## Testing
 
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
-  `os.Pipe()` backed devices via `NewTestDevice`.
-- Current coverage: ~79% aura, ~97% cli, ~27% hid (hardware-bound scan functions
-  are untestable without a device).
+  `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
+  sysfs tree (see below).
+- Current coverage: ~87% cli, ~78% aura, ~35% hid, ~11% daemon, ~8% cmd.
 - aura error branches (write failures) are not covered because mockWriter never errors.
+
+### Fake sysfs (`internal/cli`)
+
+All sysfs roots this package touches live in `paths.go` as package **vars**, not
+consts, purely so tests can redirect them. `sysfs_fake_test.go` provides
+`newFakeSysfs(t)`, which builds a temp-dir tree (hwmon curve + readings +
+k10temp devices, platform-profile devices, PPT, ryzen_smu, battery,
+firmware-attributes) and points every var at it, restoring them on cleanup.
+
+Two seams exist specifically to stop tests from touching the developer's machine
+— both were added after tests did exactly that:
+
+- `ppdRunner` (`sysfs.go`) wraps the `powerprofilesctl` exec. `newFakeSysfs`
+  replaces it with a recorder; without this, exercising `SetProfile` changes the
+  live power-profiles-daemon profile.
+- `smuReadFile` / `smuWriteFile` (`smu.go`) wrap the ryzen_smu mailbox I/O.
+  `fakeSMU` emulates the driver's write-then-read-response protocol, which plain
+  files cannot. `resetSMUProbe(t)` clears the `sync.Once` behind
+  `SMUProbeUndervolt` so each case re-probes.
+
+**Never let a test reach a real sysfs write.** `internal/daemon` handlers call
+`cli` directly and `cli`'s path vars are unexported, so daemon tests must stay on
+validation/rejection paths that return before any hardware access —
+`server_test.go` documents this at `TestHandleTDPForceBoundaryRejections`. A
+daemon test that gets past `handleTDP` validation will change the machine's
+actual power limits.
 
 ## Build / release
 

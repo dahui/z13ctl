@@ -109,7 +109,7 @@ func (d *Daemon) restoreVolatileState() {
 				slog.Warn("resume: failed to set high-TDP fan curve", "err", err)
 			}
 		}
-		if err := cli.SetTDP(0, t.PL1SPL, t.PL2SPPT, t.FPPT); err != nil {
+		if err := cli.SetTDPState(*t); err != nil {
 			slog.Warn("resume: failed to restore TDP", "err", err)
 		} else {
 			slog.Info("resume: TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
