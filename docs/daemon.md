@@ -304,6 +304,23 @@ The daemon watches the ASUS WMI hotkeys input device for `KEY_PROG3` (key code
 202) — the physical Armoury Crate button on the Z13. When pressed, it broadcasts
 a `gui-toggle` event to all connected subscribers.
 
+The device is read **non-exclusively**. It also carries `SW_TABLET_MODE`, and an
+exclusive `EVIOCGRAB` would take those tablet-mode transitions away from
+libinput — leaving the desktop convinced the machine is still a tablet and
+suppressing the detachable cover keyboard when it is attached after login. z13ctl
+grabbed the device up to v1.2.0 and did exactly that; it no longer does.
+
+One consequence of reading shared: the Armoury Crate keypress also reaches your
+desktop. No mainstream desktop binds `KEY_PROG3` by default, but if yours does,
+that binding will fire alongside the `gui-toggle` event — unbind it there, or run
+the daemon with `--no-button`.
+
+!!! note "Silent failure if another process grabs the device"
+    Because z13ctl no longer grabs, a different process holding an exclusive grab
+    will silently receive all events instead, and the watcher will sit idle with
+    nothing to report. If button presses do nothing, check what else has the
+    device open (`sudo fuser -v /dev/input/eventN`).
+
 External tools can subscribe to this event via the API:
 
 ```go
@@ -325,8 +342,8 @@ button watcher stopped; retrying err="open /dev/input/eventN: permission denied"
 
 **Workaround:** Create an override config that marks `"Asus WMI hotkeys"` as
 `ignore: true`. This tells InputPlumber to leave that device unmanaged so z13ctl
-can grab it exclusively, while preserving all other InputPlumber functionality
-(controller emulation, touchpad, etc.).
+can open it, while preserving all other InputPlumber functionality (controller
+emulation, touchpad, etc.).
 
 First, check whether the built-in config exists on your system:
 
@@ -357,7 +374,7 @@ matches:
 
 source_devices:
   - group: keyboard
-    ignore: true        # allow z13ctl to grab this device exclusively
+    ignore: true        # leave unmanaged so z13ctl can read this device
     evdev:
       name: Asus WMI hotkeys
       handler: event*
@@ -397,11 +414,11 @@ not fully restore permissions on shutdown):
 sudo z13ctl setup --perms-only
 ```
 
-Then confirm z13ctl can grab the button:
+Then confirm z13ctl can read the button device:
 
 ```sh
 journalctl --user -u z13ctl.service -f
-# Should show: watching Armoury Crate button path=/dev/input/eventN
+# Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN
 ```
 
 Alternatively, disable the button watcher entirely and let InputPlumber handle

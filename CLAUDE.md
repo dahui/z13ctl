@@ -58,7 +58,9 @@ internal/
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
-    button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13)
+    button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13);
+                             eventDevice seam — no Grab method, see issue #10
+    button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
@@ -108,8 +110,9 @@ contrib/
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.
-  When set, the button watcher goroutine is not started and EVIOCGRAB is not issued,
-  allowing other tools to exclusively grab the Armoury Crate button device.
+  When set, the button watcher goroutine is not started and z13ctl does not open
+  the Armoury Crate button device at all — for users who would rather the keypress
+  reach only their desktop, or who need another tool to manage the device.
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -130,12 +133,21 @@ contrib/
   read/write, which Go turns into an unrecoverable crash rather than a catchable
   panic. `internal/daemon/clone_test.go` guards this under `-race`.
 - **Button watcher**: Finds "Asus WMI hotkeys" input device by sysfs name
-  (`/sys/class/input/*/device/name`), opens it, grabs it exclusively with EVIOCGRAB,
-  and listens for KEY_PROG3 (code 202) key-down events. KEY_PROG3 is the Armoury Crate
-  button keycode on the 2025 ROG Flow Z13 (differs from older ASUS models that use
-  KEY_PROG1). Forwards press events to subscribed GUI connections via long-lived
-  socket connections. Disabled with `--no-button` to allow other tools exclusive
-  access to the button device.
+  (`/sys/class/input/*/device/name`), opens it, and listens for KEY_PROG3 (code 202)
+  key-down events. KEY_PROG3 is the Armoury Crate button keycode on the 2025 ROG
+  Flow Z13 (differs from older ASUS models that use KEY_PROG1). Forwards press
+  events to subscribed GUI connections via long-lived socket connections. Disabled
+  with `--no-button`.
+- **Never call EVIOCGRAB on the button device** (issue #10). The "Asus WMI hotkeys"
+  node carries `SW_TABLET_MODE` as well as KEY_PROG3 (`capabilities/sw = 2` on the
+  Z13). Grabbing it exclusively — which z13ctl did through v1.2.0 — takes the
+  tablet-mode transitions away from libinput, so attaching the detachable cover
+  after login leaves the desktop in tablet mode and the cover keyboard dead until
+  the session restarts. The watcher reads shared; evdev delivers to every
+  non-exclusive reader. This is enforced structurally: `runButtonLoop` takes an
+  `eventDevice` interface that deliberately has no `Grab` method, so reintroducing
+  the grab is a compile error. Trade-off: the keypress also reaches the desktop,
+  and a foreign exclusive grab now fails silently rather than logging EBUSY.
 - **Daemon socket protocol**: Newline-delimited JSON over Unix socket. All responses
   are `{"ok":bool,...}`. CLI `--get` commands read sysfs directly (always ground truth).
   GUI/Decky callers use the daemon socket for all operations including GET. Protocol:
