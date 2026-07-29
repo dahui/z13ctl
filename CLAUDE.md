@@ -278,10 +278,26 @@ contrib/
   that path is the ACPI alias, which lives outside `sysProfileDir` and the loop
   never visits. It returned nil having written nothing, and still called
   `setPPD`. Guarded by `primaryWritten` + a fallback write.
-- **`status` gates undervolt on `SMUProbeUndervolt()`, not `SMUAvailable()`.**
-  The latter only proves the module is loaded, so `status` advertised undervolt
-  on the leogx9r fork that cannot do CO on Strix Halo — while the daemon, which
-  probes, reported it unavailable for the same machine.
+- **`SMUProbeUndervolt()` is destructive — never call it speculatively from the
+  CLI.** The "safe no-op probe" sends CO offset 0, which is byte-for-byte what
+  `ResetCurveOptimizer` sends, so probing *clears any active undervolt*. That is
+  fine where the caller writes a CO value immediately afterwards
+  (`SetCurveOptimizer`/`ResetCurveOptimizer`) or caches the result for the
+  process lifetime — the daemon probes once at startup, before restoring saved
+  offsets, and the `sync.Once` covers every later call. It is NOT fine in a
+  short-lived CLI process, where the `sync.Once` is fresh every invocation: a
+  `status` that probed would wipe the user's undervolt every single run. `status`
+  therefore asks the daemon (`get-state`'s `undervolt_available`) and falls back
+  to `SMUAvailable()` — a plain stat — with wording that claims less.
+  `internal/cli/smu_test.go:TestSMUProbeIsDestructive` pins the payload equality;
+  if the probe ever becomes genuinely read-only, that test is the signal to relax
+  these warnings.
+- **Every route to a stock profile must clear the undervolt.** `handleProfile`
+  did; `handleTDPReset` and `cmd/tdp.go`'s `runTdpReset` did not, even though
+  both land on "balanced". That left CO applied in hardware with
+  `Undervolt.Active` still true while the daemon reported a stock profile — the
+  same "custom setting leaks into a stock profile" defect as #12. Saved values
+  are still preserved for recall; only `Active` and the hardware are reset.
 - **A corrupt state file is preserved, not silently replaced.** `loadState`
   renames an unparseable `state.json` to `state.json.corrupt` and logs before
   returning defaults; the next `saveState` would otherwise overwrite it, taking

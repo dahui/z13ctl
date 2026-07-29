@@ -118,10 +118,12 @@ Setting `custom` requires the daemon to be running, and at least one custom fan
 curve or TDP value must have been previously set.
 
 Setting a stock profile (`quiet`, `balanced`, `performance`) resets fan curves to
-firmware auto mode and writes that profile's measured stock PPT values back to
-hardware. The firmware does *not* re-apply per-profile power limits on its own,
-so z13ctl restores them explicitly. Your saved custom fan curve and TDP are kept
-in daemon state, so `--set custom` recalls them.
+firmware auto mode, resets the CPU undervolt to stock, and writes that profile's
+measured stock PPT values back to hardware. The firmware does *not* re-apply
+per-profile power limits on its own, so z13ctl restores them explicitly. Your
+saved custom fan curve, TDP, and undervolt are kept in daemon state, so
+`--set custom` recalls them. [`tdp --reset`](#tdp) behaves the same way, since it
+also lands on a stock profile.
 
 ```sh
 z13ctl profile --get
@@ -270,7 +272,7 @@ z13ctl tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile, reset fan curves to auto, and restore balanced's stock PPT |
+| `--reset` | Switch to balanced profile, reset fan curves to auto and the undervolt to stock, and restore balanced's stock PPT |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -399,8 +401,8 @@ z13ctl status
 
 This command is read-only and takes no flags. Values are read directly from
 sysfs, with two exceptions: undervolt has no sysfs readback, so the line reports
-`ryzen_smu` availability rather than the active offset; and the TDP line asks the
-daemon which profile is active, because a custom TDP of exactly 5 W is otherwise
+availability rather than the active offset; and the TDP line asks the daemon
+which profile is active, because a custom TDP of exactly 5 W is otherwise
 indistinguishable from the kernel's stale 5 W boot cache.
 
 ```sh
@@ -409,9 +411,21 @@ z13ctl status
 # Fans:    4200 RPM, mode: auto
 # Profile: balanced
 # TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
-# UV:      available (use 'undervolt --get' via daemon for current values)
+# UV:      available (use 'undervolt --get' for current values)
 # Battery: 74% (limit: 80%)
 ```
+
+The undervolt line comes from the daemon, which tests Curve Optimizer support
+once at startup. Without a daemon, `status` can only confirm that the module is
+loaded and says so:
+
+```
+# UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)
+```
+
+`status` deliberately does not run that support test itself — it works by writing
+a zero offset, which is the same command as [`undervolt --reset`](#undervolt), so
+a `status` that ran it would clear an active undervolt every time.
 
 ---
 

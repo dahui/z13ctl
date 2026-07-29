@@ -84,6 +84,14 @@ func loadState() api.State {
 		}
 		return defaultState()
 	}
+	// Repair partially-populated lighting entries on the way in, so the fix
+	// reaches everything reading daemon state — including get-state, which would
+	// otherwise hand a GUI an entry with an empty mode and colour — and so the
+	// repair is persisted by the next save rather than reapplied on every read.
+	s.Lighting = normalizeLightingState(s.Lighting, defaultState().Lighting)
+	for name, ls := range s.Devices {
+		s.Devices[name] = normalizeLightingState(ls, s.Lighting)
+	}
 	return s
 }
 

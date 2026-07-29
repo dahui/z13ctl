@@ -111,10 +111,22 @@ var (
 	smuProbeOK   bool
 )
 
-// SMUProbeUndervolt sends a safe no-op CO command (offset 0) to verify that
-// the installed ryzen_smu module supports Curve Optimizer on this platform.
-// Returns true if the command succeeds, false if the module is missing or
-// returns an error (e.g. wrong fork). The result is cached after the first call.
+// SMUProbeUndervolt reports whether the installed ryzen_smu module supports
+// Curve Optimizer on this platform, by sending a CO command with an offset of
+// 0. Returns false if the module is missing or the command errors (e.g. the
+// leogx9r fork, which does not support Strix Halo). Cached after the first call.
+//
+// The probe is NOT read-only. A CO offset of 0 is exactly what
+// ResetCurveOptimizer writes, so probing clears any undervolt currently applied.
+// That is harmless where the caller sets a CO value immediately afterwards
+// (SetCurveOptimizer, ResetCurveOptimizer) or holds the result for the process
+// lifetime (the daemon probes once at startup, before restoring saved offsets).
+//
+// It is NOT safe to call speculatively from a short-lived process just to ask
+// "is undervolting available?" — every invocation would silently wipe the user's
+// undervolt, since the sync.Once cache does not survive the process. Ask the
+// daemon (get-state's undervolt_available) or use SMUAvailable, which only stats
+// the sysfs interface.
 func SMUProbeUndervolt() bool {
 	if !SMUAvailable() {
 		return false

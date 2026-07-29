@@ -725,6 +725,16 @@ func (d *Daemon) handleTDPReset() response {
 	// window at full power with no floor, and a failed profile switch would
 	// leave it that way. The firmware manages fan curves on a profile change but
 	// does not restore PPT, so restoreStockPPT has to be explicit.
+	// Reset the undervolt too. This lands on "balanced", a stock profile, and
+	// every other route to a stock profile clears CO — leaving it applied here
+	// would leak a custom setting into a stock profile (the defect class behind
+	// #12) and leave undervolt --get reporting "active" on a stock profile.
+	// Saved values are kept in state so "custom" stays re-selectable.
+	if cli.SMUProbeUndervolt() {
+		if err := cli.ResetCurveOptimizer(); err != nil {
+			slog.Warn("failed to reset undervolt after TDP reset", "err", err)
+		}
+	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
 	}
@@ -737,6 +747,9 @@ func (d *Daemon) handleTDPReset() response {
 	d.state.TDP = nil
 	d.state.FanCurve = nil
 	d.state.Profile = "balanced"
+	if d.state.Undervolt != nil {
+		d.state.Undervolt.Active = false
+	}
 	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {

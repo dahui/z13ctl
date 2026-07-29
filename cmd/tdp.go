@@ -195,6 +195,14 @@ func runTdpReset() error {
 	// they are never dropped to auto while a high custom TDP is still in force.
 	// The firmware manages fan curves on a profile change but does not restore
 	// PPT, so that part has to be explicit.
+	// Reset the undervolt as well: this lands on a stock profile, and every
+	// other route to one clears CO. Guarded on SMUAvailable so machines without
+	// ryzen_smu do not get a spurious warning.
+	if cli.SMUAvailable() {
+		if err := cli.ResetCurveOptimizer(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
+		}
+	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}

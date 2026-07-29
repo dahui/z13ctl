@@ -215,3 +215,40 @@ func TestSaveState_RestrictivePermissions(t *testing.T) {
 		t.Errorf("state file mode = %#o, want 0600", perm)
 	}
 }
+
+// TestLoadStateRepairsPartialDeviceEntries: the repair has to happen on load,
+// not only when lighting is applied, or get-state keeps handing clients an entry
+// with an empty mode and colour and the damaged file is never rewritten.
+func TestLoadStateRepairsPartialDeviceEntries(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	path := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly what "off --device keyboard" then "brightness medium" used to write.
+	const broken = `{
+	  "lighting": {"enabled":true,"mode":"static","color":"FF0000","color2":"000000","speed":"normal","brightness":3},
+	  "devices": {"keyboard": {"enabled":true,"mode":"","color":"","color2":"","speed":"","brightness":2}}
+	}`
+	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadState()
+	kb, ok := got.Devices["keyboard"]
+	if !ok {
+		t.Fatal("keyboard entry missing after load")
+	}
+	if kb.Mode == "" || kb.Color == "" || kb.Speed == "" {
+		t.Errorf("keyboard entry still partial after load: %+v", kb)
+	}
+	if kb.Brightness != 2 || !kb.Enabled {
+		t.Errorf("keyboard entry lost its real values: %+v", kb)
+	}
+	// Gaps are filled from the all-device state, not blindly from defaults.
+	if kb.Mode != "static" || kb.Color != "FF0000" {
+		t.Errorf("keyboard entry = %+v, want gaps filled from the all-device state", kb)
+	}
+}

@@ -4,6 +4,7 @@ package cli
 // driven by the fakeSMU mailbox from sysfs_fake_test.go.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"strings"
@@ -213,4 +214,37 @@ func TestResetCurveOptimizerSendsZeroOffset(t *testing.T) {
 	if want := encodeCOValue(0); got != want {
 		t.Errorf("reset sent 0x%X, want the stock encoding 0x%X", got, want)
 	}
+}
+
+// TestSMUProbeIsDestructive documents, and pins, the fact that the availability
+// probe is not read-only: it sends the same CO-zero command as
+// ResetCurveOptimizer, so probing clears any undervolt currently applied.
+//
+// This is safe where the caller sets a value straight afterwards or caches the
+// result for the process lifetime (the daemon probes once at startup). It is NOT
+// safe to call speculatively from a short-lived CLI process — the sync.Once does
+// not survive it, so every invocation would wipe the user's undervolt. If this
+// test ever starts failing because the probe became read-only, the warnings on
+// SMUProbeUndervolt and in cmd/status.go can be relaxed.
+func TestSMUProbeIsDestructive(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+
+	probe := &fakeSMU{response: SMUReturnOK}
+	probe.install(t)
+	if !SMUProbeUndervolt() {
+		t.Fatal("SMUProbeUndervolt() = false, want true")
+	}
+	probeArgs := append([]byte(nil), probe.args...)
+
+	reset := &fakeSMU{response: SMUReturnOK}
+	reset.install(t)
+	if err := ResetCurveOptimizer(); err != nil {
+		t.Fatalf("ResetCurveOptimizer() = %v, want nil", err)
+	}
+
+	if !bytes.Equal(probeArgs, reset.args) {
+		t.Fatalf("probe args %v differ from reset args %v", probeArgs, reset.args)
+	}
+	t.Logf("probe writes the same payload as a CO reset (%v) — it is not read-only", probeArgs)
 }

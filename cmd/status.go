@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
 
 	"github.com/spf13/cobra"
@@ -62,14 +63,21 @@ func runStatus() error {
 		fmt.Println("TDP:     N/A")
 	}
 
-	// Undervolt (Curve Optimizer) — only shown if Curve Optimizer actually
-	// works here. SMUAvailable() alone only proves the ryzen_smu module is
-	// loaded, which was enough to report "available" with the leogx9r fork that
-	// does not support Strix Halo — contradicting the daemon, which gates on
-	// the probe. CO values have no sysfs readback, so current values still
-	// require daemon state.
-	if cli.SMUProbeUndervolt() {
-		fmt.Println("UV:      available (use 'undervolt --get' via daemon for current values)")
+	// Undervolt (Curve Optimizer). Ask the daemon, which probed once at startup
+	// and cached the answer.
+	//
+	// status must NOT call SMUProbeUndervolt itself: the probe writes a CO
+	// offset of 0, which is exactly a reset, and the cache that makes that
+	// harmless in the daemon does not survive a CLI process — so probing here
+	// would silently wipe an active undervolt every time anyone ran `status`.
+	// Without a daemon, report only what stat'ing sysfs can prove.
+	// CO values have no sysfs readback, so current values need daemon state.
+	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil {
+		if st.UndervoltAvailable {
+			fmt.Println("UV:      available (use 'undervolt --get' for current values)")
+		}
+	} else if cli.SMUAvailable() {
+		fmt.Println("UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)")
 	}
 
 	// Battery: current charge level and charge limit.
