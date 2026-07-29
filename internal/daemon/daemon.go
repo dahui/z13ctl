@@ -309,6 +309,11 @@ func (d *Daemon) reopenAndRestore() bool {
 // applyLightingState restores lighting from the saved state. d.dev must be non-nil.
 // If per-device states are saved (d.state.Devices), each zone is restored independently;
 // otherwise the all-device state (d.state.Lighting) is applied to all zones.
+//
+// The caller must hold d.mu: this reads d.dev (which the hotplug watcher closes
+// and replaces) and d.state.Devices (which socket handlers mutate). Reading the
+// map unlocked while a handler writes it is a concurrent map access, which the
+// Go runtime turns into an unrecoverable crash.
 func (d *Daemon) applyLightingState() error {
 	if len(d.state.Devices) > 0 {
 		for _, name := range []string{"keyboard", "lightbar"} {

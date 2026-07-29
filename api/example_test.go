@@ -231,7 +231,7 @@ func ExampleSendTdpSet() {
 }
 
 func ExampleSendTdpReset() {
-	// Reset to balanced profile (firmware manages PPT and fan curves).
+	// Reset to balanced profile, restoring its stock PPT and auto fan curves.
 	handled, err := api.SendTdpReset()
 	if !handled {
 		fmt.Println("daemon not running")

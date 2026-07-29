@@ -40,29 +40,45 @@ go work init . ./api
 ## Before submitting a pull request
 
 ```sh
-make test      # run all tests
-make lint      # run golangci-lint
-make mod-tidy  # tidy go.mod for both modules
+make test         # run all tests
+go test -race ./...  # required for changes touching the daemon
+make lint         # run golangci-lint
+make mod-tidy     # tidy go.mod for both modules
 ```
 
-Tests do not require hardware. The `internal/aura` and `internal/cli`
-packages are fully unit-testable. Code that interacts with `/dev/hidraw*`
-is intentionally isolated in `internal/hid`.
-
-Pull requests must pass both `make test` and `make lint` without errors and
-should include tests for any new behavior.
+Tests do not require hardware. Pull requests must pass `make test` and
+`make lint` without errors and should include tests for any new behavior.
+Run `go test -race ./...` for anything touching `internal/daemon` or `api` —
+both hold concurrency invariants that only the race detector enforces.
 
 ---
 
 ## Testing notes
 
 - `internal/aura` — fully unit-testable via mock writers; covers every packet type
-- `internal/cli` — fully unit-testable; covers color parsing, dryrun output
+- `internal/cli` — a fake sysfs tree (`sysfs_fake_test.go`) backs the hwmon,
+  platform-profile, PPT, battery, firmware-attribute, and `ryzen_smu` helpers;
+  also covers color parsing and dry-run output
 - `internal/hid` — tests cover sysfs parsing; writes are tested via pipe-backed
   mock devices
-- `internal/daemon` — state persistence is tested; server dispatch and button
-  watcher require hardware or an evdev mock
-- `cmd/` — no unit tests; integration tested manually against hardware
+- `internal/daemon` — state persistence, `cloneState`, the `saveState` race
+  regression, and request validation/dispatch. Handlers that reach hardware are
+  deliberately not exercised (see below); the button watcher needs an evdev mock
+- `api` — socket client tested against a stub daemon, including the read-deadline
+  and subscriber-goroutine-leak regressions
+- `cmd/` — the generated-vs-packaged permission artifact drift guard
+
+!!! warning "Tests must never touch real hardware"
+    `internal/cli` writes straight to sysfs and `SetProfile` shells out to
+    `powerprofilesctl`. Two seams exist so tests cannot reach either: the fake
+    sysfs tree redirects every path, and `ppdRunner` / `smuReadFile` /
+    `smuWriteFile` are swappable. Both were added after tests changed the
+    developer's live power profile and TDP.
+
+    `internal/daemon` handlers call `internal/cli` directly, and its path vars
+    are unexported, so **daemon tests must stay on validation paths that return
+    before any hardware access**. A daemon test that gets past `handleTDP`
+    validation will rewrite the machine's actual power limits.
 
 ---
 

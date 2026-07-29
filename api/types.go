@@ -16,9 +16,9 @@ type State struct {
 	FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`
 	TDP                *TDPState                `json:"tdp,omitempty"`
 	Undervolt          *UndervoltState          `json:"undervolt,omitempty"`
-	UndervoltAvailable bool                     `json:"undervolt_available"` // true if ryzen_smu is loaded
-	Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
-	FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+	UndervoltAvailable bool                     `json:"undervolt_available"`   // true if ryzen_smu is loaded
+	Temperature        int                      `json:"temperature,omitempty"` // APU temp, degrees Celsius
+	FanRPM             int                      `json:"fan_rpm,omitempty"`     // fan1 speed in RPM
 }
 
 // LightingState captures all parameters needed to reproduce one lighting zone.

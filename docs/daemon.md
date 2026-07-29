@@ -107,6 +107,100 @@ $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock
 
 ---
 
+## Socket protocol
+
+The wire format is newline-delimited JSON: one request object per line, one
+response object per line. Every response carries `ok` (bool) and, on failure,
+`error` (string). Commands that return data use `value` (a string, JSON-encoded
+where the payload is structured).
+
+Connections are single-shot — the daemon replies once and closes — except
+`subscribe`, which stays open and streams events.
+
+### Lighting
+
+| Command | Request | Response |
+|---|---|---|
+| Apply an effect | `{"cmd":"apply","mode":"cycle","color":"FF0000","color2":"000000","speed":"normal","brightness":3,"device":"lightbar"}` | `ok` |
+| Turn off | `{"cmd":"off","device":""}` | `ok` |
+| Brightness only | `{"cmd":"brightness","brightness":2,"device":""}` | `ok` |
+
+`device` accepts `"keyboard"`, `"lightbar"`, a `/dev/hidrawN` path, or `""` for
+all zones. `brightness` is 0–3.
+
+### System settings
+
+| Command | Request | Response |
+|---|---|---|
+| Set profile | `{"cmd":"profile","set":"performance"}` | `ok` |
+| Get profile | `{"cmd":"profile-get"}` | `ok`, `value` |
+| Set battery limit | `{"cmd":"batterylimit","set":"80"}` | `ok` |
+| Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
+| Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
+| Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+| Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
+| Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
+
+`profile` accepts `quiet`, `balanced`, `performance`, or the virtual `custom`.
+
+### Fans, TDP, and undervolt
+
+| Command | Request | Response |
+|---|---|---|
+| Set fan curve | `{"cmd":"fancurve","set":"48:2,55:20,..."}` | `ok` |
+| Get fan curve | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |
+| Reset fan curve | `{"cmd":"fancurve-reset"}` | `ok` |
+| Set TDP | `{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}` | `ok` |
+| Get TDP | `{"cmd":"tdp-get"}` | `ok`, `value` (JSON) |
+| Reset TDP | `{"cmd":"tdp-reset"}` | `ok` |
+| Set undervolt | `{"cmd":"undervolt","set":"-20"}` | `ok` |
+| Get undervolt | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
+| Reset undervolt | `{"cmd":"undervolt-reset"}` | `ok` |
+
+The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
+value to all three. `force` is required for a sustained limit (PL1) above 75 W.
+
+### State and events
+
+| Command | Request | Response |
+|---|---|---|
+| Full state | `{"cmd":"get-state"}` | `ok`, `state` |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streamed events |
+
+`get-state` merges persisted state with live sysfs reads — see
+[State file](#state-file). Each streamed event is a response object carrying an
+`event` field, e.g. `{"event":"gui-toggle"}`.
+
+!!! note "Timeouts"
+    The daemon closes a connection that does not send its request line within
+    30 seconds, so a client cannot pin a goroutine by connecting and going
+    silent. This deadline is cleared once a `subscribe` is acknowledged, since
+    subscriptions are idle by design between button presses. In the other
+    direction, `api` clients bound a whole command exchange at 10 seconds so a
+    wedged daemon cannot hang the caller indefinitely.
+
+### Minimal client
+
+```python
+import asyncio, json, os
+
+async def send(req):
+    r, w = await asyncio.open_unix_connection(
+        f"/run/user/{os.getuid()}/z13ctl/z13ctl.sock")
+    w.write((json.dumps(req) + "\n").encode())
+    await w.drain()
+    resp = json.loads(await r.readline())
+    w.close()
+    return resp
+
+asyncio.run(send({"cmd": "profile", "set": "quiet"}))
+```
+
+Go callers should use the [`api` module](api.md) rather than speaking the
+protocol directly.
+
+---
+
 ## State file
 
 The daemon persists state to:
@@ -134,7 +228,10 @@ These are not persisted — they are real-time sensor values.
 
 On startup the daemon reads this file and restores all saved settings before
 accepting any connections. If the last profile was `custom`, saved fan curves,
-TDP values, and undervolt offsets are re-applied to the hardware.
+TDP values, and undervolt offsets are re-applied to the hardware. If the last
+profile was a stock one, that profile's measured PPT values are written instead
+— the kernel's `ppt_*` attributes come up holding a stale 5 W default after
+boot, and nothing else restores them.
 
 !!! note "Raw hidrawN paths are not persisted"
     Commands sent with `--device /dev/hidraw2` (a raw path) are applied but
@@ -150,15 +247,16 @@ sleep (suspend/hibernate) and must be reapplied on resume:
 
 - **Lighting** — RGB lighting is turned off by the hardware on sleep
 - **Fan curves** — custom PWM curves reset to firmware defaults on sleep
-- **TDP (PPT)** — power limits revert to the firmware profile's defaults
+- **TDP (PPT)** — power limits are lost and must be rewritten
 - **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
 
 The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
 signals from systemd-logind. When the system resumes (`PrepareForSleep(false)`),
 the daemon restores lighting (regardless of profile) and all custom-profile
 volatile settings from its saved state. Fan curves, TDP, and undervolt are only
-restored when the `custom` profile is active — stock profiles (`quiet`,
-`balanced`, `performance`) let the firmware manage these settings.
+restored when the `custom` profile is active; under a stock profile the firmware
+manages fan curves, and the profile's stock PPT values were already written to
+hardware when that profile was selected.
 
 This happens transparently with no user intervention. You can verify it worked
 by checking the daemon logs after a resume:

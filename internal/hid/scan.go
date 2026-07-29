@@ -70,7 +70,7 @@ func findAll() (*Device, error) {
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
-			"no ASUS Aura devices found (keyboard / lightbar); try sudo or add a udev rule:\n"+
+			"no ASUS Aura devices found (keyboard / lightbar); try sudo or add a udev rule:\n" +
 				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
 		)
 	}

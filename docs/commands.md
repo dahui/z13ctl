@@ -111,8 +111,11 @@ settings from the daemon's state file. It does **not** write to `platform_profil
 Setting `custom` requires the daemon to be running, and at least one custom fan
 curve or TDP value must have been previously set.
 
-Setting a stock profile (`quiet`, `balanced`, `performance`) resets any active
-custom fan curves and TDP values back to firmware defaults.
+Setting a stock profile (`quiet`, `balanced`, `performance`) resets fan curves to
+firmware auto mode and writes that profile's measured stock PPT values back to
+hardware. The firmware does *not* re-apply per-profile power limits on its own,
+so z13ctl restores them explicitly. Your saved custom fan curve and TDP are kept
+in daemon state, so `--set custom` recalls them.
 
 ```sh
 z13ctl profile --get
@@ -381,18 +384,20 @@ battery charge level with charge limit.
 z13ctl status
 ```
 
-This command is read-only and takes no flags. All values are read directly from
-sysfs (except undervolt, which has no sysfs readback — shows `ryzen_smu`
-module availability).
+This command is read-only and takes no flags. Values are read directly from
+sysfs, with two exceptions: undervolt has no sysfs readback, so the line reports
+`ryzen_smu` availability rather than the active offset; and the TDP line asks the
+daemon which profile is active, because a custom TDP of exactly 5 W is otherwise
+indistinguishable from the kernel's stale 5 W boot cache.
 
 ```sh
 z13ctl status
-# APU:       62°C
-# Fans:      4200 RPM, mode: auto
-# Profile:   balanced
-# TDP:       52W (PL1) / 71W (PL2) / 70W (PL3)
-# Undervolt: available (ryzen_smu loaded)
-# Battery:   74% (limit: 80%)
+# APU:     62°C
+# Fans:    4200 RPM, mode: auto
+# Profile: balanced
+# TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
+# UV:      available (use 'undervolt --get' via daemon for current values)
+# Battery: 74% (limit: 80%)
 ```
 
 ---

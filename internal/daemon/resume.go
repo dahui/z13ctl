@@ -59,11 +59,16 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				// d.dev is guarded by d.mu: the hotplug watcher closes and
+				// replaces it on keyboard reattach, so an unlocked read here
+				// races with that swap and can write to a closed descriptor.
+				d.mu.Lock()
 				if d.dev != nil {
 					if err := aura.TurnOff(d.dev); err != nil {
 						slog.Warn("failed to turn off lighting before sleep", "err", err)
 					}
 				}
+				d.mu.Unlock()
 				continue
 			}
 			slog.Info("system resumed from sleep, restoring volatile state")
@@ -75,11 +80,12 @@ func (d *Daemon) watchResume(ctx context.Context) {
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
 // lighting, fan curves, TDP, and Curve Optimizer offsets.
 func (d *Daemon) restoreVolatileState() {
+	// Both d.dev and d.state are guarded by d.mu, and applyLightingState reads
+	// them directly, so hold the lock across it — the same discipline the socket
+	// handlers use. cloneState is required because the plain struct copy would
+	// alias the Devices map and the pointer fields still owned by d.state.
 	d.mu.Lock()
-	state := d.state
-	d.mu.Unlock()
-
-	// Restore lighting (lost on sleep regardless of profile).
+	state := cloneState(d.state)
 	if d.dev != nil {
 		if err := d.applyLightingState(); err != nil {
 			slog.Warn("resume: failed to restore lighting", "err", err)
@@ -87,6 +93,7 @@ func (d *Daemon) restoreVolatileState() {
 			slog.Info("resume: lighting restored")
 		}
 	}
+	d.mu.Unlock()
 
 	if state.Profile != "custom" {
 		slog.Info("skipping volatile state restore (stock profile active)", "profile", state.Profile)

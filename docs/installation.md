@@ -35,7 +35,7 @@ return a helpful error explaining how to install the module.
 | Distribution | Package | Source |
 |---|---|---|
 | Arch / CachyOS | `ryzen_smu-dkms-git` | AUR ([amkillam fork](https://github.com/amkillam/ryzen_smu)) |
-| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://gi thub.com/amkillam/ryzen_smu) |
+| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) |
 
 ```sh
 # Arch / CachyOS
@@ -92,9 +92,10 @@ sudo make install
     yay -S z13ctl-bin
     ```
 
-    The package installs the binary, udev rules, systemd units, and the
-    battery permissions service automatically. After installing, add your user
-    to the `users` group if not already a member:
+    The package installs the binary, udev rules, systemd units, and the sysfs
+    permissions service automatically, restarting the latter so an upgrade
+    applies any new permission grants without a reboot. After installing, add
+    your user to the `users` group if not already a member:
 
     ```sh
     sudo usermod -aG users $USER
@@ -119,9 +120,10 @@ sudo make install
     sudo apt install ./z13ctl_*.deb
     ```
 
-    The package installs the binary, udev rules, systemd units, and the
-    battery permissions service automatically. After installing, add your user
-    to the `users` group if not already a member:
+    The package installs the binary, udev rules, systemd units, and the sysfs
+    permissions service automatically, restarting the latter so an upgrade
+    applies any new permission grants without a reboot. After installing, add
+    your user to the `users` group if not already a member:
 
     ```sh
     sudo usermod -aG users $USER
@@ -138,9 +140,10 @@ sudo make install
     sudo dnf install ./z13ctl_*.rpm
     ```
 
-    The package installs the binary, udev rules, systemd units, and the
-    battery permissions service automatically. After installing, add your user
-    to the `users` group if not already a member:
+    The package installs the binary, udev rules, systemd units, and the sysfs
+    permissions service automatically, restarting the latter so an upgrade
+    applies any new permission grants without a reboot. After installing, add
+    your user to the `users` group if not already a member:
 
     ```sh
     sudo usermod -aG users $USER
@@ -220,19 +223,23 @@ guide to set your first lighting effect, fan curve, and performance profile.
    files — including `ryzen_smu` sysfs files for undervolting (if the module
    is loaded).
 3. Writes `/etc/systemd/system/z13ctl-perms.service` and enables it — a
-   `Type=oneshot` service that runs `chgrp` + `chmod g+w` on
-   `BAT*/charge_control_end_threshold` and `ryzen_smu_drv` sysfs files at boot.
-4. Starts the service immediately so battery limit and undervolt are accessible
-   right away.
+   `Type=oneshot` service that runs `chgrp` + `chmod g+w` at boot on
+   `BAT*/charge_control_end_threshold`, the asus-armoury firmware attributes
+   (`boot_sound`, `panel_overdrive`), the asus-nb-wmi `ppt_*` power limits, and
+   the `ryzen_smu_drv` files.
+4. Starts the service immediately so battery limit, TDP, and undervolt are
+   accessible right away.
 
-!!! note "Why a separate oneshot service for battery and ryzen_smu?"
-    The `charge_control_end_threshold` sysfs attribute is added by the
+!!! note "Why a separate oneshot service?"
+    The `charge_control_end_threshold` and `ppt_*` attributes are added by the
     `asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
-    observable udev child-device events have already fired. The `ryzen_smu`
-    files are kobjects under `/sys/kernel/`, not udev-managed devices. There
-    is no udev hook that can reliably target either. The `z13ctl-perms.service`
-    unit is a self-contained workaround that runs at `sysinit.target`. It has
-    no dependency on the z13ctl binary and can be inspected at any time:
+    observable udev child-device events have already fired. The
+    firmware-attribute `current_value` files may likewise be created after their
+    parent's `ADD` event, and the `ryzen_smu` files are kobjects under
+    `/sys/kernel/`, not udev-managed devices. No udev hook can reliably target
+    any of them. The `z13ctl-perms.service` unit is a self-contained workaround
+    that runs at `sysinit.target`. It has no dependency on the z13ctl binary and
+    can be inspected at any time:
 
     ```sh
     systemctl cat z13ctl-perms.service

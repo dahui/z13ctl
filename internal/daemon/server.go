@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
@@ -50,9 +51,19 @@ type response struct {
 	Event string     `json:"event,omitempty"`
 }
 
+// requestReadTimeout bounds how long a connection may stay open without
+// sending its request line. Declared as a var so tests can shorten it.
+var requestReadTimeout = 30 * time.Second
+
 // handleConn reads one JSON request, dispatches it, and writes one JSON response.
 // For "subscribe" requests the connection is kept open for event streaming.
 func (d *Daemon) handleConn(conn net.Conn) {
+	// Bound how long a connection may sit without sending its request line.
+	// handleConn runs in its own goroutine per connection with no cap, so a
+	// client that connects and stays silent would otherwise pin a goroutine
+	// (and, for a subscribe, a file descriptor) for the daemon's lifetime.
+	_ = conn.SetReadDeadline(time.Now().Add(requestReadTimeout))
+
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		_ = conn.Close()
@@ -67,11 +78,18 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	}
 
 	if req.Cmd == "subscribe" {
-		// Acknowledge and keep connection open for event streaming.
+		// Acknowledge and keep the connection open for event streaming. Clear
+		// the deadline first: a subscription is idle by design between button
+		// presses, and the daemon only ever writes on it from here on.
+		_ = conn.SetReadDeadline(time.Time{})
 		writeResponse(conn, response{OK: true})
 		d.addSubscriber(conn)
 		return
 	}
+
+	// The command is handled synchronously below; clear the read deadline so it
+	// cannot expire mid-write on a slow hardware operation.
+	_ = conn.SetReadDeadline(time.Time{})
 
 	resp := d.dispatch(req)
 	if !resp.OK {

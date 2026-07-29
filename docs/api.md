@@ -42,7 +42,26 @@ if !handled {
 ```
 
 `Subscribe` follows the same pattern but holds the connection open to receive a
-stream of events.
+stream of events. Always call the returned cancel func when you stop consuming
+the channel — it releases the reader goroutine, which otherwise parks once the
+channel buffer fills. Calling it more than once is safe.
+
+```go
+ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
+if err != nil || ch == nil {
+    // daemon not running, or it rejected the subscription
+}
+defer cancel()
+for range ch {
+    // toggle your window
+}
+```
+
+!!! note "Timeouts"
+    Connecting is bounded at 1 second and the whole request/response exchange at
+    10 seconds, so a wedged daemon returns an error rather than hanging your
+    process. `Subscribe` bounds only its handshake — the stream itself is
+    open-ended, since subscriptions are idle by design between events.
 
 ---
 
