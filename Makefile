@@ -1,4 +1,8 @@
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# --match 'v*' restricts this to main-module tags. The api submodule is tagged
+# api/vX.Y.Z in the same repository, and those tags land on more recent commits
+# than the last release — without the filter, git describe picks one and the
+# binary reports "api/v1.1.7" as its own version.
+VERSION := $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS  := -s -w -X github.com/dahui/z13ctl/cmd.Version=$(VERSION)
 
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
