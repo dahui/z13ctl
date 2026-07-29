@@ -2,6 +2,20 @@ version: 2
 
 project_name: z13ctl
 
+# The api submodule is tagged api/vX.Y.Z in this same repository, and those tags
+# land on commits well after the last main-module release. Without this filter
+# goreleaser treats the newest api/* tag as the previous release and generates
+# the changelog from that point — for v1.2.1 that meant a single commit instead
+# of the whole bugfix series, silently truncating the GitHub release body.
+#
+# Verified by building v1.2.1 both ways in a scratch clone: 1 commit without,
+# the full series with. Note it does NOT affect --snapshot versioning, which
+# still derives from a plain `git describe`; the Makefile filters tags itself
+# for the same reason.
+git:
+  ignore_tags:
+    - "api/*"
+
 before:
   hooks:
     - go mod tidy
