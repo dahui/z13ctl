@@ -8,6 +8,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
@@ -77,8 +78,13 @@ func DryRunBatteryLimit(limit int) {
 // including mapped names for secondary devices (e.g. amd-pmf uses "low-power" not "quiet").
 func DryRunProfile(profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if _, ok := StockProfilePPT[profile]; ok {
+		fmt.Println("Would reset the CPU Curve Optimizer to stock")
+	}
 	primary := FindProfilePath()
-	fmt.Printf("Would write %q to %s\n", profile, primary)
+	// Name-mapped, as SetProfile does for every device including the primary —
+	// printing the raw name here showed "quiet" where "low-power" gets written.
+	fmt.Printf("Would write %q to %s\n", profileNameForDevice(filepath.Dir(primary), profile), primary)
 	dir := sysProfileDir
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -106,10 +112,11 @@ func DryRunProfile(profile string) {
 	}
 	// Switching to a stock profile also restores that profile's PPT values,
 	// since the firmware does not re-apply them on a platform_profile write.
+	// Fans are released last, after the limit has been lowered.
 	if stock, ok := StockProfilePPT[profile]; ok {
-		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
 		fmt.Printf("Would write stock PPT for %s: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
 			profile, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
+		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
 	}
 }
 
@@ -155,44 +162,77 @@ func DryRunFanCurveReset() {
 }
 
 // DryRunTdp prints the sysfs writes for a TDP set operation.
+//
+// The limits come from TDPStateFor and the fan-floor condition from
+// ApplyTDPSafely, so this cannot drift from what the real path does. It
+// previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
+// --force was given and any limit exceeded the safe max — three separate
+// inaccuracies: the floor is a curve, not full speed; it is driven by the
+// sustained limit alone; and it does not depend on --force.
 func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	if pl1 == 0 {
-		pl1 = watts
+	s := TDPStateFor(watts, pl1, pl2, pl3)
+	if force {
+		fmt.Printf("--force given: sustained limit allowed above %dW (hardware max %dW)\n",
+			TDPMaxSafe, TDPMaxForced)
 	}
-	if pl2 == 0 {
-		pl2 = watts
-	}
-	if pl3 == 0 {
-		pl3 = watts
-	}
-	if force && (pl1 > TDPMaxSafe || pl2 > TDPMaxSafe || pl3 > TDPMaxSafe) {
-		fmt.Println("Would set all fans to full speed (pwm_enable=0) for thermal safety")
+	if s.PL1SPL > TDPMaxSafe {
+		curveDir := FindFanCurveHwmonPath()
+		if curveDir == "" {
+			curveDir = "<hwmon not found>"
+		}
+		fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 80%%) to both fans in %s\n",
+			HighTDPMinPWM, curveDir)
+		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
+		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",
+			s.PL1SPL, TDPMaxSafe)
 	}
 	base := FindPPTBasePath()
-	fmt.Printf("Would write %d to %s/ppt_pl1_spl\n", pl1, base)
-	fmt.Printf("Would write %d to %s/ppt_pl2_sppt\n", pl2, base)
-	fmt.Printf("Would write %d to %s/ppt_fppt\n", pl3, base)
-	fmt.Printf("Would write %d to %s/ppt_apu_sppt\n", pl2, base)
-	fmt.Printf("Would write %d to %s/ppt_platform_sppt\n", pl2, base)
+	for _, w := range []struct {
+		attr  string
+		watts int
+	}{
+		{"ppt_pl1_spl", s.PL1SPL},
+		{"ppt_pl2_sppt", s.PL2SPPT},
+		{"ppt_fppt", s.FPPT},
+		{"ppt_apu_sppt", s.APUSPPT},
+		{"ppt_platform_sppt", s.PlatformSPPT},
+	} {
+		fmt.Printf("Would write %d to %s/%s\n", w.watts, base, w.attr)
+	}
 }
 
-// DryRunTdpReset prints the actions for a TDP reset.
+// DryRunTdpReset prints the actions for a TDP reset, in the order the real path
+// performs them.
+//
+// It used to claim the firmware sets per-profile PPT on a profile change. It
+// does not — that false assumption is the whole of issue #12, and z13ctl writes
+// the stock values itself. The order matters too: power is lowered before the
+// fans are released, never the other way round.
 func DryRunTdpReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Println("Would reset fan curves to auto mode")
-	fmt.Println("Would switch profile to balanced (firmware sets per-profile PPT and fan curves)")
+	fmt.Println("Would reset the CPU Curve Optimizer to stock (balanced is a stock profile)")
+	fmt.Println("Would switch profile to balanced")
+	stock := StockProfilePPT["balanced"]
+	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
+		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
+	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before)")
 }
 
-// DryRunUndervolt prints the SMU commands that would be sent for a Curve Optimizer change.
+// DryRunUndervolt prints the SMU commands that would be sent for a Curve
+// Optimizer change.
+//
+// An offset of 0 is not "no change": it encodes to the same argument as
+// ResetCurveOptimizer, so "--set 0" clears any offset currently applied. Saying
+// "no changes" here told users the opposite of what the command does.
 func DryRunUndervolt(cpu int) {
 	fmt.Println("=== DRY RUN (no SMU write) ===")
-	if cpu != 0 {
-		encoded := encodeCOValue(cpu)
-		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO %d)\n", encoded, cpu)
-	} else {
-		fmt.Println("No changes (offset is 0)")
+	encoded := encodeCOValue(cpu)
+	if cpu == 0 {
+		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO 0 — clears any active undervolt)\n", encoded)
+		return
 	}
+	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO %d)\n", encoded, cpu)
 }
 
 // DryRunUndervoltReset prints the SMU commands that would be sent to reset CO.

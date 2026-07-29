@@ -307,10 +307,13 @@ re-selectable.
 
 **Safety:**
 
-- Default range: 5–75W
-- `--force` extends the range to 5–93W
-- When any PPT value exceeds 75W, **both fans are forced to full speed** before
-  the TDP values are written. If the fan write fails, TDP is not applied.
+- Default range: 5–75W for the sustained limit (PL1); `--force` extends it to
+  5–93W. Burst limits (PL2/PL3) may go to 93W without `--force`, since short
+  bursts are thermally safe.
+- When the **sustained** limit exceeds 75W, both fans are held to a minimum of
+  204 PWM (80%) before the TDP values are written. If that fan write fails, the
+  TDP is not applied at all. Burst limits above 75W do not trigger this on their
+  own.
 
 ```sh
 # Read current TDP values
@@ -322,10 +325,10 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (fans will be set to full speed)
+# Force high sustained TDP (fans are held to an 80% floor first)
 z13ctl tdp --set 85 --force
 
-# Reset to balanced profile (restores balanced's stock PPT)
+# Reset to balanced profile (restores balanced's stock PPT and clears the undervolt)
 z13ctl tdp --reset
 ```
 

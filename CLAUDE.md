@@ -232,9 +232,13 @@ contrib/
   which has empty calibration data). Five attributes: `ppt_pl1_spl` (Sustained),
   `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
   `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
-  (G-Helper absolute max for 2025 Z13 GZ302E). When any PPT value exceeds 75W,
-  all fans are forced to full speed before PPT writes. If fan write fails, TDP
-  write is aborted entirely. APU sPPT and Platform sPPT always follow PL2.
+  (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
+  (PL1) exceeds 75W, both fans are written `HighTDPFanCurve` — an 80% PWM floor
+  with `pwm_enable=1` — before the PPT writes, and the TDP is not applied at all
+  if that fails (see `ApplyTDPSafely`). Burst limits alone do not trigger it.
+  `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
+  calls any more; the docs, the dry-run output, and this file all described it
+  for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
 - **`cli.ApplyTDPSafely` is the only way to apply a custom TDP.** Above
   `TDPMaxSafe` (75W) the fans must be held to an 80% PWM floor
   (`HighTDPFanCurve`). Five paths apply a TDP — `handleTDP`, the `handleProfile`

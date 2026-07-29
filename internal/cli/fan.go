@@ -203,6 +203,12 @@ func ResetAllFanCurves() error {
 // Only the base "asus" hwmon device supports pwm_enable=0, and only pwm1_enable
 // is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
 // is sufficient to force both physical fans to full speed.
+//
+// Nothing calls this. High-TDP cooling uses HighTDPFanCurve (an 80% PWM floor
+// with pwm_enable=1) via ApplyTDPSafely; full speed was an earlier approach that
+// the docs, the --dry-run output, and CLAUDE.md all went on describing long
+// after the code stopped doing it. Kept because it is a real, tested hardware
+// capability — but it is not the high-TDP path, and callers should not assume so.
 func SetAllFansFullSpeed() error {
 	readDir := FindFanReadingsHwmonPath()
 	if readDir == "" {

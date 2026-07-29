@@ -211,11 +211,45 @@ func TestDryRunTdp(t *testing.T) {
 	}
 }
 
-func TestDryRunTdp_Force(t *testing.T) {
+// TestDryRunTdp_HighSustained pins the dry run against what ApplyTDPSafely
+// actually does. The old expectation here was "full speed", which the real path
+// has never done — it writes the 80% floor curve with pwm_enable=1. A dry run
+// that describes an operation the tool does not perform is worse than none.
+func TestDryRunTdp_HighSustained(t *testing.T) {
 	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
 
-	if !strings.Contains(out, "full speed") {
-		t.Error("DryRunTdp(80W, force) should mention full speed")
+	for _, want := range []string{"204", "80%", "pwm", "not applied at all"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunTdp(80W) output missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "full speed") {
+		t.Error("DryRunTdp must not claim full speed — the real path writes the 80% floor curve")
+	}
+}
+
+// TestDryRunTdp_FanFloorIgnoresForce: the floor depends on the sustained limit,
+// not on --force. The old code only mentioned fans when --force was passed.
+func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
+	forced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
+	unforced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, false) })
+
+	if !strings.Contains(unforced, "204") {
+		t.Errorf("DryRunTdp(80W, no force) omitted the fan floor; got:\n%s", unforced)
+	}
+	if strings.Contains(forced, "204") != strings.Contains(unforced, "204") {
+		t.Error("the fan floor must not depend on --force")
+	}
+}
+
+// TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone: a burst limit over the safe max
+// does not trigger the floor — only the sustained limit does. The old condition
+// fired on pl2/pl3 as well.
+func TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 50, 90, 90, true) })
+
+	if strings.Contains(out, "204") || strings.Contains(out, "fan") {
+		t.Errorf("burst limits above the safe max must not imply a fan change; got:\n%s", out)
 	}
 }
 
@@ -240,10 +274,35 @@ func TestDryRunTdpReset(t *testing.T) {
 		"DRY RUN",
 		"fan curves",
 		"balanced",
+		"Curve Optimizer", // a stock profile clears the undervolt
+		"stock PPT",       // z13ctl writes these; the firmware does not
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("DryRunTdpReset output missing %q", want)
+			t.Errorf("DryRunTdpReset output missing %q; got:\n%s", want, out)
 		}
+	}
+	// The firmware does not re-apply per-profile PPT — assuming it did is the
+	// whole of issue #12, and this text used to assert it.
+	if strings.Contains(out, "firmware sets per-profile PPT") {
+		t.Error("DryRunTdpReset still claims the firmware restores PPT")
+	}
+	// Power comes down before the fans are released.
+	if strings.Index(out, "stock PPT") > strings.Index(out, "fan curves to auto") {
+		t.Error("dry run shows fans released before the limit is lowered")
+	}
+}
+
+// TestDryRunUndervoltZeroIsNotANoOp: an offset of 0 encodes identically to a
+// reset, so "--set 0" clears an active undervolt. The dry run used to say "No
+// changes", which is the opposite of what the command does.
+func TestDryRunUndervoltZeroIsNotANoOp(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunUndervolt(0) })
+
+	if strings.Contains(out, "No changes") {
+		t.Error("DryRunUndervolt(0) claims no changes, but the command clears any active undervolt")
+	}
+	if !strings.Contains(out, "0x4C") {
+		t.Errorf("DryRunUndervolt(0) should show the SMU command it sends; got:\n%s", out)
 	}
 }
 
