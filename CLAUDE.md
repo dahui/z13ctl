@@ -34,6 +34,7 @@ cmd/                         Cobra subcommands
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
   setup_test.go              drift guard: generated vs packaged contrib/ artifacts
+  undervolt_test.go          --set parse rejections (CLI/daemon parity; no SMU access)
 internal/
   aura/                      Aura HID protocol implementation
     aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
@@ -45,7 +46,8 @@ internal/
     sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
     fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
     paths.go                 sysfs roots as vars (injectable by tests); see Testing
-    tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT, SetTDP, SetTDPState
+    tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
+                             SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor, CheckFanFloorRelease
     smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
@@ -53,7 +55,8 @@ internal/
     sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
     fan_sysfs_test.go        fan curve/mode/RPM + profile/battery/firmware-attr tests
     smu_test.go              SMU mailbox protocol + Curve Optimizer tests
-    tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests
+    tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests +
+                             ApplyTDPSafely fan-floor refusal (the thermal-guard regression test)
     dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve, DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
@@ -64,15 +67,17 @@ internal/
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
+    state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup
     clone_test.go            cloneState deep-copy, saveState race regression, broadcast wire shape
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
   hid/
     doc.go                   package doc file only
     device.go                Device type, Write, SetFeature, Paths, Descriptions, Close
-    scan.go                  FindDevice, ListDevices, sysfs discovery, hasAuraReport
+    scan.go                  FindDevice, ListDevices, sysfs discovery, hasAuraReport, descriptorHasAuraReport
     export_test.go           test-only exports: NewTestDevice, NewTestDeviceAnon,
-                             UeventToDevPath, DeviceNameFromUevent
+                             UeventToDevPath, DeviceNameFromUevent, HasDeviceGlob,
+                             DescriptorHasAuraReport
 contrib/
   systemd/user/
     z13ctl.socket            systemd user socket unit (socket activation, %t/z13ctl/z13ctl.sock)
@@ -230,6 +235,47 @@ contrib/
   (G-Helper absolute max for 2025 Z13 GZ302E). When any PPT value exceeds 75W,
   all fans are forced to full speed before PPT writes. If fan write fails, TDP
   write is aborted entirely. APU sPPT and Platform sPPT always follow PL2.
+- **`cli.ApplyTDPSafely` is the only way to apply a custom TDP.** Above
+  `TDPMaxSafe` (75W) the fans must be held to an 80% PWM floor
+  (`HighTDPFanCurve`). Five paths apply a TDP — `handleTDP`, the `handleProfile`
+  "custom" branch, daemon startup, resume, and `cmd/tdp.go`'s no-daemon path —
+  and they previously enforced this four different ways: two warned and applied
+  anyway, one raised power *before* raising the fans and discarded the fan
+  error with `_ =`, and only one refused. They all now call `ApplyTDPSafely`,
+  which fails closed: if the fan write fails the TDP is not written at all.
+  Release order is the mirror image — lower power *first*, then release the
+  fans (`handleTDPReset`, the stock-profile branch, `cmd/tdp.go` reset), so the
+  machine is never at a high limit with no floor. `internal/cli/tdp_test.go`
+  guards this against the fake sysfs; the refusal case is the one that matters.
+- **Fan-floor checks read hardware, not cached state.** `cli.CheckFanCurveFloor`
+  and `cli.CheckFanFloorRelease` both take the *effective* profile and go through
+  `ReadEffectivePPT`. `handleFanCurve` used to gate on `d.state.TDP`, which
+  silently skipped the guard whenever state and hardware disagreed (a TDP set
+  while the daemon was down, a reset state file). `fancurve --reset` is refused
+  above 75W in both the daemon and the CLI: firmware auto has no floor, so
+  dropping to it removes exactly the protection the limit requires. A PPT *read*
+  failure is deliberately not a refusal — it must not make fan control
+  unavailable.
+- **Daemon tests cannot exercise the fan-floor guards.** Whether they refuse
+  depends on the real `ppt_*` values and `internal/cli`'s path vars are
+  unexported, so a daemon test that passes the guard writes the machine's actual
+  fan mode. `internal/daemon/server_test.go` stays on parse-rejection paths; the
+  guards themselves are covered hermetically in `internal/cli/tdp_test.go`.
+- **A corrupt state file is preserved, not silently replaced.** `loadState`
+  renames an unparseable `state.json` to `state.json.corrupt` and logs before
+  returning defaults; the next `saveState` would otherwise overwrite it, taking
+  every saved setting with it and leaving nothing to diagnose. `statePath` also
+  falls back to `os.TempDir()` when neither `XDG_STATE_HOME` nor a home
+  directory resolves — the old code yielded the root-relative
+  `/.local/state/...`, unwritable for any non-root user.
+- **`make test` and `make lint` must run both modules.** `api/` is a separate Go
+  module, so a bare `go test ./...` / `golangci-lint run ./...` from the root
+  silently skips it — which is how two lint issues sat unnoticed in a *released*
+  module. Both targets now `cd api` as a second step.
+- **`--color 000000` is not black.** `aura.SetMode` sets the random-colour flag
+  (`0xFF`) for an all-zero primary colour, matching g-helper, so the firmware
+  picks a colour. `off` / `--brightness off` is how you get no light. Documented
+  in `docs/commands.md` and the `--color` flag help.
 - **Custom profile**: `profile --set custom` is a virtual profile that re-applies
   saved fan curves and TDP from daemon state. It does NOT write to `platform_profile`
   — the underlying hardware profile stays as-is. Setting any custom curve or TDP
@@ -323,7 +369,7 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
   `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
   sysfs tree (see below).
-- Current coverage: ~87% cli, ~78% aura, ~35% hid, ~19% daemon, ~28% api, ~8% cmd.
+- Current coverage: ~88% cli, ~78% aura, ~40% hid, ~21% daemon, ~38% api, ~9% cmd.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
 ### Fake sysfs (`internal/cli`)

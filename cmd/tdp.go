@@ -154,14 +154,8 @@ func runTdpSet() error {
 		return nil
 	}
 
-	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
-	if pl1 > cli.TDPMaxSafe {
-		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
-			return fmt.Errorf("failed to set high-TDP fan curve: %w (refusing to apply unsafe TDP)", err)
-		}
-		fmt.Println("Fans set to 80%+ curve for thermal safety")
-	}
-
+	// The daemon applies the fan floor itself (cli.ApplyTDPSafely), so hand the
+	// whole operation over before touching hardware here.
 	if handled, err := api.SendTdpSet(tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
@@ -170,8 +164,13 @@ func runTdpSet() error {
 		return nil
 	}
 
-	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
+	// Direct path: same helper, so the no-daemon path enforces the 80% fan floor
+	// on the same terms — fans first, and no TDP at all if that write fails.
+	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+	}
+	if pl1 > cli.TDPMaxSafe {
+		fmt.Println("Fans set to 80%+ curve for thermal safety")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil
@@ -191,16 +190,18 @@ func runTdpReset() error {
 		return nil
 	}
 
-	// Direct path (no daemon): reset fans to auto, then switch to balanced
-	// profile and write its stock PPT values back to hardware. The firmware
-	// manages fan curves on a profile change but does not restore PPT.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
-	}
+	// Direct path (no daemon): switch to balanced, write its stock PPT values
+	// back to hardware, and only then release the fans to firmware auto — so
+	// they are never dropped to auto while a high custom TDP is still in force.
+	// The firmware manages fan curves on a profile change but does not restore
+	// PPT, so that part has to be explicit.
 	if err := cli.SetProfile("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	restoreStockPPT("balanced")
+	if err := cli.ResetAllFanCurves(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	}
 	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
 }

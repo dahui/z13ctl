@@ -128,9 +128,14 @@ func SetTDPState(s api.TDPState) error {
 	return nil
 }
 
-// SetTDP writes all PPT values. pl1/pl2/pl3 override the unified watts value
-// when non-zero. APU sPPT and Platform sPPT always follow PL2.
-func SetTDP(watts, pl1, pl2, pl3 int) error {
+// TDPStateFor resolves a unified watts value plus optional per-limit overrides
+// into the five PPT values. pl1/pl2/pl3 override watts when non-zero; APU sPPT
+// and Platform sPPT always follow PL2.
+//
+// Exposed separately from SetTDP so callers can hand the resolved state to
+// ApplyTDPSafely, which needs to know PL1 before deciding whether the fan floor
+// applies.
+func TDPStateFor(watts, pl1, pl2, pl3 int) api.TDPState {
 	if pl1 == 0 {
 		pl1 = watts
 	}
@@ -140,11 +145,83 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 	if pl3 == 0 {
 		pl3 = watts
 	}
-	return SetTDPState(api.TDPState{
+	return api.TDPState{
 		PL1SPL:       pl1,
 		PL2SPPT:      pl2,
 		FPPT:         pl3,
 		APUSPPT:      pl2,
 		PlatformSPPT: pl2,
-	})
+	}
+}
+
+// SetTDP writes all PPT values. pl1/pl2/pl3 override the unified watts value
+// when non-zero. APU sPPT and Platform sPPT always follow PL2.
+//
+// This applies the values unconditionally. Prefer ApplyTDPSafely for anything
+// that can exceed TDPMaxSafe.
+func SetTDP(watts, pl1, pl2, pl3 int) error {
+	return SetTDPState(TDPStateFor(watts, pl1, pl2, pl3))
+}
+
+// ApplyTDPSafely writes s, first raising both fans to HighTDPFanCurve when the
+// sustained limit exceeds TDPMaxSafe. If that fan write fails, the TDP is NOT
+// applied: sustaining more than TDPMaxSafe watts without the HighTDPMinPWM
+// floor is the exact condition HighTDPFanCurve exists to prevent, so failing
+// closed is the only safe outcome.
+//
+// This is the single entry point for every path that applies a custom TDP —
+// the socket handler, the "custom" profile recall, daemon startup, resume, and
+// the no-daemon CLI path. They previously enforced the floor four different
+// ways, including one that raised power before raising the fans and discarded
+// the fan error.
+//
+// Values are written verbatim via SetTDPState; use TDPStateFor first if PL2
+// should be mirrored into APU/Platform sPPT.
+func ApplyTDPSafely(s api.TDPState) error {
+	if s.PL1SPL > TDPMaxSafe {
+		if err := SetBothFanCurves(HighTDPFanCurve()); err != nil {
+			return fmt.Errorf("setting high-TDP fan curve: %w (refusing to apply %dW sustained TDP without the %d PWM floor)",
+				err, s.PL1SPL, HighTDPMinPWM)
+		}
+	}
+	return SetTDPState(s)
+}
+
+// CheckFanCurveFloor rejects a curve holding any point below HighTDPMinPWM
+// while the effective sustained TDP is above TDPMaxSafe.
+//
+// profile must be the *effective* profile (see ReadEffectivePPT). The check
+// reads hardware rather than trusting cached state, which can disagree with it
+// after a TDP change made while the daemon was down. A PPT read failure is not
+// a rejection: the guard is best-effort and must not make fan control
+// unavailable when sysfs cannot be read at all.
+func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
+	tdp, err := ReadEffectivePPT(profile)
+	if err != nil || tdp.PL1SPL <= TDPMaxSafe {
+		return nil
+	}
+	for _, p := range points {
+		if p.PWM < HighTDPMinPWM {
+			return fmt.Errorf("PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
+				p.PWM, p.Temp, HighTDPMinPWM, TDPMaxSafe)
+		}
+	}
+	return nil
+}
+
+// CheckFanFloorRelease reports whether the fans may be released to firmware
+// auto — i.e. whether a fan curve reset is allowed. It refuses while the
+// effective sustained TDP is above TDPMaxSafe, since firmware auto is precisely
+// what HighTDPFanCurve exists to override; dropping to it would remove the
+// thermal floor while the power limit that requires it is still in force.
+// "tdp --reset" remains the way out, as it lowers the limit first.
+//
+// As with CheckFanCurveFloor, a PPT read failure is not a refusal.
+func CheckFanFloorRelease(profile string) error {
+	tdp, err := ReadEffectivePPT(profile)
+	if err != nil || tdp.PL1SPL <= TDPMaxSafe {
+		return nil
+	}
+	return fmt.Errorf("sustained TDP is %dW (above %dW), so fans must stay at or above %d PWM; lower it first with 'z13ctl tdp --reset'",
+		tdp.PL1SPL, TDPMaxSafe, HighTDPMinPWM)
 }

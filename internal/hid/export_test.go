@@ -22,3 +22,6 @@ var DeviceNameFromUevent = deviceNameFromUevent
 
 // HasDeviceGlob is the test-only export of hasDeviceGlob.
 var HasDeviceGlob = hasDeviceGlob
+
+// DescriptorHasAuraReport is the test-only export of descriptorHasAuraReport.
+var DescriptorHasAuraReport = descriptorHasAuraReport

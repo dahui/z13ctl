@@ -49,6 +49,12 @@ z13ctl apply [flags]
 
 All modes accept `--brightness`.
 
+!!! note "`--color 000000` means \"pick a color\", not black"
+    An all-zero primary color sets the Aura protocol's random-color flag, so the
+    firmware chooses a color itself. This matches the reference implementation
+    the protocol was derived from. To turn lighting off, use
+    [`z13ctl off`](#off) or `--brightness off` — not a black color.
+
 ```sh
 z13ctl apply --color cyan --brightness high
 z13ctl apply --mode rainbow --speed slow
@@ -226,6 +232,13 @@ mixed in the same curve.
 - Exactly 8 points required
 - Temperatures must be monotonically increasing (0–120 &deg;C)
 - Speed values must be non-decreasing (0–255 PWM or 0–100%)
+
+!!! warning "Fan control is restricted above 75 W sustained TDP"
+    While sustained TDP (PL1) is above 75 W, every curve point must be at least
+    204 PWM (80%), and `--reset` is refused — firmware auto mode has no floor,
+    and dropping to it would remove the cooling the power limit depends on.
+    Lower the limit first with [`z13ctl tdp --reset`](#tdp), which restores the
+    balanced profile before releasing the fans.
 
 ```sh
 # Read current fan curves

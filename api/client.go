@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -177,8 +179,9 @@ func SendBatteryLimitGet() (handled bool, limit int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &limit); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, scanErr)
+	limit, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, parseErr)
 	}
 	return true, limit, nil
 }
@@ -242,8 +245,9 @@ func SendBootSoundGet() (handled bool, value int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, scanErr)
+	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, parseErr)
 	}
 	return true, value, nil
 }
@@ -259,8 +263,9 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 	if !resp.OK {
 		return true, 0, fmt.Errorf("%s", resp.Error)
 	}
-	if _, scanErr := fmt.Sscan(resp.Value, &value); scanErr != nil {
-		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, scanErr)
+	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, parseErr)
 	}
 	return true, value, nil
 }
@@ -319,7 +324,7 @@ func SendTdpGet() (handled bool, value string, err error) {
 }
 
 // SendTdpSet sends a TDP set command to the daemon.
-func SendTdpSet(watts string, pl1, pl2, pl3 string, force bool) (bool, error) {
+func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 	handled, resp, err := sendCommand(request{
 		Cmd:   "tdp",
 		Set:   watts,
@@ -406,7 +411,7 @@ func SendGetState() (bool, *State, error) {
 // The returned cancel func closes the underlying connection and stops the
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
-func Subscribe(events []string) (<-chan string, func(), error) {
+func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error) {
 	conn, err := net.DialTimeout("unix", SocketPath(), dialTimeout)
 	if err != nil {
 		return nil, nil, nil // daemon not running
@@ -468,7 +473,7 @@ func Subscribe(events []string) (<-chan string, func(), error) {
 	}()
 
 	var once sync.Once
-	cancel := func() {
+	cancel = func() {
 		once.Do(func() {
 			close(done)
 			_ = conn.Close()

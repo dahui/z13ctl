@@ -6,6 +6,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -100,8 +101,11 @@ func printUndervoltState(uv api.UndervoltState, profile string) {
 }
 
 func runUndervoltSet() error {
-	var cpuOffset int
-	if _, err := fmt.Sscan(uvSetFlag, &cpuOffset); err != nil {
+	// strconv.Atoi, not fmt.Sscan: Sscan stops at the first token, so it accepts
+	// "-20 40" as -20 while the daemon parses the same flag with Atoi and rejects
+	// it. The two paths must agree on what is a valid value.
+	cpuOffset, err := strconv.Atoi(uvSetFlag)
+	if err != nil {
 		return fmt.Errorf("invalid CPU undervolt value %q: must be an integer", uvSetFlag)
 	}
 

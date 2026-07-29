@@ -109,14 +109,11 @@ func (d *Daemon) restoreVolatileState() {
 		}
 	}
 
-	// Restore TDP.
+	// Restore TDP. ApplyTDPSafely raises the fans to the 80% floor first when the
+	// sustained limit exceeds the safe max, and declines to apply the TDP at all
+	// if that fails.
 	if t := state.TDP; t != nil {
-		if t.PL1SPL > cli.TDPMaxSafe {
-			if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
-				slog.Warn("resume: failed to set high-TDP fan curve", "err", err)
-			}
-		}
-		if err := cli.SetTDPState(*t); err != nil {
+		if err := cli.ApplyTDPSafely(*t); err != nil {
 			slog.Warn("resume: failed to restore TDP", "err", err)
 		} else {
 			slog.Info("resume: TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)

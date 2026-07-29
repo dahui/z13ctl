@@ -37,7 +37,11 @@ speed is either a PWM value (0–255) or a percentage with a % suffix (0–100%)
 Both formats can be mixed. Temps must be monotonically increasing; speed values
 must be non-decreasing.
 
-With --reset, restores firmware auto mode (pwm_enable=2) for both fans.`,
+With --reset, restores firmware auto mode (pwm_enable=2) for both fans.
+
+Safety: while sustained TDP (PL1) is above 75W, every curve point must be at
+least 204 PWM (80%) and --reset is refused, since firmware auto mode has no
+minimum. Lower the limit first with 'z13ctl tdp --reset'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !fanCurveGetFlag && fanCurveSetFlag == "" && !fanCurveResetFlag {
@@ -92,14 +96,9 @@ func runFanCurveSet() error {
 		return fmt.Errorf("invalid fan curve: %w", err)
 	}
 
-	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
-	if tdp, tdpErr := cli.ReadEffectivePPT(effectiveProfileForTDP()); tdpErr == nil && tdp.PL1SPL > cli.TDPMaxSafe {
-		for _, p := range points {
-			if p.PWM < cli.HighTDPMinPWM {
-				return fmt.Errorf("PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
-					p.PWM, p.Temp, cli.HighTDPMinPWM, cli.TDPMaxSafe)
-			}
-		}
+	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
+	if err := cli.CheckFanCurveFloor(effectiveProfileForTDP(), points); err != nil {
+		return err
 	}
 
 	if dryRunFlag {
@@ -126,6 +125,13 @@ func runFanCurveReset() error {
 	if dryRunFlag {
 		cli.DryRunFanCurveReset()
 		return nil
+	}
+
+	// Firmware auto has no PWM floor, so releasing the fans while a high
+	// sustained TDP is still in force removes the protection the high-TDP curve
+	// provides. "tdp --reset" is the way out — it lowers power first.
+	if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
+		return err
 	}
 
 	if handled, err := api.SendFanCurveReset(); handled {

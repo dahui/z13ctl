@@ -371,13 +371,12 @@ func (d *Daemon) handleProfile(req request) response {
 				slog.Warn("failed to reapply fan curve", "err", err)
 			}
 		}
-		// Re-apply saved TDP.
+		// Re-apply saved TDP. ApplyTDPSafely raises the fans to the 80% floor
+		// before raising power (this branch used to do it the other way round,
+		// and discarded the fan error) and refuses the TDP if that write fails.
 		if t := d.state.TDP; t != nil {
-			if err := cli.SetTDPState(*t); err != nil {
+			if err := cli.ApplyTDPSafely(*t); err != nil {
 				slog.Warn("failed to reapply TDP", "err", err)
-			}
-			if t.PL1SPL > cli.TDPMaxSafe {
-				_ = cli.SetBothFanCurves(cli.HighTDPFanCurve())
 			}
 		}
 		// Re-apply saved undervolt.
@@ -397,13 +396,12 @@ func (d *Daemon) handleProfile(req request) response {
 		return response{OK: true}
 	}
 
-	// Stock profile: reset fan curves to auto and UV to stock, then write to
-	// platform_profile. The firmware manages fan curves for stock profiles, but
-	// it does NOT re-apply per-profile PPT, so any custom watts would otherwise
-	// persist across the switch — restoreStockPPT does that explicitly below.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves to auto", "err", err)
-	}
+	// Stock profile: reset UV to stock, write platform_profile, restore that
+	// profile's stock PPT, and only then release the fans to firmware auto. The
+	// firmware manages fan curves for stock profiles, but it does NOT re-apply
+	// per-profile PPT, so any custom watts would otherwise persist across the
+	// switch — restoreStockPPT does that explicitly. Fans are released last so
+	// they are never dropped to auto while a high custom TDP is still in force.
 	if cli.SMUProbeUndervolt() {
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
@@ -413,6 +411,9 @@ func (d *Daemon) handleProfile(req request) response {
 		return response{OK: false, Error: "profile: " + err.Error()}
 	}
 	restoreStockPPT(profile)
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves to auto", "err", err)
+	}
 
 	slog.Info("profile", "set", profile)
 	d.mu.Lock()
@@ -563,18 +564,12 @@ func (d *Daemon) handleFanCurve(req request) response {
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
-	// Enforce minimum PWM floor when sustained TDP exceeds safe max.
-	d.mu.Lock()
-	tdp := d.state.TDP
-	d.mu.Unlock()
-	if tdp != nil && tdp.PL1SPL > cli.TDPMaxSafe {
-		for _, p := range points {
-			if p.PWM < cli.HighTDPMinPWM {
-				return response{OK: false, Error: fmt.Sprintf(
-					"fancurve: PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
-					p.PWM, p.Temp, cli.HighTDPMinPWM, cli.TDPMaxSafe)}
-			}
-		}
+	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
+	// This reads hardware rather than the cached d.state.TDP, which can disagree
+	// with it — a TDP set while the daemon was down, or a reset state file — and
+	// silently skipped the guard. Matches the CLI's direct path.
+	if err := cli.CheckFanCurveFloor(d.effectiveProfile(), points); err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
 	if err := cli.SetBothFanCurves(points); err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
@@ -592,6 +587,12 @@ func (d *Daemon) handleFanCurve(req request) response {
 }
 
 func (d *Daemon) handleFanCurveReset() response {
+	// Firmware auto has no PWM floor, so releasing the fans while a high
+	// sustained TDP is still in force removes the very protection the high-TDP
+	// curve provides. "tdp --reset" is the way out — it lowers power first.
+	if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+	}
 	if err := cli.ResetAllFanCurves(); err != nil {
 		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 	}
@@ -679,27 +680,19 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	// Safety: set fans to 80% minimum when sustained TDP exceeds safe max.
-	if pl1 > cli.TDPMaxSafe {
-		if err := cli.SetBothFanCurves(cli.HighTDPFanCurve()); err != nil {
-			return response{OK: false, Error: "cannot set high-TDP fan curve: " + err.Error()}
-		}
-		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
-	}
-
-	if err := cli.SetTDP(watts, pl1, pl2, pl3); err != nil {
+	// ApplyTDPSafely raises the fans to the 80% floor first when pl1 exceeds the
+	// safe sustained max, and refuses to apply the TDP at all if that fails.
+	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
+	if err := cli.ApplyTDPSafely(tdp); err != nil {
 		return response{OK: false, Error: "tdp: " + err.Error()}
+	}
+	if pl1 > cli.TDPMaxSafe {
+		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
 	}
 	slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3)
 
 	d.mu.Lock()
-	d.state.TDP = &api.TDPState{
-		PL1SPL:       pl1,
-		PL2SPPT:      pl2,
-		FPPT:         pl3,
-		APUSPPT:      pl2,
-		PlatformSPPT: pl2,
-	}
+	d.state.TDP = &tdp
 	d.state.Profile = "custom"
 	fc := d.state.FanCurve
 	s := cloneState(d.state)
@@ -723,17 +716,19 @@ func (d *Daemon) handleTDP(req request) response {
 }
 
 func (d *Daemon) handleTDPReset() response {
-	// Reset fans to auto mode (undo any full-speed override from high TDP), then
-	// switch to balanced profile and write its stock PPT values back to hardware.
-	// The firmware manages fan curves on a profile change but does not restore
-	// PPT, so the reset has to be explicit.
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
-	}
+	// Lower power first, then release the fans: balanced's sustained limit is
+	// below TDPMaxSafe, so by the time the fans drop to firmware auto the limit
+	// that required the 80% floor is gone. Doing it the other way round leaves a
+	// window at full power with no floor, and a failed profile switch would
+	// leave it that way. The firmware manages fan curves on a profile change but
+	// does not restore PPT, so restoreStockPPT has to be explicit.
 	if err := cli.SetProfile("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
 	}
 	restoreStockPPT("balanced")
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+	}
 	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
 	d.state.TDP = nil
@@ -759,7 +754,6 @@ func (d *Daemon) handleUndervoltGet() response {
 	uvState := api.UndervoltState{}
 	if uv != nil {
 		uvState = *uv
-		uvState.Active = uv.Active
 	}
 	// Include the current profile so the client can tell whether CO is active.
 	data, _ := json.Marshal(struct {

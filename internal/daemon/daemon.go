@@ -128,13 +128,11 @@ func Run(ctx context.Context, watchBtn bool) error {
 			}
 		}
 		if t := d.state.TDP; t != nil {
-			// Set fans to 80% minimum if sustained TDP exceeds safe max.
-			if t.PL1SPL > cli.TDPMaxSafe {
-				if fsErr := cli.SetBothFanCurves(cli.HighTDPFanCurve()); fsErr != nil {
-					slog.Warn("failed to set high-TDP fan curve for TDP restore", "err", fsErr)
-				}
-			}
-			if tdpErr := cli.SetTDPState(*t); tdpErr != nil {
+			// ApplyTDPSafely raises the fans to the 80% floor first when the
+			// sustained limit exceeds the safe max, and declines to apply the
+			// TDP at all if that fails — better to boot at the existing limits
+			// than above the safe sustained max with no thermal floor.
+			if tdpErr := cli.ApplyTDPSafely(*t); tdpErr != nil {
 				slog.Warn("failed to restore TDP", "err", tdpErr)
 			} else {
 				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)

@@ -75,6 +75,42 @@ func TestHandleTDPForceBoundaryRejections(t *testing.T) {
 	}
 }
 
+// TestHandleFanCurveRejectsInvalidCurve covers the only fan-curve path that is
+// safe to exercise here: a malformed curve string is rejected by ParseFanCurve
+// before anything reaches hwmon.
+//
+// The thermal-floor guards this handler now applies — cli.CheckFanCurveFloor on
+// set and cli.CheckFanFloorRelease on reset — cannot be driven from this package
+// without changing the machine's real fan mode, because whether they refuse
+// depends on the actual ppt_* values and internal/cli's path vars are
+// unexported. Both are covered hermetically in internal/cli/tdp_test.go against
+// the fake sysfs tree.
+func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
+	tests := []struct {
+		name    string
+		set     string
+		wantErr string
+	}{
+		{"wrong point count", "40:100,50:150", "exactly 8 points"},
+		{"missing pwm", "40,50,60,70,80,90,100,110", "expected temp:pwm"},
+		{"non-numeric temp", "hot:100,50:150,60:160,65:170,70:180,75:190,80:200,85:210", "invalid temp"},
+		{"pwm out of range", "40:300,50:300,60:300,65:300,70:300,75:300,80:300,85:300", "out of range"},
+		{"temps not increasing", "40:100,40:150,60:160,65:170,70:180,75:190,80:200,85:210", "monotonically increasing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Daemon{}
+			resp := d.handleFanCurve(request{Cmd: "fancurve", Set: tt.set})
+			if resp.OK {
+				t.Fatalf("handleFanCurve(%q).OK = true, want a rejection", tt.set)
+			}
+			if !strings.Contains(resp.Error, tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", resp.Error, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestHandleProfileRequiresSet(t *testing.T) {
 	d := &Daemon{}
 	resp := d.handleProfile(request{Cmd: "profile"})

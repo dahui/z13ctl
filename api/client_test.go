@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,4 +212,67 @@ func subscribeReaderRunning() bool {
 	buf := make([]byte, 1<<20)
 	n := runtime.Stack(buf, true)
 	return strings.Contains(string(buf[:n]), "api.Subscribe.func")
+}
+
+// TestIntGettersRejectMalformedValues covers the numeric response parsers. They
+// used fmt.Sscan, which stops at the first token — so a daemon reply of
+// "80 garbage" was silently accepted as 80, and "" scanned into an untouched
+// zero rather than an error. strconv.Atoi makes a malformed reply an error.
+func TestIntGettersRejectMalformedValues(t *testing.T) {
+	getters := []struct {
+		name string
+		call func() (bool, int, error)
+	}{
+		{"batterylimit-get", SendBatteryLimitGet},
+		{"bootsound-get", SendBootSoundGet},
+		{"paneloverdrive-get", SendPanelOverdriveGet},
+	}
+	malformed := []string{"80 garbage", "", "eighty", "8.0", "80,"}
+
+	for _, g := range getters {
+		for _, value := range malformed {
+			t.Run(g.name+"/"+value, func(t *testing.T) {
+				reply := `{"ok":true,"value":` + strconv.Quote(value) + "}\n"
+				stubDaemon(t, func(c net.Conn) {
+					_ = bufio.NewScanner(c).Scan()
+					_, _ = c.Write([]byte(reply))
+					_ = c.Close()
+				})
+
+				handled, got, err := g.call()
+				if !handled {
+					t.Fatal("handled = false, want true when the daemon replied")
+				}
+				if err == nil {
+					t.Fatalf("%s with value %q = %d, nil; want an error", g.name, value, got)
+				}
+				if got != 0 {
+					t.Errorf("value = %d on error, want 0", got)
+				}
+			})
+		}
+	}
+}
+
+// TestIntGettersParseValues pins the accepted forms, including the trailing
+// newline sysfs values carry.
+func TestIntGettersParseValues(t *testing.T) {
+	for _, value := range []string{"80", "80\n", " 80 "} {
+		t.Run(strconv.Quote(value), func(t *testing.T) {
+			reply := `{"ok":true,"value":` + strconv.Quote(value) + "}\n"
+			stubDaemon(t, func(c net.Conn) {
+				_ = bufio.NewScanner(c).Scan()
+				_, _ = c.Write([]byte(reply))
+				_ = c.Close()
+			})
+
+			handled, got, err := SendBatteryLimitGet()
+			if !handled || err != nil {
+				t.Fatalf("SendBatteryLimitGet() = %v, %v, want handled with no error", handled, err)
+			}
+			if got != 80 {
+				t.Errorf("limit = %d, want 80", got)
+			}
+		})
+	}
 }

@@ -207,9 +207,22 @@ func hasAuraReport(f *os.File) bool {
 		return false
 	}
 
-	n := int(desc.size)
+	return descriptorHasAuraReport(desc.value[:], desc.size)
+}
+
+// descriptorHasAuraReport scans the first size bytes of a report descriptor for
+// the Report ID 0x5d item.
+//
+// size is kernel-supplied. The kernel caps it at HID_MAX_DESCRIPTOR_SIZE, which
+// is the length of the buffer, but clamp anyway: an out-of-range value here
+// would panic during device enumeration, before any command has run.
+func descriptorHasAuraReport(value []byte, size uint32) bool {
+	n := int(size)
+	if n > len(value) || n < 0 {
+		n = len(value)
+	}
 	for i := 0; i < n-1; i++ {
-		if desc.value[i] == 0x85 && desc.value[i+1] == 0x5d {
+		if value[i] == 0x85 && value[i+1] == 0x5d {
 			return true
 		}
 	}

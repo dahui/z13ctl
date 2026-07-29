@@ -161,6 +161,17 @@ all zones. `brightness` is 0–3.
 The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
 value to all three. `force` is required for a sustained limit (PL1) above 75 W.
 
+!!! warning "Fan commands are restricted above 75 W sustained TDP"
+    While PL1 is above 75 W, both fans are held to a minimum of 204 PWM (80%).
+    `fancurve` is rejected if any point falls below that floor, and
+    `fancurve-reset` is rejected outright — firmware auto mode has no minimum.
+    `tdp-reset` is the way out: it lowers the limit before releasing the fans.
+
+    `tdp` applies the same rule in the other direction. Raising PL1 above 75 W
+    writes the high-TDP curve **first**, and if that write fails the power limit
+    is not applied at all. The same holds for the daemon's own restore paths —
+    startup, resume, and `profile --set custom`.
+
 ### State and events
 
 | Command | Request | Response |
@@ -242,6 +253,13 @@ TDP values, and undervolt offsets are re-applied to the hardware. If the last
 profile was a stock one, that profile's measured PPT values are written instead
 — the kernel's `ppt_*` attributes come up holding a stale 5 W default after
 boot, and nothing else restores them.
+
+!!! note "A corrupt state file is kept, not discarded"
+    If `state.json` exists but cannot be parsed, the daemon renames it to
+    `state.json.corrupt`, logs a warning, and starts from defaults. Without
+    that rename the next command would overwrite the damaged file, taking every
+    saved setting with it and leaving nothing to inspect. Repair the `.corrupt`
+    copy and move it back to recover.
 
 !!! note "Raw hidrawN paths are not persisted"
     Commands sent with `--device /dev/hidraw2` (a raw path) are applied but
