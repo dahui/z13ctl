@@ -227,7 +227,11 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 			d.subMu.Unlock()
 			return
 		case <-d.buttonCh:
-			d.broadcast(response{Event: "gui-toggle"})
+			// OK must be true: `ok` has no omitempty, so leaving it zero ships
+			// {"ok":false,...} on a perfectly good event, and any client that
+			// checks ok before dispatching — the documented contract — silently
+			// drops every button press.
+			d.broadcast(response{OK: true, Event: "gui-toggle"})
 		}
 	}
 }

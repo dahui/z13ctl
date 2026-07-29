@@ -168,8 +168,17 @@ value to all three. `force` is required for a sustained limit (PL1) above 75 W.
 | Subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streamed events |
 
 `get-state` merges persisted state with live sysfs reads — see
-[State file](#state-file). Each streamed event is a response object carrying an
-`event` field, e.g. `{"event":"gui-toggle"}`.
+[State file](#state-file).
+
+Each streamed event is a full response object with an `event` field:
+
+```json
+{"ok":true,"event":"gui-toggle"}
+```
+
+Discriminate on the presence of `event` — a command reply never carries it.
+(Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate on
+`ok` dropped them.)
 
 !!! note "Timeouts"
     The daemon closes a connection that does not send its request line within

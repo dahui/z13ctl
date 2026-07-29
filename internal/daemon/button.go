@@ -23,6 +23,12 @@ var inputClassDir = "/sys/class/input"
 // buttonDeviceName is the sysfs device name of the node carrying KEY_PROG3.
 const buttonDeviceName = "Asus WMI hotkeys"
 
+// Retry delays for the watcher loop. Vars so tests can shorten them.
+var (
+	buttonSearchDelay = 5 * time.Second // device not present yet
+	buttonRetryDelay  = time.Second     // open failed, or the read loop ended
+)
+
 // eventDevice is the subset of *evdev.InputDevice the watcher needs.
 //
 // It deliberately omits Grab. The "Asus WMI hotkeys" node carries SW_TABLET_MODE
@@ -75,21 +81,21 @@ func watchButton(ctx context.Context, ch chan<- struct{}) {
 		}
 		path := findButtonDevice()
 		if path == "" {
-			slog.Info("Armoury Crate button device not found; will retry", "delay", "5s")
+			slog.Info("Armoury Crate button device not found; will retry", "delay", buttonSearchDelay)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(buttonSearchDelay):
 			}
 			continue
 		}
 		dev, err := openEventDevice(path)
 		if err != nil {
-			slog.Info("button watcher stopped; retrying", "err", err, "delay", "1s")
+			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			case <-time.After(buttonRetryDelay):
 			}
 			continue
 		}
@@ -98,11 +104,11 @@ func watchButton(ctx context.Context, ch chan<- struct{}) {
 		// to it, and this loop will sit idle with no error to report.
 		slog.Info("watching Armoury Crate button (shared, non-exclusive)", "path", path)
 		if err := runButtonLoop(ctx, dev, ch); err != nil {
-			slog.Info("button watcher stopped; retrying", "err", err, "delay", "1s")
+			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			case <-time.After(buttonRetryDelay):
 			}
 		}
 	}

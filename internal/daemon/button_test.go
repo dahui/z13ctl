@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -243,4 +244,159 @@ func TestRunButtonLoopClosesDevice(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Error("runButtonLoop() returned without closing the device — the fd leaks on every retry")
+}
+
+// --- watchButton: the retry loop that runs for the daemon's lifetime ---
+
+// fastRetries shrinks the watcher's backoff so tests do not sleep for seconds.
+func fastRetries(t *testing.T) {
+	t.Helper()
+	origSearch, origRetry := buttonSearchDelay, buttonRetryDelay
+	buttonSearchDelay, buttonRetryDelay = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { buttonSearchDelay, buttonRetryDelay = origSearch, origRetry })
+}
+
+// stubOpener replaces openEventDevice and records how many times it was called.
+func stubOpener(t *testing.T, fn func(path string) (eventDevice, error)) *int32 {
+	t.Helper()
+	var calls int32
+	orig := openEventDevice
+	openEventDevice = func(path string) (eventDevice, error) {
+		atomic.AddInt32(&calls, 1)
+		return fn(path)
+	}
+	t.Cleanup(func() { openEventDevice = orig })
+	return &calls
+}
+
+func TestWatchButtonRetriesWhenDeviceMissing(t *testing.T) {
+	fakeInputSysfs(t) // empty: findButtonDevice returns ""
+	fastRetries(t)
+	calls := stubOpener(t, func(string) (eventDevice, error) {
+		t.Error("openEventDevice called even though no device was discovered")
+		return nil, errors.New("unreachable")
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchButton did not return after cancellation")
+	}
+	if got := atomic.LoadInt32(calls); got != 0 {
+		t.Errorf("openEventDevice calls = %d, want 0", got)
+	}
+}
+
+// TestWatchButtonReopensAfterReadError covers the recovery path used on
+// suspend/resume: the read loop ends with an error and the watcher must reopen
+// the device rather than give up.
+func TestWatchButtonReopensAfterReadError(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNode(t, root, "event3", buttonDeviceName)
+	fastRetries(t)
+
+	var mu sync.Mutex
+	var opened []string
+	calls := stubOpener(t, func(path string) (eventDevice, error) {
+		mu.Lock()
+		opened = append(opened, path)
+		mu.Unlock()
+		// Each device immediately fails its read, forcing a reopen.
+		return &fakeEvdev{readErr: errors.New("device disappeared")}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+
+	// Wait for several reopen cycles.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(calls) < 3 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchButton did not return after cancellation")
+	}
+
+	if got := atomic.LoadInt32(calls); got < 3 {
+		t.Errorf("openEventDevice calls = %d, want >= 3 (watcher stopped reopening)", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range opened {
+		if p != "/dev/input/event3" {
+			t.Errorf("opened %q, want /dev/input/event3", p)
+		}
+	}
+}
+
+// TestWatchButtonRetriesWhenOpenFails is the InputPlumber case: the node exists
+// but cannot be opened. The watcher must keep retrying, not exit.
+func TestWatchButtonRetriesWhenOpenFails(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNode(t, root, "event3", buttonDeviceName)
+	fastRetries(t)
+	calls := stubOpener(t, func(string) (eventDevice, error) {
+		return nil, os.ErrPermission
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(calls) < 3 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchButton did not return after cancellation")
+	}
+	if got := atomic.LoadInt32(calls); got < 3 {
+		t.Errorf("openEventDevice calls = %d, want >= 3 (watcher gave up on open failure)", got)
+	}
+}
+
+func TestWatchButtonForwardsPressThroughWatcher(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNode(t, root, "event3", buttonDeviceName)
+	fastRetries(t)
+	stubOpener(t, func(string) (eventDevice, error) {
+		return &fakeEvdev{
+			events:  []evdev.InputEvent{keyEvent(evdev.KEY_PROG3, 1)},
+			readErr: errors.New("eof"),
+		}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); watchButton(ctx, ch) }()
+
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("button press did not reach the channel through watchButton")
+	}
+
+	// Wait for the watcher to exit before the test returns: its cleanup restores
+	// the package-level delay vars this goroutine is still reading.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchButton did not return after cancellation")
+	}
 }

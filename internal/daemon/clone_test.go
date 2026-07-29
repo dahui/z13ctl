@@ -4,8 +4,12 @@ package daemon
 // to saveState after releasing d.mu.
 
 import (
+	"bufio"
+	"encoding/json"
+	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dahui/z13ctl/api"
 )
@@ -127,4 +131,65 @@ func TestSaveStateSnapshotIsRaceFree(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestBroadcastEventShape pins the wire format of a streamed event. `ok` has no
+// omitempty, so a response built without it ships {"ok":false,...} — and the
+// documented protocol tells clients every response carries ok, so a client that
+// checks it before dispatching would discard every button press.
+func TestBroadcastEventShape(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+
+	d := &Daemon{}
+	d.addSubscriber(server)
+
+	go d.broadcast(response{OK: true, Event: "gui-toggle"})
+
+	_ = client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	line, err := bufio.NewReader(client).ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("reading broadcast: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(line, &got); err != nil {
+		t.Fatalf("broadcast is not valid JSON: %v (%q)", err, line)
+	}
+	if got["event"] != "gui-toggle" {
+		t.Errorf("event = %v, want \"gui-toggle\"", got["event"])
+	}
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true — a client honouring the documented contract would drop this event", got["ok"])
+	}
+}
+
+// TestBroadcastPrunesDeadSubscribers covers the write-failure path: a closed
+// subscriber must be dropped rather than retried forever.
+func TestBroadcastPrunesDeadSubscribers(t *testing.T) {
+	live, liveServer := net.Pipe()
+	defer func() { _ = live.Close() }()
+	dead, deadServer := net.Pipe()
+	_ = dead.Close()
+	_ = deadServer.Close()
+
+	d := &Daemon{}
+	d.addSubscriber(deadServer)
+	d.addSubscriber(liveServer)
+
+	done := make(chan struct{})
+	go func() { defer close(done); d.broadcast(response{OK: true, Event: "gui-toggle"}) }()
+
+	_ = live.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := bufio.NewReader(live).ReadBytes('\n'); err != nil {
+		t.Fatalf("live subscriber did not receive the event: %v", err)
+	}
+	<-done
+
+	d.subMu.Lock()
+	n := len(d.subscribers)
+	d.subMu.Unlock()
+	if n != 1 {
+		t.Errorf("subscribers after broadcast = %d, want 1 (dead one not pruned)", n)
+	}
 }
