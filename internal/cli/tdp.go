@@ -169,6 +169,14 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 // floor is the exact condition HighTDPFanCurve exists to prevent, so failing
 // closed is the only safe outcome.
 //
+// "Fails" now includes the kernel accepting the write and then dropping the
+// curve: SetBothFanCurves reads pwm_enable back, so a floor lost to a
+// concurrent platform_profile write is a refusal rather than a false success.
+// This function only guarantees the floor at the moment the limit is raised —
+// keeping it in force afterwards is the reconcile watcher's job
+// (internal/daemon/reconcile.go), since a later profile write would otherwise
+// return the fans to firmware auto while the PPT stays high.
+//
 // This is the single entry point for every path that applies a custom TDP —
 // the socket handler, the "custom" profile recall, daemon startup, resume, and
 // the no-daemon CLI path. They previously enforced the floor four different
@@ -202,7 +210,7 @@ func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 	}
 	for _, p := range points {
 		if p.PWM < HighTDPMinPWM {
-			return fmt.Errorf("PWM %d at %d°C is below minimum %d (80%%) required when sustained TDP is above %dW",
+			return fmt.Errorf("PWM %d at %d°C is below minimum %d (50%%) required when sustained TDP is above %dW",
 				p.PWM, p.Temp, HighTDPMinPWM, TDPMaxSafe)
 		}
 	}

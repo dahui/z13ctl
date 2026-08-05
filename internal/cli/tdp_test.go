@@ -152,7 +152,7 @@ func TestStockProfilePPTSanity(t *testing.T) {
 }
 
 // TestApplyTDPSafely is the regression guard for the thermal-floor cluster: the
-// four paths that apply a custom TDP each enforced the 80% fan floor
+// four paths that apply a custom TDP each enforced the 50% fan floor
 // differently, and one of them raised power before raising the fans and threw
 // the fan error away. They now all go through ApplyTDPSafely, which must fail
 // closed.
@@ -211,6 +211,34 @@ func TestApplyTDPSafely(t *testing.T) {
 		err := ApplyTDPSafely(high)
 		if err == nil {
 			t.Fatal("ApplyTDPSafely() = nil, want an error when the fan curve cannot be written")
+		}
+
+		got, readErr := ReadAllPPT()
+		if readErr != nil {
+			t.Fatalf("ReadAllPPT() = %v, want nil", readErr)
+		}
+		if got != baseline {
+			t.Errorf("PPT = %+v, want the untouched baseline %+v — an unsafe TDP was applied without the fan floor", got, baseline)
+		}
+	})
+
+	// The other half of failing closed: the write is accepted but the kernel
+	// does not keep the mode, which is what a concurrent platform_profile write
+	// produces. Before the readback in SetBothFanCurves this looked like success
+	// and the machine ran above the safe sustained max with no floor at all.
+	t.Run("refuses the TDP when the fan curve does not stick", func(t *testing.T) {
+		f := newFakeSysfs(t)
+		f.seedFanCurveFiles(t, 40, 50) // pwm_enable = 2 (auto)
+		baseline := StockProfilePPT["balanced"]
+		if err := SetTDPState(baseline); err != nil {
+			t.Fatalf("SetTDPState(baseline) = %v, want nil", err)
+		}
+		orig := fanWriteInt
+		fanWriteInt = func(string, int) error { return nil } // accepted, no effect
+		t.Cleanup(func() { fanWriteInt = orig })
+
+		if err := ApplyTDPSafely(high); err == nil {
+			t.Fatal("ApplyTDPSafely() = nil, want an error when the kernel drops the fan curve")
 		}
 
 		got, readErr := ReadAllPPT()

@@ -35,6 +35,7 @@ func TestFindFanHwmonPathMissingDir(t *testing.T) {
 func TestSetBothFanCurvesWritesBothFansAndEnablesCustom(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
+	seedReadingsSentinel(t, f)
 
 	points := make([]api.FanCurvePoint, fanCurvePoints)
 	for i := range points {
@@ -52,13 +53,29 @@ func TestSetBothFanCurvesWritesBothFansAndEnablesCustom(t *testing.T) {
 				t.Errorf("fan%d point %d = %d:%d, want %d:%d", fan.index, i+1, gotTemp, gotPWM, p.Temp, p.PWM)
 			}
 		}
-		// Custom mode must be enabled on both the curve and readings devices.
+		// Custom mode must be enabled on the curve device...
 		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 1 {
 			t.Errorf("curve device fan%d pwm_enable = %d, want 1 (custom)", fan.index, got)
 		}
-		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != 1 {
-			t.Errorf("readings device fan%d pwm_enable = %d, want 1 (custom)", fan.index, got)
+		// ...and the base "asus" device must be left untouched. Its
+		// pwm1_enable_store rejects mode 1 on the Z13 (fan_type SPEC83) and, where
+		// it is accepted, clears custom_fan_curves[*].enabled for every fan —
+		// undoing the curve that was just enabled. See issue #15.
+		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != readingsSentinel {
+			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan.index, got, readingsSentinel)
 		}
+	}
+}
+
+// readingsSentinel is written to the base "asus" device's pwm_enable files so a
+// test can tell "left alone" from "written with the same value".
+const readingsSentinel = 9
+
+// seedReadingsSentinel marks both readings-device pwm_enable files.
+func seedReadingsSentinel(t *testing.T, f *fakeSysfs) {
+	t.Helper()
+	for _, fan := range fanNames {
+		f.writeFile(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable", itoa(readingsSentinel))
 	}
 }
 
@@ -78,9 +95,10 @@ func TestSetBothFanCurvesErrorsWhenHwmonMissing(t *testing.T) {
 	}
 }
 
-func TestResetAllFanCurvesSetsAutoOnBothDevices(t *testing.T) {
+func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
+	seedReadingsSentinel(t, f)
 
 	// Put both fans in custom mode first so the reset is observable.
 	if err := setAllFanModes(1); err != nil {
@@ -93,9 +111,96 @@ func TestResetAllFanCurvesSetsAutoOnBothDevices(t *testing.T) {
 		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 2 {
 			t.Errorf("curve device fan%d pwm_enable = %d, want 2 (auto)", fan.index, got)
 		}
-		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != 2 {
-			t.Errorf("readings device fan%d pwm_enable = %d, want 2 (auto)", fan.index, got)
+		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != readingsSentinel {
+			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan.index, got, readingsSentinel)
 		}
+	}
+}
+
+// TestSetFanModeLeavesReadingsDeviceAlone is the direct guard on the mode-1/2
+// path: nothing but the curve device may be written, because the base device's
+// store handler clears the driver's custom-curve enabled flag as a side effect.
+func TestSetFanModeLeavesReadingsDeviceAlone(t *testing.T) {
+	for _, mode := range []int{1, 2} {
+		f := newFakeSysfs(t)
+		f.seedFanCurveFiles(t, 40, 100)
+		seedReadingsSentinel(t, f)
+
+		if err := setFanMode(1, mode); err != nil {
+			t.Fatalf("setFanMode(1, %d) = %v, want nil", mode, err)
+		}
+		if got := f.readInt(t, f.hwmon+"/pwm1_enable"); got != mode {
+			t.Errorf("curve device pwm1_enable = %d, want %d", got, mode)
+		}
+		if got := f.readInt(t, f.hwmonRead+"/pwm1_enable"); got != readingsSentinel {
+			t.Errorf("readings device pwm1_enable = %d, want %d (untouched)", got, readingsSentinel)
+		}
+	}
+}
+
+// TestSetBothFanCurvesFailsWhenCurveDoesNotStick is the regression test for
+// issue #15. The kernel accepts the pwm_enable write and then leaves the mode at
+// auto — which is what a concurrent platform_profile write produces — and the
+// caller must find out rather than being told the curve was applied.
+func TestSetBothFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.seedFanCurveFiles(t, 40, 100) // seeds pwm_enable = 2 (auto)
+
+	orig := fanWriteInt
+	fanWriteInt = func(string, int) error { return nil } // accepted, no effect
+	t.Cleanup(func() { fanWriteInt = orig })
+
+	points := make([]api.FanCurvePoint, fanCurvePoints)
+	for i := range points {
+		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 50 + i*20}
+	}
+	err := SetBothFanCurves(points)
+	if err == nil {
+		t.Fatal("SetBothFanCurves() = nil, want an error when the kernel does not honour the curve")
+	}
+	if !strings.Contains(err.Error(), "pwm1_enable") {
+		t.Errorf("error %q does not name the attribute that proved it", err)
+	}
+	if got := f.readInt(t, f.hwmon+"/pwm1_enable"); got != 2 {
+		t.Fatalf("test setup: curve device pwm1_enable = %d, want 2", got)
+	}
+}
+
+func TestVerifyFanCurveActive(t *testing.T) {
+	cases := []struct {
+		name    string
+		modes   [fanCount]string // "" means do not create the file
+		wantErr bool
+	}{
+		{"both custom", [fanCount]string{"1", "1"}, false},
+		{"fan1 dropped to auto", [fanCount]string{"2", "1"}, true},
+		{"fan2 dropped to auto", [fanCount]string{"1", "2"}, true},
+		{"full speed is not custom", [fanCount]string{"0", "1"}, true},
+		// Unverifiable is not the same as failed: a SKU exposing only the CPU
+		// curve must keep working, floor and all.
+		{"fan2 missing", [fanCount]string{"1", ""}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeSysfs(t)
+			for i, fan := range fanNames {
+				if tc.modes[i] == "" {
+					continue
+				}
+				f.writeFile(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable", tc.modes[i])
+			}
+			err := VerifyFanCurveActive()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("VerifyFanCurveActive() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestVerifyFanCurveActiveErrorsWhenHwmonMissing(t *testing.T) {
+	swap(t, &sysHwmonDir, t.TempDir())
+	if err := VerifyFanCurveActive(); err == nil {
+		t.Error("VerifyFanCurveActive() = nil, want an error when the hwmon device is absent")
 	}
 }
 

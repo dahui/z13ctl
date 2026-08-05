@@ -39,8 +39,15 @@ must be non-decreasing.
 
 With --reset, restores firmware auto mode (pwm_enable=2) for both fans.
 
+The mode shown by --get is the truth: "custom" means the kernel is honouring
+your curve, "auto" means it is not, whatever points are listed. The kernel
+driver discards custom fan curves on every system power profile change — GNOME
+power modes, power-profiles-daemon (including its automatic AC/battery
+switching), Fn+F5, asusctl. Run the daemon and it re-applies your curve within
+a couple of seconds; without it, re-run --set after any profile change.
+
 Safety: while sustained TDP (PL1) is above 75W, every curve point must be at
-least 204 PWM (80%) and --reset is refused, since firmware auto mode has no
+least 127 PWM (50%) and --reset is refused, since firmware auto mode has no
 minimum. Lower the limit first with 'z13ctl tdp --reset'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -111,6 +118,9 @@ func runFanCurveSet() error {
 			return err
 		}
 		fmt.Println("Fan curves set for both fans (custom mode enabled)")
+		fmt.Println("  Note: the kernel driver drops custom fan curves whenever the system power")
+		fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5). The z13ctl")
+		fmt.Println("  daemon watches for that and re-applies this curve within a couple of seconds.")
 		return nil
 	}
 
@@ -118,6 +128,10 @@ func runFanCurveSet() error {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves set for both fans (custom mode enabled)")
+	fmt.Println("  Warning: the kernel driver drops custom fan curves whenever the system power")
+	fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5), and the")
+	fmt.Println("  z13ctl daemon is not running to restore it. Re-run this command after any")
+	fmt.Println("  profile change, or start the daemon (see 'z13ctl daemon').")
 	return nil
 }
 

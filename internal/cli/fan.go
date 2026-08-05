@@ -23,10 +23,23 @@ const (
 	fanCurvePoints = 8
 	fanCount       = 2 // fan 1 (pwm1) and fan 2 (pwm2)
 
-	// HighTDPMinPWM is the minimum PWM value (80% of 255) enforced when
+	// HighTDPMinPWM is the minimum PWM value (50% of 255) enforced when
 	// sustained TDP exceeds TDPMaxSafe. Users can set fans higher but not lower.
-	HighTDPMinPWM = 204
+	//
+	// This was 204 (80%) up to v1.2.1, which users found unreasonably loud to
+	// live with — loud enough that the realistic alternative was not running the
+	// high TDP at all. The protection that matters is the *ramp*, not the floor:
+	// a machine sustaining more than TDPMaxSafe watts sits well above 60°C, where
+	// HighTDPFanCurve is far above this minimum anyway. The floor only sets how
+	// the fans behave while the APU is still cool.
+	HighTDPMinPWM = 127
 )
+
+// fanWriteInt is the pwm_enable write used by setFanMode. It is a var purely so
+// tests can simulate the kernel's real failure mode here: accepting the write
+// and then leaving the mode unchanged, which is what a concurrent
+// platform_profile write produces. Plain files cannot reproduce that.
+var fanWriteInt = writeIntFile
 
 // fanNames maps internal fan names to their hwmon index (1 or 2).
 var fanNames = [fanCount]struct {
@@ -86,6 +99,60 @@ func ReadBothFanRPM() ([fanCount]int, error) {
 	return rpms, nil
 }
 
+// ReadFanCurveModes returns the pwm_enable value for each fan on the curve
+// hwmon device, using -1 for a channel that cannot be read. Unlike
+// ReadBothFanModes it does not fail the whole read because one channel is
+// missing: a SKU that exposes only the CPU curve is a supported configuration,
+// and the reconcile watcher must still be able to act on the channel it has.
+// An error is returned only when the hwmon device itself is absent.
+func ReadFanCurveModes() ([fanCount]int, error) {
+	dir := FindFanCurveHwmonPath()
+	if dir == "" {
+		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+	}
+	var modes [fanCount]int
+	for i, f := range fanNames {
+		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", f.index))
+		if err != nil {
+			modes[i] = -1
+			continue
+		}
+		modes[i] = v
+	}
+	return modes, nil
+}
+
+// VerifyFanCurveActive reports whether the kernel is actually honouring the
+// custom curve on every readable fan channel.
+//
+// fan_curve_enable_show() returns the driver's cached data->enabled flag, so
+// this file is ground truth: anything other than 1 means the curve was dropped.
+// The usual cause is a platform_profile write — throttle_thermal_policy_write()
+// ends by clearing custom_fan_curves[*].enabled for every fan, and
+// fan_curve_write() then returns early on !enabled — which is what made a
+// curve set by z13ctl silently stop working minutes later (issue #15).
+//
+// A channel that cannot be read is deliberately not a failure: unverifiable is
+// not the same as failed, and hard-failing there would make fan control (and
+// with it the high-TDP floor) unavailable on any SKU that does not expose
+// pwm2_enable on the curve device.
+func VerifyFanCurveActive() error {
+	modes, err := ReadFanCurveModes()
+	if err != nil {
+		return err
+	}
+	for i, m := range modes {
+		if m == -1 || m == 1 {
+			continue
+		}
+		return fmt.Errorf(
+			"custom fan curve was written but the kernel is not honouring it (pwm%d_enable = %d, %s): "+
+				"a platform_profile change disables custom fan curves in the kernel driver; re-apply the curve",
+			fanNames[i].index, m, FanModeName(m))
+	}
+	return nil
+}
+
 // ReadBothFanModes reads the pwm_enable value for both fans from the curve
 // hwmon device. Returns 0 (full-speed), 1 (custom), or 2 (auto/firmware).
 func ReadBothFanModes() ([fanCount]int, error) {
@@ -129,8 +196,14 @@ func ReadBothFanCurves() ([fanCount][]api.FanCurvePoint, error) {
 	return curves, nil
 }
 
-// SetBothFanCurves writes the same 8-point fan curve to both fans and enables
-// custom mode (pwm_enable=1) on both.
+// SetBothFanCurves writes the same 8-point fan curve to both fans, enables
+// custom mode (pwm_enable=1) on both, and verifies that the kernel kept it.
+//
+// The readback is not paranoia: the driver drops custom curves on any
+// platform_profile write without reporting anything to the process that set
+// them, so without it every caller reports success for a curve that is no
+// longer in effect — including ApplyTDPSafely, whose thermal floor depends on
+// this write having stuck.
 func SetBothFanCurves(points []api.FanCurvePoint) error {
 	if len(points) != fanCurvePoints {
 		return fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(points))
@@ -149,14 +222,25 @@ func SetBothFanCurves(points []api.FanCurvePoint) error {
 			}
 		}
 	}
-	return setAllFanModes(1) // enable custom mode on both
+	if err := setAllFanModes(1); err != nil { // enable custom mode on both
+		return err
+	}
+	return VerifyFanCurveActive()
 }
 
 // setFanMode writes pwm_enable for a single fan (by index).
-// Mode 0 (full-speed) is only supported by the base "asus" hwmon device;
-// the "asus_custom_fan_curve" device rejects it with EINVAL.
-// Modes 1 (custom) and 2 (auto) are written to the curve device first,
-// then synced to the readings device.
+//
+// Mode 0 (full-speed) is only supported by the base "asus" hwmon device; the
+// "asus_custom_fan_curve" device rejects it with EINVAL.
+//
+// Modes 1 (custom) and 2 (auto) go to the curve device *only*. The base device
+// must not be written for them: on the Z13 its fan_type is SPEC83, whose
+// pwm1_enable_store accepts just 0 (full-speed) and 2 (auto) and answers mode 1
+// with EINVAL — and, worse, it clears custom_fan_curves[*].enabled for every fan
+// before returning. On any kernel or SKU that accepts the write, syncing the
+// mode there would disable the very curve this function has just enabled.
+// z13ctl did exactly that through v1.2.1; it was inert only because the Z13
+// rejects it (issue #15).
 func setFanMode(idx, mode int) error {
 	file := fmt.Sprintf("pwm%d_enable", idx)
 
@@ -166,20 +250,15 @@ func setFanMode(idx, mode int) error {
 		if readDir == "" {
 			return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
 		}
-		return writeIntFile(readDir+"/"+file, mode)
+		return fanWriteInt(readDir+"/"+file, mode)
 	}
 
-	// Custom (1) or auto (2): write to curve device first, then sync readings.
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	if err := writeIntFile(curveDir+"/"+file, mode); err != nil {
+	if err := fanWriteInt(curveDir+"/"+file, mode); err != nil {
 		return fmt.Errorf("setting fan mode on %s: %w", hwmonNameCurves, err)
-	}
-	readDir := FindFanReadingsHwmonPath()
-	if readDir != "" {
-		_ = writeIntFile(readDir+"/"+file, mode)
 	}
 	return nil
 }
@@ -204,7 +283,7 @@ func ResetAllFanCurves() error {
 // is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
 // is sufficient to force both physical fans to full speed.
 //
-// Nothing calls this. High-TDP cooling uses HighTDPFanCurve (an 80% PWM floor
+// Nothing calls this. High-TDP cooling uses HighTDPFanCurve (a 50% PWM floor
 // with pwm_enable=1) via ApplyTDPSafely; full speed was an earlier approach that
 // the docs, the --dry-run output, and CLAUDE.md all went on describing long
 // after the code stopped doing it. Kept because it is a real, tested hardware
@@ -217,18 +296,23 @@ func SetAllFansFullSpeed() error {
 	return writeIntFile(readDir+"/pwm1_enable", 0)
 }
 
-// HighTDPFanCurve returns an 8-point fan curve with a minimum PWM of 80%,
+// HighTDPFanCurve returns an 8-point fan curve with a minimum PWM of 50%,
 // suitable for sustained TDP above 75W. Users can replace this with a custom
 // curve as long as all PWM values stay at or above HighTDPMinPWM.
+//
+// The floor holds only while the APU is cool; from 60°C the curve climbs hard
+// and reaches 100% at 80°C, which is the range a machine actually sustaining
+// more than TDPMaxSafe watts lives in. Keeping the top of the ramp is what
+// makes the lower floor safe.
 func HighTDPFanCurve() []api.FanCurvePoint {
 	return []api.FanCurvePoint{
 		{Temp: 30, PWM: HighTDPMinPWM},
 		{Temp: 40, PWM: HighTDPMinPWM},
-		{Temp: 50, PWM: 215},
-		{Temp: 60, PWM: 225},
-		{Temp: 65, PWM: 235},
-		{Temp: 70, PWM: 240},
-		{Temp: 75, PWM: 250},
+		{Temp: 50, PWM: 140},
+		{Temp: 60, PWM: 165},
+		{Temp: 65, PWM: 190},
+		{Temp: 70, PWM: 215},
+		{Temp: 75, PWM: 235},
 		{Temp: 80, PWM: 255},
 	}
 }

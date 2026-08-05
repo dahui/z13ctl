@@ -37,9 +37,16 @@ the same value. Use --pl1, --pl2, --pl3 to override individual limits.
 
 Safety: The sustained power limit (PL1) is capped at 75W by default. Use --force
 to allow PL1 up to 93W (the absolute hardware maximum for the ROG Flow Z13
-GZ302E). When PL1 exceeds 75W, fans are automatically set to full speed for
-thermal safety. Burst limits (PL2/PL3) are allowed up to 93W without --force
-since short bursts are thermally safe.
+GZ302E). When PL1 exceeds 75W, both fans are held to a curve with a 50% PWM
+floor that reaches 100% at 80°C, written before the power limit; if that write
+fails, or the kernel does not honour it, the TDP is not applied at all. Burst
+limits (PL2/PL3) are allowed up to 93W without --force since short bursts are
+thermally safe.
+
+Run the daemon when sustaining above 75W. The kernel releases custom fan curves
+on every system power profile change while the power limit survives it, so
+without the daemon to restore the floor the machine can end up at high power on
+the firmware's ordinary fan curve.
 
 With --reset, switches to the balanced profile, resets fan curves to auto mode,
 and writes balanced's stock PPT values back to hardware. The firmware manages
@@ -160,17 +167,25 @@ func runTdpSet() error {
 		if err != nil {
 			return err
 		}
+		if pl1 > cli.TDPMaxSafe {
+			fmt.Println("Fans set to 50%+ curve for thermal safety (the daemon keeps that floor in")
+			fmt.Println("  force if a power profile change releases it)")
+		}
 		fmt.Printf("TDP set to %dW\n", watts)
 		return nil
 	}
 
-	// Direct path: same helper, so the no-daemon path enforces the 80% fan floor
+	// Direct path: same helper, so the no-daemon path enforces the 50% fan floor
 	// on the same terms — fans first, and no TDP at all if that write fails.
 	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	if pl1 > cli.TDPMaxSafe {
-		fmt.Println("Fans set to 80%+ curve for thermal safety")
+		fmt.Println("Fans set to 50%+ curve for thermal safety")
+		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
+		fmt.Println("  power-profiles-daemon, Fn+F5) releases that floor in the kernel driver while")
+		fmt.Println("  this power limit stays in force, and the z13ctl daemon is not running to")
+		fmt.Println("  restore it. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil

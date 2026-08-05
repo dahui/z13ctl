@@ -220,6 +220,17 @@ z13ctl fancurve [flags]
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
 | `--reset` | Reset both fans to firmware auto mode |
 
+The **mode** in `--get` output is the one to read. `custom` means the kernel is
+honouring your curve; `auto` means it is not, regardless of which points are
+listed underneath — the driver keeps the curve data after disabling it.
+
+```
+$ z13ctl fancurve --get
+Fans: 4400 RPM, mode: custom, APU: 43°C   # <- your curve is live
+$ z13ctl fancurve --get
+Fans: 1200 RPM, mode: auto, APU: 48°C     # <- it is not; see the warning below
+```
+
 **Curve format:** 8 comma-separated `temp:speed` pairs. Speed can be a PWM
 value (0–255) or a percentage with a `%` suffix (0–100%). Both formats can be
 mixed in the same curve.
@@ -235,9 +246,26 @@ mixed in the same curve.
 - Temperatures must be monotonically increasing (0–120 &deg;C)
 - Speed values must be non-decreasing (0–255 PWM or 0–100%)
 
+!!! warning "A power profile change wipes your custom curve"
+    The kernel's `asus-wmi` driver disables custom fan curves on every
+    `platform_profile` write, silently. GNOME power modes and
+    `power-profiles-daemon` do that on each AC/battery transition, so does Fn+F5,
+    and so does `asusctl`. Run the [daemon](daemon.md) and it puts your curve back
+    within a couple of seconds; without it, re-run `--set` after any profile
+    change. Since 1.2.2 the command errors out instead of reporting success when
+    the kernel refuses the curve.
+
+    To confirm it for yourself, read the driver's own flag — `1` is custom,
+    `2` is firmware auto:
+
+    ```sh
+    curve=$(grep -l asus_custom_fan_curve /sys/class/hwmon/hwmon*/name | xargs dirname)
+    cat $curve/pwm1_enable
+    ```
+
 !!! warning "Fan control is restricted above 75 W sustained TDP"
     While sustained TDP (PL1) is above 75 W, every curve point must be at least
-    204 PWM (80%), and `--reset` is refused — firmware auto mode has no floor,
+    127 PWM (50%), and `--reset` is refused — firmware auto mode has no floor,
     and dropping to it would remove the cooling the power limit depends on.
     Lower the limit first with [`z13ctl tdp --reset`](#tdp), which restores the
     balanced profile before releasing the fans.
@@ -276,7 +304,7 @@ z13ctl tdp [flags]
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to an 80% minimum curve; custom curves must keep all PWM values at or above 204 (80%). |
+| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to a 50% minimum curve; custom curves must keep all PWM values at or above 127 (50%). |
 
 **PPT attributes:**
 
@@ -311,9 +339,28 @@ re-selectable.
   5–93W. Burst limits (PL2/PL3) may go to 93W without `--force`, since short
   bursts are thermally safe.
 - When the **sustained** limit exceeds 75W, both fans are held to a minimum of
-  204 PWM (80%) before the TDP values are written. If that fan write fails, the
-  TDP is not applied at all. Burst limits above 75W do not trigger this on their
-  own.
+  127 PWM (50%) before the TDP values are written. If that fan write fails — or
+  the kernel accepts it and then drops the curve — the TDP is not applied at all.
+  Burst limits above 75W do not trigger this on their own.
+- The floor is only the bottom of the curve. Above 50 °C it climbs steadily and
+  reaches 100% at 80 °C, which is the range a machine actually sustaining more
+  than 75 W spends its time in:
+
+    | Temp | 30 °C | 40 °C | 50 °C | 60 °C | 65 °C | 70 °C | 75 °C | 80 °C |
+    |------|-------|-------|-------|-------|-------|-------|-------|-------|
+    | PWM  | 127   | 127   | 140   | 165   | 190   | 215   | 235   | 255   |
+
+    A custom curve may replace it as long as every point stays at or above 127.
+    The floor was 204 (80%) through v1.2.1 — loud enough that users were turning
+    the feature off rather than living with it, which protects nobody.
+
+!!! danger "Run the daemon when sustaining above 75 W"
+    The kernel releases custom fan curves on every `platform_profile` write, and
+    the power limit survives it — so a GNOME power mode change or an AC/battery
+    transition can leave the machine drawing >75 W sustained with the fans back on
+    the firmware's ordinary curve. The [daemon](daemon.md) watches for that and
+    restores the floor within a couple of seconds. Without it, that state persists
+    until you re-apply the curve yourself.
 
 ```sh
 # Read current TDP values
@@ -325,7 +372,7 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high sustained TDP (fans are held to an 80% floor first)
+# Force high sustained TDP (fans are held to a 50% floor first)
 z13ctl tdp --set 85 --force
 
 # Reset to balanced profile (restores balanced's stock PPT and clears the undervolt)

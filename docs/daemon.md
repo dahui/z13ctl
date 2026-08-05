@@ -12,6 +12,9 @@ ordinary one-shot CLI invocations cannot:
 - **Keyboard reattach recovery** — detects the detachable keyboard being removed
   and reattached, reopens the HID device, and re-applies the saved keyboard
   lighting (the firmware does not restore it on its own).
+- **Custom fan curve reconciliation** — re-applies your custom fan curve (and the
+  high-TDP fan floor) after the kernel driver drops it, which it does on every
+  system power profile change.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -162,7 +165,7 @@ The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
 value to all three. `force` is required for a sustained limit (PL1) above 75 W.
 
 !!! warning "Fan commands are restricted above 75 W sustained TDP"
-    While PL1 is above 75 W, both fans are held to a minimum of 204 PWM (80%).
+    While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
     `fancurve` is rejected if any point falls below that floor, and
     `fancurve-reset` is rejected outright — firmware auto mode has no minimum.
     `tdp-reset` is the way out: it lowers the limit before releasing the fans.
@@ -274,7 +277,8 @@ Several hardware settings are volatile — they are lost when the system enters
 sleep (suspend/hibernate) and must be reapplied on resume:
 
 - **Lighting** — RGB lighting is turned off by the hardware on sleep
-- **Fan curves** — custom PWM curves reset to firmware defaults on sleep
+- **Fan curves** — custom PWM curves reset to firmware defaults on sleep (and on
+  every power profile change — see [reconciliation](#custom-fan-curve-reconciliation))
 - **TDP (PPT)** — power limits are lost and must be rewritten
 - **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
 
@@ -323,6 +327,48 @@ journalctl --user -u z13ctl -f
     This recovery only happens while the daemon is running. Without it, re-run
     your `apply` command (or press the Armoury Crate button in z13gui) after
     reattaching the keyboard.
+
+---
+
+## Custom fan curve reconciliation
+
+The kernel's `asus-wmi` driver **disables custom fan curves on every
+`platform_profile` write**. The write handler ends by clearing the driver's
+internal "custom curve enabled" flag for each fan, and the curve is then never
+pushed to the EC again until something re-enables it. Nothing is reported to the
+process that set the curve — your fans simply return to the firmware's own curve.
+
+This is easy to trigger without meaning to:
+
+- GNOME power modes and `power-profiles-daemon` write `platform_profile` on every
+  AC/battery transition and whenever an application requests a profile hold
+- Fn+F5 (the ASUS fan-mode hotkey)
+- `asusctl`, `tuned`, or any other tool that manages the platform profile
+
+The daemon polls the fan curve device's `pwm_enable` — the driver's own
+"is the custom curve live" flag, so it catches every cause — every two seconds.
+When the curve has been dropped while your saved settings say it should still be
+in force, it writes the curve back. The same applies to the 50% PWM floor that a
+sustained TDP above 75 W requires: without this, a power profile change would
+release the fans while the power limit stayed in place.
+
+```sh
+journalctl --user -u z13ctl -f
+# After a profile change: reconciling custom thermal settings
+#   reason="saved custom fan curve was disabled" platform_profile=balanced pwm_enable=2
+```
+
+The daemon never writes `platform_profile` itself — your desktop stays in charge
+of the power profile. Reconciliation only runs while the `custom` profile is
+active, so selecting `quiet`, `balanced`, or `performance` with
+`z13ctl profile --set` releases the fans to firmware control and keeps them there.
+
+!!! note "Daemon required"
+    Without the daemon, a custom fan curve set with `z13ctl fancurve --set` lasts
+    only until the next power profile change. The CLI warns about this when it
+    applies a curve directly. Since z13ctl 1.2.2 the command also fails with an
+    error, rather than reporting success, if the kernel refuses to honour the
+    curve it just wrote.
 
 ---
 

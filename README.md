@@ -66,6 +66,8 @@ z13ctl profile --set balanced
 z13ctl batterylimit --set 80
 
 # Custom fan curve (8-point, temp:pwm pairs — both fans)
+# The kernel drops custom curves on every power profile change; run the daemon
+# and it re-applies yours automatically.
 z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Set TDP to 50W

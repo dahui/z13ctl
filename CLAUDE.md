@@ -65,6 +65,8 @@ internal/
                              eventDevice seam — no Grab method, see issue #10
     button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
+    reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce
+    reconcile_test.go        reconcileTick decision table (no hardware) + reconcileOnce race guard
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
     state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup
@@ -223,24 +225,58 @@ contrib/
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
   `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute
-  via `FindFanHwmonPath()`. Both hwmon devices expose `pwm_enable` and both must
-  be written for the kernel to honor the mode change. `pwm_enable` values:
-  0=full-speed, 1=custom, 2=auto/firmware. Both fans cool the same APU (no
-  discrete GPU), so the same curve is always applied to both fans simultaneously.
+  via `FindFanHwmonPath()`. `pwm_enable` values: 0=full-speed, 1=custom,
+  2=auto/firmware. Modes 1 and 2 go to the **curve device only**: the base `asus`
+  device is `fan_type` SPEC83 on the Z13, whose `pwm1_enable_store` accepts just 0
+  and 2 (mode 1 is `-EINVAL`) and clears `custom_fan_curves[*].enabled` for every
+  fan before returning — so syncing the mode there, which z13ctl did through
+  v1.2.1, would disable the curve it had just enabled on any kernel or SKU that
+  accepts the write. Only `SetAllFansFullSpeed` (mode 0) and the RPM reads use the
+  base device. Both fans cool the same APU (no discrete GPU), so the same curve is
+  always applied to both fans simultaneously.
+- **A custom fan curve is dropped by any `platform_profile` write** (issue #15).
+  `throttle_thermal_policy_write()` — which every profile write goes through —
+  ends by clearing `custom_fan_curves[*].enabled`, and `fan_curve_write()` then
+  returns early on `!enabled`. Nothing is reported to the process that set the
+  curve. On a GNOME desktop, power-profiles-daemon writes `platform_profile` on
+  every AC/battery transition and on any PPD hold, so a curve set by z13ctl stops
+  working minutes later for no visible reason; Fn+F5, asusctl and tuned do the
+  same. Two halves fix it: `SetBothFanCurves` reads `pwm_enable` back
+  (`VerifyFanCurveActive`) so a dropped curve is an error rather than a false
+  success — which is also what makes `ApplyTDPSafely` genuinely fail closed — and
+  `internal/daemon/reconcile.go` polls the curve device's `pwm_enable` every 2s
+  and re-applies. It polls the enable flag rather than `platform_profile` because
+  `fan_curve_enable_show()` returns the driver's cached `enabled`, making it
+  ground truth and catching every cause rather than the one we predicted. It
+  never writes `platform_profile` (that would be a write-fight with PPD over
+  every AC transition) and acts only while `state.Profile == "custom"`, so a
+  deliberate stock-profile switch is left alone by construction.
+- **`hwMu` guards hardware mutation sequences; lock order is `hwMu` then `d.mu`.**
+  `d.mu` guards state, and every mutating handler does its hardware I/O outside
+  it, so nothing otherwise stops the reconcile watcher interleaving its
+  `SetBothFanCurves` with `handleProfile`'s `ResetAllFanCurves` — the fans would
+  keep whichever mode landed last. `handleProfile`'s "custom" branch used to hold
+  `d.mu` across the `cli.*` calls and now snapshots first, so the order holds
+  everywhere. `*-get` handlers deliberately do not take `hwMu`: blocking a GUI
+  read behind a fan write sequence would be a regression.
 - **TDP (PPT power limits)**: Direct platform device attributes at
   `/sys/devices/platform/asus-nb-wmi/ppt_*` (NOT the firmware-attributes interface,
   which has empty calibration data). Five attributes: `ppt_pl1_spl` (Sustained),
   `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
   `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
   (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
-  (PL1) exceeds 75W, both fans are written `HighTDPFanCurve` — an 80% PWM floor
-  with `pwm_enable=1` — before the PPT writes, and the TDP is not applied at all
-  if that fails (see `ApplyTDPSafely`). Burst limits alone do not trigger it.
+  (PL1) exceeds 75W, both fans are written `HighTDPFanCurve` — a 50% PWM floor
+  with `pwm_enable=1`, ramping to 100% at 80°C — before the PPT writes, and the
+  TDP is not applied at all if that fails (see `ApplyTDPSafely`). The floor was
+  80% (204) through v1.2.1 and users reported it as loud enough that they simply
+  stopped using high TDP, so it is now 127; the *ramp* is what protects the APU,
+  since a machine actually sustaining >75W is well past 60°C where the curve is
+  far above the floor anyway. Burst limits alone do not trigger it.
   `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
   calls any more; the docs, the dry-run output, and this file all described it
   for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
 - **`cli.ApplyTDPSafely` is the only way to apply a custom TDP.** Above
-  `TDPMaxSafe` (75W) the fans must be held to an 80% PWM floor
+  `TDPMaxSafe` (75W) the fans must be held to a 50% PWM floor
   (`HighTDPFanCurve`). Five paths apply a TDP — `handleTDP`, the `handleProfile`
   "custom" branch, daemon startup, resume, and `cmd/tdp.go`'s no-daemon path —
   and they previously enforced this four different ways: two warned and applied

@@ -88,6 +88,11 @@ z13ctl batterylimit --set 100
 Both physical fans cool the same APU, so the same curve is always applied to
 both fans simultaneously.
 
+The kernel discards custom fan curves whenever the system power profile changes —
+which GNOME power modes and `power-profiles-daemon` do on every AC/battery
+transition. Run the [daemon](daemon.md) and it re-applies your curve automatically;
+otherwise re-run `--set` after any profile change.
+
 ```sh
 # Check current fan curves
 z13ctl fancurve --get
@@ -117,6 +122,11 @@ Setting a custom TDP switches to the `custom` profile. Switching back to a stock
 profile restores that profile's stock PPT values to hardware, while keeping the
 custom values saved so `custom` stays re-selectable.
 
+Sustaining more than 75 W holds both fans to a 50% PWM floor that rises to 100%
+at 80 °C. Run the [daemon](daemon.md) if you use that: a system power profile
+change releases the floor in the kernel while the power limit stays in force,
+and the daemon is what puts it back.
+
 ```sh
 # Check current TDP/PPT values
 z13ctl tdp --get
@@ -127,7 +137,7 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (above 75W, fans set to 80% minimum)
+# Force high TDP (above 75W, fans set to 50% minimum)
 z13ctl tdp --set 85 --force
 
 # Reset to balanced profile (restores balanced's stock PPT)
