@@ -80,6 +80,11 @@ func (d *Daemon) watchResume(ctx context.Context) {
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
 // lighting, fan curves, TDP, and Curve Optimizer offsets.
 func (d *Daemon) restoreVolatileState() {
+	// hwMu before d.mu: the fan/TDP block below writes the same attributes the
+	// socket handlers and the reconcile watcher do.
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
 	// Both d.dev and d.state are guarded by d.mu, and applyLightingState reads
 	// them directly, so hold the lock across it — the same discipline the socket
 	// handlers use. cloneState is required because the plain struct copy would
@@ -109,7 +114,7 @@ func (d *Daemon) restoreVolatileState() {
 		}
 	}
 
-	// Restore TDP. ApplyTDPSafely raises the fans to the 80% floor first when the
+	// Restore TDP. ApplyTDPSafely raises the fans to the 50% floor first when the
 	// sustained limit exceeds the safe max, and declines to apply the TDP at all
 	// if that fails.
 	if t := state.TDP; t != nil {

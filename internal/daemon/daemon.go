@@ -35,6 +35,15 @@ import (
 
 // Daemon holds the runtime state for the long-running z13ctl process.
 type Daemon struct {
+	// hwMu serializes hardware *mutation sequences* — fan mode, PPT, profile —
+	// against each other. d.mu guards state only, and every mutating handler
+	// deliberately does its hardware I/O outside it, so without hwMu the
+	// reconcile watcher could interleave its SetBothFanCurves with a handler's
+	// ResetAllFanCurves and the fans would keep whichever mode landed last.
+	//
+	// Lock order is hwMu then d.mu. Never acquire hwMu while holding d.mu.
+	hwMu sync.Mutex
+
 	mu    sync.Mutex
 	dev   *hid.Device // nil if no HID device was found at startup
 	state api.State
@@ -128,7 +137,7 @@ func Run(ctx context.Context, watchBtn bool) error {
 			}
 		}
 		if t := d.state.TDP; t != nil {
-			// ApplyTDPSafely raises the fans to the 80% floor first when the
+			// ApplyTDPSafely raises the fans to the 50% floor first when the
 			// sustained limit exceeds the safe max, and declines to apply the
 			// TDP at all if that fails — better to boot at the existing limits
 			// than above the safe sustained max with no thermal floor.
@@ -157,6 +166,10 @@ func Run(ctx context.Context, watchBtn bool) error {
 	go d.watchResume(ctx)
 
 	go d.watchHotplug(ctx)
+
+	// State-driven, so it is a no-op on a machine that never uses the custom
+	// profile; register it unconditionally.
+	go d.watchReconcile(ctx)
 
 	ln, err := d.getListener()
 	if err != nil {

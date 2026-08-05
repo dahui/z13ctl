@@ -147,6 +147,7 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, f.index)
 	}
+	fmt.Printf("Would read %s/pwm*_enable back to confirm the kernel kept the curve\n", curveDir)
 }
 
 // DryRunFanCurveReset prints the sysfs writes for a fan curve reset (both fans).
@@ -181,7 +182,7 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
-		fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 80%%) to both fans in %s\n",
+		fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
 			HighTDPMinPWM, curveDir)
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",

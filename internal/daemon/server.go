@@ -360,35 +360,50 @@ func (d *Daemon) handleProfile(req request) response {
 
 	profile := strings.ToLower(req.Set)
 
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
 	// "custom" is a virtual profile: re-apply saved fan curve + TDP + UV.
 	if profile == "custom" {
+		// Snapshot under d.mu, then do the hardware work unlocked. Holding d.mu
+		// across cli.* calls — as this branch used to — takes d.mu before hwMu
+		// and inverts the lock order the rest of the daemon follows.
 		d.mu.Lock()
 		if d.state.FanCurve == nil && d.state.TDP == nil && d.state.Undervolt == nil {
 			d.mu.Unlock()
 			return response{OK: false, Error: "no custom settings saved; set fan curve, TDP, or undervolt first"}
 		}
 		d.state.Profile = "custom"
+		saved := cloneState(d.state)
+		d.mu.Unlock()
+
 		// Re-apply saved fan curve to both fans.
-		if fc := d.state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+		if fc := saved.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
 			if err := cli.SetBothFanCurves(fc.Points); err != nil {
 				slog.Warn("failed to reapply fan curve", "err", err)
 			}
 		}
-		// Re-apply saved TDP. ApplyTDPSafely raises the fans to the 80% floor
+		// Re-apply saved TDP. ApplyTDPSafely raises the fans to the 50% floor
 		// before raising power (this branch used to do it the other way round,
 		// and discarded the fan error) and refuses the TDP if that write fails.
-		if t := d.state.TDP; t != nil {
+		if t := saved.TDP; t != nil {
 			if err := cli.ApplyTDPSafely(*t); err != nil {
 				slog.Warn("failed to reapply TDP", "err", err)
 			}
 		}
 		// Re-apply saved undervolt.
-		if uv := d.state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
+		uvActive := false
+		if uv := saved.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
 			if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
 				slog.Warn("failed to reapply undervolt", "err", err)
 			} else {
-				d.state.Undervolt.Active = true
+				uvActive = true
 			}
+		}
+
+		d.mu.Lock()
+		if uvActive && d.state.Undervolt != nil {
+			d.state.Undervolt.Active = true
 		}
 		s := cloneState(d.state)
 		d.mu.Unlock()
@@ -567,6 +582,8 @@ func (d *Daemon) handleFanCurve(req request) response {
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
 	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
 	// This reads hardware rather than the cached d.state.TDP, which can disagree
 	// with it — a TDP set while the daemon was down, or a reset state file — and
@@ -590,6 +607,8 @@ func (d *Daemon) handleFanCurve(req request) response {
 }
 
 func (d *Daemon) handleFanCurveReset() response {
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the very protection the high-TDP
 	// curve provides. "tdp --reset" is the way out — it lowers power first.
@@ -683,14 +702,17 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	// ApplyTDPSafely raises the fans to the 80% floor first when pl1 exceeds the
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
+	// ApplyTDPSafely raises the fans to the 50% floor first when pl1 exceeds the
 	// safe sustained max, and refuses to apply the TDP at all if that fails.
 	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
 	if err := cli.ApplyTDPSafely(tdp); err != nil {
 		return response{OK: false, Error: "tdp: " + err.Error()}
 	}
 	if pl1 > cli.TDPMaxSafe {
-		slog.Warn("fans set to 80%+ curve for high TDP", "pl1", pl1)
+		slog.Warn("fans set to 50%+ curve for high TDP", "pl1", pl1)
 	}
 	slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3)
 
@@ -719,9 +741,11 @@ func (d *Daemon) handleTDP(req request) response {
 }
 
 func (d *Daemon) handleTDPReset() response {
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
 	// Lower power first, then release the fans: balanced's sustained limit is
 	// below TDPMaxSafe, so by the time the fans drop to firmware auto the limit
-	// that required the 80% floor is gone. Doing it the other way round leaves a
+	// that required the 50% floor is gone. Doing it the other way round leaves a
 	// window at full power with no floor, and a failed profile switch would
 	// leave it that way. The firmware manages fan curves on a profile change but
 	// does not restore PPT, so restoreStockPPT has to be explicit.

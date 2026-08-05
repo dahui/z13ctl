@@ -19,7 +19,7 @@ on Linux.
 - **Fan curves** — set custom 8-point fan curves via the asus-wmi hwmon interface
   (both fans cool the same APU and share one curve)
 - **TDP control** — set CPU/GPU power limits (5–93W) via asus-nb-wmi PPT attributes,
-  with automatic fan safety above 75W
+  with an automatic fan floor (50% PWM, rising to 100% at 80 °C) above 75W sustained
 - **CPU undervolting** — reduce voltage via AMD Curve Optimizer for lower
   temperatures and power draw without reducing performance (requires `ryzen_smu`
   kernel module)
@@ -29,7 +29,9 @@ on Linux.
 
 All features work without root after a one-time `setup` step, and all persist across
 reboots when the daemon is running. The daemon also re-applies keyboard lighting
-automatically when the detachable keyboard is removed and reattached.
+automatically when the detachable keyboard is removed and reattached, and puts your
+fan curve back when the kernel discards it — which it does on every system power
+profile change (see [Daemon](daemon.md#custom-fan-curve-reconciliation)).
 
 !!! tip "New to Linux? Use the GUI"
     Most users — especially those newer to Linux — should install

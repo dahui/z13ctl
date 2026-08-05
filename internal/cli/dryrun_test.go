@@ -3,6 +3,7 @@ package cli_test
 import (
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -213,18 +214,21 @@ func TestDryRunTdp(t *testing.T) {
 
 // TestDryRunTdp_HighSustained pins the dry run against what ApplyTDPSafely
 // actually does. The old expectation here was "full speed", which the real path
-// has never done — it writes the 80% floor curve with pwm_enable=1. A dry run
+// has never done — it writes the 50% floor curve with pwm_enable=1. A dry run
 // that describes an operation the tool does not perform is worse than none.
 func TestDryRunTdp_HighSustained(t *testing.T) {
 	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
 
-	for _, want := range []string{"204", "80%", "pwm", "not applied at all"} {
+	// Reference the constant rather than the number: the floor has moved once
+	// already (80% -> 50%) and these assertions should not need revisiting.
+	floor := strconv.Itoa(cli.HighTDPMinPWM)
+	for _, want := range []string{floor, "pwm", "not applied at all"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("DryRunTdp(80W) output missing %q; got:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "full speed") {
-		t.Error("DryRunTdp must not claim full speed — the real path writes the 80% floor curve")
+		t.Error("DryRunTdp must not claim full speed — the real path writes the 50% floor curve")
 	}
 }
 
@@ -234,10 +238,11 @@ func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
 	forced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
 	unforced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, false) })
 
-	if !strings.Contains(unforced, "204") {
+	floor := strconv.Itoa(cli.HighTDPMinPWM)
+	if !strings.Contains(unforced, floor) {
 		t.Errorf("DryRunTdp(80W, no force) omitted the fan floor; got:\n%s", unforced)
 	}
-	if strings.Contains(forced, "204") != strings.Contains(unforced, "204") {
+	if strings.Contains(forced, floor) != strings.Contains(unforced, floor) {
 		t.Error("the fan floor must not depend on --force")
 	}
 }
@@ -248,7 +253,7 @@ func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
 func TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone(t *testing.T) {
 	out := captureStdout(t, func() { cli.DryRunTdp(50, 50, 90, 90, true) })
 
-	if strings.Contains(out, "204") || strings.Contains(out, "fan") {
+	if strings.Contains(out, strconv.Itoa(cli.HighTDPMinPWM)) || strings.Contains(out, "fan") {
 		t.Errorf("burst limits above the safe max must not imply a fan change; got:\n%s", out)
 	}
 }
