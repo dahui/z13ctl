@@ -212,6 +212,29 @@ contrib/
   to edit; absent/empty means the active one. `profile --set` now *rejects* a
   name that is neither a firmware profile nor a saved custom profile, where it
   used to forward any string to `platform_profile`.
+- **`subscribe`'s `events` list is honoured; it was ignored until v1.3.0.**
+  `addSubscriber` now records the set and `broadcast` filters on it. That was
+  invisible while `gui-toggle` was the only event, and became a live hazard the
+  moment a second one existed: a client that subscribed to `gui-toggle` and wrote
+  the obvious `for range ch { toggle() }` — reasonable when only one event
+  existed — would toggle its window on every power-source change. A subscriber
+  that did *not* want an event must survive the broadcast rather than being
+  pruned. Events are `gui-toggle`, `power-source` and `state-changed`
+  (`api/events.go`), and carry **no payload**: the name says what happened and
+  `get-state` answers with current truth, whereas a payload describes the moment
+  the event was queued. That is also why `api.Subscribe` keeps its
+  `<-chan string` signature — the payload was the only thing that wanted a
+  breaking change.
+- **Broadcast writes are deadline-bounded (`broadcastWriteTimeout`).** Events are
+  emitted from handlers holding `hwMu`, so an unbounded write to a subscriber
+  that stopped reading would block every hardware operation in the daemon behind
+  a socket buffer. A subscriber that cannot take a notification in time is
+  dropped.
+- **Every handler that mutates profile or thermal state calls `saveAndNotify`,
+  not `saveState`.** That is the funnel which keeps a new handler from silently
+  leaving clients showing stale values. Lighting handlers deliberately still call
+  `saveState` directly — a brightness slider drag would otherwise emit a burst of
+  events describing values the client just set.
 - **Streamed events must set `OK: true`.** `response.OK` has no `omitempty`, so
   `broadcast(response{Event: ...})` ships `{"ok":false,...}` on a perfectly good
   event. The Go client keys on the `event` field and never noticed, but the

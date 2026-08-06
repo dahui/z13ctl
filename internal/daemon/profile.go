@@ -141,9 +141,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 }
 
 // applyStockHW switches to a firmware profile.
@@ -174,9 +172,7 @@ func (d *Daemon) applyStockHW(profile string) error {
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return nil
 }
 
@@ -325,9 +321,7 @@ func (d *Daemon) handleProfileCreate(req request) response {
 	d.state.CustomProfiles[name] = api.CustomProfile{Name: name}
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	slog.Info("profile-create", "profile", name)
 	return response{OK: true}
 }
@@ -365,9 +359,7 @@ func (d *Daemon) handleProfileSave(req request) response {
 	d.state.CustomProfiles[name] = p
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	slog.Info("profile-save", "profile", name, "from", src.Name)
 	return response{OK: true}
 }
@@ -400,9 +392,7 @@ func (d *Daemon) handleProfileDelete(req request) response {
 	delete(d.state.CustomProfiles, name)
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	slog.Info("profile-delete", "profile", name)
 	return response{OK: true}
 }

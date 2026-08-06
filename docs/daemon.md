@@ -237,7 +237,7 @@ state that would be unsafe when activated.
 | Command | Request | Response |
 |---|---|---|
 | Full state | `{"cmd":"get-state"}` | `ok`, `state` |
-| Subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streamed events |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle","power-source","state-changed"]}` | `ok`, then streamed events |
 
 `get-state` merges persisted state with live sysfs reads — see
 [State file](#state-file).
@@ -247,6 +247,35 @@ Each streamed event is a full response object with an `event` field:
 ```json
 {"ok":true,"event":"gui-toggle"}
 ```
+
+**Events**
+
+| Event | Emitted when |
+|---|---|
+| `gui-toggle` | the Armoury Crate button is pressed |
+| `power-source` | the machine moves between mains and battery power |
+| `state-changed` | the active profile, its settings, the saved profiles, or the autoswitch configuration change |
+
+`power-source` fires on the transition itself, whether or not autoswitch is
+configured, so a client can drive a plug/battery indicator from it alone.
+
+`state-changed` fires whatever the cause — this client, another client, the CLI,
+autoswitch, or a resume. A client displaying profile, TDP, fan curve, or
+undervolt values should re-read them with `get-state` when it arrives. Lighting
+is deliberately excluded: a brightness slider drag would emit a burst of events
+describing values the client just set itself.
+
+Events carry **no payload**. The name says what happened and `get-state` answers
+with current truth — a payload would describe the moment the event was queued,
+which can already be stale by the time the client handles it.
+
+The `events` list is honoured: a client that subscribes to `gui-toggle` alone is
+never woken by the other two. Subscribing with an empty list receives everything.
+
+!!! warning "Switch on the event name"
+    While `gui-toggle` was the only event, `for range ch { toggle() }` was a
+    reasonable client loop. It is not any more — it would toggle the window on
+    every power-source change. Dispatch on the name.
 
 Discriminate on the presence of `event` — a command reply never carries it.
 (Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate on

@@ -90,7 +90,7 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		// presses, and the daemon only ever writes on it from here on.
 		_ = conn.SetReadDeadline(time.Time{})
 		writeResponse(conn, response{OK: true})
-		d.addSubscriber(conn)
+		d.addSubscriber(conn, req.Events)
 		return
 	}
 
@@ -413,9 +413,7 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	d.state.Battery = limit
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -460,9 +458,7 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	d.state.PanelOverdrive = value
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -549,9 +545,7 @@ func (d *Daemon) handleFanCurve(req request) response {
 	d.mu.Lock()
 	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -590,9 +584,7 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 	d.mu.Lock()
 	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -714,9 +706,7 @@ func (d *Daemon) handleTDP(req request) response {
 	d.mu.Lock()
 	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 
 	// With the limit safe again, put the fans back to what the profile actually
 	// describes: its own curve, or firmware auto when it has none. Releasing
@@ -759,9 +749,7 @@ func (d *Daemon) handleTDPReset(req request) response {
 		d.mu.Lock()
 		s := d.commitEditLocked(target, p)
 		d.mu.Unlock()
-		if err := saveState(s); err != nil {
-			slog.Warn("failed to save state", "err", err)
-		}
+		d.saveAndNotify(s)
 		slog.Info("tdp-reset", "profile", target.Name, "applied", false)
 		return response{OK: true}
 	}
@@ -805,9 +793,7 @@ func (d *Daemon) handleTDPReset(req request) response {
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -882,9 +868,7 @@ func (d *Daemon) handleUndervolt(req request) response {
 	d.mu.Lock()
 	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 
@@ -918,9 +902,7 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 	d.mu.Lock()
 	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	return response{OK: true}
 }
 

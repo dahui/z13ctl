@@ -154,12 +154,17 @@ func TestPowerTickLatchesThroughADisabledTransition(t *testing.T) {
 	st := latched(true, false)
 
 	st, act := powerTick(st, powerObs{OnAC: false, Known: true, Auto: off, Current: "balanced"})
-	if !act.none() {
-		t.Fatalf("acted while disabled: %+v", act)
+	if act.Profile != "" {
+		t.Fatalf("applied a profile while disabled: %+v", act)
 	}
 	st, act = powerTick(st, powerObs{OnAC: false, Known: true, Auto: off, Current: "balanced"})
-	if !act.none() {
-		t.Fatalf("acted while disabled: %+v", act)
+	if act.Profile != "" {
+		t.Fatalf("applied a profile while disabled: %+v", act)
+	}
+	// The transition is still announced: an AC/battery indicator is useful on a
+	// machine that never configures autoswitch, which is most of them.
+	if !act.SourceChanged {
+		t.Error("a confirmed transition was not announced while autoswitch was disabled")
 	}
 	if st.onAC {
 		t.Fatal("the source latch did not follow the transition while disabled")

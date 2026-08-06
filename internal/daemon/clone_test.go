@@ -253,7 +253,7 @@ func TestBroadcastEventShape(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	d := &Daemon{}
-	d.addSubscriber(server)
+	d.addSubscriber(server, nil)
 
 	go d.broadcast(response{OK: true, Event: "gui-toggle"})
 
@@ -285,8 +285,8 @@ func TestBroadcastPrunesDeadSubscribers(t *testing.T) {
 	_ = deadServer.Close()
 
 	d := &Daemon{}
-	d.addSubscriber(deadServer)
-	d.addSubscriber(liveServer)
+	d.addSubscriber(deadServer, nil)
+	d.addSubscriber(liveServer, nil)
 
 	done := make(chan struct{})
 	go func() { defer close(done); d.broadcast(response{OK: true, Event: "gui-toggle"}) }()

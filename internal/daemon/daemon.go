@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	sddaemon "github.com/coreos/go-systemd/v22/daemon"
@@ -49,7 +50,7 @@ type Daemon struct {
 	state api.State
 
 	subMu       sync.Mutex
-	subscribers []net.Conn // long-lived connections subscribed to events
+	subscribers []subscriber // long-lived connections subscribed to events
 
 	buttonCh chan struct{}
 }
@@ -258,8 +259,8 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			d.subMu.Lock()
-			for _, c := range d.subscribers {
-				_ = c.Close()
+			for _, s := range d.subscribers {
+				_ = s.conn.Close()
 			}
 			d.subscribers = nil
 			d.subMu.Unlock()
@@ -269,32 +270,95 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 			// {"ok":false,...} on a perfectly good event, and any client that
 			// checks ok before dispatching — the documented contract — silently
 			// drops every button press.
-			d.broadcast(response{OK: true, Event: "gui-toggle"})
+			d.broadcast(response{OK: true, Event: api.EventGUIToggle})
 		}
 	}
 }
 
+// broadcastWriteTimeout bounds a single write to one subscriber.
+//
+// Broadcasts are emitted from handlers that hold hwMu, so an unbounded write to
+// a subscriber that has stopped reading — a hung GUI, a suspended process —
+// would block every hardware operation in the daemon behind a socket buffer.
+// A subscriber that cannot take a notification in this long is dropped. Declared
+// as a var so tests can shorten it.
+var broadcastWriteTimeout = 2 * time.Second
+
+// subscriber is one long-lived event connection and the events it asked for.
+type subscriber struct {
+	conn net.Conn
+	// events is the set the client subscribed to. Empty means every event: that
+	// is what a client sending no list gets, and it is what the daemon did for
+	// every subscriber before the filter existed.
+	events map[string]bool
+}
+
+// wants reports whether this subscriber asked for the named event.
+func (s subscriber) wants(event string) bool {
+	return len(s.events) == 0 || s.events[event]
+}
+
+// broadcast delivers an event to the subscribers that asked for it.
+//
+// The filter matters as soon as there is more than one event name: a client
+// that subscribed to "gui-toggle" and reasonably wrote `for range ch { toggle() }`
+// — the obvious loop when only one event existed — would otherwise toggle its
+// window on every power-source change.
 func (d *Daemon) broadcast(r response) {
 	data, _ := json.Marshal(r)
 	data = append(data, '\n')
 
 	d.subMu.Lock()
-	var alive []net.Conn
-	for _, c := range d.subscribers {
-		if _, err := c.Write(data); err == nil {
-			alive = append(alive, c)
+	alive := d.subscribers[:0:0]
+	for _, s := range d.subscribers {
+		if !s.wants(r.Event) {
+			alive = append(alive, s)
+			continue
+		}
+		_ = s.conn.SetWriteDeadline(time.Now().Add(broadcastWriteTimeout))
+		_, err := s.conn.Write(data)
+		_ = s.conn.SetWriteDeadline(time.Time{})
+		if err == nil {
+			alive = append(alive, s)
 		} else {
-			_ = c.Close()
+			_ = s.conn.Close()
 		}
 	}
 	d.subscribers = alive
 	d.subMu.Unlock()
 }
 
-func (d *Daemon) addSubscriber(conn net.Conn) {
+// addSubscriber registers a connection for the named events. An empty or nil
+// list subscribes to everything.
+func (d *Daemon) addSubscriber(conn net.Conn, events []string) {
+	set := make(map[string]bool, len(events))
+	for _, e := range events {
+		if e != "" {
+			set[e] = true
+		}
+	}
 	d.subMu.Lock()
-	d.subscribers = append(d.subscribers, conn)
+	d.subscribers = append(d.subscribers, subscriber{conn: conn, events: set})
 	d.subMu.Unlock()
+}
+
+// notifyStateChanged tells subscribers that profile or thermal state moved, so
+// anything displaying it can re-read. Callers pass the state they just saved
+// only to make the call sites read as "persist, then announce"; the event
+// carries no payload by design (see api/events.go).
+func (d *Daemon) notifyStateChanged() {
+	d.broadcast(response{OK: true, Event: api.EventStateChanged})
+}
+
+// saveAndNotify persists a state snapshot and announces the change. Every
+// handler that mutates profile or thermal state goes through this rather than
+// calling saveState directly, so a new handler cannot silently leave clients
+// showing stale values.
+func (d *Daemon) saveAndNotify(s api.State) {
+	if err := saveState(s); err != nil {
+		slog.Warn("failed to save state", "err", err)
+	}
+	d.notifyStateChanged()
 }
 
 // normalizeLightingState fills in any field left empty by a partial update,

@@ -75,9 +75,13 @@ type powerState struct {
 type powerAction struct {
 	Profile string
 	Reason  string
+	// SourceChanged reports a confirmed AC/battery transition, whether or not it
+	// calls for a profile change. Clients want the notification either way: an
+	// indicator is useful on a machine that never configures autoswitch.
+	SourceChanged bool
 }
 
-func (a powerAction) none() bool { return a.Profile == "" }
+func (a powerAction) none() bool { return a.Profile == "" && !a.SourceChanged }
 
 // powerTick decides whether a power-source observation calls for a profile
 // change. It is pure — no sysfs, no locks, no logging — because internal/cli's
@@ -136,24 +140,26 @@ func powerTick(prev powerState, obs powerObs) (powerState, powerAction) {
 	if confirmed {
 		st.onAC = source
 	}
+	// The transition itself is worth announcing even when nothing else follows.
+	act := powerAction{SourceChanged: confirmed}
 	if !confirmed && !justEnabled {
-		return st, powerAction{}
+		return st, act
 	}
 
 	if !enabled {
-		return st, powerAction{}
+		return st, act
 	}
 	target := obs.Auto.Target(source)
 	if target == "" {
 		// This side is unconfigured: hand it to the desktop.
-		return st, powerAction{}
+		return st, act
 	}
 	// Only the enable-time one-shot checks for equality. A confirmed source
 	// transition applies unconditionally: something else may have moved
 	// platform_profile behind our back, and skipping would leave the machine on
 	// the wrong profile with no way back until the next unplug.
 	if justEnabled && !confirmed && target == obs.Current {
-		return st, powerAction{}
+		return st, act
 	}
 
 	reason := "switched to battery"
@@ -163,7 +169,9 @@ func powerTick(prev powerState, obs powerObs) (powerState, powerAction) {
 	if justEnabled && !confirmed {
 		reason = "autoswitch enabled"
 	}
-	return st, powerAction{Profile: target, Reason: reason}
+	act.Profile = target
+	act.Reason = reason
+	return st, act
 }
 
 // watchPowerSource runs until ctx is done, applying the configured profile on
@@ -215,6 +223,13 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 	source := "battery"
 	if obs.OnAC {
 		source = "AC"
+	}
+	if act.SourceChanged {
+		slog.Info("power source changed", "source", source)
+		d.broadcast(response{OK: true, Event: api.EventPowerSource})
+	}
+	if act.Profile == "" {
+		return st
 	}
 	slog.Info("autoswitch", "source", source, "profile", act.Profile, "reason", act.Reason)
 
@@ -339,9 +354,7 @@ func (d *Daemon) handleAutoswitch(req request) response {
 	d.state.Autoswitch = &api.AutoswitchState{Enabled: req.Enabled, AC: ac, Battery: battery}
 	s := cloneState(d.state)
 	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
+	d.saveAndNotify(s)
 	slog.Info("autoswitch", "enabled", req.Enabled, "ac", ac, "battery", battery)
 	return response{OK: true}
 }

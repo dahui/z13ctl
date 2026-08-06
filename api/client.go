@@ -8,7 +8,8 @@ package api
 // back to direct hardware access.
 //
 // Subscribe opens a long-lived connection and returns a channel that receives
-// event name strings streamed by the daemon.
+// event name strings streamed by the daemon. Event names and their meanings are
+// in events.go.
 
 import (
 	"bufio"
@@ -543,7 +544,24 @@ func SendGetState() (bool, *State, error) {
 }
 
 // Subscribe opens a long-lived subscription to the daemon and returns a channel
-// that receives event name strings (e.g. "gui-toggle") as they are streamed.
+// that receives event name strings as they are streamed. Pass the events you
+// want — EventGUIToggle, EventPowerSource, EventStateChanged — or nil for all of
+// them. The daemon honours the list, so a client that asks only for
+// EventGUIToggle will not be woken by anything else.
+//
+// Events carry no payload by design: the name says what happened, and
+// SendGetState answers with current truth. Switch on the name rather than
+// treating every event alike —
+//
+//	for ev := range ch {
+//	    switch ev {
+//	    case api.EventGUIToggle:
+//	        toggleWindow()
+//	    case api.EventPowerSource, api.EventStateChanged:
+//	        refreshFromGetState()
+//	    }
+//	}
+//
 // The returned cancel func closes the underlying connection and stops the
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
