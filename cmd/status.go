@@ -5,6 +5,7 @@ package cmd
 // TDP, and battery information into a single dashboard view.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -50,9 +51,24 @@ func runStatus() error {
 	}
 	fmt.Printf("Fans:    %s%s\n", rpmStr, modeStr)
 
-	// Performance profile.
-	profile := readCurrentProfile()
-	fmt.Printf("Profile: %s\n", profile)
+	// Performance profile. platform_profile is never a custom profile name, so
+	// the effective profile comes from the daemon when it is running; show the
+	// firmware profile underneath it when the two differ.
+	profile := effectiveProfileForTDP()
+	if hw := readCurrentProfile(); hw != profile && hw != "unknown" {
+		fmt.Printf("Profile: %s (platform: %s)\n", profile, hw)
+	} else {
+		fmt.Printf("Profile: %s\n", profile)
+	}
+
+	// Power source, and what autoswitch would select for it.
+	if onAC, err := cli.OnACPower(); err == nil {
+		source := "battery"
+		if onAC {
+			source = "AC"
+		}
+		fmt.Printf("Power:   %s%s\n", source, autoswitchNote(onAC))
+	}
 
 	// TDP power limits.
 	tdp, tdpErr := cli.ReadEffectivePPT(effectiveProfileForTDP())
@@ -92,6 +108,28 @@ func runStatus() error {
 	fmt.Printf("Battery: %s%s\n", capStr, limitStr)
 
 	return nil
+}
+
+// autoswitchNote returns a parenthetical naming the profile autoswitch selects
+// for the current source, or "" when it is off, unconfigured, or the daemon is
+// not running. Best-effort: status must not fail because autoswitch is unset.
+func autoswitchNote(onAC bool) string {
+	handled, value, err := api.SendAutoswitchGet()
+	if !handled || err != nil {
+		return ""
+	}
+	var st autoswitchStatus
+	if err := json.Unmarshal([]byte(value), &st); err != nil || !st.Enabled {
+		return ""
+	}
+	target := st.Battery
+	if onAC {
+		target = st.AC
+	}
+	if target == "" {
+		return ""
+	}
+	return " (autoswitch: " + target + ")"
 }
 
 func init() {

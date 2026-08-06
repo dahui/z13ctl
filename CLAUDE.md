@@ -13,7 +13,8 @@ Module path: `github.com/dahui/z13ctl`. Binary name: `z13ctl`. License: Apache 2
 ```
 api/                         Public client API submodule (github.com/dahui/z13ctl/api)
   go.mod                     Separate module; stdlib only; importable by z13gui and external tools
-  types.go                   State, LightingState, FanCurvePoint, FanCurveState, TDPState, UndervoltState (exported protocol types)
+  types.go                   State, LightingState, FanCurvePoint, FanCurveState, TDPState, UndervoltState,
+                             CustomProfile, AutoswitchState; IsCustomProfile/InCustomProfile/ActiveCustomProfile
   client.go                  SocketPath, Send*, Subscribe (all client functions)
   example_test.go            testable examples for all Send* and Subscribe functions
 main.go                      entry point
@@ -24,7 +25,8 @@ cmd/                         Cobra subcommands
   daemon.go                  start the daemon (z13ctl daemon)
   list.go                    list hidraw devices
   off.go                     turn lighting off
-  profile.go                 get/set performance profile (platform_profile sysfs); "custom" virtual profile
+  profile.go                 get/set profile; create/save-as/delete/list custom profiles
+  autoswitch.go              configure the AC/battery profile pair
   batterylimit.go            get/set battery charge limit (power_supply sysfs)
   bootsound.go               get/set POST boot sound (asus-armoury firmware-attributes)
   paneloverdrive.go          get/set panel refresh overdrive (asus-armoury firmware-attributes)
@@ -35,6 +37,7 @@ cmd/                         Cobra subcommands
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
   setup_test.go              drift guard: generated vs packaged contrib/ artifacts
   undervolt_test.go          --set parse rejections (CLI/daemon parity; no SMU access)
+  autoswitch_test.go         flag-combination rejections; profile-name parity; --profile guards
 internal/
   aura/                      Aura HID protocol implementation
     aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
@@ -44,10 +47,13 @@ internal/
     colors.go                named color table, ResolveColor, PrintColorList
     parse.go                 ParseColor, ParseBrightness
     sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
+    power.go                 FindACOnlinePath, OnACPower (Mains-only discovery), IsStockProfile, ValidateProfileName
+    power_test.go            mains discovery vs the decoy supplies; profile-name rules
     fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
     paths.go                 sysfs roots as vars (injectable by tests); see Testing
     tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
-                             SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor, CheckFanFloorRelease
+                             SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor/CheckCurveAgainstTDP,
+                             CheckFanFloorRelease/CheckFanFloorReleaseAt (the *At forms are pure, for inactive profiles)
     smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
@@ -57,7 +63,9 @@ internal/
     smu_test.go              SMU mailbox protocol + Curve Optimizer tests
     tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests +
                              ApplyTDPSafely fan-floor refusal (the thermal-guard regression test)
-    dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve, DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
+    dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunProfileCreate/Save/Delete,
+                             DryRunAutoswitch, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve,
+                             DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
@@ -66,11 +74,18 @@ internal/
     button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce
+    profile.go               applyProfileLocked/applyCustomHW/applyStockHW, edit-target resolution,
+                             profile create/save/delete/list handlers
+    powersource.go           AC/battery autoswitch watcher; pure powerTick seam + powerSourceOnce;
+                             UPower nudge + sysfs poll; autoswitchTarget for the Run() startup case
+    powersource_test.go      powerTick decision table, settle window, charger flap (no hardware)
     reconcile_test.go        reconcileTick decision table (no hardware) + reconcileOnce race guard
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
-    state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup
-    clone_test.go            cloneState deep-copy, saveState race regression, broadcast wire shape
+    state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup,
+                             legacy migration, reserved-name sanitisation
+    clone_test.go            cloneState deep-copy (incl. CustomProfiles), saveState race regression,
+                             broadcast wire shape, withLegacyProjection
     resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
     client.go                Redirect comment only — client functions live in api/
   hid/
@@ -156,7 +171,10 @@ contrib/
   the grab is a compile error. Trade-off: the keypress also reaches the desktop,
   and a foreign exclusive grab now fails silently rather than logging EBUSY.
 - **Daemon socket protocol**: Newline-delimited JSON over Unix socket. All responses
-  are `{"ok":bool,...}`. CLI `--get` commands read sysfs directly (always ground truth).
+  are `{"ok":bool,...}`. CLI `--get` commands read sysfs directly (always ground
+  truth) — except `profile --get`, which asks the daemon first and falls back to
+  sysfs: `platform_profile` is never a custom profile name, so sysfs alone cannot
+  say which custom profile is running.
   GUI/Decky callers use the daemon socket for all operations including GET. Protocol:
   | Command | Request | Response field |
   |---|---|---|
@@ -180,8 +198,43 @@ contrib/
   | undervolt set | `{"cmd":"undervolt","set":"-20"}` | `ok` |
   | undervolt get | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
   | undervolt reset | `{"cmd":"undervolt-reset"}` | `ok` |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available) |
+  | profile create | `{"cmd":"profile-create","set":"gaming"}` | `ok` |
+  | profile save-as | `{"cmd":"profile-save","set":"gaming"}` | `ok` |
+  | profile delete | `{"cmd":"profile-delete","set":"gaming"}` | `ok` |
+  | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
+  | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
+  | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
+
+  `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `undervolt` and
+  `undervolt-reset` take an optional `"profile"` field naming the custom profile
+  to edit; absent/empty means the active one. `profile --set` now *rejects* a
+  name that is neither a firmware profile nor a saved custom profile, where it
+  used to forward any string to `platform_profile`.
+- **`subscribe`'s `events` list is honoured; it was ignored until v1.3.0.**
+  `addSubscriber` now records the set and `broadcast` filters on it. That was
+  invisible while `gui-toggle` was the only event, and became a live hazard the
+  moment a second one existed: a client that subscribed to `gui-toggle` and wrote
+  the obvious `for range ch { toggle() }` — reasonable when only one event
+  existed — would toggle its window on every power-source change. A subscriber
+  that did *not* want an event must survive the broadcast rather than being
+  pruned. Events are `gui-toggle`, `power-source` and `state-changed`
+  (`api/events.go`), and carry **no payload**: the name says what happened and
+  `get-state` answers with current truth, whereas a payload describes the moment
+  the event was queued. That is also why `api.Subscribe` keeps its
+  `<-chan string` signature — the payload was the only thing that wanted a
+  breaking change.
+- **Broadcast writes are deadline-bounded (`broadcastWriteTimeout`).** Events are
+  emitted from handlers holding `hwMu`, so an unbounded write to a subscriber
+  that stopped reading would block every hardware operation in the daemon behind
+  a socket buffer. A subscriber that cannot take a notification in time is
+  dropped.
+- **Every handler that mutates profile or thermal state calls `saveAndNotify`,
+  not `saveState`.** That is the funnel which keeps a new handler from silently
+  leaving clients showing stale values. Lighting handlers deliberately still call
+  `saveState` directly — a brightness slider drag would otherwise emit a burst of
+  events describing values the client just set.
 - **Streamed events must set `OK: true`.** `response.OK` has no `omitempty`, so
   `broadcast(response{Event: ...})` ships `{"ok":false,...}` on a perfectly good
   event. The Go client keys on the `event` field and never noticed, but the
@@ -249,9 +302,21 @@ contrib/
   `fan_curve_enable_show()` returns the driver's cached `enabled`, making it
   ground truth and catching every cause rather than the one we predicted. It
   never writes `platform_profile` (that would be a write-fight with PPD over
-  every AC transition) and acts only while `state.Profile == "custom"`, so a
-  deliberate stock-profile switch is left alone by construction.
+  every AC transition) and acts only while the active profile is a custom one
+  (`obs.Custom`, from `state.ActiveCustomProfile()`), so a deliberate
+  firmware-profile switch is left alone by construction. Named profiles are
+  defended exactly as `custom` is; a reserved name never is.
 - **`hwMu` guards hardware mutation sequences; lock order is `hwMu` then `d.mu`.**
+  `applyProfileLocked` states this in its doc comment because it is the one
+  function both a socket handler and a watcher call: the caller holds `hwMu` and
+  must NOT hold `d.mu`, and nothing reached from it may call
+  `d.effectiveProfile()`, which takes `d.mu`. It also decides custom-ness and
+  snapshots the profile in a single `d.mu` critical section, closing the window
+  where a concurrent `profile-delete` could remove the entry between the two.
+  `d.state.Profile` is set *before* the hardware work, so the reconcile watcher
+  starts defending the fans during the apply and a half-failed apply self-heals
+  on the next tick.
+  
   `d.mu` guards state, and every mutating handler does its hardware I/O outside
   it, so nothing otherwise stops the reconcile watcher interleaving its
   `SetBothFanCurves` with `handleProfile`'s `ResetAllFanCurves` — the fans would
@@ -287,6 +352,14 @@ contrib/
   fans (`handleTDPReset`, the stock-profile branch, `cmd/tdp.go` reset), so the
   machine is never at a high limit with no floor. `internal/cli/tdp_test.go`
   guards this against the fake sysfs; the refusal case is the one that matters.
+- **Fan-floor checks read hardware for the *live* profile, and the profile's own
+  TDP for any other.** `CheckFanCurveFloor`/`CheckFanFloorRelease` go through
+  `ReadEffectivePPT`; their pure siblings `CheckCurveAgainstTDP` and
+  `CheckFanFloorReleaseAt` take a limit directly, which is what an inactive
+  profile needs — hardware says nothing about a profile that is not running. The
+  effect is a *stronger* invariant than before: a profile can never be stored in
+  a state that would be unsafe the moment it is activated, and `ApplyTDPSafely`
+  still fails closed at activation.
 - **Fan-floor checks read hardware, not cached state.** `cli.CheckFanCurveFloor`
   and `cli.CheckFanFloorRelease` both take the *effective* profile and go through
   `ReadEffectivePPT`. `handleFanCurve` used to gate on `d.state.TDP`, which
@@ -338,6 +411,11 @@ contrib/
   `Undervolt.Active` still true while the daemon reported a stock profile — the
   same "custom setting leaks into a stock profile" defect as #12. Saved values
   are still preserved for recall; only `Active` and the hardware are reset.
+  `setUndervoltActive(state, false)` stamps every saved profile, since CO is
+  global hardware and at most one profile's offset can be applied. `Active` is
+  set true in exactly one place — `applyCustomHW`, and only when the SMU write
+  succeeded — so a profile copied while CO was live never claims to be applied
+  before anything was written.
 - **A corrupt state file is preserved, not silently replaced.** `loadState`
   renames an unparseable `state.json` to `state.json.corrupt` and logs before
   returning defaults; the next `saveState` would otherwise overwrite it, taking
@@ -353,13 +431,138 @@ contrib/
   (`0xFF`) for an all-zero primary colour, matching g-helper, so the firmware
   picks a colour. `off` / `--brightness off` is how you get no light. Documented
   in `docs/commands.md` and the `--color` flag help.
-- **Custom profile**: `profile --set custom` is a virtual profile that re-applies
-  saved fan curves and TDP from daemon state. It does NOT write to `platform_profile`
-  — the underlying hardware profile stays as-is. Setting any custom curve or TDP
-  implicitly sets profile to "custom". Switching to a stock profile (quiet/balanced/
-  performance) resets fan hardware to auto and writes that profile's `StockProfilePPT`
-  row to hardware, but preserves custom settings in state for later recall.
-  `profile --set custom` returns an error if no custom fan curves or TDP have been saved.
+- **Custom profiles are named records; `state.CustomProfiles` is the only
+  in-memory truth.** A custom profile is a `CustomProfile{Name, FanCurve, TDP,
+  Undervolt}` — per-subsystem *pointers*, so `nil` means "this profile does not
+  control that subsystem" and a new subsystem (GPU PPT, dynamic boost) is an
+  additive field that leaves old profiles loadable. None of them writes
+  `platform_profile`; the firmware profile underneath stays as-is.
+  `api.State.FanCurve/TDP/Undervolt` still exist but are a **projection**, filled
+  in only by `withLegacyProjection` at the two serialization boundaries
+  (`get-state` and `saveState`) so z13gui and the Decky plugin keep working. The
+  source is the active custom profile, or `custom` when a firmware profile is
+  active — i.e. whatever a bare `undervolt --set` edits and `profile --set custom`
+  recalls. Projecting *nothing* on a firmware profile looks tidier and is a
+  regression on both sides: a GUI showing "saved undervolt, not active" loses the
+  value it displays, and a downgrade taken while on `balanced` writes those
+  settings away entirely. `loadState` clears them after migrating, so nothing inside
+  the daemon can read the stale copy instead of the map; internal readers go
+  through `state.ActiveCustomProfile()`. Any new pointer/slice/map on `api.State`
+  must also be added to `cloneState` — `clone_test.go` under `-race` is the only
+  thing that catches a shallow copy of the profile map, and each entry needs a
+  copy of its own (three pointers and a slice), not just a new map header.
+- **The active profile is the default edit target; `--profile` overrides it.**
+  `fancurve|tdp|undervolt --set` with no `--profile` edits the profile you are
+  running, creating and activating `custom` when a firmware profile is active —
+  exactly the pre-existing behaviour, so no existing invocation changes meaning.
+  There is no working slot and no save step: the edit lands in the profile and
+  persists immediately. `--profile <name>` edits a profile that is *not* running,
+  stores only, and writes no hardware. That is not a convenience — autoswitch is
+  unusable without it, since configuring the battery profile would otherwise mean
+  applying it first. `resolveEditTargetLocked` + `commitEditLocked`
+  (`internal/daemon/profile.go`) are the single place that resolves and commits.
+- **Activating a custom profile *clears* the subsystems it does not set.**
+  `applyCustomHW` releases the fans when the profile has no curve, resets the
+  Curve Optimizer when it has no offset, and hands the PPT limits back to the
+  firmware profile underneath when it has no TDP. Without that, switching from a
+  profile with a 90W limit and a -25 offset to one that sets neither leaves both
+  in force while the daemon reports the second profile — and A→B→A does not give
+  the same machine as A. This only became reachable once custom→custom switching
+  existed. Ordering is the fail-closed part and is not free to rearrange: the
+  profile's own curve goes on *before* its TDP so `ApplyTDPSafely`'s floor is
+  written last and wins; clearing the TDP lowers power before the fans are
+  touched; and the fans are released only when no high sustained limit is in
+  force, so a high-TDP profile with no curve of its own keeps the floor
+  `ApplyTDPSafely` just wrote. `Run()` calls the same helper rather than
+  hand-rolling the restore, so startup cannot drift from it.
+- **There is exactly one apply-a-custom-profile sequence: `applyCustomHW`.** The
+  socket command, the autoswitch watcher, `Run()`'s startup restore and
+  `resume.go` all call it. Four hand-rolled copies is precisely how the ordering
+  and clearing rules drifted apart; `handleTDP`'s post-lower fan step is the last
+  place that repeats any of it, and it mirrors the same rule deliberately
+  (restore the profile's curve, else release the fans, so lowering a limit and
+  selecting the profile converge on the same hardware).
+- **A daemon restart does not reset the fan controller or the Curve Optimizer.**
+  Both are hardware state that outlives the process, so a custom profile that was
+  in force still is. If the startup autoswitch resolution moves off it onto a
+  firmware profile, `Run()` must release them exactly as `applyStockHW` would —
+  otherwise the machine keeps running the old curve and offset while reporting a
+  firmware profile, and the reconcile watcher stays inert because the profile is
+  no longer custom.
+- **Only a firmware profile name may reach `platform_profile`.** `Run()`'s
+  restore is gated on `cli.IsStockProfile`, not on "not custom": a state file
+  naming a profile that is neither — deleted by hand, or lost in a downgrade —
+  would otherwise be written straight to the attribute. `loadState` also clears
+  such a name, so `effectiveProfile` falls back to `platform_profile` instead of
+  every later lookup erroring.
+- **The profile CRUD handlers take `hwMu` even though they write no hardware.**
+  The edit handlers resolve a target under `d.mu`, release it for the hardware
+  write, then commit the profile back under `d.mu` again. Mutating the profile map
+  inside that window is silently undone by the commit — and for a delete, undone
+  by *resurrecting* the profile. `hwMu` is what makes the whole
+  resolve-write-commit span exclusive. It also keeps a delete from landing
+  part-way through `applyProfileLocked`, which would leave `state.Profile` naming
+  a profile that no longer exists and so stop the reconcile watcher defending a
+  fan curve that is live in hardware.
+  `internal/daemon/profile_test.go:TestProfileMutatorsTakeHwMu` is the guard.
+- **The `profile` request field is silently ignored by older daemons, which
+  makes an unguarded `--profile` edit apply to the running machine.** It is an
+  additive field, so a pre-1.3 daemon unmarshals the request, drops the field,
+  applies the setting live, and answers `ok` — the CLI would print "stored in
+  profile X (not applied)" over a real TDP change. This happened during
+  development. `cmd.ensureProfileTargetSupported` probes `profile-list` (which
+  answers `unknown command` on an older daemon) before every `--profile` send.
+  Any other client offering profile targeting must do the same.
+- **The firmware profile names are reserved at four layers.** `quiet`,
+  `balanced` and `performance` can never name a custom profile, so selecting one
+  always reaches the firmware profile: (1) `cli.ValidateProfileName` rejects
+  them, (2) `applyProfileLocked` tests `cli.IsStockProfile` *before* it consults
+  the map, (3) `api.State.IsCustomProfile` returns false for them ahead of the
+  lookup, and (4) `loadState` drops a `custom_profiles` entry carrying one. Layer
+  4 is not paranoia — `state.json` is a plain file a user can edit, and it parses
+  fine, so the other three never see it. The reservation is load-bearing beyond
+  aesthetics: `ReadEffectivePPT` disables its stale-5W fallback for any name
+  absent from `StockProfilePPT`, which is right for a custom profile and wrong
+  for a firmware one, so a custom "balanced" would misreport the power limits.
+  Name validation is strict on write (`profile-create`/`profile-save` reject
+  `Gaming` rather than folding it to `gaming`, or the user looks for a profile
+  under a name that is not there) and lenient on lookup (`--set` and `--profile`
+  do fold case).
+- **Switching to a firmware profile preserves every custom profile**; it resets
+  fan hardware to auto, clears the undervolt, and writes that profile's
+  `StockProfilePPT` row. `profile --set <custom>` errors if that profile has no
+  settings at all — there would be nothing to apply.
+- **AC/battery autoswitch is edge-triggered on `online`, never level-triggered,
+  and never reads `platform_profile`** (`internal/daemon/powersource.go`, issue
+  #6). That is the whole safety argument: the watcher reacts only to a value
+  neither z13ctl nor PPD nor the desktop can write, so the feedback loop that
+  would produce a write-fight does not exist. A level-triggered "keep my profile
+  applied" watcher would both fight PPD over every transition — the thing
+  `reconcile.go` exists to avoid — and make a manual profile change impossible to
+  hold. The intended semantics follow directly: a profile chosen by hand sticks
+  until the source actually changes, and z13ctl yields in between (GNOME's
+  Automatic Power Saver is a *low-battery* trigger, not an unplug trigger, and is
+  correctly ignored). One observation function, `cli.OnACPower()`, with two
+  triggers: a UPower `OnBattery` nudge for immediacy and a 2s poll as the
+  backstop for Gaming Mode / no-UPower setups — so there is one behaviour to
+  test, not two. An edge is confirmed on the following observation before
+  applying; that settle window lets PPD's own transition write land first (else
+  the custom curve is dropped until reconcile notices) and stops a loose USB-C
+  connector driving a full PPT+fan+SMU write per bounce. A failed apply latches
+  the source anyway and does not retry. **The startup apply lives in `Run()`, not
+  the watcher**, which latches its first observation without acting: `Run()`
+  holds the same-value guard that keeps a redundant `platform_profile` write —
+  and the WMI fan-controller reset that comes with it — out of every daemon
+  restart. There is deliberately no hook in `resume.go`: Go timers use
+  `CLOCK_MONOTONIC` and do not advance across suspend, so the armed timer fires
+  promptly after resume; duplicating it would race the watcher over `hwMu`.
+- **`cli.FindACOnlinePath` filters on `type == "Mains"`, never on the presence of
+  an `online` file.** On the Z13 the detachable keyboard registers as
+  `hid-*-battery-N` (type `Battery`) and the two USB-C ports as
+  `ucsi-source-psy-*` (type `USB`), and all of them expose `online` — a `*/online`
+  glob reports mains power whenever the cover is attached. `OnACPower` returns an
+  *error* when no Mains supply exists (VM, desktop, driver not yet bound); callers
+  must treat that as unknown and do nothing, never as "on battery".
 - **Stock PPT restore is explicit, not firmware-driven** (issue #12): the firmware
   does *not* re-apply per-profile PPT on a `platform_profile` write, and the
   `ppt_*` attributes have no "reset to firmware default" operation — writing 5W

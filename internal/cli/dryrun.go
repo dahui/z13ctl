@@ -78,9 +78,18 @@ func DryRunBatteryLimit(limit int) {
 // including mapped names for secondary devices (e.g. amd-pmf uses "low-power" not "quiet").
 func DryRunProfile(profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	if _, ok := StockProfilePPT[profile]; ok {
-		fmt.Println("Would reset the CPU Curve Optimizer to stock")
+
+	// A custom profile is never written to platform_profile — this printed the
+	// name as a platform_profile write for every release up to now, describing
+	// something the daemon has never done.
+	if !IsStockProfile(profile) {
+		fmt.Printf("Would recall custom profile %q from daemon state and apply its\n", profile)
+		fmt.Println("  saved fan curve, TDP, and Curve Optimizer offset")
+		fmt.Println("Would NOT write platform_profile (custom profiles leave it to the desktop)")
+		return
 	}
+
+	fmt.Println("Would reset the CPU Curve Optimizer to stock")
 	primary := FindProfilePath()
 	// Name-mapped, as SetProfile does for every device including the primary —
 	// printing the raw name here showed "quiet" where "low-power" gets written.
@@ -118,6 +127,68 @@ func DryRunProfile(profile string) {
 			profile, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
 		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
 	}
+}
+
+// DryRunProfileEdit prints what storing a setting in a profile that is not
+// running would do. Nothing reaches hardware on that path, so printing the
+// ordinary sysfs write list would describe the opposite of what happens.
+func DryRunProfileEdit(profile, setting string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would store the %s in custom profile %q in daemon state\n", setting, profile)
+	fmt.Println("Would NOT write hardware — the setting takes effect when that profile")
+	fmt.Printf("  is activated: z13ctl profile --set %s\n", profile)
+}
+
+// DryRunProfileCreate prints what creating an empty custom profile would do.
+// Custom profiles live in daemon state, not sysfs, so there is nothing to write.
+func DryRunProfileCreate(name string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would create empty custom profile %q in daemon state\n", name)
+	fmt.Println("Would NOT change the active profile or touch hardware")
+}
+
+// DryRunProfileSave prints what copying the active profile would do.
+func DryRunProfileSave(name string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would copy the active custom profile to %q in daemon state\n", name)
+	fmt.Println("Would NOT change the active profile or touch hardware")
+}
+
+// DryRunProfileDelete prints what deleting a custom profile would do.
+func DryRunProfileDelete(name string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would delete custom profile %q from daemon state\n", name)
+	fmt.Println("  (refused if it is the active profile or referenced by autoswitch)")
+}
+
+// DryRunAutoswitch prints the AC/battery configuration that would be stored.
+// It stores configuration only — the daemon applies a profile on the next
+// power-source transition, not now.
+func DryRunAutoswitch(enabled bool, ac, battery string) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if !enabled {
+		fmt.Println("Would disable AC/battery autoswitching in daemon state")
+		return
+	}
+	fmt.Printf("Would store autoswitch in daemon state: AC=%s battery=%s\n",
+		dryRunTarget(ac), dryRunTarget(battery))
+	fmt.Printf("Would read the power source from %s\n", dryRunACPath())
+	fmt.Println("Would NOT change the profile now — the daemon applies one on the next")
+	fmt.Println("  plug or unplug")
+}
+
+func dryRunTarget(name string) string {
+	if name == "" {
+		return "(unchanged)"
+	}
+	return name
+}
+
+func dryRunACPath() string {
+	if p := FindACOnlinePath(); p != "" {
+		return p
+	}
+	return "(no mains power supply found)"
 }
 
 // DryRunBootSound prints the sysfs write that would be performed for a boot sound change.

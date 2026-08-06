@@ -22,8 +22,19 @@ type fakeSysfs struct {
 	ppt        string
 	smu        string
 	battery    string
+	ac         string // the Mains power supply device
 	firmware   string
 	ppdCalls   *[]string // powerprofilesctl profiles the stub recorded
+}
+
+// setACOnline flips the mains adapter between plugged and unplugged.
+func (f *fakeSysfs) setACOnline(t *testing.T, online bool) {
+	t.Helper()
+	v := "0"
+	if online {
+		v = "1"
+	}
+	f.writeFile(t, f.ac+"/online", v)
 }
 
 // newFakeSysfs builds the tree and redirects every path var for the test's
@@ -53,6 +64,19 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	f.writeFile(t, f.hwmon+"/name", hwmonNameCurves)
 	f.writeFile(t, f.hwmonRead+"/name", hwmonNameReadings)
 	f.writeFile(t, f.hwmonTemp+"/name", "k10temp")
+
+	// The mains adapter, plus the two decoys that also carry an "online" file on
+	// a real Z13: the detachable keyboard's HID battery and a USB-C PD source.
+	// Any helper that globs */online instead of filtering on type picks these up
+	// and reports mains power whenever the cover is attached.
+	f.ac = root + "/power_supply/AC0"
+	f.writeFile(t, f.ac+"/type", "Mains")
+	f.writeFile(t, f.ac+"/online", "1")
+	f.writeFile(t, f.battery+"/type", "Battery")
+	f.writeFile(t, root+"/power_supply/hid-0018:04F3:43C7.0008-battery-7/type", "Battery")
+	f.writeFile(t, root+"/power_supply/hid-0018:04F3:43C7.0008-battery-7/online", "1")
+	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/type", "USB")
+	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/online", "1")
 
 	// Never shell out to the live power-profiles-daemon from a test.
 	origPPD := ppdRunner

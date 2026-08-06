@@ -16,13 +16,14 @@ import (
 )
 
 var (
-	tdpGetFlag   bool
-	tdpSetFlag   string
-	tdpResetFlag bool
-	tdpPL1Flag   string
-	tdpPL2Flag   string
-	tdpPL3Flag   string
-	tdpForceFlag bool
+	tdpGetFlag     bool
+	tdpSetFlag     string
+	tdpResetFlag   bool
+	tdpPL1Flag     string
+	tdpPL2Flag     string
+	tdpPL3Flag     string
+	tdpForceFlag   bool
+	tdpProfileFlag string
 )
 
 var tdpCmd = &cobra.Command{
@@ -66,9 +67,14 @@ When using --set, all three limits are set to the same value by default. Use
 --pl1, --pl2, and --pl3 to set them independently — for example, --set 45
 --pl2 55 --pl3 65 allows short bursts up to 65W while sustaining 45W.
 
-Setting a custom TDP switches to the "custom" profile. Switching back to a
-stock profile restores that profile's stock PPT values to hardware while
-keeping the custom values saved, so "custom" stays re-selectable.`,
+Setting a TDP edits the custom profile you are running, creating and
+activating "custom" if a firmware profile is active. Switching back to a
+firmware profile restores that profile's stock PPT values to hardware while
+keeping every custom profile saved, so they stay re-selectable.
+
+Use --profile <name> to store limits in a profile you are NOT running: nothing
+is written to hardware, which is how you build the profile 'z13ctl autoswitch'
+selects on battery.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !tdpGetFlag && tdpSetFlag == "" && !tdpResetFlag {
@@ -157,15 +163,26 @@ func runTdpSet() error {
 	}
 
 	if dryRunFlag {
+		if tdpProfileFlag != "" {
+			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
+			return nil
+		}
 		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag)
 		return nil
 	}
 
 	// The daemon applies the fan floor itself (cli.ApplyTDPSafely), so hand the
 	// whole operation over before touching hardware here.
-	if handled, err := api.SendTdpSet(tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
+	if err := ensureProfileTargetSupported(tdpProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendTdpSetFor(tdpProfileFlag, tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
+		}
+		if tdpProfileFlag != "" {
+			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
+			return nil
 		}
 		if pl1 > cli.TDPMaxSafe {
 			fmt.Println("Fans set to 50%+ curve for thermal safety (the daemon keeps that floor in")
@@ -175,6 +192,9 @@ func runTdpSet() error {
 		return nil
 	}
 
+	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
+		return err
+	}
 	// Direct path: same helper, so the no-daemon path enforces the 50% fan floor
 	// on the same terms — fans first, and no TDP at all if that write fails.
 	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
@@ -193,18 +213,32 @@ func runTdpSet() error {
 
 func runTdpReset() error {
 	if dryRunFlag {
+		if tdpProfileFlag != "" {
+			cli.DryRunProfileEdit(tdpProfileFlag, "cleared power limits")
+			return nil
+		}
 		cli.DryRunTdpReset()
 		return nil
 	}
 
-	if handled, err := api.SendTdpReset(); handled {
+	if err := ensureProfileTargetSupported(tdpProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendTdpResetFor(tdpProfileFlag); handled {
 		if err != nil {
 			return err
+		}
+		if tdpProfileFlag != "" {
+			fmt.Printf("Cleared the power limits from profile %s\n", tdpProfileFlag)
+			return nil
 		}
 		fmt.Println("TDP reset: switched to balanced profile (stock PPT restored)")
 		return nil
 	}
 
+	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
+		return err
+	}
 	// Direct path (no daemon): switch to balanced, write its stock PPT values
 	// back to hardware, and only then release the fans to firmware auto — so
 	// they are never dropped to auto while a high custom TDP is still in force.
@@ -278,5 +312,6 @@ func init() {
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")
 	tdpCmd.Flags().BoolVar(&tdpForceFlag, "force", false, "Allow sustained TDP (PL1) above 75W (up to 93W)")
+	tdpCmd.Flags().StringVar(&tdpProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(tdpCmd)
 }

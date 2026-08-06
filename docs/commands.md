@@ -98,8 +98,8 @@ z13ctl off --device lightbar
 
 ## profile
 
-Get or set the system performance profile via the asus-wmi `platform_profile`
-sysfs interface. Root or group access required; see [setup](#setup).
+Get or set the system performance profile, and manage named custom profiles.
+Root or group access required; see [setup](#setup).
 
 ```
 z13ctl profile [flags]
@@ -107,34 +107,138 @@ z13ctl profile [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the active performance profile |
-| `--set <profile>` | Set the performance profile |
+| `--get` | Print the active profile |
+| `--set <profile>` | Set the profile (firmware or custom) |
+| `--list` | List saved custom profiles |
+| `--create <name>` | Create an empty custom profile (does not activate it) |
+| `--save-as <name>` | Copy the active custom profile under a new name |
+| `--delete <name>` | Delete a saved custom profile |
 
-Valid profiles: `quiet`, `balanced`, `performance`, `custom`
+### Firmware profiles
 
-The `custom` profile is a virtual profile that recalls saved fan curves and TDP
-settings from the daemon's state file. It does **not** write to `platform_profile`.
-Setting `custom` requires the daemon to be running, and at least one custom fan
-curve or TDP value must have been previously set.
+`quiet`, `balanced`, and `performance` are written to `platform_profile` via
+asus-wmi. These three names are **reserved**: a custom profile can never take
+one, so `--set balanced` always reaches the firmware profile.
 
-Setting a stock profile (`quiet`, `balanced`, `performance`) resets fan curves to
-firmware auto mode, resets the CPU undervolt to stock, and writes that profile's
-measured stock PPT values back to hardware. The firmware does *not* re-apply
-per-profile power limits on its own, so z13ctl restores them explicitly. Your
-saved custom fan curve, TDP, and undervolt are kept in daemon state, so
-`--set custom` recalls them. [`tdp --reset`](#tdp) behaves the same way, since it
-also lands on a stock profile.
+Setting a firmware profile resets fan curves to firmware auto mode, resets the
+CPU undervolt to stock, and writes that profile's measured stock PPT values back
+to hardware. The firmware does *not* re-apply per-profile power limits on its
+own, so z13ctl restores them explicitly. Your custom profiles are untouched and
+can be selected again at any time. [`tdp --reset`](#tdp) behaves the same way,
+since it also lands on a firmware profile.
+
+### Custom profiles
+
+A custom profile is z13ctl's own: a named set of fan curve, TDP, and Curve
+Optimizer settings that z13ctl applies itself. It is **never** written to
+`platform_profile`, so profile ownership stays with your desktop.
+
+`custom` is the profile created automatically by the first `fancurve --set`,
+`tdp --set`, or `undervolt --set` made while a firmware profile is active — the
+behaviour z13ctl has always had. `--create` makes more.
+
+Setting a fan curve, TDP, or undervolt edits the profile you are *running*, and
+the change takes effect and persists immediately. There is no save step;
+`--save-as` copies the active profile under a new name rather than committing
+pending edits.
+
+`--profile <name>` on [`fancurve`](#fancurve), [`tdp`](#tdp), and
+[`undervolt`](#undervolt) edits a profile you are **not** running: the setting is
+stored and nothing is applied to hardware. That is how you build the profile
+[`autoswitch`](#autoswitch) selects on battery without applying it first.
+
+Selecting a custom profile puts the machine into the state that profile
+describes. A subsystem it does not set is cleared rather than left alone — a
+profile with no fan curve releases the fans to firmware auto, one with no
+undervolt resets it, and one with no TDP hands the power limits back to the
+firmware profile underneath. That is what makes switching between two custom
+profiles predictable.
+
+Custom profiles live in daemon state, so every custom-profile operation requires
+the daemon.
 
 ```sh
 z13ctl profile --get
 z13ctl profile --set performance
-z13ctl profile --set balanced
-z13ctl profile --set custom
+
+# build a profile without applying it
+z13ctl profile --create battery-uv
+z13ctl tdp --set 35 --profile battery-uv
+z13ctl undervolt --set -25 --profile battery-uv
+
+z13ctl profile --set battery-uv    # now apply it
+z13ctl profile --list
+z13ctl profile --save-as gaming    # copy the active profile
 ```
 
+Profile names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, and `_`, and
+may not be `quiet`, `balanced`, `performance`, or `custom`.
+
 !!! note
-    When the daemon is running, setting a profile also updates
-    `power-profiles-daemon` (if installed) to the equivalent PPD profile.
+    When the daemon is running, setting a firmware profile also updates
+    `power-profiles-daemon` (if installed) to the equivalent PPD profile. Custom
+    profiles deliberately do not.
+
+!!! warning "Deleting a profile"
+    z13ctl refuses to delete the active profile or one referenced by
+    `autoswitch`. Switch away, or reconfigure autoswitch, then delete.
+
+---
+
+## autoswitch
+
+Apply a different profile automatically when the charger is plugged or
+unplugged. Requires the daemon, which watches the power source.
+
+```
+z13ctl autoswitch [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the configuration and the current power source |
+| `--ac <profile>` | Profile to apply on AC power |
+| `--battery <profile>` | Profile to apply on battery |
+| `--on` | Enable autoswitch with the configured targets |
+| `--off` | Disable autoswitch, keeping the configured targets |
+| `--clear` | Disable autoswitch and clear both targets |
+
+Each side takes any profile name, firmware or custom. Setting `--ac` or
+`--battery` enables autoswitch unless `--off` is given, and changes only the side
+you name — `--battery quiet` leaves the AC target as it was. An empty target
+leaves that side alone, which hands it back to your desktop's power management:
+
+```sh
+z13ctl autoswitch --ac "" --battery battery-uv
+```
+
+The full recipe, matching the most common request — a firmware profile on AC and
+a custom profile with an undervolt on battery:
+
+```sh
+z13ctl profile --create battery-uv
+z13ctl tdp --set 35 --profile battery-uv
+z13ctl undervolt --set -25 --profile battery-uv
+z13ctl autoswitch --ac balanced --battery battery-uv
+z13ctl autoswitch --get
+```
+
+Autoswitch acts **only when the power source actually changes**. A profile you
+pick by hand therefore stays in force until the next plug or unplug, and z13ctl
+does not contest the profile with `power-profiles-daemon` in between. The
+transition is applied about two seconds after the event: that settle window lets
+the desktop's own transition write land first, and stops a loose USB-C connector
+from driving a profile change per bounce.
+
+The daemon also resolves the right profile for the current power source at
+startup, so a machine that was on AC when the daemon stopped and is on battery
+when it starts lands on the battery profile directly.
+
+!!! note "GNOME's Automatic Power Saver"
+    That setting triggers on *low battery*, not on unplugging, so it can still
+    move a firmware profile after autoswitch has acted. z13ctl deliberately
+    yields between transitions rather than fighting for the profile. If you want
+    your desktop to own one side entirely, give that side an empty target.
 
 ---
 
@@ -219,6 +323,7 @@ z13ctl fancurve [flags]
 | `--get` | Print the current fan curve, mode, RPM, and APU temperature |
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
 | `--reset` | Reset both fans to firmware auto mode |
+| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 The **mode** in `--get` output is the one to read. `custom` means the kernel is
 honouring your curve; `auto` means it is not, regardless of which points are
@@ -305,6 +410,7 @@ z13ctl tdp [flags]
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
 | `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to a 50% minimum curve; custom curves must keep all PWM values at or above 127 (50%). |
+| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 **PPT attributes:**
 
@@ -397,6 +503,7 @@ z13ctl undervolt [flags]
 | `--get` | Print current CO offset (from daemon state) |
 | `--set <value>` | Set all-core CPU CO offset (0 to -40) |
 | `--reset` | Reset CPU CO to stock (0) |
+| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 CO values have no sysfs readback — `--get` returns the last-applied values from
 daemon state. If a stock profile is active (quiet/balanced/performance), the

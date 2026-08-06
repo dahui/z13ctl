@@ -8,7 +8,8 @@ package api
 // back to direct hardware access.
 //
 // Subscribe opens a long-lived connection and returns a channel that receives
-// event name strings streamed by the daemon.
+// event name strings streamed by the daemon. Event names and their meanings are
+// in events.go.
 
 import (
 	"bufio"
@@ -46,6 +47,13 @@ type request struct {
 	PL2        string   `json:"pl2,omitempty"`
 	PL3        string   `json:"pl3,omitempty"`
 	Force      bool     `json:"force,omitempty"`
+	// Profile names the custom profile a fancurve/tdp/undervolt command edits.
+	// Empty means the active profile, which is also what every client written
+	// before this field existed sends.
+	Profile string `json:"profile,omitempty"`
+	AC      string `json:"ac,omitempty"`
+	Battery string `json:"battery,omitempty"`
+	Enabled bool   `json:"enabled,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -284,10 +292,17 @@ func SendFanCurveGet() (handled bool, value string, err error) {
 	return true, resp.Value, nil
 }
 
-// SendFanCurveSet sends a fan curve set command to the daemon.
-// The curve is applied to both fans simultaneously.
+// SendFanCurveSet sends a fan curve set command to the daemon, editing the
+// active custom profile. The curve is applied to both fans simultaneously.
 func SendFanCurveSet(curve string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "fancurve", Set: curve})
+	return SendFanCurveSetFor("", curve)
+}
+
+// SendFanCurveSetFor stores a fan curve in the named custom profile. An empty
+// profile means the active one, in which case the curve is also written to
+// hardware; naming a profile that is not active only records it.
+func SendFanCurveSetFor(profile, curve string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve", Set: curve, Profile: profile})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -299,7 +314,14 @@ func SendFanCurveSet(curve string) (bool, error) {
 
 // SendFanCurveReset resets both fans to firmware auto mode.
 func SendFanCurveReset() (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "fancurve-reset"})
+	return SendFanCurveResetFor("")
+}
+
+// SendFanCurveResetFor clears the fan curve from the named custom profile. An
+// empty profile means the active one, which also releases both fans to firmware
+// auto mode.
+func SendFanCurveResetFor(profile string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "fancurve-reset", Profile: profile})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -323,15 +345,24 @@ func SendTdpGet() (handled bool, value string, err error) {
 	return true, resp.Value, nil
 }
 
-// SendTdpSet sends a TDP set command to the daemon.
+// SendTdpSet sends a TDP set command to the daemon, editing the active custom
+// profile.
 func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
+	return SendTdpSetFor("", watts, pl1, pl2, pl3, force)
+}
+
+// SendTdpSetFor stores TDP limits in the named custom profile. An empty profile
+// means the active one, in which case the limits are also written to hardware;
+// naming a profile that is not active only records them.
+func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 	handled, resp, err := sendCommand(request{
-		Cmd:   "tdp",
-		Set:   watts,
-		PL1:   pl1,
-		PL2:   pl2,
-		PL3:   pl3,
-		Force: force,
+		Cmd:     "tdp",
+		Set:     watts,
+		PL1:     pl1,
+		PL2:     pl2,
+		PL3:     pl3,
+		Force:   force,
+		Profile: profile,
 	})
 	if !handled || err != nil {
 		return handled, err
@@ -344,7 +375,13 @@ func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 
 // SendTdpReset sends a TDP reset command to the daemon.
 func SendTdpReset() (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "tdp-reset"})
+	return SendTdpResetFor("")
+}
+
+// SendTdpResetFor clears the TDP limits from the named custom profile. An empty
+// profile means the active one, which also restores stock power limits.
+func SendTdpResetFor(profile string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "tdp-reset", Profile: profile})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -368,10 +405,18 @@ func SendUndervoltGet() (handled bool, value string, err error) {
 	return true, resp.Value, nil
 }
 
-// SendUndervoltSet sends a Curve Optimizer set command to the daemon.
-// cpu is a string representation of the CO offset (e.g. "-20").
+// SendUndervoltSet sends a Curve Optimizer set command to the daemon, editing
+// the active custom profile. cpu is a string representation of the CO offset
+// (e.g. "-20").
 func SendUndervoltSet(cpu string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu})
+	return SendUndervoltSetFor("", cpu)
+}
+
+// SendUndervoltSetFor stores a Curve Optimizer offset in the named custom
+// profile. An empty profile means the active one, in which case the offset is
+// also applied to hardware; naming a profile that is not active only records it.
+func SendUndervoltSetFor(profile, cpu string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu, Profile: profile})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -383,7 +428,13 @@ func SendUndervoltSet(cpu string) (bool, error) {
 
 // SendUndervoltReset resets Curve Optimizer to stock (0).
 func SendUndervoltReset() (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset"})
+	return SendUndervoltResetFor("")
+}
+
+// SendUndervoltResetFor clears the Curve Optimizer offset from the named custom
+// profile. An empty profile means the active one, which also resets hardware.
+func SendUndervoltResetFor(profile string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset", Profile: profile})
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -391,6 +442,92 @@ func SendUndervoltReset() (bool, error) {
 		return true, fmt.Errorf("%s", resp.Error)
 	}
 	return true, nil
+}
+
+// SendProfileCreate creates an empty custom profile. It does not activate it.
+func SendProfileCreate(name string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "profile-create", Set: name})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendProfileSave copies the active custom profile under a new name. It does
+// not activate the copy.
+func SendProfileSave(name string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "profile-save", Set: name})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendProfileDelete removes a saved custom profile. The daemon refuses to
+// delete the active profile or one referenced by autoswitch.
+func SendProfileDelete(name string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "profile-delete", Set: name})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendProfileList queries the daemon for the saved custom profiles.
+// Returns a JSON array of CustomProfile. Returns (false, "", nil) if the daemon
+// is not running.
+func SendProfileList() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "profile-list"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
+}
+
+// SendAutoswitchSet configures automatic profile selection by power source.
+// An empty ac or battery target leaves the profile alone on that source.
+func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error) {
+	handled, resp, err := sendCommand(request{
+		Cmd:     "autoswitch",
+		Enabled: enabled,
+		AC:      ac,
+		Battery: battery,
+	})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
+}
+
+// SendAutoswitchGet queries the daemon for the autoswitch configuration.
+// Returns a JSON AutoswitchState. Returns (false, "", nil) if the daemon is not
+// running.
+func SendAutoswitchGet() (handled bool, value string, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "autoswitch-get"})
+	if !handled || err != nil {
+		return handled, "", err
+	}
+	if !resp.OK {
+		return true, "", fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Value, nil
 }
 
 // SendGetState fetches the daemon's full cached state for GUI initialization.
@@ -407,7 +544,24 @@ func SendGetState() (bool, *State, error) {
 }
 
 // Subscribe opens a long-lived subscription to the daemon and returns a channel
-// that receives event name strings (e.g. "gui-toggle") as they are streamed.
+// that receives event name strings as they are streamed. Pass the events you
+// want — EventGUIToggle, EventPowerSource, EventStateChanged — or nil for all of
+// them. The daemon honours the list, so a client that asks only for
+// EventGUIToggle will not be woken by anything else.
+//
+// Events carry no payload by design: the name says what happened, and
+// SendGetState answers with current truth. Switch on the name rather than
+// treating every event alike —
+//
+//	for ev := range ch {
+//	    switch ev {
+//	    case api.EventGUIToggle:
+//	        toggleWindow()
+//	    case api.EventPowerSource, api.EventStateChanged:
+//	        refreshFromGetState()
+//	    }
+//	}
+//
 // The returned cancel func closes the underlying connection and stops the
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.

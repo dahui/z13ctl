@@ -92,17 +92,104 @@ func loadState() api.State {
 	for name, ls := range s.Devices {
 		s.Devices[name] = normalizeLightingState(ls, s.Lighting)
 	}
+	return migrateCustomProfiles(s)
+}
+
+// migrateCustomProfiles brings a loaded state up to the current schema.
+//
+// State files written before named profiles existed carry the custom fan curve,
+// TDP and undervolt in the top-level FanCurve/TDP/Undervolt fields; those become
+// the "custom" profile. Newer files carry CustomProfiles and the top-level
+// fields are only a projection of the active profile, so they are discarded and
+// rebuilt rather than trusted.
+//
+// It also drops any profile whose name is reserved. Validation rejects those at
+// the door, but state.json is a plain file a user can edit, and a custom profile
+// named "balanced" would otherwise shadow the firmware profile of that name.
+func migrateCustomProfiles(s api.State) api.State {
+	if s.CustomProfiles == nil && (s.FanCurve != nil || s.TDP != nil || s.Undervolt != nil) {
+		p := api.CustomProfile{
+			Name:      api.DefaultCustomProfile,
+			FanCurve:  s.FanCurve,
+			TDP:       s.TDP,
+			Undervolt: s.Undervolt,
+		}
+		if p.Undervolt != nil {
+			// Active describes hardware, which has not been written yet.
+			p.Undervolt.Active = false
+		}
+		s.CustomProfiles = map[string]api.CustomProfile{api.DefaultCustomProfile: p}
+		slog.Info("migrated saved custom settings into the \"custom\" profile")
+	}
+	for name := range s.CustomProfiles {
+		if api.IsStockProfileName(name) || name == "" {
+			slog.Warn("dropping custom profile with a reserved name", "profile", name)
+			delete(s.CustomProfiles, name)
+			continue
+		}
+		// The name field is what profile --list reports; a hand-edited file may
+		// disagree with the key, and the key is the addressable one.
+		p := s.CustomProfiles[name]
+		p.Name = name
+		s.CustomProfiles[name] = p
+	}
+	// An active profile that resolves to nothing — deleted by a hand edit, or
+	// dropped by a downgrade — must not be carried forward. Left in place it
+	// reads as neither stock nor custom, so nothing restores it and every later
+	// lookup falls through to an error. Clearing it makes effectiveProfile fall
+	// back to platform_profile, which is the honest answer.
+	if s.Profile != "" && !api.IsStockProfileName(s.Profile) && !s.IsCustomProfile(s.Profile) {
+		slog.Warn("saved profile no longer exists; falling back to the firmware profile", "profile", s.Profile)
+		s.Profile = ""
+	}
+
+	// The legacy fields are an output projection, never in-memory storage, so
+	// clear them here: leaving a copy behind invites a future edit to read the
+	// stale one instead of the profile map.
+	s.FanCurve, s.TDP, s.Undervolt = nil, nil, nil
+	return s
+}
+
+// withLegacyProjection returns s with the top-level FanCurve/TDP/Undervolt
+// fields filled in from the custom profile those fields used to mean.
+//
+// They are no longer storage — CustomProfiles is — but they remain part of the
+// get-state response and of the state file, so clients and daemons written
+// before named profiles existed keep working. Everything inside the daemon
+// reads the profile map; this projection exists purely for the wire, and is
+// applied at the two serialization boundaries (saveState and get-state).
+//
+// The source is the active custom profile, or "custom" when a firmware profile
+// is active — i.e. whatever a bare "undervolt --set" would edit and
+// "profile --set custom" would recall. Projecting nothing on a firmware profile
+// would be a regression on both sides: a GUI showing "saved undervolt, not
+// active" would lose the value it displays, and a downgrade taken while on a
+// firmware profile would write those settings away entirely. Active is false
+// throughout in that case, since a firmware profile clears the offset in
+// hardware, so nothing here can read as applied when it is not.
+func withLegacyProjection(s api.State) api.State {
+	p, ok := s.ActiveCustomProfile()
+	if !ok {
+		p = s.CustomProfiles[api.DefaultCustomProfile]
+	}
+	s.FanCurve = p.FanCurve
+	s.TDP = p.TDP
+	s.Undervolt = p.Undervolt
 	return s
 }
 
 // cloneState returns a deep copy of s that shares no mutable memory with it.
 //
-// api.State holds a map and four pointer fields, so the plain struct copy in
+// api.State holds two maps and five pointer fields, so the plain struct copy in
 // "s := d.state" still aliases live daemon state. Handlers release d.mu before
 // calling saveState, so marshaling an aliased snapshot races with any handler
-// that mutates the map or dereferences a pointer under the lock — a concurrent
+// that mutates a map or dereferences a pointer under the lock — a concurrent
 // map read/write, which the Go runtime turns into an unrecoverable crash rather
 // than a catchable panic. Always snapshot through this before unlocking.
+//
+// CustomProfiles needs a copy per entry, not just a new map header: each entry
+// carries three pointers and a slice, and a shallow copy would share every one
+// of them.
 func cloneState(s api.State) api.State {
 	c := s
 	if s.Devices != nil {
@@ -111,26 +198,62 @@ func cloneState(s api.State) api.State {
 			c.Devices[k] = v
 		}
 	}
-	if s.TDP != nil {
-		tdp := *s.TDP
-		c.TDP = &tdp
-	}
-	if s.Undervolt != nil {
-		uv := *s.Undervolt
-		c.Undervolt = &uv
-	}
-	if s.FanCurve != nil {
-		fc := *s.FanCurve
-		if s.FanCurve.Points != nil {
-			fc.Points = append([]api.FanCurvePoint(nil), s.FanCurve.Points...)
+	if s.CustomProfiles != nil {
+		c.CustomProfiles = make(map[string]api.CustomProfile, len(s.CustomProfiles))
+		for k, v := range s.CustomProfiles {
+			c.CustomProfiles[k] = cloneCustomProfile(v)
 		}
-		c.FanCurve = &fc
 	}
+	if s.Autoswitch != nil {
+		as := *s.Autoswitch
+		c.Autoswitch = &as
+	}
+	c.TDP = cloneTDP(s.TDP)
+	c.Undervolt = cloneUndervolt(s.Undervolt)
+	c.FanCurve = cloneFanCurve(s.FanCurve)
 	return c
 }
 
-// saveState atomically writes state to disk.
+// cloneCustomProfile deep-copies one profile, including the fan curve's points.
+func cloneCustomProfile(p api.CustomProfile) api.CustomProfile {
+	p.FanCurve = cloneFanCurve(p.FanCurve)
+	p.TDP = cloneTDP(p.TDP)
+	p.Undervolt = cloneUndervolt(p.Undervolt)
+	return p
+}
+
+func cloneFanCurve(fc *api.FanCurveState) *api.FanCurveState {
+	if fc == nil {
+		return nil
+	}
+	c := *fc
+	if fc.Points != nil {
+		c.Points = append([]api.FanCurvePoint(nil), fc.Points...)
+	}
+	return &c
+}
+
+func cloneTDP(t *api.TDPState) *api.TDPState {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
+}
+
+func cloneUndervolt(uv *api.UndervoltState) *api.UndervoltState {
+	if uv == nil {
+		return nil
+	}
+	c := *uv
+	return &c
+}
+
+// saveState atomically writes state to disk. The legacy FanCurve/TDP/Undervolt
+// fields are projected from the active profile on the way out so that a daemon
+// from before named profiles existed still finds the active profile's settings.
 func saveState(s api.State) error {
+	s = withLegacyProjection(s)
 	path := statePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err

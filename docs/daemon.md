@@ -145,7 +145,49 @@ all zones. `brightness` is 0–3.
 | Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
 | Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
 
-`profile` accepts `quiet`, `balanced`, `performance`, or the virtual `custom`.
+`profile` accepts `quiet`, `balanced`, `performance`, or the name of a custom
+profile (including `custom`).
+
+!!! warning "Unknown profile names are now rejected"
+    Earlier daemons forwarded any string to `platform_profile`. A name that is
+    neither a firmware profile nor a saved custom profile is now an error, so a
+    typo cannot reach the fan-curve reset on its way to failing. A client that
+    sent e.g. `low-power` will need updating.
+
+### Custom profiles
+
+| Command | Request | Response |
+|---|---|---|
+| Create profile | `{"cmd":"profile-create","set":"gaming"}` | `ok` |
+| Copy active profile | `{"cmd":"profile-save","set":"gaming"}` | `ok` |
+| Delete profile | `{"cmd":"profile-delete","set":"gaming"}` | `ok` |
+| List profiles | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
+
+`profile-list` returns a JSON array of `{name, fan_curve, tdp, undervolt,
+active}`. Names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, `_`, and
+may not be a firmware profile name or `custom`; `profile-create` and
+`profile-save` validate the name as sent rather than case-folding it.
+
+`profile-delete` refuses to remove the active profile or one referenced by
+`autoswitch`.
+
+Selecting a custom profile puts hardware into the state that profile describes,
+which means a subsystem it leaves unset is **cleared**, not left alone: no fan
+curve releases the fans to firmware auto, no undervolt resets the Curve
+Optimizer, and no TDP hands the power limits back to the firmware profile
+underneath. Without that, switching between two custom profiles would leave the
+previous one's limits and offset in force, and selecting A then B then A would
+not give the same machine as selecting A.
+
+### AC/battery autoswitch
+
+| Command | Request | Response |
+|---|---|---|
+| Configure | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
+| Get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON: `enabled`, `ac`, `battery`, `on_ac`, `source_known`) |
+
+An empty `ac` or `battery` leaves the profile alone on that source. Both targets
+are validated against the firmware profiles and the saved custom profiles.
 
 ### Fans, TDP, and undervolt
 
@@ -164,6 +206,21 @@ all zones. `brightness` is 0–3.
 The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
 value to all three. `force` is required for a sustained limit (PL1) above 75 W.
 
+All six commands accept an optional `profile` field naming the custom profile to
+edit. Absent or empty means the active profile — which is what every client
+written before this field existed sends, so their behaviour is unchanged. Naming
+a profile that is *not* active stores the setting and writes nothing to
+hardware; the fan-curve floor is then checked against that profile's own TDP
+rather than against the running machine, so a profile can never be stored in a
+state that would be unsafe when activated.
+
+!!! danger "The `profile` field is silently ignored by older daemons"
+    It is an additive field, so a daemon from before custom profiles unmarshals
+    the request, drops the field, **applies the setting to the running machine**,
+    and answers `ok`. A client that offers profile targeting must probe first —
+    `profile-list` answers `unknown command` on an older daemon, which is exactly
+    what `z13ctl` itself does before sending any `--profile` edit.
+
 !!! warning "Fan commands are restricted above 75 W sustained TDP"
     While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
     `fancurve` is rejected if any point falls below that floor, and
@@ -173,14 +230,14 @@ value to all three. `force` is required for a sustained limit (PL1) above 75 W.
     `tdp` applies the same rule in the other direction. Raising PL1 above 75 W
     writes the high-TDP curve **first**, and if that write fails the power limit
     is not applied at all. The same holds for the daemon's own restore paths —
-    startup, resume, and `profile --set custom`.
+    startup, resume, and selecting a custom profile.
 
 ### State and events
 
 | Command | Request | Response |
 |---|---|---|
 | Full state | `{"cmd":"get-state"}` | `ok`, `state` |
-| Subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streamed events |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle","power-source","state-changed"]}` | `ok`, then streamed events |
 
 `get-state` merges persisted state with live sysfs reads — see
 [State file](#state-file).
@@ -190,6 +247,35 @@ Each streamed event is a full response object with an `event` field:
 ```json
 {"ok":true,"event":"gui-toggle"}
 ```
+
+**Events**
+
+| Event | Emitted when |
+|---|---|
+| `gui-toggle` | the Armoury Crate button is pressed |
+| `power-source` | the machine moves between mains and battery power |
+| `state-changed` | the active profile, its settings, the saved profiles, or the autoswitch configuration change |
+
+`power-source` fires on the transition itself, whether or not autoswitch is
+configured, so a client can drive a plug/battery indicator from it alone.
+
+`state-changed` fires whatever the cause — this client, another client, the CLI,
+autoswitch, or a resume. A client displaying profile, TDP, fan curve, or
+undervolt values should re-read them with `get-state` when it arrives. Lighting
+is deliberately excluded: a brightness slider drag would emit a burst of events
+describing values the client just set itself.
+
+Events carry **no payload**. The name says what happened and `get-state` answers
+with current truth — a payload would describe the moment the event was queued,
+which can already be stale by the time the client handles it.
+
+The `events` list is honoured: a client that subscribes to `gui-toggle` alone is
+never woken by the other two. Subscribing with an empty list receives everything.
+
+!!! warning "Switch on the event name"
+    While `gui-toggle` was the only event, `for range ch { toggle() }` was a
+    reasonable client loop. It is not any more — it would toggle the window on
+    every power-source change. Dispatch on the name.
 
 Discriminate on the presence of `event` — a command reply never carries it.
 (Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate on
@@ -237,25 +323,44 @@ The file is written atomically after every successful command. It stores:
 
 - `lighting` — mode, color, color2, speed, brightness, enabled flag
 - `devices` — per-device overrides (keyboard/lightbar can have independent state)
-- `profile` — last-set performance profile
+- `profile` — the active profile: a firmware profile, or a custom profile name
 - `battery_limit` — last-set charge limit
-- `fan_curve` — custom curve points and mode (applied to both fans)
-- `tdp` — PL1, PL2, and PL3 power limits in watts
-- `undervolt` — CPU Curve Optimizer offset and active flag (preserved across
-  profile switches for recall; `undervolt-get` includes the current profile so
-  clients can distinguish active vs saved values)
+- `custom_profiles` — saved custom profiles keyed by name, each holding its own
+  `fan_curve`, `tdp`, and `undervolt`. This is the source of truth for custom
+  settings.
+- `autoswitch` — `enabled`, and the `ac` and `battery` profile targets
+- `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit of
+  clients and daemons from before named profiles existed. They carry the active
+  custom profile's settings, or `custom`'s when a firmware profile is active —
+  the same values selecting `custom` would recall, which is what keeps a "saved
+  undervolt, not active" display working and what stops a downgrade taken while
+  on `balanced` from writing those settings away. They are output only;
+  `custom_profiles` is what is read back.
+
+A state file written before named profiles existed has no `custom_profiles`, so
+its top-level `fan_curve`/`tdp`/`undervolt` are migrated into a profile called
+`custom` on first load — the same settings, now addressable by name. Nothing
+needs to be done by hand.
 
 On `get-state` requests the daemon also populates `temperature` (APU die
-temperature in °C), `fan_rpm` (fan speed in RPM), and `undervolt_available`
-(whether the `ryzen_smu` kernel module is present) from live sysfs reads.
-These are not persisted — they are real-time sensor values.
+temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
+is plugged in), and `undervolt_available` (whether the `ryzen_smu` kernel module
+is present) from live sysfs reads. These are not persisted — they are real-time
+sensor values.
 
-On startup the daemon reads this file and restores all saved settings before
-accepting any connections. If the last profile was `custom`, saved fan curves,
-TDP values, and undervolt offsets are re-applied to the hardware. If the last
-profile was a stock one, that profile's measured PPT values are written instead
-— the kernel's `ppt_*` attributes come up holding a stale 5 W default after
-boot, and nothing else restores them.
+On startup the daemon reads this file, resolves what the current power source
+calls for if autoswitch is configured, and restores all saved settings before
+accepting any connections. If the active profile is a custom one, its fan curve,
+TDP, and undervolt are re-applied to the hardware. If it is a firmware profile,
+that profile's measured PPT values are written instead — the kernel's `ppt_*`
+attributes come up holding a stale 5 W default after boot, and nothing else
+restores them.
+
+!!! warning "Downgrading loses named profiles"
+    A daemon from before this release reads only the top-level fields and drops
+    `custom_profiles` on its next save. The active profile's settings survive via
+    the projection above; any other saved profile does not. Copy `state.json`
+    aside before downgrading.
 
 !!! note "A corrupt state file is kept, not discarded"
     If `state.json` exists but cannot be parsed, the daemon renames it to
@@ -369,6 +474,52 @@ active, so selecting `quiet`, `balanced`, or `performance` with
     applies a curve directly. Since z13ctl 1.2.2 the command also fails with an
     error, rather than reporting success, if the kernel refuses to honour the
     curve it just wrote.
+
+---
+
+## AC/battery autoswitch
+
+When [`z13ctl autoswitch`](commands.md#autoswitch) is configured, the daemon
+applies the profile that matches the power source on every plug and unplug.
+
+The watcher is **edge-triggered** on the mains adapter's `online` attribute
+under `/sys/class/power_supply`, and never reads or writes `platform_profile`.
+That is what makes it safe to run alongside `power-profiles-daemon`: it reacts
+only to a value that neither z13ctl nor PPD nor the desktop can write, so the
+feedback loop that would produce a write-fight does not exist. The visible
+consequence, and the intended semantics, is that a profile you choose by hand
+stays in force until the power source actually changes.
+
+Detection uses two triggers and one observation. UPower's `OnBattery` property
+wakes the watcher immediately where UPower is running; a 2-second poll is the
+backstop that keeps this working in Steam Gaming Mode, on a bare session, or
+wherever UPower is absent. Either way the answer comes from sysfs, so there is
+one behaviour to reason about.
+
+A transition is confirmed on the following observation before anything is
+applied, so a change lands about two seconds after the event. That settle window
+lets the desktop's own transition write land first — a custom fan curve would
+otherwise be dropped in the gap before the [reconciler](#custom-fan-curve-reconciliation)
+notices — and stops a loose USB-C connector from driving a full power-limit, fan,
+and SMU write per bounce.
+
+Devices are selected by their `type` file, not by having an `online` file. On the
+Z13 the detachable keyboard registers as `hid-*-battery-N` and the USB-C ports as
+`ucsi-source-psy-*`, and all of them expose `online`; only `type` `Mains` is the
+charger. If no `Mains` supply exists at all — a VM, a desktop, a driver not yet
+bound — the source is treated as *unknown* and the watcher does nothing, rather
+than concluding the machine is on battery.
+
+There is deliberately no autoswitch hook in the resume path. Go timers do not
+advance across suspend, so the watcher's armed timer fires promptly after resume
+and handles an unplug-during-sleep on its own; duplicating the logic would race
+it and apply twice for one event.
+
+!!! note "GNOME's Automatic Power Saver"
+    That setting triggers on low battery rather than on unplugging, so it can
+    still move a firmware profile after autoswitch has acted. z13ctl yields
+    between transitions by design. Give a side an empty target to hand it to your
+    desktop entirely.
 
 ---
 
