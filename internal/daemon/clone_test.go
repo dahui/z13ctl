@@ -30,6 +30,23 @@ func sampleState() api.State {
 			Mode:   1,
 			Points: []api.FanCurvePoint{{Temp: 40, PWM: 50}, {Temp: 50, PWM: 80}},
 		},
+		Autoswitch: &api.AutoswitchState{Enabled: true, AC: "balanced", Battery: "battery-uv"},
+		CustomProfiles: map[string]api.CustomProfile{
+			"custom": {
+				Name:      "custom",
+				TDP:       &api.TDPState{PL1SPL: 15, PL2SPPT: 20, FPPT: 25, APUSPPT: 20, PlatformSPPT: 20},
+				Undervolt: &api.UndervoltState{CPUCO: -20, Active: true},
+				FanCurve: &api.FanCurveState{
+					Mode:   1,
+					Points: []api.FanCurvePoint{{Temp: 40, PWM: 50}, {Temp: 50, PWM: 80}},
+				},
+			},
+			"battery-uv": {
+				Name:      "battery-uv",
+				TDP:       &api.TDPState{PL1SPL: 35, PL2SPPT: 40, FPPT: 45},
+				Undervolt: &api.UndervoltState{CPUCO: -25},
+			},
+		},
 	}
 }
 
@@ -58,6 +75,88 @@ func TestCloneStateSharesNoMutableMemory(t *testing.T) {
 	}
 	if orig.FanCurve.Points[0].PWM != 50 {
 		t.Errorf("original FanCurve.Points[0].PWM = %d, want 50 — the slice is shared", orig.FanCurve.Points[0].PWM)
+	}
+}
+
+// TestCloneStateDeepCopiesCustomProfiles is the guard for the riskiest part of
+// named profiles: a new map header is not enough, because each entry carries
+// three pointers and a slice. A shallow entry copy reproduces exactly the
+// concurrent map/pointer mutation that the Go runtime turns into an
+// unrecoverable crash rather than a catchable panic.
+func TestCloneStateDeepCopiesCustomProfiles(t *testing.T) {
+	orig := sampleState()
+	c := cloneState(orig)
+
+	c.CustomProfiles["custom"].TDP.PL1SPL = 99
+	c.CustomProfiles["custom"].FanCurve.Points[0].PWM = 255
+	c.CustomProfiles["battery-uv"].Undervolt.CPUCO = -1
+	c.CustomProfiles["added"] = api.CustomProfile{Name: "added"}
+	c.Autoswitch.Battery = "something-else"
+
+	if orig.CustomProfiles["custom"].TDP.PL1SPL != 15 {
+		t.Errorf("original profile TDP = %d, want 15 — the entry's pointer is shared",
+			orig.CustomProfiles["custom"].TDP.PL1SPL)
+	}
+	if orig.CustomProfiles["custom"].FanCurve.Points[0].PWM != 50 {
+		t.Errorf("original profile curve point = %d, want 50 — the entry's slice is shared",
+			orig.CustomProfiles["custom"].FanCurve.Points[0].PWM)
+	}
+	if orig.CustomProfiles["battery-uv"].Undervolt.CPUCO != -25 {
+		t.Errorf("original profile CO = %d, want -25 — the entry's pointer is shared",
+			orig.CustomProfiles["battery-uv"].Undervolt.CPUCO)
+	}
+	if _, ok := orig.CustomProfiles["added"]; ok {
+		t.Error("a key added to the clone appeared in the original — the map is shared")
+	}
+	if orig.Autoswitch.Battery != "battery-uv" {
+		t.Errorf("original Autoswitch.Battery = %q, want \"battery-uv\" — the pointer is shared", orig.Autoswitch.Battery)
+	}
+}
+
+// TestWithLegacyProjection covers the compatibility shim: CustomProfiles is the
+// truth, and the top-level fields are filled in from the active profile only at
+// the serialization boundaries so clients written before named profiles existed
+// keep seeing the settings that are in force.
+func TestWithLegacyProjection(t *testing.T) {
+	s := api.State{
+		Profile: "battery-uv",
+		CustomProfiles: map[string]api.CustomProfile{
+			"battery-uv": {Name: "battery-uv", TDP: &api.TDPState{PL1SPL: 35}},
+		},
+	}
+	got := withLegacyProjection(s)
+	if got.TDP == nil || got.TDP.PL1SPL != 35 {
+		t.Errorf("projected TDP = %+v, want the active profile's 35W", got.TDP)
+	}
+	if got.FanCurve != nil || got.Undervolt != nil {
+		t.Error("projected fields the active profile does not set")
+	}
+
+	// On a firmware profile the projection falls back to "custom" — what a bare
+	// "undervolt --set" edits and "profile --set custom" recalls. Projecting
+	// nothing would lose the saved-but-inactive undervolt a GUI displays, and
+	// would write those settings away on a downgrade taken while on balanced.
+	s.Profile = "balanced"
+	s.TDP = &api.TDPState{PL1SPL: 99} // a stale projection from an earlier active profile
+	s.CustomProfiles[api.DefaultCustomProfile] = api.CustomProfile{
+		Name:      api.DefaultCustomProfile,
+		Undervolt: &api.UndervoltState{CPUCO: -20},
+	}
+	got = withLegacyProjection(s)
+	if got.TDP != nil {
+		t.Errorf("projected TDP = %+v, want nil — \"custom\" holds no TDP", got.TDP)
+	}
+	if got.Undervolt == nil || got.Undervolt.CPUCO != -20 {
+		t.Errorf("projected undervolt = %+v, want the saved -20 offset", got.Undervolt)
+	}
+	if got.Undervolt != nil && got.Undervolt.Active {
+		t.Error("the projection reads as applied while a firmware profile is active")
+	}
+
+	// Nothing saved at all: the fields stay nil rather than becoming zero values.
+	got = withLegacyProjection(api.State{Profile: "balanced"})
+	if got.FanCurve != nil || got.TDP != nil || got.Undervolt != nil {
+		t.Errorf("projection invented fields with nothing saved: %+v", got)
 	}
 }
 
@@ -91,6 +190,9 @@ func TestCloneStateHandlesNilFields(t *testing.T) {
 	c := cloneState(api.State{Profile: "balanced"})
 	if c.Devices != nil || c.TDP != nil || c.Undervolt != nil || c.FanCurve != nil {
 		t.Errorf("cloneState() populated nil fields: %+v", c)
+	}
+	if c.CustomProfiles != nil || c.Autoswitch != nil {
+		t.Errorf("cloneState() populated nil profile fields: %+v", c)
 	}
 	if c.Profile != "balanced" {
 		t.Errorf("Profile = %q, want \"balanced\"", c.Profile)
@@ -128,6 +230,13 @@ func TestSaveStateSnapshotIsRaceFree(t *testing.T) {
 				d.state.Devices["lightbar"] = api.LightingState{Brightness: i % 4}
 				d.state.Undervolt.Active = i%2 == 0
 				d.state.FanCurve.Points[0].PWM = i % 256
+				// The profile map is mutated by every setting handler and by the
+				// autoswitch watcher, through both the map header and the
+				// pointers inside each entry.
+				d.state.CustomProfiles["custom"].TDP.PL1SPL = 10 + i%40
+				d.state.CustomProfiles["custom"].FanCurve.Points[0].PWM = i % 256
+				setUndervoltActive(d.state, i%2 == 0)
+				d.state.Autoswitch.Battery = "battery-uv"
 				d.mu.Unlock()
 			}
 		}()

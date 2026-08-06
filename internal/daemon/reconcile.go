@@ -46,9 +46,9 @@ const reconcileQuietAfter = 3
 // reconcileObs is one observation: what daemon state says should be in force,
 // and what the hardware currently reports.
 type reconcileObs struct {
-	Profile   string              // effective profile from daemon state
-	WantCurve []api.FanCurvePoint // saved custom curve; nil if none
-	WantTDP   *api.TDPState       // saved custom TDP; nil if none
+	Custom    bool                // daemon state says a custom profile is active
+	WantCurve []api.FanCurvePoint // that profile's curve; nil if none
+	WantTDP   *api.TDPState       // that profile's TDP; nil if none
 	CurveMode int                 // curve device pwm1_enable; -1 if unreadable
 	PL1       int                 // effective sustained limit in watts; -1 if unreadable
 	ProfileHW string              // platform_profile, for logging only
@@ -81,11 +81,13 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 	st := prev
 	st.lastHW = obs.ProfileHW
 
-	// Only "custom" means the daemon is claiming ownership of fans and PPT.
-	// Every route to a stock profile — handleProfile, handleTDPReset,
+	// Only a custom profile means the daemon is claiming ownership of fans and
+	// PPT. Every route to a stock profile — handleProfile, handleTDPReset,
 	// handleFanCurveReset — updates state first, so this is what keeps the
-	// watcher from fighting a legitimate profile switch.
-	if obs.Profile != "custom" {
+	// watcher from fighting a legitimate profile switch. A firmware profile name
+	// is never custom even if a profile of that name somehow reached the map,
+	// so this cannot be subverted by a hand-edited state file.
+	if !obs.Custom {
 		st.failures = 0
 		st.quiet = false
 		return st, reconcileAction{}
@@ -177,14 +179,16 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	d.mu.Unlock()
 
 	obs := reconcileObs{
-		Profile:   s.Profile,
 		CurveMode: -1,
 		PL1:       -1,
 	}
-	if s.FanCurve != nil && s.FanCurve.Mode == 1 && len(s.FanCurve.Points) == 8 {
-		obs.WantCurve = s.FanCurve.Points
+	if active, ok := s.ActiveCustomProfile(); ok {
+		obs.Custom = true
+		if fc := active.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+			obs.WantCurve = fc.Points
+		}
+		obs.WantTDP = active.TDP
 	}
-	obs.WantTDP = s.TDP
 
 	// Cheap enough to read unconditionally, and reading them even when the
 	// profile is stock keeps lastHW meaningful for the log line.

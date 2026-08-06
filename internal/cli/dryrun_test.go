@@ -61,6 +61,41 @@ func TestDryRunProfile(t *testing.T) {
 	}
 }
 
+// TestDryRunProfileCustomDoesNotClaimAPlatformProfileWrite is the regression
+// guard for a long-standing lie: the dry run printed
+// `Would write "custom" to /sys/.../profile` for a custom profile, which the
+// daemon has never done — custom profiles deliberately leave platform_profile
+// to the desktop.
+func TestDryRunProfileCustomDoesNotClaimAPlatformProfileWrite(t *testing.T) {
+	for _, name := range []string{"custom", "battery-uv"} {
+		out := captureStdout(t, func() { cli.DryRunProfile(name) })
+		if strings.Contains(out, "Would write") {
+			t.Errorf("DryRunProfile(%q) claims a sysfs write:\n%s", name, out)
+		}
+		if !strings.Contains(out, name) {
+			t.Errorf("DryRunProfile(%q) does not name the profile:\n%s", name, out)
+		}
+	}
+}
+
+func TestDryRunAutoswitch(t *testing.T) {
+	out := captureStdout(t, func() { cli.DryRunAutoswitch(true, "balanced", "battery-uv") })
+	for _, want := range []string{"DRY RUN", "balanced", "battery-uv"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("DryRunAutoswitch output missing %q:\n%s", want, out)
+		}
+	}
+	// Configuration only: it must not read as having changed the profile.
+	if strings.Contains(out, "Would write") {
+		t.Errorf("DryRunAutoswitch claims a sysfs write:\n%s", out)
+	}
+
+	off := captureStdout(t, func() { cli.DryRunAutoswitch(false, "balanced", "battery-uv") })
+	if !strings.Contains(off, "disable") {
+		t.Errorf("DryRunAutoswitch(false, ...) does not say it disables autoswitch:\n%s", off)
+	}
+}
+
 func TestDryRunOff(t *testing.T) {
 	out := captureStdout(t, cli.DryRunOff)
 

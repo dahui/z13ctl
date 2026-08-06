@@ -13,7 +13,6 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 // watchResume connects to the system DBus and listens for resume events.
@@ -100,47 +99,24 @@ func (d *Daemon) restoreVolatileState() {
 	}
 	d.mu.Unlock()
 
-	if state.Profile != "custom" {
-		slog.Info("skipping volatile state restore (stock profile active)", "profile", state.Profile)
+	// The power source may have changed while the machine was asleep. There is
+	// deliberately no autoswitch hook here: Go timers use CLOCK_MONOTONIC and do
+	// not advance across suspend, so the power-source watcher's armed timer
+	// fires promptly after resume and handles it. Duplicating the logic here
+	// would race that watcher over hwMu and apply twice for one event. The cost
+	// is a few seconds during which the pre-sleep profile is back in force,
+	// which ApplyTDPSafely still keeps within the thermal floor.
+	active, ok := state.ActiveCustomProfile()
+	if !ok || active.Empty() {
+		slog.Info("skipping volatile state restore (no custom profile active)", "profile", state.Profile)
 		return
 	}
 
-	// Restore fan curve.
-	if fc := state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
-		if err := cli.SetBothFanCurves(fc.Points); err != nil {
-			slog.Warn("resume: failed to restore fan curve", "err", err)
-		} else {
-			slog.Info("resume: fan curve restored")
-		}
-	}
-
-	// Restore TDP. ApplyTDPSafely raises the fans to the 50% floor first when the
-	// sustained limit exceeds the safe max, and declines to apply the TDP at all
-	// if that fails.
-	if t := state.TDP; t != nil {
-		if err := cli.ApplyTDPSafely(*t); err != nil {
-			slog.Warn("resume: failed to restore TDP", "err", err)
-		} else {
-			slog.Info("resume: TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
-		}
-	}
-
-	// Restore undervolt.
-	if uv := state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
-		d.mu.Lock()
-		if d.state.Undervolt != nil {
-			d.state.Undervolt.Active = false
-		}
-		d.mu.Unlock()
-		if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
-			slog.Warn("resume: failed to restore undervolt", "err", err)
-		} else {
-			d.mu.Lock()
-			if d.state.Undervolt != nil {
-				d.state.Undervolt.Active = true
-			}
-			d.mu.Unlock()
-			slog.Info("resume: undervolt restored", "cpu", uv.CPUCO)
-		}
-	}
+	// Through the same helper as the socket command, the autoswitch watcher and
+	// daemon startup. Resume used to carry its own copy of the apply sequence,
+	// which is how the four drifted apart in the first place; every fix to the
+	// ordering or the clearing rules now lands here too. hwMu is already held,
+	// which is what applyCustomHW requires.
+	slog.Info("resume: restoring custom profile", "profile", active.Name)
+	d.applyCustomHW(active)
 }

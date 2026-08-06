@@ -127,7 +127,7 @@ func TestHandleProfileCustomWithoutSavedSettings(t *testing.T) {
 	if resp.OK {
 		t.Fatal("profile --set custom with no saved settings was accepted, want a rejection")
 	}
-	if !strings.Contains(resp.Error, "no custom settings saved") {
+	if !strings.Contains(resp.Error, "no settings saved") {
 		t.Errorf("error = %q, want it to explain nothing is saved", resp.Error)
 	}
 }
@@ -214,5 +214,158 @@ func TestRequestUnmarshalsProtocolShape(t *testing.T) {
 	want := request{Cmd: "tdp", Set: "60", PL1: "55", PL2: "65", PL3: "70", Force: true}
 	if !reflect.DeepEqual(req, want) {
 		t.Errorf("request = %+v, want %+v", req, want)
+	}
+}
+
+// The profile handlers below stay strictly on validation and refusal paths.
+// internal/cli's sysfs path vars are unexported, so a daemon test that got past
+// validation into applyProfileLocked would rewrite the developer's real power
+// limits, fan mode, and Curve Optimizer offset — the same warning as
+// TestHandleTDPForceBoundaryRejections.
+
+func TestHandleProfileCreateRejectsBadNames(t *testing.T) {
+	d := &Daemon{}
+	for _, name := range []string{"", "quiet", "balanced", "performance", "custom", "Gaming", "my profile", "a/b"} {
+		resp := d.handleProfileCreate(request{Cmd: "profile-create", Set: name})
+		if resp.OK {
+			t.Errorf("profile-create %q was accepted, want a rejection", name)
+		}
+	}
+}
+
+// TestHandleProfileRejectsUnknownNames is the guard that keeps a typo out of
+// cli.SetProfile. Before named profiles the daemon forwarded any string to
+// platform_profile; a mistyped name would now reach ResetAllFanCurves and drop
+// the user's fan curve on the way to failing.
+func TestHandleProfileRejectsUnknownNames(t *testing.T) {
+	d := &Daemon{state: api.State{Profile: "balanced"}}
+	for _, name := range []string{"performanc", "low-power", "gaming"} {
+		resp := d.handleProfile(request{Cmd: "profile", Set: name})
+		if resp.OK {
+			t.Fatalf("profile --set %q was accepted, want a rejection before any hardware write", name)
+		}
+		if !strings.Contains(resp.Error, "unknown profile") {
+			t.Errorf("error for %q = %q, want it to say the profile is unknown", name, resp.Error)
+		}
+	}
+}
+
+func TestHandleProfileDeleteRefusals(t *testing.T) {
+	base := func() api.State {
+		return api.State{
+			Profile: "gaming",
+			CustomProfiles: map[string]api.CustomProfile{
+				"gaming":     {Name: "gaming"},
+				"battery-uv": {Name: "battery-uv"},
+				"spare":      {Name: "spare"},
+			},
+			Autoswitch: &api.AutoswitchState{Enabled: true, AC: "balanced", Battery: "battery-uv"},
+		}
+	}
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{"unknown profile", "nope", "no saved profile"},
+		{"the active profile", "gaming", "active profile"},
+		{"referenced by autoswitch", "battery-uv", "autoswitch battery profile"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Daemon{state: base()}
+			resp := d.handleProfileDelete(request{Cmd: "profile-delete", Set: tt.target})
+			if resp.OK {
+				t.Fatalf("deleting %q was accepted, want a rejection", tt.target)
+			}
+			if !strings.Contains(resp.Error, tt.want) {
+				t.Errorf("error = %q, want it to mention %q", resp.Error, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandleAutoswitchRejectsUnknownTargets(t *testing.T) {
+	d := &Daemon{state: api.State{
+		CustomProfiles: map[string]api.CustomProfile{"battery-uv": {Name: "battery-uv"}},
+	}}
+	for _, req := range []request{
+		{Cmd: "autoswitch", Enabled: true, AC: "turbo", Battery: "battery-uv"},
+		{Cmd: "autoswitch", Enabled: true, AC: "balanced", Battery: "deleted"},
+	} {
+		resp := d.handleAutoswitch(req)
+		if resp.OK {
+			t.Errorf("autoswitch %+v was accepted, want a rejection", req)
+		}
+	}
+}
+
+// TestResolveEditTargetLocked covers where a setting command lands. The empty
+// name must behave exactly as z13ctl did before named profiles existed: create
+// and activate "custom" when a firmware profile is running.
+func TestResolveEditTargetLocked(t *testing.T) {
+	state := api.State{
+		Profile: "balanced",
+		CustomProfiles: map[string]api.CustomProfile{
+			"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 70}},
+		},
+	}
+	tests := []struct {
+		name     string
+		active   string
+		arg      string
+		wantName string
+		wantLive bool
+		wantErr  bool
+	}{
+		{name: "empty on a firmware profile creates and activates custom", active: "balanced", arg: "", wantName: "custom", wantLive: true},
+		{name: "empty on a custom profile edits it in place", active: "gaming", arg: "", wantName: "gaming", wantLive: true},
+		{name: "naming the active profile is live", active: "gaming", arg: "gaming", wantName: "gaming", wantLive: true},
+		{name: "naming another profile is not live", active: "balanced", arg: "gaming", wantName: "gaming", wantLive: false},
+		{name: "custom is addressable before it exists", active: "balanced", arg: "custom", wantName: "custom", wantLive: false},
+		{name: "a firmware profile has nothing to edit", active: "balanced", arg: "balanced", wantErr: true},
+		{name: "an unsaved name is rejected", active: "balanced", arg: "nope", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := cloneState(state)
+			s.Profile = tt.active
+			d := &Daemon{state: s}
+			d.mu.Lock()
+			got, err := d.resolveEditTargetLocked(tt.arg)
+			d.mu.Unlock()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveEditTargetLocked(%q) error = %v, wantErr %v", tt.arg, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got.Name != tt.wantName || got.Live != tt.wantLive {
+				t.Errorf("resolveEditTargetLocked(%q) = {Name:%q Live:%v}, want {Name:%q Live:%v}",
+					tt.arg, got.Name, got.Live, tt.wantName, tt.wantLive)
+			}
+		})
+	}
+}
+
+// TestEditTargetIsACopy guards commitEditLocked's premise: the target carries a
+// snapshot, so building the edited profile from it cannot mutate live state
+// before the commit — and cannot alias it afterwards.
+func TestEditTargetIsACopy(t *testing.T) {
+	d := &Daemon{state: api.State{
+		Profile: "gaming",
+		CustomProfiles: map[string]api.CustomProfile{
+			"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 70}},
+		},
+	}}
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked("")
+	d.mu.Unlock()
+	if err != nil {
+		t.Fatalf("resolveEditTargetLocked: %v", err)
+	}
+	target.Profile.TDP.PL1SPL = 5
+	if d.state.CustomProfiles["gaming"].TDP.PL1SPL != 70 {
+		t.Error("editing the target mutated live daemon state before any commit")
 	}
 }

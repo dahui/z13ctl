@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	fanCurveGetFlag   bool
-	fanCurveSetFlag   string
-	fanCurveResetFlag bool
+	fanCurveGetFlag     bool
+	fanCurveSetFlag     string
+	fanCurveResetFlag   bool
+	fanCurveProfileFlag string
 )
 
 var fancurveCmd = &cobra.Command{
@@ -46,9 +47,14 @@ power modes, power-profiles-daemon (including its automatic AC/battery
 switching), Fn+F5, asusctl. Run the daemon and it re-applies your curve within
 a couple of seconds; without it, re-run --set after any profile change.
 
+Use --profile <name> to store a curve in a profile you are NOT running: nothing
+is written to the fans, which is how you build the profile 'z13ctl autoswitch'
+selects on battery.
+
 Safety: while sustained TDP (PL1) is above 75W, every curve point must be at
 least 127 PWM (50%) and --reset is refused, since firmware auto mode has no
-minimum. Lower the limit first with 'z13ctl tdp --reset'.`,
+minimum. Lower the limit first with 'z13ctl tdp --reset'. A curve stored in a
+profile you are not running is checked against that profile's own power limit.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !fanCurveGetFlag && fanCurveSetFlag == "" && !fanCurveResetFlag {
@@ -104,18 +110,34 @@ func runFanCurveSet() error {
 	}
 
 	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
-	if err := cli.CheckFanCurveFloor(effectiveProfileForTDP(), points); err != nil {
-		return err
+	// Only meaningful for the running machine: when --profile names another
+	// profile the daemon checks the curve against that profile's own TDP, since
+	// hardware says nothing about a profile that is not applied.
+	if fanCurveProfileFlag == "" {
+		if err := cli.CheckFanCurveFloor(effectiveProfileForTDP(), points); err != nil {
+			return err
+		}
 	}
 
 	if dryRunFlag {
+		if fanCurveProfileFlag != "" {
+			cli.DryRunProfileEdit(fanCurveProfileFlag, "fan curve")
+			return nil
+		}
 		cli.DryRunFanCurve(points)
 		return nil
 	}
 
-	if handled, err := api.SendFanCurveSet(fanCurveSetFlag); handled {
+	if err := ensureProfileTargetSupported(fanCurveProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendFanCurveSetFor(fanCurveProfileFlag, fanCurveSetFlag); handled {
 		if err != nil {
 			return err
+		}
+		if fanCurveProfileFlag != "" {
+			fmt.Print(profileEditMessage(fanCurveProfileFlag, ""))
+			return nil
 		}
 		fmt.Println("Fan curves set for both fans (custom mode enabled)")
 		fmt.Println("  Note: the kernel driver drops custom fan curves whenever the system power")
@@ -124,6 +146,9 @@ func runFanCurveSet() error {
 		return nil
 	}
 
+	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
+		return err
+	}
 	if err := cli.SetBothFanCurves(points); err != nil {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
@@ -143,21 +168,37 @@ func runFanCurveReset() error {
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the protection the high-TDP curve
 	// provides. "tdp --reset" is the way out — it lowers power first.
-	if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
-		return err
+	if fanCurveProfileFlag == "" {
+		if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
+			return err
+		}
 	}
 
 	if dryRunFlag {
+		if fanCurveProfileFlag != "" {
+			cli.DryRunProfileEdit(fanCurveProfileFlag, "cleared fan curve")
+			return nil
+		}
 		cli.DryRunFanCurveReset()
 		return nil
 	}
 
-	if handled, err := api.SendFanCurveReset(); handled {
+	if err := ensureProfileTargetSupported(fanCurveProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendFanCurveResetFor(fanCurveProfileFlag); handled {
 		if err != nil {
 			return err
 		}
+		if fanCurveProfileFlag != "" {
+			fmt.Printf("Cleared the fan curve from profile %s\n", fanCurveProfileFlag)
+			return nil
+		}
 		fmt.Println("Fan curves reset to auto mode (both fans)")
 		return nil
+	}
+	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
+		return err
 	}
 	if err := cli.ResetAllFanCurves(); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
@@ -170,5 +211,6 @@ func init() {
 	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curve, mode, and RPM")
 	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm or temp:pct%,...)")
 	fancurveCmd.Flags().BoolVar(&fanCurveResetFlag, "reset", false, "Restore firmware auto fan mode")
+	fancurveCmd.Flags().StringVar(&fanCurveProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(fancurveCmd)
 }

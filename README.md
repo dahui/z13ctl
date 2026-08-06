@@ -75,6 +75,14 @@ z13ctl tdp --set 50
 
 # Undervolt CPU by -20 (Curve Optimizer, requires ryzen_smu)
 z13ctl undervolt --set -20
+
+# A different profile on AC and on battery.
+# --profile stores a setting without applying it, so you can build the battery
+# profile while still plugged in.
+z13ctl profile --create battery-uv
+z13ctl tdp --set 35 --profile battery-uv
+z13ctl undervolt --set -25 --profile battery-uv
+z13ctl autoswitch --ac balanced --battery battery-uv
 ```
 
 ## Documentation

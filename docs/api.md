@@ -65,6 +65,47 @@ for range ch {
 
 ---
 
+## Custom profiles
+
+Since api v1.2.0, custom settings live in named profiles. `State.CustomProfiles`
+is the source of truth; `State.FanCurve`, `State.TDP`, and `State.Undervolt`
+remain as a projection so existing clients keep working unchanged. They carry the
+active custom profile's settings, or `custom`'s when a firmware profile is
+active — the same values selecting `custom` would recall. `Undervolt.Active` is
+what says whether an offset is applied to hardware right now.
+
+Two things to move to:
+
+**`State.Profile == "custom"` is no longer the test for custom settings.** A
+named profile makes that comparison false. Use the method instead:
+
+```go
+if state.InCustomProfile() {
+    // show the fan curve / TDP / undervolt controls
+}
+if p, ok := state.ActiveCustomProfile(); ok {
+    fmt.Println(p.Name, p.TDP)
+}
+```
+
+**Profile-targeted setters.** `SendFanCurveSet`, `SendTdpSet`, and
+`SendUndervoltSet` are unchanged and edit the active profile. The `…For`
+variants take a profile name and store the setting without applying it, which is
+how a client builds the profile `SendAutoswitchSet` selects on battery:
+
+```go
+api.SendTdpSetFor("battery-uv", "35", "", "", "", false)
+api.SendAutoswitchSet(true, "balanced", "battery-uv")
+```
+
+!!! danger "Probe before offering profile targeting"
+    The wire field behind the `…For` variants is additive, so a daemon from
+    before custom profiles drops it, **applies the setting to the running
+    machine**, and answers `ok`. Call `SendProfileList` first: an older daemon
+    answers `unknown command`, and that is the only reliable signal.
+
+---
+
 ## Socket path
 
 ```go

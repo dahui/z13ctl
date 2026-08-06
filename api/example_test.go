@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/dahui/z13ctl/api"
@@ -315,4 +316,192 @@ func ExampleSubscribe() {
 	for event := range ch {
 		fmt.Println("received event:", event)
 	}
+}
+
+func ExampleSendProfileCreate() {
+	// Create an empty custom profile. It is not activated; add settings with
+	// the *For variants, then select it with SendProfileSet.
+	handled, err := api.SendProfileCreate("battery-uv")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("profile created")
+}
+
+func ExampleSendProfileSave() {
+	// Copy the profile currently in force under a new name, leaving the
+	// original active.
+	handled, err := api.SendProfileSave("gaming")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("profile copied")
+}
+
+func ExampleSendProfileDelete() {
+	// The daemon refuses to delete the active profile or one referenced by
+	// autoswitch.
+	handled, err := api.SendProfileDelete("gaming")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("profile deleted")
+}
+
+func ExampleSendProfileList() {
+	handled, value, err := api.SendProfileList()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	var profiles []struct {
+		api.CustomProfile
+		Active bool `json:"active"`
+	}
+	if err := json.Unmarshal([]byte(value), &profiles); err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, p := range profiles {
+		fmt.Println(p.Name, p.Active)
+	}
+}
+
+func ExampleSendTdpSetFor() {
+	// Store a 35W limit in a profile that is not running. Nothing is applied to
+	// hardware, which is what makes it possible to build the profile autoswitch
+	// selects on battery while still plugged in.
+	handled, err := api.SendTdpSetFor("battery-uv", "35", "", "", "", false)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("stored in battery-uv")
+}
+
+func ExampleSendFanCurveSetFor() {
+	// An empty profile name edits the active profile and writes hardware, which
+	// is exactly what SendFanCurveSet does.
+	handled, err := api.SendFanCurveSetFor("battery-uv", "30:40%,40:45%,50:50%,60:60%,70:70%,80:85%,90:100%,100:100%")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("stored in battery-uv")
+}
+
+func ExampleSendFanCurveResetFor() {
+	// Clear the fan curve from a stored profile, so it no longer controls fans.
+	handled, err := api.SendFanCurveResetFor("battery-uv")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("fan curve cleared")
+}
+
+func ExampleSendTdpResetFor() {
+	handled, err := api.SendTdpResetFor("battery-uv")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("power limits cleared")
+}
+
+func ExampleSendUndervoltSetFor() {
+	handled, err := api.SendUndervoltSetFor("battery-uv", "-25")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("stored in battery-uv")
+}
+
+func ExampleSendUndervoltResetFor() {
+	handled, err := api.SendUndervoltResetFor("battery-uv")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("undervolt cleared")
+}
+
+func ExampleSendAutoswitchSet() {
+	// Balanced on AC, a custom profile on battery. An empty target leaves that
+	// side to the desktop's own power management.
+	handled, err := api.SendAutoswitchSet(true, "balanced", "battery-uv")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("autoswitch configured")
+}
+
+func ExampleSendAutoswitchGet() {
+	handled, value, err := api.SendAutoswitchGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	var st struct {
+		api.AutoswitchState
+		OnAC bool `json:"on_ac"`
+	}
+	if err := json.Unmarshal([]byte(value), &st); err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println(st.Enabled, st.AC, st.Battery, st.OnAC)
 }

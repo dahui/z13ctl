@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	uvGetFlag   bool
-	uvSetFlag   string
-	uvResetFlag bool
+	uvGetFlag     bool
+	uvSetFlag     string
+	uvResetFlag   bool
+	uvProfileFlag string
 )
 
 var undervoltCmd = &cobra.Command{
@@ -42,7 +43,10 @@ Safety limits (matching G-Helper defaults):
 Requires the ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR).
 The amkillam fork is required for Strix Halo (Ryzen AI MAX+) support.
 CO values are volatile — they reset on reboot and sleep. The daemon reapplies
-them automatically on startup and resume when the custom profile is active.`,
+them automatically on startup and resume when a custom profile is active.
+
+Use --profile <name> to store an offset in a profile you are NOT running:
+nothing is applied to the CPU until you select that profile.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !uvGetFlag && uvSetFlag == "" && !uvResetFlag {
@@ -114,18 +118,28 @@ func runUndervoltSet() error {
 	}
 
 	if dryRunFlag {
+		if uvProfileFlag != "" {
+			cli.DryRunProfileEdit(uvProfileFlag, "Curve Optimizer offset")
+			return nil
+		}
 		cli.DryRunUndervolt(cpuOffset)
 		return nil
 	}
 
-	if handled, err := api.SendUndervoltSet(uvSetFlag); handled {
+	if err := ensureProfileTargetSupported(uvProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendUndervoltSetFor(uvProfileFlag, uvSetFlag); handled {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
+		fmt.Print(profileEditMessage(uvProfileFlag, fmt.Sprintf("Curve Optimizer set: CPU %d", cpuOffset)))
 		return nil
 	}
 
+	if err := requireDaemonForProfile(uvProfileFlag); err != nil {
+		return err
+	}
 	if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
 		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
@@ -135,18 +149,28 @@ func runUndervoltSet() error {
 
 func runUndervoltReset() error {
 	if dryRunFlag {
+		if uvProfileFlag != "" {
+			cli.DryRunProfileEdit(uvProfileFlag, "cleared Curve Optimizer offset")
+			return nil
+		}
 		cli.DryRunUndervoltReset()
 		return nil
 	}
 
-	if handled, err := api.SendUndervoltReset(); handled {
+	if err := ensureProfileTargetSupported(uvProfileFlag); err != nil {
+		return err
+	}
+	if handled, err := api.SendUndervoltResetFor(uvProfileFlag); handled {
 		if err != nil {
 			return err
 		}
-		fmt.Println("Curve Optimizer reset to stock (0)")
+		fmt.Print(profileEditMessage(uvProfileFlag, "Curve Optimizer reset to stock (0)"))
 		return nil
 	}
 
+	if err := requireDaemonForProfile(uvProfileFlag); err != nil {
+		return err
+	}
 	if err := cli.ResetCurveOptimizer(); err != nil {
 		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
@@ -158,5 +182,6 @@ func init() {
 	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print current Curve Optimizer offset")
 	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set all-core CPU CO offset (0 to -40)")
 	undervoltCmd.Flags().BoolVar(&uvResetFlag, "reset", false, "Reset CO to stock (0)")
+	undervoltCmd.Flags().StringVar(&uvProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(undervoltCmd)
 }

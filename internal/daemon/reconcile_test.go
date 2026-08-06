@@ -23,6 +23,39 @@ func curve(pwm int) []api.FanCurvePoint {
 	return points
 }
 
+// TestReconcileCustomFlagFollowsTheProfileMap covers what feeds obs.Custom:
+// reconcileOnce derives it from ActiveCustomProfile, so a named profile must
+// be defended exactly as "custom" is, and a stale or reserved name must not be.
+// The apply path itself cannot be exercised here — internal/cli's path vars are
+// unexported, so it would write the developer's real fan hardware.
+func TestReconcileCustomFlagFollowsTheProfileMap(t *testing.T) {
+	profiles := map[string]api.CustomProfile{
+		"battery-uv": {Name: "battery-uv", FanCurve: &api.FanCurveState{Mode: 1, Points: curve(120)}},
+		"balanced":   {Name: "balanced"}, // a hand-edited state file
+	}
+	tests := []struct {
+		profile string
+		want    bool
+	}{
+		{"battery-uv", true},
+		{api.DefaultCustomProfile, true},
+		{"balanced", false}, // reserved: the firmware profile always wins
+		{"performance", false},
+		{"deleted-profile", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		s := api.State{Profile: tt.profile, CustomProfiles: profiles}
+		active, ok := s.ActiveCustomProfile()
+		if ok != tt.want {
+			t.Errorf("ActiveCustomProfile() with Profile=%q returned ok=%v, want %v", tt.profile, ok, tt.want)
+		}
+		if ok && tt.profile == "battery-uv" && active.FanCurve == nil {
+			t.Error("the named profile's curve did not reach the watcher, so it would not be defended")
+		}
+	}
+}
+
 func TestReconcileTick(t *testing.T) {
 	saved := curve(120)
 	floorTDP := &api.TDPState{PL1SPL: 90, PL2SPPT: 90, FPPT: 90}
@@ -36,37 +69,33 @@ func TestReconcileTick(t *testing.T) {
 	}{
 		{
 			name: "stock profile is left alone even with hardware in auto",
-			obs:  reconcileObs{Profile: "balanced", WantCurve: saved, CurveMode: 2, PL1: 35},
-		},
-		{
-			name: "empty profile is not custom",
-			obs:  reconcileObs{Profile: "", WantCurve: saved, CurveMode: 2, PL1: 35},
+			obs:  reconcileObs{Custom: false, WantCurve: saved, CurveMode: 2, PL1: 35},
 		},
 		{
 			name: "curve still live: nothing to do",
-			obs:  reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: 1, PL1: 35},
+			obs:  reconcileObs{Custom: true, WantCurve: saved, CurveMode: 1, PL1: 35},
 		},
 		{
 			name: "unreadable mode: never act on an unknown",
-			obs:  reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: -1, PL1: 35},
+			obs:  reconcileObs{Custom: true, WantCurve: saved, CurveMode: -1, PL1: 35},
 		},
 		{
 			name: "full speed is more cooling than we would write",
-			obs:  reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: 0, PL1: 90},
+			obs:  reconcileObs{Custom: true, WantCurve: saved, CurveMode: 0, PL1: 90},
 		},
 		{
 			name:      "dropped to auto with a saved curve",
-			obs:       reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: 2, PL1: 35},
+			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: 35},
 			wantCurve: true,
 		},
 		{
 			name:      "unreadable PPT does not block restoring a saved curve",
-			obs:       reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: 2, PL1: -1},
+			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: -1},
 			wantCurve: true,
 		},
 		{
 			name:      "no saved curve but the high-TDP floor is required",
-			obs:       reconcileObs{Profile: "custom", CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
 			wantFloor: true,
 		},
@@ -76,36 +105,36 @@ func TestReconcileTick(t *testing.T) {
 			// leaves a sub-floor curve in state. Restoring it would undo the
 			// floor at the moment it is needed.
 			name:      "saved curve below the floor while the limit is high",
-			obs:       reconcileObs{Profile: "custom", WantCurve: saved, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
 			wantFloor: true,
 		},
 		{
 			name:      "saved curve already meets the floor",
-			obs:       reconcileObs{Profile: "custom", WantCurve: curve(cli.HighTDPMinPWM), CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, WantCurve: curve(cli.HighTDPMinPWM), CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
 			wantFloor: true, // its own points are at the floor
 		},
 		{
 			name: "no saved curve and the limit is safe",
-			obs:  reconcileObs{Profile: "custom", CurveMode: 2, PL1: cli.TDPMaxSafe},
+			obs:  reconcileObs{Custom: true, CurveMode: 2, PL1: cli.TDPMaxSafe},
 		},
 		{
 			name: "no saved curve and PPT unreadable",
-			obs:  reconcileObs{Profile: "custom", CurveMode: 2, PL1: -1},
+			obs:  reconcileObs{Custom: true, CurveMode: 2, PL1: -1},
 		},
 		{
 			name:    "PPT drifted from the saved custom value",
-			obs:     reconcileObs{Profile: "custom", CurveMode: 1, PL1: 35, WantTDP: floorTDP},
+			obs:     reconcileObs{Custom: true, CurveMode: 1, PL1: 35, WantTDP: floorTDP},
 			wantTDP: true,
 		},
 		{
 			name: "PPT matches the saved value",
-			obs:  reconcileObs{Profile: "custom", CurveMode: 1, PL1: 90, WantTDP: floorTDP},
+			obs:  reconcileObs{Custom: true, CurveMode: 1, PL1: 90, WantTDP: floorTDP},
 		},
 		{
 			name: "unreadable PPT is not a TDP mismatch",
-			obs:  reconcileObs{Profile: "custom", CurveMode: 1, PL1: -1, WantTDP: floorTDP},
+			obs:  reconcileObs{Custom: true, CurveMode: 1, PL1: -1, WantTDP: floorTDP},
 		},
 	}
 
@@ -139,7 +168,7 @@ func TestReconcileTick(t *testing.T) {
 // restore which can never succeed — revoked permissions, an unbound driver —
 // from writing a warning to the journal every two seconds forever.
 func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
-	obs := reconcileObs{Profile: "custom", WantCurve: curve(120), CurveMode: 2, PL1: 35}
+	obs := reconcileObs{Custom: true, WantCurve: curve(120), CurveMode: 2, PL1: 35}
 
 	// The loop increments failures itself; the tick must not clear them while
 	// the hardware still disagrees.
@@ -154,7 +183,7 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 
 	// A tick with nothing to do clears the latch, so the next real failure is
 	// logged again.
-	st, act = reconcileTick(st, reconcileObs{Profile: "custom", CurveMode: 1, PL1: 35})
+	st, act = reconcileTick(st, reconcileObs{Custom: true, CurveMode: 1, PL1: 35})
 	if !act.none() {
 		t.Fatalf("tick acted on a live curve: %+v", act)
 	}
@@ -165,7 +194,7 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 
 func TestReconcileTickTracksProfileForLogging(t *testing.T) {
 	st, _ := reconcileTick(reconcileState{lastHW: "performance"},
-		reconcileObs{Profile: "custom", CurveMode: 1, ProfileHW: "balanced"})
+		reconcileObs{Custom: true, CurveMode: 1, ProfileHW: "balanced"})
 	if st.lastHW != "balanced" {
 		t.Errorf("lastHW = %q, want \"balanced\"", st.lastHW)
 	}

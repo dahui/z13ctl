@@ -205,7 +205,23 @@ func ApplyTDPSafely(s api.TDPState) error {
 // unavailable when sysfs cannot be read at all.
 func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 	tdp, err := ReadEffectivePPT(profile)
-	if err != nil || tdp.PL1SPL <= TDPMaxSafe {
+	if err != nil {
+		return nil
+	}
+	return CheckCurveAgainstTDP(points, tdp.PL1SPL)
+}
+
+// CheckCurveAgainstTDP rejects a curve holding any point below HighTDPMinPWM
+// while pl1 is above TDPMaxSafe. It reads nothing, which is what makes it usable
+// for a custom profile that is not currently applied: hardware says nothing
+// about a profile that is not running, so the limit to check against is the one
+// stored in the same profile.
+//
+// Applying that check when a profile is *edited* means no profile can be saved
+// in a state that would be unsafe when it is later activated. ApplyTDPSafely
+// still fails closed at activation; this is the earlier, friendlier refusal.
+func CheckCurveAgainstTDP(points []api.FanCurvePoint, pl1 int) error {
+	if pl1 <= TDPMaxSafe {
 		return nil
 	}
 	for _, p := range points {
@@ -227,9 +243,21 @@ func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 // As with CheckFanCurveFloor, a PPT read failure is not a refusal.
 func CheckFanFloorRelease(profile string) error {
 	tdp, err := ReadEffectivePPT(profile)
-	if err != nil || tdp.PL1SPL <= TDPMaxSafe {
+	if err != nil {
+		return nil
+	}
+	return CheckFanFloorReleaseAt(tdp.PL1SPL)
+}
+
+// CheckFanFloorReleaseAt is CheckFanFloorRelease against a known sustained
+// limit rather than one read from hardware. It is what a custom profile that is
+// not currently applied has to be checked against: hardware says nothing about
+// a profile that is not running, and clearing the curve from a profile that
+// keeps a high limit would be unsafe the moment that profile is activated.
+func CheckFanFloorReleaseAt(pl1 int) error {
+	if pl1 <= TDPMaxSafe {
 		return nil
 	}
 	return fmt.Errorf("sustained TDP is %dW (above %dW), so fans must stay at or above %d PWM; lower it first with 'z13ctl tdp --reset'",
-		tdp.PL1SPL, TDPMaxSafe, HighTDPMinPWM)
+		pl1, TDPMaxSafe, HighTDPMinPWM)
 }

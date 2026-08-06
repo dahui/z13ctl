@@ -83,13 +83,54 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
+	// Resolve the power source before restoring anything, so a machine that was
+	// on AC when the daemon stopped and is on battery now lands on the battery
+	// profile directly. The watcher deliberately does not act on its first
+	// observation: the restore below already skips a redundant platform_profile
+	// write, and that write costs a WMI fan-controller reset (see the comment on
+	// the restore).
+	leftCustom := false
+	if onAC, acErr := cli.OnACPower(); acErr == nil {
+		if target := autoswitchTarget(d.state, onAC); target != "" {
+			source := "battery"
+			if onAC {
+				source = "AC"
+			}
+			slog.Info("autoswitch: selecting startup profile", "source", source, "profile", target)
+			leftCustom = d.state.InCustomProfile() && !d.state.IsCustomProfile(target)
+			d.state.Profile = target
+		}
+	}
+
+	// A daemon restart does not reset the fan controller or the Curve Optimizer
+	// — both are hardware state that outlives the process — so a custom profile
+	// that was in force is still in force now. If autoswitch has just moved us
+	// off it onto a firmware profile, release them, exactly as applyStockHW
+	// would. Without this the machine keeps running the old profile's fan curve
+	// and undervolt while the daemon reports a firmware profile, and the
+	// reconcile watcher stays inert because the profile is no longer custom.
+	if leftCustom {
+		if cli.SMUProbeUndervolt() {
+			if uvErr := cli.ResetCurveOptimizer(); uvErr != nil {
+				slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
+			}
+		}
+		if fanErr := cli.ResetAllFanCurves(); fanErr != nil {
+			slog.Warn("failed to release fans leaving the custom profile", "err", fanErr)
+		}
+	}
+
 	// Restore stock profile if saved, but only if it differs from the
 	// kernel's current profile. Writing the same value to platform_profile
 	// still triggers a WMI call that resets the fan controller, briefly
 	// stopping fans — harmful on daemon restart where the profile hasn't
-	// changed. Skip "custom" — it's a virtual profile that the kernel
-	// rejects; custom fan curves and TDP are restored separately below.
-	if d.state.Profile != "" && d.state.Profile != "custom" {
+	// changed. Skip custom profiles — they are never written to
+	// platform_profile; their fan curves and TDP are restored separately below.
+	// Gated on IsStockProfile, not on "not custom": a state file naming a profile
+	// that is neither — one deleted by hand, or lost in a downgrade — would
+	// otherwise be written straight to platform_profile, where the kernel rejects
+	// it. Only a firmware profile name may ever reach that attribute.
+	if cli.IsStockProfile(d.state.Profile) {
 		current := ""
 		if data, readErr := os.ReadFile(cli.FindProfilePath()); readErr == nil {
 			current = strings.TrimSpace(string(data))
@@ -127,34 +168,17 @@ func Run(ctx context.Context, watchBtn bool) error {
 		}
 	}
 
-	// Restore fan curve + TDP if last profile was "custom".
-	if d.state.Profile == "custom" {
-		if fc := d.state.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
-			if fcErr := cli.SetBothFanCurves(fc.Points); fcErr != nil {
-				slog.Warn("failed to restore fan curve", "err", fcErr)
-			} else {
-				slog.Info("fan curve restored")
-			}
-		}
-		if t := d.state.TDP; t != nil {
-			// ApplyTDPSafely raises the fans to the 50% floor first when the
-			// sustained limit exceeds the safe max, and declines to apply the
-			// TDP at all if that fails — better to boot at the existing limits
-			// than above the safe sustained max with no thermal floor.
-			if tdpErr := cli.ApplyTDPSafely(*t); tdpErr != nil {
-				slog.Warn("failed to restore TDP", "err", tdpErr)
-			} else {
-				slog.Info("TDP restored", "pl1", t.PL1SPL, "pl2", t.PL2SPPT, "pl3", t.FPPT)
-			}
-		}
-		if uv := d.state.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
-			if uvErr := cli.SetCurveOptimizer(uv.CPUCO); uvErr != nil {
-				slog.Warn("failed to restore undervolt", "err", uvErr)
-			} else {
-				d.state.Undervolt.Active = true
-				slog.Info("undervolt restored", "cpu", uv.CPUCO)
-			}
-		}
+	// Restore fan curve + TDP + undervolt if the last profile was a custom one.
+	// This goes through the same helper the socket command and the autoswitch
+	// watcher use, so startup cannot drift from them — in particular it clears
+	// the subsystems the profile does not set, which matters after a daemon
+	// restart where the previous profile's curve and offset are still live in
+	// hardware. ApplyTDPSafely still raises the fan floor before raising power
+	// and declines the TDP entirely if that write fails, so a machine can never
+	// come up above the safe sustained max without a floor.
+	if active, ok := d.state.ActiveCustomProfile(); ok && !active.Empty() {
+		slog.Info("restoring custom profile", "profile", active.Name)
+		d.applyCustomHW(active)
 	}
 
 	if watchBtn {
@@ -167,9 +191,12 @@ func Run(ctx context.Context, watchBtn bool) error {
 
 	go d.watchHotplug(ctx)
 
-	// State-driven, so it is a no-op on a machine that never uses the custom
+	// State-driven, so it is a no-op on a machine that never uses a custom
 	// profile; register it unconditionally.
 	go d.watchReconcile(ctx)
+
+	// Likewise inert until autoswitch is configured.
+	go d.watchPowerSource(ctx)
 
 	ln, err := d.getListener()
 	if err != nil {

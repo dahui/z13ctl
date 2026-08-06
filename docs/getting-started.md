@@ -170,22 +170,64 @@ Safety limit (matching G-Helper defaults): CPU 0 to -40.
 
 ---
 
-## Custom profile
+## Custom profiles
 
-The `custom` profile recalls previously saved fan curves, TDP, and undervolt
-settings from the daemon's state. At least one custom fan curve, TDP value, or
-undervolt offset must have been previously set.
+A custom profile is a named set of fan curve, TDP, and undervolt settings that
+z13ctl applies itself. The first custom setting you make while a firmware
+profile is active creates one called `custom`:
 
 ```sh
-# Set up a custom configuration
 z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 z13ctl tdp --set 50
 
-# Recall it later with custom profile
+# Recall it later
 z13ctl profile --set custom
 
-# Switch back to a stock profile (resets fan curves and TDP)
+# Switch back to a firmware profile (resets fan curves and TDP)
 z13ctl profile --set balanced
+```
+
+Editing a setting changes the profile you are running and persists immediately —
+there is no save step. Give a setup its own name with `--create`, or copy the one
+you are running with `--save-as`:
+
+```sh
+z13ctl profile --save-as quiet-work
+z13ctl profile --list
+```
+
+Requires the daemon, which is what stores and recalls custom profiles.
+
+---
+
+## A different profile on AC and battery
+
+Build the profile you want on battery first. `--profile` stores a setting in a
+profile you are *not* running, so nothing is applied to the machine while you set
+it up:
+
+```sh
+z13ctl profile --create battery-uv
+z13ctl tdp --set 35 --profile battery-uv
+z13ctl undervolt --set -25 --profile battery-uv
+```
+
+Then hand the pair to the daemon:
+
+```sh
+z13ctl autoswitch --ac balanced --battery battery-uv
+z13ctl autoswitch --get
+```
+
+Unplug the charger and the battery profile takes effect a couple of seconds
+later; plug it back in and you are on `balanced` again. A profile you pick by
+hand in between stays until the next plug or unplug.
+
+To hand one side back to your desktop's power management, leave its target
+empty:
+
+```sh
+z13ctl autoswitch --ac "" --battery battery-uv
 ```
 
 ---

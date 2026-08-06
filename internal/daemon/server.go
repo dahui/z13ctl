@@ -40,6 +40,13 @@ type request struct {
 	PL2        string   `json:"pl2,omitempty"`
 	PL3        string   `json:"pl3,omitempty"`
 	Force      bool     `json:"force,omitempty"`
+	// Profile names the custom profile a fancurve/tdp/undervolt command edits.
+	// Empty means the active profile — which is what every client written before
+	// this field existed sends, so their behaviour is unchanged.
+	Profile string `json:"profile,omitempty"`
+	AC      string `json:"ac,omitempty"`
+	Battery string `json:"battery,omitempty"`
+	Enabled bool   `json:"enabled,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -111,6 +118,18 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleProfile(req)
 	case "profile-get":
 		return handleProfileGet()
+	case "profile-create":
+		return d.handleProfileCreate(req)
+	case "profile-save":
+		return d.handleProfileSave(req)
+	case "profile-delete":
+		return d.handleProfileDelete(req)
+	case "profile-list":
+		return d.handleProfileList()
+	case "autoswitch":
+		return d.handleAutoswitch(req)
+	case "autoswitch-get":
+		return d.handleAutoswitchGet()
 	case "batterylimit":
 		return d.handleBatteryLimit(req)
 	case "batterylimit-get":
@@ -128,23 +147,30 @@ func (d *Daemon) dispatch(req request) response {
 	case "fancurve-get":
 		return handleFanCurveGet()
 	case "fancurve-reset":
-		return d.handleFanCurveReset()
+		return d.handleFanCurveReset(req)
 	case "tdp":
 		return d.handleTDP(req)
 	case "tdp-get":
 		return d.handleTDPGet()
 	case "tdp-reset":
-		return d.handleTDPReset()
+		return d.handleTDPReset(req)
 	case "undervolt":
 		return d.handleUndervolt(req)
 	case "undervolt-get":
 		return d.handleUndervoltGet()
 	case "undervolt-reset":
-		return d.handleUndervoltReset()
+		return d.handleUndervoltReset(req)
 	case "get-state":
 		d.mu.Lock()
-		s := cloneState(d.state)
+		// The legacy FanCurve/TDP/Undervolt fields are projected here from the
+		// active custom profile so clients written before named profiles existed
+		// still see the settings that are in force. Two of the three are then
+		// overwritten with live sysfs readings below.
+		s := withLegacyProjection(cloneState(d.state))
 		d.mu.Unlock()
+		if onAC, acErr := cli.OnACPower(); acErr == nil {
+			s.OnAC = onAC
+		}
 		// Populate firmware-managed fields from sysfs (not cached in daemon state).
 		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
 		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
@@ -353,100 +379,6 @@ func (d *Daemon) handleBrightness(req request) response {
 	return response{OK: true}
 }
 
-func (d *Daemon) handleProfile(req request) response {
-	if req.Set == "" {
-		return response{OK: false, Error: "profile requires a set field"}
-	}
-
-	profile := strings.ToLower(req.Set)
-
-	d.hwMu.Lock()
-	defer d.hwMu.Unlock()
-
-	// "custom" is a virtual profile: re-apply saved fan curve + TDP + UV.
-	if profile == "custom" {
-		// Snapshot under d.mu, then do the hardware work unlocked. Holding d.mu
-		// across cli.* calls — as this branch used to — takes d.mu before hwMu
-		// and inverts the lock order the rest of the daemon follows.
-		d.mu.Lock()
-		if d.state.FanCurve == nil && d.state.TDP == nil && d.state.Undervolt == nil {
-			d.mu.Unlock()
-			return response{OK: false, Error: "no custom settings saved; set fan curve, TDP, or undervolt first"}
-		}
-		d.state.Profile = "custom"
-		saved := cloneState(d.state)
-		d.mu.Unlock()
-
-		// Re-apply saved fan curve to both fans.
-		if fc := saved.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
-			if err := cli.SetBothFanCurves(fc.Points); err != nil {
-				slog.Warn("failed to reapply fan curve", "err", err)
-			}
-		}
-		// Re-apply saved TDP. ApplyTDPSafely raises the fans to the 50% floor
-		// before raising power (this branch used to do it the other way round,
-		// and discarded the fan error) and refuses the TDP if that write fails.
-		if t := saved.TDP; t != nil {
-			if err := cli.ApplyTDPSafely(*t); err != nil {
-				slog.Warn("failed to reapply TDP", "err", err)
-			}
-		}
-		// Re-apply saved undervolt.
-		uvActive := false
-		if uv := saved.Undervolt; uv != nil && cli.SMUProbeUndervolt() {
-			if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
-				slog.Warn("failed to reapply undervolt", "err", err)
-			} else {
-				uvActive = true
-			}
-		}
-
-		d.mu.Lock()
-		if uvActive && d.state.Undervolt != nil {
-			d.state.Undervolt.Active = true
-		}
-		s := cloneState(d.state)
-		d.mu.Unlock()
-		slog.Info("profile", "set", "custom")
-		if err := saveState(s); err != nil {
-			slog.Warn("failed to save state", "err", err)
-		}
-		return response{OK: true}
-	}
-
-	// Stock profile: reset UV to stock, write platform_profile, restore that
-	// profile's stock PPT, and only then release the fans to firmware auto. The
-	// firmware manages fan curves for stock profiles, but it does NOT re-apply
-	// per-profile PPT, so any custom watts would otherwise persist across the
-	// switch — restoreStockPPT does that explicitly. Fans are released last so
-	// they are never dropped to auto while a high custom TDP is still in force.
-	if cli.SMUProbeUndervolt() {
-		if err := cli.ResetCurveOptimizer(); err != nil {
-			slog.Warn("failed to reset undervolt", "err", err)
-		}
-	}
-	if err := cli.SetProfile(profile); err != nil {
-		return response{OK: false, Error: "profile: " + err.Error()}
-	}
-	restoreStockPPT(profile)
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves to auto", "err", err)
-	}
-
-	slog.Info("profile", "set", profile)
-	d.mu.Lock()
-	d.state.Profile = profile
-	if d.state.Undervolt != nil {
-		d.state.Undervolt.Active = false
-	}
-	s := cloneState(d.state)
-	d.mu.Unlock()
-	if err := saveState(s); err != nil {
-		slog.Warn("failed to save state", "err", err)
-	}
-	return response{OK: true}
-}
-
 // restoreStockPPT writes the measured stock PPT values for a stock profile back
 // to hardware. The asus-nb-wmi PPT attributes have no "reset to firmware
 // default" operation and the firmware does not re-apply per-profile limits on a
@@ -584,21 +516,38 @@ func (d *Daemon) handleFanCurve(req request) response {
 	}
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
-	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
-	// This reads hardware rather than the cached d.state.TDP, which can disagree
-	// with it — a TDP set while the daemon was down, or a reset state file — and
-	// silently skipped the guard. Matches the CLI's direct path.
-	if err := cli.CheckFanCurveFloor(d.effectiveProfile(), points); err != nil {
-		return response{OK: false, Error: "fancurve: " + err.Error()}
-	}
-	if err := cli.SetBothFanCurves(points); err != nil {
-		return response{OK: false, Error: "fancurve: " + err.Error()}
-	}
-	slog.Info("fancurve", "fans", "both")
+
 	d.mu.Lock()
-	d.state.FanCurve = &api.FanCurveState{Mode: 1, Points: points}
-	d.state.Profile = "custom"
-	s := cloneState(d.state)
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
+		return response{OK: false, Error: "fancurve: " + err.Error()}
+	}
+	d.mu.Unlock()
+
+	// Enforce the minimum PWM floor when the sustained TDP that will accompany
+	// this curve exceeds the safe max. For the live profile that limit comes
+	// from hardware, which is ground truth and can disagree with cached state —
+	// a TDP set while the daemon was down, or a reset state file. For any other
+	// profile it comes from that profile's own saved TDP, so a profile can never
+	// be stored in a state that would be unsafe the moment it is activated.
+	if err := cli.CheckCurveAgainstTDP(points, d.floorLimitFor(target)); err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
+	}
+
+	if target.Live {
+		if err := cli.SetBothFanCurves(points); err != nil {
+			return response{OK: false, Error: "fancurve: " + err.Error()}
+		}
+		slog.Info("fancurve", "fans", "both", "profile", target.Name)
+	} else {
+		slog.Info("fancurve", "profile", target.Name, "applied", false)
+	}
+
+	p := target.Profile
+	p.FanCurve = &api.FanCurveState{Mode: 1, Points: points}
+	d.mu.Lock()
+	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -606,22 +555,40 @@ func (d *Daemon) handleFanCurve(req request) response {
 	return response{OK: true}
 }
 
-func (d *Daemon) handleFanCurveReset() response {
+func (d *Daemon) handleFanCurveReset(req request) response {
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
+		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+	}
+	d.mu.Unlock()
+
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the very protection the high-TDP
-	// curve provides. "tdp --reset" is the way out — it lowers power first.
-	if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+	// curve provides. "tdp --reset" is the way out — it lowers power first. The
+	// same reasoning applies to clearing the curve from a profile that keeps a
+	// high TDP: it would be unsafe the moment that profile is activated.
+	if err := cli.CheckFanFloorReleaseAt(d.floorLimitFor(target)); err != nil {
 		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 	}
-	if err := cli.ResetAllFanCurves(); err != nil {
-		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+
+	if target.Live {
+		if err := cli.ResetAllFanCurves(); err != nil {
+			return response{OK: false, Error: "fancurve-reset: " + err.Error()}
+		}
+		slog.Info("fancurve-reset", "fans", "both", "profile", target.Name)
+	} else {
+		slog.Info("fancurve-reset", "profile", target.Name, "applied", false)
 	}
-	slog.Info("fancurve-reset", "fans", "both")
+
+	p := target.Profile
+	p.FanCurve = nil
 	d.mu.Lock()
-	d.state.FanCurve = nil
-	s := cloneState(d.state)
+	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -705,44 +672,100 @@ func (d *Daemon) handleTDP(req request) response {
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
 
-	// ApplyTDPSafely raises the fans to the 50% floor first when pl1 exceeds the
-	// safe sustained max, and refuses to apply the TDP at all if that fails.
-	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
-	if err := cli.ApplyTDPSafely(tdp); err != nil {
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
 		return response{OK: false, Error: "tdp: " + err.Error()}
 	}
-	if pl1 > cli.TDPMaxSafe {
-		slog.Warn("fans set to 50%+ curve for high TDP", "pl1", pl1)
-	}
-	slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3)
+	d.mu.Unlock()
 
+	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
+
+	// A profile that is not running must still be storable only in a state that
+	// is safe to activate: a high sustained limit alongside a curve that dips
+	// below the floor would be refused at activation, so refuse it here where
+	// the user can see why. The live profile needs no equivalent check —
+	// ApplyTDPSafely raises the floor itself.
+	if !target.Live && target.Profile.FanCurve != nil {
+		if err := cli.CheckCurveAgainstTDP(target.Profile.FanCurve.Points, pl1); err != nil {
+			return response{OK: false, Error: "tdp: " + err.Error() + " (stored in profile " + target.Name + ")"}
+		}
+	}
+
+	fc := target.Profile.FanCurve
+	if target.Live {
+		// ApplyTDPSafely raises the fans to the 50% floor first when pl1 exceeds
+		// the safe sustained max, and refuses to apply the TDP at all if that
+		// fails.
+		if err := cli.ApplyTDPSafely(tdp); err != nil {
+			return response{OK: false, Error: "tdp: " + err.Error()}
+		}
+		if pl1 > cli.TDPMaxSafe {
+			slog.Warn("fans set to 50%+ curve for high TDP", "pl1", pl1)
+		}
+		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
+	} else {
+		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name, "applied", false)
+	}
+
+	p := target.Profile
+	p.TDP = &tdp
 	d.mu.Lock()
-	d.state.TDP = &tdp
-	d.state.Profile = "custom"
-	fc := d.state.FanCurve
-	s := cloneState(d.state)
+	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
 	}
 
-	// If sustained TDP is now safe, restore saved fan curve (undo high-TDP curve).
-	if pl1 <= cli.TDPMaxSafe {
+	// With the limit safe again, put the fans back to what the profile actually
+	// describes: its own curve, or firmware auto when it has none. Releasing
+	// them in the second case is the part that used to be missing — the
+	// high-TDP floor stayed applied to a profile holding no curve, so the same
+	// profile gave a different machine depending on whether it was reached by
+	// lowering the TDP or by selecting it, which applyCustomHW does not do.
+	if target.Live && pl1 <= cli.TDPMaxSafe {
 		if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
 			if err := cli.SetBothFanCurves(fc.Points); err != nil {
 				slog.Warn("failed to restore fan curve after TDP change", "err", err)
 			} else {
 				slog.Info("fan curve restored after TDP reduced to safe levels")
 			}
+		} else if err := cli.ResetAllFanCurves(); err != nil {
+			slog.Warn("failed to release fans after TDP reduced to safe levels", "err", err)
 		}
 	}
 
 	return response{OK: true}
 }
 
-func (d *Daemon) handleTDPReset() response {
+// handleTDPReset lands on the balanced firmware profile when it targets the
+// live profile, and merely clears the stored limits when it targets another.
+func (d *Daemon) handleTDPReset(req request) response {
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
+		return response{OK: false, Error: "tdp-reset: " + err.Error()}
+	}
+	d.mu.Unlock()
+
+	if !target.Live {
+		p := target.Profile
+		p.TDP = nil
+		d.mu.Lock()
+		s := d.commitEditLocked(target, p)
+		d.mu.Unlock()
+		if err := saveState(s); err != nil {
+			slog.Warn("failed to save state", "err", err)
+		}
+		slog.Info("tdp-reset", "profile", target.Name, "applied", false)
+		return response{OK: true}
+	}
+
 	// Lower power first, then release the fans: balanced's sustained limit is
 	// below TDPMaxSafe, so by the time the fans drop to firmware auto the limit
 	// that required the 50% floor is gone. Doing it the other way round leaves a
@@ -768,12 +791,18 @@ func (d *Daemon) handleTDPReset() response {
 	}
 	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
-	d.state.TDP = nil
-	d.state.FanCurve = nil
-	d.state.Profile = "balanced"
-	if d.state.Undervolt != nil {
-		d.state.Undervolt.Active = false
+	// Clear the limits and curve from the profile that was running, not from a
+	// global slot: switching back to it later must not resurrect the TDP this
+	// command just reset in hardware.
+	p := target.Profile
+	p.TDP = nil
+	p.FanCurve = nil
+	if d.state.CustomProfiles == nil {
+		d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
 	}
+	d.state.CustomProfiles[target.Name] = p
+	d.state.Profile = "balanced"
+	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
@@ -787,8 +816,13 @@ func (d *Daemon) handleUndervoltGet() response {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 	d.mu.Lock()
-	uv := d.state.Undervolt
 	profile := d.state.Profile
+	// Report the offset that "undervolt --set" with no profile would replace:
+	// the active custom profile's, or the default one's when a firmware profile
+	// is active. Values survive a switch to a stock profile so they can be
+	// recalled; Active is what says whether they are in hardware right now.
+	target, _ := d.resolveEditTargetLocked("")
+	uv := target.Profile.Undervolt
 	d.mu.Unlock()
 
 	uvState := api.UndervoltState{}
@@ -821,15 +855,32 @@ func (d *Daemon) handleUndervolt(req request) response {
 		return response{OK: false, Error: err.Error()}
 	}
 
-	if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
 		return response{OK: false, Error: "undervolt: " + err.Error()}
 	}
+	d.mu.Unlock()
 
-	slog.Info("undervolt", "cpu", cpuOffset)
+	active := false
+	if target.Live {
+		if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
+			return response{OK: false, Error: "undervolt: " + err.Error()}
+		}
+		active = true
+		slog.Info("undervolt", "cpu", cpuOffset, "profile", target.Name)
+	} else {
+		slog.Info("undervolt", "cpu", cpuOffset, "profile", target.Name, "applied", false)
+	}
+
+	p := target.Profile
+	p.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, Active: active}
 	d.mu.Lock()
-	d.state.Undervolt = &api.UndervoltState{CPUCO: cpuOffset, Active: true}
-	d.state.Profile = "custom"
-	s := cloneState(d.state)
+	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
@@ -837,19 +888,35 @@ func (d *Daemon) handleUndervolt(req request) response {
 	return response{OK: true}
 }
 
-func (d *Daemon) handleUndervoltReset() response {
+func (d *Daemon) handleUndervoltReset(req request) response {
 	if !cli.SMUProbeUndervolt() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
-	if err := cli.ResetCurveOptimizer(); err != nil {
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
+	d.mu.Lock()
+	target, err := d.resolveEditTargetLocked(req.Profile)
+	if err != nil {
+		d.mu.Unlock()
 		return response{OK: false, Error: "undervolt-reset: " + err.Error()}
 	}
+	d.mu.Unlock()
 
-	slog.Info("undervolt-reset")
+	if target.Live {
+		if err := cli.ResetCurveOptimizer(); err != nil {
+			return response{OK: false, Error: "undervolt-reset: " + err.Error()}
+		}
+		slog.Info("undervolt-reset", "profile", target.Name)
+	} else {
+		slog.Info("undervolt-reset", "profile", target.Name, "applied", false)
+	}
+
+	p := target.Profile
+	p.Undervolt = nil
 	d.mu.Lock()
-	d.state.Undervolt = nil
-	s := cloneState(d.state)
+	s := d.commitEditLocked(target, p)
 	d.mu.Unlock()
 	if err := saveState(s); err != nil {
 		slog.Warn("failed to save state", "err", err)
