@@ -577,6 +577,44 @@ contrib/
   matched. nil means "the limit imposes nothing and the profile has no curve;
   leave the fans where they are". The helper is pure so the table can cover it
   without writing the developer's fan controller.
+- **The reconcile watcher's undervolt arm is signal-driven, not
+  observation-driven, because CO has no readback.** `SetCurveOptimizer` and
+  `ResetCurveOptimizer` are write-only — the ryzen_smu interface offers nothing to
+  read back — so the watcher cannot tell that hardware lost the offset. CO is
+  volatile across suspend and `restoreVolatileState` normally replaces it; when
+  that signal never arrives the offset sits at stock while state reports it
+  applied, and no observation can notice. `reconcileTick` therefore sets
+  `act.Undervolt` on exactly one path: the stand-down budget expiring, which is
+  the only evidence available that a `PrepareForSleep(false)` went missing. It is
+  deliberately **not** a periodic re-apply — that would write the CPU voltage
+  curve every 2 s on no evidence — and it is idempotent in the case the signal
+  cannot distinguish (an abandoned suspend never lost the offset).
+  `cli.SMUProbeUndervolt()` is called in the *apply* step rather than the observe
+  step so the common path never touches it; the daemon's startup probe means the
+  `sync.Once` makes it a cached bool read rather than the destructive write it
+  would otherwise be.
+- **`cli.DryRunTdp` takes the curve as a parameter; it must not read hwmon.**
+  Mirroring `ApplyTDPSafely`'s own `want`, the CLI passes `cli.LiveFanCurve()`.
+  Reading the fan mode inside the function made `internal/cli/dryrun_test.go`
+  depend on the developer's machine — and that test package is `cli_test`, so
+  `newFakeSysfs` is out of reach. It was not theoretical: only the `len(live) == 0`
+  branch prints `HighTDPMinPWM`, and `TestDryRunTdp_HighSustained` asserts on it,
+  so the test passed only while the machine happened to be on firmware auto and
+  failed outright with a curve live. Any future `DryRun*` that would consult
+  hardware state should take it as an argument for the same reason.
+- **`Run()` persists a startup autoswitch decision that lands on a firmware
+  profile.** A custom target is saved by `applyCustomHW`; a firmware target had no
+  such path, so the daemon acted on a decision it never recorded and the state file
+  kept naming the previous session's profile. That is self-correcting only while
+  autoswitch stays enabled and configured identically.
+- **`handleTDPReset` writes `platform_profile` even when already on `balanced`,
+  and that is deliberate.** The redundant write costs a WMI call whose
+  fan-controller reset is immediately superseded by the `ResetAllFanCurves` that
+  follows, so it is invisible — whereas guarding it would also skip `setPPD`,
+  since `cli.SetProfile` only syncs power-profiles-daemon after a successful
+  primary write. `Run()`'s same-value guard exists because nothing else there is
+  touching the fans; that reasoning does not transfer to a command whose whole
+  purpose is to land on `balanced`.
 - **Activating a custom profile *clears* the subsystems it does not set.**
   `applyCustomHW` releases the fans when the profile has no curve, resets the
   Curve Optimizer when it has no offset, and hands the PPT limits back to the

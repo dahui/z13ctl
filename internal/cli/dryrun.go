@@ -237,10 +237,19 @@ func DryRunFanCurveReset() {
 //
 // The limits come from TDPStateFor and the fan state from the same
 // FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so the *rule*
-// cannot drift from the real path. The input can: this predicts from the curve
-// live in hardware, while the daemon applies the active profile's *stored* curve.
-// The two agree whenever that profile is the one in force, which is the normal
-// case, and a preview is allowed to be approximate where a real write is not.
+// cannot drift from the real path. The input can: live is the curve the caller
+// intends to run — the CLI passes LiveFanCurve() — while the daemon applies the
+// active profile's *stored* curve. The two agree whenever that profile is the one
+// in force, which is the normal case, and a preview is allowed to be approximate
+// where a real write is not.
+//
+// live is a parameter rather than a LiveFanCurve() call in here, mirroring
+// ApplyTDPSafely's own want parameter, because reading hwmon made this function —
+// and so dryrun_test.go, which is an external test package and cannot reach
+// newFakeSysfs — depend on the developer's fan mode. That was not theoretical:
+// only the len(live) == 0 branch below prints HighTDPMinPWM, and
+// TestDryRunTdp_HighSustained asserts on it, so the test passed only while the
+// machine happened to be on firmware auto and failed outright with a curve live.
 //
 // It previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
 // --force was given and any limit exceeded the safe max — three separate
@@ -249,7 +258,7 @@ func DryRunFanCurveReset() {
 // whole floor curve would always be written above the safe max, which stopped
 // being true once the floor became a per-point minimum rather than a replacement
 // curve.
-func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
+func DryRunTdp(watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	s := TDPStateFor(watts, pl1, pl2, pl3)
 	if force {
@@ -261,7 +270,6 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
-		live := LiveFanCurve()
 		switch {
 		case len(live) == 0:
 			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",

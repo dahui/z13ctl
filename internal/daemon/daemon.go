@@ -125,16 +125,13 @@ func Run(ctx context.Context, opts Options) error {
 	// observation: the restore below already skips a redundant platform_profile
 	// write, and that write costs a WMI fan-controller reset (see the comment on
 	// the restore).
-	leftCustom := false
+	leftCustom, autoswitched := false, false
 	if onAC, acErr := cli.OnACPower(); acErr == nil {
 		if target := autoswitchTarget(d.state, onAC); target != "" {
-			source := "battery"
-			if onAC {
-				source = "AC"
-			}
-			slog.Info("autoswitch: selecting startup profile", "source", source, "profile", target)
+			slog.Info("autoswitch: selecting startup profile", "source", sourceName(onAC), "profile", target)
 			leftCustom = d.state.InCustomProfile() && !d.state.IsCustomProfile(target)
 			d.state.Profile = target
+			autoswitched = true
 		}
 	}
 
@@ -215,6 +212,17 @@ func Run(ctx context.Context, opts Options) error {
 	if active, ok := d.state.ActiveCustomProfile(); ok && !active.Empty() {
 		slog.Info("restoring custom profile", "profile", active.Name)
 		d.applyCustomHW(active)
+	} else if autoswitched {
+		// Persist the startup autoswitch decision. A custom target is saved by
+		// applyCustomHW above, but a firmware target had no such path, so the
+		// daemon acted on a decision it never recorded: the state file kept naming
+		// the profile from the previous session. That is self-correcting only while
+		// autoswitch stays enabled and configured the same way — disable it, or
+		// clear one side, and the next start restores a profile the machine had
+		// already been switched away from.
+		if saveErr := saveState(cloneState(d.state)); saveErr != nil {
+			slog.Warn("failed to save the startup autoswitch profile", "err", saveErr)
+		}
 	}
 
 	if opts.WatchButton {

@@ -167,7 +167,7 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag)
+		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag, cli.LiveFanCurve())
 		return nil
 	}
 

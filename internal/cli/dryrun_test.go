@@ -227,7 +227,7 @@ func TestDryRunFanCurveReset(t *testing.T) {
 }
 
 func TestDryRunTdp(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 0, 0, 0, false) })
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 0, 0, 0, false, nil) })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -252,7 +252,7 @@ func TestDryRunTdp(t *testing.T) {
 // has never done — it writes the 50% floor curve with pwm_enable=1. A dry run
 // that describes an operation the tool does not perform is worse than none.
 func TestDryRunTdp_HighSustained(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
+	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
 
 	// Reference the constant rather than the number: the floor has moved once
 	// already (80% -> 50%) and these assertions should not need revisiting.
@@ -270,8 +270,8 @@ func TestDryRunTdp_HighSustained(t *testing.T) {
 // TestDryRunTdp_FanFloorIgnoresForce: the floor depends on the sustained limit,
 // not on --force. The old code only mentioned fans when --force was passed.
 func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
-	forced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true) })
-	unforced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, false) })
+	forced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
+	unforced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, false, nil) })
 
 	floor := strconv.Itoa(cli.HighTDPMinPWM)
 	if !strings.Contains(unforced, floor) {
@@ -286,7 +286,7 @@ func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
 // does not trigger the floor — only the sustained limit does. The old condition
 // fired on pl2/pl3 as well.
 func TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 50, 90, 90, true) })
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 50, 90, 90, true, nil) })
 
 	if strings.Contains(out, strconv.Itoa(cli.HighTDPMinPWM)) || strings.Contains(out, "fan") {
 		t.Errorf("burst limits above the safe max must not imply a fan change; got:\n%s", out)
@@ -294,7 +294,7 @@ func TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone(t *testing.T) {
 }
 
 func TestDryRunTdp_PLOverrides(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 45, 55, 60, false) })
+	out := captureStdout(t, func() { cli.DryRunTdp(50, 45, 55, 60, false, nil) })
 
 	if !strings.Contains(out, "45") {
 		t.Error("DryRunTdp PL overrides: missing pl1=45")
@@ -358,5 +358,53 @@ func TestDryRunApply_ZeroColor_RandomFlag(t *testing.T) {
 	// randFlag 0xFF should appear in the SetMode packet hex
 	if !strings.Contains(out, "FF") {
 		t.Error("DryRunApply zero-color: expected FF (randFlag) in output")
+	}
+}
+
+// TestDryRunTdp_HighSustainedWithLiveCurve covers the two branches that were
+// unreachable from this test package while DryRunTdp read the fan mode itself.
+//
+// Passing the curve in is what makes them testable, and their absence was not
+// harmless: only the no-curve branch prints HighTDPMinPWM, so
+// TestDryRunTdp_HighSustained passed only while the developer's machine happened
+// to be on firmware auto. With a custom curve live it asserted on a string the
+// output never contains.
+//
+// No t.Parallel: these redirect os.Stdout, which is process-global.
+func TestDryRunTdp_HighSustainedWithLiveCurve(t *testing.T) {
+	flat := func(pwm int) []api.FanCurvePoint {
+		points := make([]api.FanCurvePoint, 8)
+		for i := range points {
+			points[i] = api.FanCurvePoint{Temp: 30 + i*10, PWM: pwm}
+		}
+		return points
+	}
+
+	// A curve flat at the floor's bottom still dips under the ramp above 40 °C,
+	// so the floor raises it — the case the scalar-minimum rule used to wave
+	// through.
+	raised := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, flat(cli.HighTDPMinPWM)) })
+	if !strings.Contains(raised, "raise") {
+		t.Errorf("a curve flat at the floor's bottom must be described as raised; got:\n%s", raised)
+	}
+	if strings.Contains(raised, "unchanged") {
+		t.Errorf("a curve the ramp raises must not be described as unchanged; got:\n%s", raised)
+	}
+
+	// A curve at 100% everywhere is above the ramp at every temperature and must
+	// be reported as kept exactly as drawn.
+	kept := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, flat(255)) })
+	if !strings.Contains(kept, "unchanged") {
+		t.Errorf("a curve above the ramp everywhere must be described as unchanged; got:\n%s", kept)
+	}
+	if strings.Contains(kept, "raise") {
+		t.Errorf("a curve above the ramp everywhere must not be described as raised; got:\n%s", kept)
+	}
+
+	// And the no-curve case still names the floor, which is what the older test
+	// was really pinning.
+	none := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
+	if !strings.Contains(none, strconv.Itoa(cli.HighTDPMinPWM)) {
+		t.Errorf("with no curve to keep the floor value must be named; got:\n%s", none)
 	}
 }

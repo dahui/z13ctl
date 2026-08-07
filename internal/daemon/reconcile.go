@@ -76,6 +76,7 @@ type reconcileObs struct {
 	SuspendGen int                 // increments per suspend; see the gate in reconcileTick
 	WantCurve  []api.FanCurvePoint // that profile's curve; nil if none
 	WantTDP    *api.TDPState       // that profile's TDP; nil if none
+	WantCO     *int                // that profile's Curve Optimizer offset; nil if none
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
 	PL1        int                 // effective sustained limit in watts; -1 if unreadable
 	ProfileHW  string              // platform_profile, for logging only
@@ -84,13 +85,21 @@ type reconcileObs struct {
 // reconcileAction is what a tick decided to put back. A zero value means
 // "leave the hardware alone", which is the common case.
 type reconcileAction struct {
-	Curve  []api.FanCurvePoint
-	TDP    *api.TDPState
-	Reason string
+	Curve []api.FanCurvePoint
+	TDP   *api.TDPState
+	// Undervolt re-applies the Curve Optimizer offset. Unlike Curve and TDP this
+	// is never driven by an observation, because there is no CO readback in the
+	// ryzen_smu interface at all — SetCurveOptimizer and ResetCurveOptimizer are
+	// write-only. It is set on exactly one path: a stand-down that expired,
+	// meaning a PrepareForSleep(false) never arrived. See reconcileTick.
+	Undervolt *int
+	Reason    string
 }
 
 // none reports whether the action would touch anything.
-func (a reconcileAction) none() bool { return a.Curve == nil && a.TDP == nil }
+func (a reconcileAction) none() bool {
+	return a.Curve == nil && a.TDP == nil && a.Undervolt == nil
+}
 
 // reconcileState is the latched watcher state carried between ticks.
 type reconcileState struct {
@@ -124,11 +133,18 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		st.suspendGen = obs.SuspendGen
 		st.suspendedTicks = 0
 	}
+	staleResume := false
 	if obs.Suspending {
 		st.suspendedTicks++
 		if st.suspendedTicks < reconcileSuspendMaxTicks {
 			return st, reconcileAction{}
 		}
+		// The budget is gone, so no PrepareForSleep(false) arrived. Either the
+		// suspend was abandoned before the freeze, or the machine slept and the
+		// resume signal was lost — and nothing here can tell those apart. The fan
+		// curve and TDP arms below repair themselves from observations; the Curve
+		// Optimizer cannot, so it is repaired from this signal instead.
+		staleResume = true
 	}
 	st.suspendedTicks = 0
 
@@ -192,6 +208,23 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		act.TDP = obs.WantTDP
 		if act.Reason == "" {
 			act.Reason = "sustained TDP no longer matches the saved custom value"
+		}
+	}
+
+	// Curve Optimizer offsets are volatile — hardware loses them across a suspend
+	// — and restoreVolatileState is what normally puts them back. When its signal
+	// never arrives the offset stays at stock while daemon state goes on reporting
+	// it applied, and no later tick notices, because there is nothing to read back.
+	//
+	// This deliberately fires only on the expired stand-down and not on every tick.
+	// A watcher that re-sent the offset periodically would be writing the CPU
+	// voltage curve on no evidence at all, which is a worse trade than the gap it
+	// closes. Re-sending it here is idempotent in the case we cannot distinguish:
+	// if the suspend was abandoned the offset is already in force.
+	if staleResume && obs.WantCO != nil {
+		act.Undervolt = obs.WantCO
+		if act.Reason == "" {
+			act.Reason = "no resume signal arrived, so volatile settings may have been lost"
 		}
 	}
 
@@ -271,6 +304,12 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			obs.WantCurve = fc.Points
 		}
 		obs.WantTDP = active.TDP
+		// A plain state read, so it costs nothing on the common path; the SMU is
+		// only consulted if the tick actually asks for a re-apply.
+		if uv := active.Undervolt; uv != nil && uv.CPUCO != 0 {
+			co := uv.CPUCO
+			obs.WantCO = &co
+		}
 	}
 
 	// Cheap enough to read unconditionally, and reading them even when the
@@ -341,6 +380,20 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			if !st.quiet {
 				slog.Warn("failed to re-apply fan curve", "err", err)
 			}
+		}
+	}
+	if act.Undervolt != nil && cli.SMUProbeUndervolt() {
+		// Probed once at daemon startup and cached behind a sync.Once, so this is a
+		// bool read rather than the destructive no-op write the probe would
+		// otherwise be. It is called here and not in the observe step so the common
+		// path never touches it at all.
+		if err := cli.SetCurveOptimizer(*act.Undervolt); err != nil {
+			ok = false
+			if !st.quiet {
+				slog.Warn("failed to re-apply the Curve Optimizer offset", "cpu_co", *act.Undervolt, "err", err)
+			}
+		} else {
+			slog.Info("re-applied the Curve Optimizer offset after a missing resume signal", "cpu_co", *act.Undervolt)
 		}
 	}
 

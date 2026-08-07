@@ -510,3 +510,100 @@ func TestReconcileCurveForDoesNotMutateSavedCurve(t *testing.T) {
 		}
 	}
 }
+
+// TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing pins the one path
+// that may re-send a Curve Optimizer offset.
+//
+// CO is write-only in the ryzen_smu interface — there is no readback — so the
+// watcher cannot observe that hardware has lost it. A suspend clears it and
+// restoreVolatileState puts it back; if that signal never arrives the offset stays
+// at stock while daemon state reports it applied, and no observation can notice.
+// The expired stand-down is the only evidence available, so it is the only trigger.
+//
+// The negative half matters as much as the positive: re-sending the offset on
+// ordinary ticks would mean writing the CPU voltage curve every two seconds on no
+// evidence at all.
+func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
+	t.Parallel()
+
+	co := -25
+	base := reconcileObs{
+		Custom:    true,
+		WantCO:    &co,
+		CurveMode: 1, // curve live, so no fan action of its own
+		PL1:       52,
+	}
+
+	t.Run("not on an ordinary tick", func(t *testing.T) {
+		t.Parallel()
+		_, act := reconcileTick(reconcileState{}, base)
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d on a tick with no suspend in progress", *act.Undervolt)
+		}
+	})
+
+	t.Run("not while standing down", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		for i := 1; i < reconcileSuspendMaxTicks; i++ {
+			var act reconcileAction
+			st, act = reconcileTick(st, obs)
+			if act.Undervolt != nil {
+				t.Fatalf("tick %d: Undervolt re-applied inside the stand-down window", i)
+			}
+		}
+	})
+
+	t.Run("once the stand-down expires", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		var act reconcileAction
+		for range reconcileSuspendMaxTicks {
+			st, act = reconcileTick(st, obs)
+		}
+		if act.Undervolt == nil {
+			t.Fatal("Undervolt was not re-applied after the stand-down expired")
+		}
+		if *act.Undervolt != co {
+			t.Errorf("Undervolt = %d, want %d", *act.Undervolt, co)
+		}
+		if !strings.Contains(act.Reason, "resume") {
+			t.Errorf("Reason = %q, want it to mention the missing resume", act.Reason)
+		}
+	})
+
+	t.Run("nothing to re-apply when the profile sets no offset", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.WantCO = nil
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		var act reconcileAction
+		for range reconcileSuspendMaxTicks {
+			st, act = reconcileTick(st, obs)
+		}
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d for a profile with no offset", *act.Undervolt)
+		}
+	})
+
+	t.Run("a real resume clears the budget without re-applying", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		for range reconcileSuspendMaxTicks - 1 {
+			st, _ = reconcileTick(st, obs)
+		}
+		// PrepareForSleep(false) arrived: the flag drops before the budget expires.
+		obs.Suspending = false
+		_, act := reconcileTick(st, obs)
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d after a resume that did arrive", *act.Undervolt)
+		}
+	})
+}
