@@ -172,3 +172,51 @@ func TestSleepActionZeroValueIsInert(t *testing.T) {
 		t.Error("the zero sleepAction is not inert")
 	}
 }
+
+// TestSetSuspendingBumpsGenerationOnEntry covers the producer side of the counter
+// the reconcile watcher uses to tell one suspend from the next.
+//
+// It must advance on every *entry* into suspending and not on the way out, and not
+// on a repeated entry either — a machine that flaps sleep→wake→sleep faster than
+// the 2 s reconcile poll never presents an idle tick, and the generation is the
+// only thing that then distinguishes "still the same suspend" from "a new one".
+func TestSetSuspendingBumpsGenerationOnEntry(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{}
+
+	read := func() (bool, int) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.suspending, d.suspendGen
+	}
+
+	if _, gen := read(); gen != 0 {
+		t.Fatalf("fresh daemon has suspendGen %d, want 0", gen)
+	}
+
+	d.setSuspending(true)
+	susp, gen := read()
+	if !susp || gen != 1 {
+		t.Fatalf("after first entry: suspending=%v gen=%d, want true/1", susp, gen)
+	}
+
+	// Idempotent while already suspending: the sleep hook is free to be called
+	// twice without the watcher thinking a second suspend began.
+	d.setSuspending(true)
+	if _, gen = read(); gen != 1 {
+		t.Errorf("a repeated entry advanced the generation to %d, want 1", gen)
+	}
+
+	// Leaving does not advance it — otherwise every resume would look like a new
+	// suspend to the watcher and reset a budget that is no longer counting.
+	d.setSuspending(false)
+	susp, gen = read()
+	if susp || gen != 1 {
+		t.Errorf("after leaving: suspending=%v gen=%d, want false/1", susp, gen)
+	}
+
+	d.setSuspending(true)
+	if _, gen = read(); gen != 2 {
+		t.Errorf("the next suspend got generation %d, want 2", gen)
+	}
+}

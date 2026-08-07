@@ -236,14 +236,19 @@ func DryRunFanCurveReset() {
 // DryRunTdp prints the sysfs writes for a TDP set operation.
 //
 // The limits come from TDPStateFor and the fan state from the same
-// FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so this cannot
-// drift from what the real path does. It previously claimed the fans would go to
-// *full speed* (pwm_enable=0) whenever --force was given and any limit exceeded
-// the safe max — three separate inaccuracies: the floor is a curve, not full
-// speed; it is driven by the sustained limit alone; and it does not depend on
-// --force. It then claimed the whole floor curve would always be written above the
-// safe max, which stopped being true once the floor became a per-point minimum
-// rather than a replacement curve.
+// FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so the *rule*
+// cannot drift from the real path. The input can: this predicts from the curve
+// live in hardware, while the daemon applies the active profile's *stored* curve.
+// The two agree whenever that profile is the one in force, which is the normal
+// case, and a preview is allowed to be approximate where a real write is not.
+//
+// It previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
+// --force was given and any limit exceeded the safe max — three separate
+// inaccuracies: the floor is a curve, not full speed; it is driven by the
+// sustained limit alone; and it does not depend on --force. It then claimed the
+// whole floor curve would always be written above the safe max, which stopped
+// being true once the floor became a per-point minimum rather than a replacement
+// curve.
 func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	s := TDPStateFor(watts, pl1, pl2, pl3)

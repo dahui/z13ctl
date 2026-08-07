@@ -32,8 +32,10 @@ import (
 //
 // The caller must hold d.hwMu and must NOT hold d.mu. This function takes d.mu
 // itself, and the lock order in this package is hwMu then d.mu, always. For the
-// same reason nothing reached from here may call d.effectiveProfile(), which
-// takes d.mu.
+// same reason nothing reached from here may call d.effectiveProfile() — which
+// takes d.mu — *while d.mu is held*. applyCustomHW does call it, from a stretch
+// where it holds only hwMu; that is legal, and the distinction is what this
+// sentence used to get wrong by forbidding the call outright.
 func (d *Daemon) applyProfileLocked(profile string) error {
 	// Stock first, before the map is consulted at all. This is the last of the
 	// four layers that keep a custom profile from shadowing a firmware one, and
@@ -98,6 +100,10 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 // Individual failures are logged rather than returned: a profile that only
 // partly applies is still the profile the user asked for, and the reconcile
 // watcher keeps trying on the parts it owns.
+//
+// The caller must hold d.hwMu and must NOT hold d.mu: this takes d.mu itself for
+// the state commit at the end, and calls d.effectiveProfile() — which also takes
+// it — for the fan-floor check before that.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	hasCurve := p.FanCurve != nil && p.FanCurve.Mode == 1 && len(p.FanCurve.Points) == 8
 	var wantCurve []api.FanCurvePoint

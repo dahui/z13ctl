@@ -55,6 +55,14 @@ type Daemon struct {
 	// curve would undo the release that lets the EC stop the fans.
 	suspending bool
 
+	// suspendGen increments on every transition into suspending. The reconcile
+	// watcher uses it to tell one suspend from the next, which a bool cannot do:
+	// its stand-down budget is per-suspend, and on a machine that flaps
+	// sleep→wake→sleep faster than the 2s poll the watcher may never observe an
+	// idle tick to reset on. Without this the budget accumulated across suspends
+	// and eventually expired *inside* a real pre-freeze window.
+	suspendGen int
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 
@@ -388,10 +396,14 @@ func (d *Daemon) saveAndNotify(s api.State) {
 	d.notifyStateChanged()
 }
 
-// setSuspending records whether the machine is on its way into sleep. See the
-// field comment on Daemon.suspending.
+// setSuspending records whether the machine is on its way into sleep, bumping the
+// generation on each entry so the reconcile watcher can tell suspends apart. See
+// the field comments on Daemon.suspending and Daemon.suspendGen.
 func (d *Daemon) setSuspending(v bool) {
 	d.mu.Lock()
+	if v && !d.suspending {
+		d.suspendGen++
+	}
 	d.suspending = v
 	d.mu.Unlock()
 }

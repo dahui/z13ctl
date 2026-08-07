@@ -176,6 +176,13 @@ func runTdpSet() error {
 	if err := ensureProfileTargetSupported(tdpProfileFlag); err != nil {
 		return err
 	}
+
+	// Sampled *before* the send. Asking after it is meaningless: the daemon has
+	// already written the clamped curve, so the live curve then satisfies the floor
+	// by construction and FloorAdjustsCurve is always false — except when the read
+	// fails and nil makes it spuriously true, which is exactly backwards.
+	preCurve := cli.LiveFanCurve()
+
 	if handled, err := api.SendTdpSetFor(tdpProfileFlag, tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
@@ -184,9 +191,7 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		// The daemon decided this, so ask the same question it did rather than
-		// asserting an adjustment that may not have happened.
-		if cli.FloorAdjustsCurve(pl1, cli.LiveFanCurve()) {
+		if cli.FloorAdjustsCurve(pl1, preCurve) {
 			fmt.Printf("Fan curve points below %d PWM (50%%) were raised to that floor; every other\n", cli.HighTDPMinPWM)
 			fmt.Println("  point is unchanged (the daemon keeps the floor in force if a power profile")
 			fmt.Println("  change releases it)")
@@ -203,8 +208,9 @@ func runTdpSet() error {
 	//
 	// LiveFanCurve is what this path has instead of profile state. Without it the
 	// floor would replace a curve the user set moments earlier even when that curve
-	// is well above it.
-	want := cli.LiveFanCurve()
+	// is well above it. preCurve was sampled before the socket attempt, which never
+	// wrote anything on this branch, so it is still current.
+	want := preCurve
 	adjusted := cli.FloorAdjustsCurve(pl1, want)
 	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)

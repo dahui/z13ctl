@@ -37,7 +37,14 @@ archives:
     files:
       - LICENSE
       - contrib/systemd/**/*
-      - contrib/udev/**/*
+      # contrib/udev/* and not **/*: the doublestar form requires an intervening
+      # directory, so it silently matched nothing for a flat directory and the
+      # tarball shipped without the udev rules. contrib/systemd worked only
+      # because it has user/ and system/ beneath it. A tarball install with no
+      # rules file loses every sysfs grant on the next reboot — the same failure
+      # as issue #12, reached a different way. goreleaser logs "no files matched"
+      # rather than failing, so watch for that line in the release output.
+      - contrib/udev/*
 
 checksum:
   name_template: "checksums.txt"

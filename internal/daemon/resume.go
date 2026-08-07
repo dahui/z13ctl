@@ -110,6 +110,11 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			slog.Info("system resumed from sleep, restoring volatile state")
 			d.restoreVolatileState()
+			// Release before re-taking. The sleep branch normally leaves this at -1,
+			// but nothing guarantees the two edges alternate — a (false) with no
+			// preceding (true) would otherwise overwrite a still-open fd, leaking it
+			// and leaving logind counting a delay lock nobody can release.
+			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
 		}
 	}
@@ -318,14 +323,8 @@ func (d *Daemon) restoreVolatileState() {
 	// Through the same helper as the socket command, the autoswitch watcher and
 	// daemon startup. Resume used to carry its own copy of the apply sequence,
 	// which is how the four drifted apart in the first place; every fix to the
-	// ordering or the clearing rules now lands here too. hwMu is already held,
-	// which is what applyCustomHW requires.
-	//
-	// Bracketed by the same wakeup_count samples as the sleep path, because this is
-	// the unexamined half: on a lid-close suspend that immediately wakes, the lid is
-	// still shut, so logind suspends again within seconds — and these writes (curve,
-	// PPT and the SMU offsets) land shortly before that next attempt. A settle delay
-	// on the sleep side alone would not cover an event provoked here.
+	// ordering or the clearing rules now lands here too. hwMu is already held and
+	// d.mu is not, which is what applyCustomHW requires.
 	slog.Info("resume: restoring custom profile", "profile", active.Name)
 	d.applyCustomHW(active)
 }

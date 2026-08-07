@@ -8,6 +8,7 @@ package daemon
 // the apply path would write the developer's actual fan hardware.
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -236,6 +237,72 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 	}
 	if st.quiet || st.failures != 0 {
 		t.Errorf("state after a clean tick = %+v, want failures 0 and quiet false", st)
+	}
+}
+
+// TestReconcileReasonDescribesWhatWasDone is the regression test for a log line
+// that lied. The curve branch used to set act.Reason unconditionally, so a
+// PPT-only reconcile on a curveless custom profile at a safe limit reported
+// "high-TDP fan floor was released while the limit is still in force" — the TDP
+// arm only fills in a reason when one is not already set, so the fan text won.
+func TestReconcileReasonDescribesWhatWasDone(t *testing.T) {
+	t.Parallel()
+
+	_, act := reconcileTick(reconcileState{}, reconcileObs{
+		Custom: true, WantCurve: nil, CurveMode: 2, PL1: 52,
+		WantTDP: &api.TDPState{PL1SPL: 67},
+	})
+	if act.Curve != nil {
+		t.Errorf("restored a curve for a profile that has none at a safe limit: %+v", act.Curve)
+	}
+	if act.TDP == nil {
+		t.Fatal("the drifted PPT was not restored")
+	}
+	if strings.Contains(act.Reason, "fan") {
+		t.Errorf("reason mentions fans for a PPT-only action: %q", act.Reason)
+	}
+}
+
+// TestReconcileSuspendBudgetIsPerSuspend is the regression test for a stand-down
+// budget that accumulated across suspends. reconcileState resets on a
+// non-suspending tick, but a machine flapping sleep→wake→sleep faster than the 2 s
+// poll never presents one — so the counter climbed until it expired *inside* a real
+// pre-freeze window and the watcher undid the release. obs.SuspendGen fixes it.
+func TestReconcileSuspendBudgetIsPerSuspend(t *testing.T) {
+	t.Parallel()
+
+	var st reconcileState
+	// Well past the ceiling, each iteration a distinct suspend, and never an idle
+	// tick in between — the flap loop that used to defeat the counter.
+	for gen := 1; gen <= reconcileSuspendMaxTicks*3; gen++ {
+		var act reconcileAction
+		st, act = reconcileTick(st, reconcileObs{
+			Custom: true, Suspending: true, SuspendGen: gen,
+			WantCurve: curve(204), CurveMode: 2, PL1: 52,
+		})
+		if !act.none() {
+			t.Fatalf("suspend %d: re-enabled the curve mid-suspend, undoing the release", gen)
+		}
+		if st.suspendedTicks != 1 {
+			t.Fatalf("suspend %d: suspendedTicks = %d, want 1 — the budget carried over", gen, st.suspendedTicks)
+		}
+	}
+
+	// The ceiling must still fire within a *single* suspend, which is the missed
+	// resume signal it exists for.
+	st = reconcileState{}
+	for i := 1; i <= reconcileSuspendMaxTicks; i++ {
+		var act reconcileAction
+		st, act = reconcileTick(st, reconcileObs{
+			Custom: true, Suspending: true, SuspendGen: 7,
+			WantCurve: curve(204), CurveMode: 2, PL1: 52,
+		})
+		if i < reconcileSuspendMaxTicks && !act.none() {
+			t.Fatalf("tick %d of one suspend acted before the ceiling", i)
+		}
+		if i == reconcileSuspendMaxTicks && act.none() {
+			t.Fatal("the ceiling never fired within a single suspend, so a missed resume leaves the curve undefended")
+		}
 	}
 }
 

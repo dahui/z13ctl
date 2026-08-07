@@ -375,6 +375,17 @@ contrib/
   curve" message must gate on. A *nil* curve counts as adjusted, while
   `CheckCurveAgainstTDP` alone answers "no problem" for it, since a curve with no
   points has none below the floor.
+  **It must be evaluated against the curve as it was *before* the write.** On the
+  daemon path `cmd/tdp.go` asked it *after* `SendTdpSetFor`, by which point the
+  daemon had already written the clamped curve — so the live curve satisfied the
+  floor by construction, the notice never printed, and the one case that did print
+  it was a failed read returning nil. `preCurve` is now sampled before the send and
+  reused by both the daemon and no-daemon branches. Any new "we altered what you
+  asked for" message has the same ordering requirement.
+  `reconcileTick` has the mirror-image trap: its curve branch must set `act.Reason`
+  only when a curve action actually results, or a PPT-only reconcile on a curveless
+  profile logs a fan-floor reason for a machine at 52 W — the TDP arm below only
+  fills in a reason when one is not already set, so the wrong text wins.
   The edit-time refusals (`CheckFanCurveFloor` in `handleFanCurve`,
   `CheckCurveAgainstTDP` for a non-live `--profile` target) deliberately stay
   refusals rather than clamping: storing a curve silently different from the one
@@ -724,6 +735,14 @@ contrib/
   reachable only by a `PrepareForSleep(false)` that never arrived.
   `restoreVolatileState` clears the flag via `defer` placed *before* `hwMu` is
   taken, so the early return for a firmware profile reaches it too.
+  **The budget is per-suspend, and `d.suspendGen` is what makes it so.** Resetting
+  the counter on the first non-suspending tick looks sufficient and is not: a
+  machine flapping sleep→wake→sleep faster than the 2 s poll never presents an idle
+  tick, so the count accumulated across suspends and eventually expired *inside* a
+  real pre-freeze window — the watcher then re-enabled the curve and undid the
+  release. `setSuspending` bumps the generation on entry only (not on exit, and not
+  on a repeated entry), and `reconcileTick` zeroes its counter whenever the
+  generation it is counting for changes.
 - **The daemon holds a logind delay inhibitor, because
   `PrepareForSleep(true)` is otherwise advisory.** logind emits it and proceeds
   to freeze; the release's sysfs writes racing that is how the fix would silently
@@ -837,7 +856,17 @@ Default value in source is `"1.0.0-beta"` (used only in local builds without ldf
 Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.yml`.
 - Builds for `linux/amd64` only (hidraw is Linux-specific; Z13 is x86_64).
 - `before.hooks`: `go mod tidy` only.
-- Archives include `LICENSE` and `contrib/systemd/**/*` (user + system unit files).
+- Archives include `LICENSE`, `contrib/systemd/**/*` (user + system unit files) and
+  `contrib/udev/*` (the rules file).
+- **`contrib/udev/*`, not `contrib/udev/**/*`.** The doublestar form requires an
+  intervening directory, so it matched nothing for that flat directory and the
+  tarball shipped with no udev rules — a tarball install then loses every sysfs
+  grant on the next reboot, the same failure as issue #12 by another route. The
+  `contrib/systemd` glob works only because it has `user/` and `system/` beneath it.
+  goreleaser logs `no files matched glob=...` and carries on rather than failing, so
+  that line in the release output is the only warning you get. The nfpm packages
+  were never affected — they list files individually under `nfpms.contents`.
+  `tar tzf dist/*.tar.gz` after `make snapshot` is the check.
 - `prerelease: auto` — tags with a pre-release suffix (e.g. `v1.0.0-beta`) are marked
   as pre-release on GitHub automatically.
 - To release: `git tag v1.0.0 && git push origin v1.0.0`

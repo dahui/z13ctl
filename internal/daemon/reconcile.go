@@ -66,6 +66,7 @@ const reconcileSuspendMaxTicks = 15
 type reconcileObs struct {
 	Custom     bool                // daemon state says a custom profile is active
 	Suspending bool                // the sleep hook has released the fans on purpose
+	SuspendGen int                 // increments per suspend; see the gate in reconcileTick
 	WantCurve  []api.FanCurvePoint // that profile's curve; nil if none
 	WantTDP    *api.TDPState       // that profile's TDP; nil if none
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
@@ -89,7 +90,8 @@ type reconcileState struct {
 	failures       int    // consecutive unsuccessful restorations
 	quiet          bool   // stop logging repeated failures
 	lastHW         string // last observed platform_profile
-	suspendedTicks int    // consecutive ticks observed while suspending
+	suspendedTicks int    // ticks observed during the current suspend
+	suspendGen     int    // the suspend suspendedTicks is counting for
 }
 
 // reconcileTick decides what to restore from one observation. It is pure — no
@@ -105,6 +107,16 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 	// through s2idle; re-enabling the curve here would undo it in the window
 	// before userspace freezes. Falling through past the ceiling is the backstop
 	// for a resume signal that never arrived — see reconcileSuspendMaxTicks.
+	//
+	// The budget is per-suspend, and obs.SuspendGen is what makes that true. A
+	// machine that flaps sleep→wake→sleep faster than the 2s poll never presents an
+	// idle tick to reset on, so counting alone let the budget accumulate across
+	// suspends until it expired *inside* a real pre-freeze window and the watcher
+	// undid the release.
+	if obs.SuspendGen != st.suspendGen {
+		st.suspendGen = obs.SuspendGen
+		st.suspendedTicks = 0
+	}
 	if obs.Suspending {
 		st.suspendedTicks++
 		if st.suspendedTicks < reconcileSuspendMaxTicks {
@@ -145,17 +157,25 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		// FanCurveForTDP yields HighTDPFanCurve, which is the other half of
 		// ApplyTDPSafely's fail-closed guard — the floor was written once and could
 		// then be dropped while the PPT stayed high.
-		act.Curve = obs.WantCurve
+		want := obs.WantCurve
 		if c := cli.FanCurveForTDP(obs.PL1, obs.WantCurve); c != nil {
-			act.Curve = c
+			want = c
 		}
-		switch {
-		case obs.WantCurve == nil:
-			act.Reason = "high-TDP fan floor was released while the limit is still in force"
-		case cli.FloorAdjustsCurve(obs.PL1, obs.WantCurve):
-			act.Reason = "fan curve was disabled and its sub-floor points were raised to the high-TDP floor"
-		default:
-			act.Reason = "saved custom fan curve was disabled"
+		// Guarded: with no saved curve and a safe limit there is nothing to put
+		// back, and want stays nil. Setting act.Reason unconditionally here made a
+		// PPT-only reconcile on a curveless profile log "high-TDP fan floor was
+		// released while the limit is still in force" for a machine at 52W, because
+		// the TDP arm below only fills in a reason when one is not already set.
+		if want != nil {
+			act.Curve = want
+			switch {
+			case obs.WantCurve == nil:
+				act.Reason = "high-TDP fan floor was released while the limit is still in force"
+			case cli.FloorAdjustsCurve(obs.PL1, obs.WantCurve):
+				act.Reason = "fan curve was disabled and its sub-floor points were raised to the high-TDP floor"
+			default:
+				act.Reason = "saved custom fan curve was disabled"
+			}
 		}
 	}
 
@@ -200,11 +220,12 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 
 	d.mu.Lock()
 	s := cloneState(d.state) // must clone: FanCurve.Points and TDP alias live state
-	suspending := d.suspending
+	suspending, suspendGen := d.suspending, d.suspendGen
 	d.mu.Unlock()
 
 	obs := reconcileObs{
 		Suspending: suspending,
+		SuspendGen: suspendGen,
 		CurveMode:  -1,
 		PL1:        -1,
 	}
