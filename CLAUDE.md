@@ -73,20 +73,25 @@ internal/
                              eventDevice seam — no Grab method, see issue #10
     button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
-    reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce
+    reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
+                             stands down while d.suspending, with a tick-counted staleness ceiling
     profile.go               applyProfileLocked/applyCustomHW/applyStockHW, edit-target resolution,
                              profile create/save/delete/list handlers
     powersource.go           AC/battery autoswitch watcher; pure powerTick seam + powerSourceOnce;
                              UPower nudge + sysfs poll; autoswitchTarget for the Run() startup case
     powersource_test.go      powerTick decision table, settle window, charger flap (no hardware)
-    reconcile_test.go        reconcileTick decision table (no hardware) + reconcileOnce race guard
+    reconcile_test.go        reconcileTick decision table (no hardware) + reconcileOnce race guard +
+                             the suspend gate and its ceiling
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     server_test.go           request validation + dispatch routing (no hardware access)
     state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup,
                              legacy migration, reserved-name sanitisation
     clone_test.go            cloneState deep-copy (incl. CustomProfiles), saveState race regression,
                              broadcast wire shape, withLegacyProjection
-    resume.go                DBus logind PrepareForSleep watcher; turns off lightbar on sleep, restores lighting + volatile state on resume
+    resume.go                DBus logind PrepareForSleep watcher; logind delay inhibitor; pure sleepTick seam;
+                             on sleep turns off lightbar + releases fans to firmware auto (releaseVolatileState),
+                             on resume restores lighting + volatile state (restoreVolatileState)
+    resume_test.go           sleepTick decision table + the sleep/resume symmetry invariant (no hardware)
     client.go                Redirect comment only — client functions live in api/
   hid/
     doc.go                   package doc file only
@@ -330,9 +335,12 @@ contrib/
   `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
   `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
   (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
-  (PL1) exceeds 75W, both fans are written `HighTDPFanCurve` — a 50% PWM floor
-  with `pwm_enable=1`, ramping to 100% at 80°C — before the PPT writes, and the
-  TDP is not applied at all if that fails (see `ApplyTDPSafely`). The floor was
+  (PL1) exceeds 75W, both fans must be on a curve that holds a 50% PWM floor,
+  written with `pwm_enable=1` before the PPT writes, and the TDP is not applied at
+  all if that fails (see `ApplyTDPSafely`). The floor is applied per point: a
+  curve's sub-floor points are raised to `HighTDPMinPWM` and the rest are left as
+  drawn, and `HighTDPFanCurve` — the 50% floor ramping to 100% at 80°C — is written
+  whole only when the profile has no curve of its own (see `FanCurveForTDP`). The floor was
   80% (204) through v1.2.1 and users reported it as loud enough that they simply
   stopped using high TDP, so it is now 127; the *ramp* is what protects the APU,
   since a machine actually sustaining >75W is well past 60°C where the curve is
@@ -340,18 +348,50 @@ contrib/
   `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
   calls any more; the docs, the dry-run output, and this file all described it
   for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
-- **`cli.ApplyTDPSafely` is the only way to apply a custom TDP.** Above
-  `TDPMaxSafe` (75W) the fans must be held to a 50% PWM floor
-  (`HighTDPFanCurve`). Five paths apply a TDP — `handleTDP`, the `handleProfile`
-  "custom" branch, daemon startup, resume, and `cmd/tdp.go`'s no-daemon path —
-  and they previously enforced this four different ways: two warned and applied
-  anyway, one raised power *before* raising the fans and discarded the fan
-  error with `_ =`, and only one refused. They all now call `ApplyTDPSafely`,
-  which fails closed: if the fan write fails the TDP is not written at all.
+- **The high-TDP fan floor is a *per-point minimum*, not a replacement curve.**
+  `cli.FanCurveForTDP` is the single place that rule lives: above `TDPMaxSafe` it
+  returns the caller's own curve with any point below `HighTDPMinPWM` raised to it
+  and **every other point left exactly as drawn**. `HighTDPFanCurve()` is returned
+  whole only when there is no curve at all — nothing to clamp, so it is all that is
+  left to write. `ApplyTDPSafely` and `reconcileTick` both call it.
+  They used to carry separate copies that disagreed — the watcher honoured a curve
+  above the floor, the apply path replaced *every* curve above `TDPMaxSafe` — and
+  the apply path was the one users saw. A saved curve of 204→255 came back as the
+  127→255 ramp, and a curve at 100% everywhere was downgraded to one that idles at
+  50%; the watcher could not correct it either, because the fans were left in mode
+  1, which reads as "the curve is live". It presented as "my fan curve resets to
+  stock after sleep" because `applyCustomHW` runs on every resume, but every
+  `tdp --set` above 75W had always done it.
+  Two properties of the clamp are load-bearing: it **copies** — `want` aliases
+  `p.FanCurve.Points` in daemon state, and clamping in place would rewrite the
+  user's saved curve so there was nothing to restore when the limit came down —
+  and it preserves the non-decreasing PWM order `ParseFanCurve` enforces, since
+  `max(x, floor)` over a non-decreasing `x` is still non-decreasing.
+  `cli.FloorAdjustsCurve` is the companion predicate every "the floor changed your
+  curve" message must gate on. A *nil* curve counts as adjusted, while
+  `CheckCurveAgainstTDP` alone answers "no problem" for it, since a curve with no
+  points has none below the floor.
+  The edit-time refusals (`CheckFanCurveFloor` in `handleFanCurve`,
+  `CheckCurveAgainstTDP` for a non-live `--profile` target) deliberately stay
+  refusals rather than clamping: storing a curve silently different from the one
+  the user drew is worse than saying no up front. Clamping is for the curve already
+  in state when the *limit* rises afterwards, which no edit-time check can catch.
+- **`cli.ApplyTDPSafely` is the only way to apply a custom TDP, and it takes the
+  curve the caller intends to run.** Five paths apply a TDP — `handleTDP`, the
+  `handleProfile` "custom" branch, daemon startup, resume, and `cmd/tdp.go`'s
+  no-daemon path — and they previously enforced the floor four different ways:
+  two warned and applied anyway, one raised power *before* raising the fans and
+  discarded the fan error with `_ =`, and only one refused. They all now call
+  `ApplyTDPSafely`, which fails closed: if the fan write fails the TDP is not
+  written at all. Passing `nil` for the curve asks for `HighTDPFanCurve` wholesale
+  and is right only when there genuinely is no curve; `cmd/tdp.go` has no profile
+  state and so passes `cli.LiveFanCurve()`, or a `tdp --set` would discard a
+  curve the user set moments earlier.
   Release order is the mirror image — lower power *first*, then release the
   fans (`handleTDPReset`, the stock-profile branch, `cmd/tdp.go` reset), so the
   machine is never at a high limit with no floor. `internal/cli/tdp_test.go`
-  guards this against the fake sysfs; the refusal case is the one that matters.
+  guards this against the fake sysfs; the refusal case and the
+  "keeps a curve that already meets the floor" case are the two that matter.
 - **Fan-floor checks read hardware for the *live* profile, and the profile's own
   TDP for any other.** `CheckFanCurveFloor`/`CheckFanFloorRelease` go through
   `ReadEffectivePPT`; their pure siblings `CheckCurveAgainstTDP` and
@@ -475,6 +515,20 @@ contrib/
   force, so a high-TDP profile with no curve of its own keeps the floor
   `ApplyTDPSafely` just wrote. `Run()` calls the same helper rather than
   hand-rolling the restore, so startup cannot drift from it.
+  That last condition is checked against **hardware** — `cli.CheckFanFloorRelease`
+  — and not only against `p.TDP`. `highTDP` is false whenever `ApplyTDPSafely`
+  failed, *including* the case where it succeeded at writing `HighTDPFanCurve` and
+  then failed at `SetTDPState`, so trusting the flag alone released the floor it
+  had just written one line earlier. The same guard also covers a limit left high
+  out-of-band, which cached state says nothing about.
+- **`ResetAllFanCurves` verifies the release, as `SetBothFanCurves` verifies the
+  curve.** It was a bare `setAllFanModes(2)`, so a release the driver silently
+  ignored was indistinguishable from success. That became load-bearing with the
+  pre-sleep release: firmware auto is what lets the EC stop the fans through
+  s2idle, so an unnoticed failure is the difference between a quiet suspend and a
+  machine that runs its fans all night. `verifyFanModeReleased` accepts mode 0
+  (forced full speed is not a curve, so there is nothing left to release) and an
+  unreadable channel, exactly as `VerifyFanCurveActive` does.
 - **There is exactly one apply-a-custom-profile sequence: `applyCustomHW`.** The
   socket command, the autoswitch watcher, `Run()`'s startup restore and
   `resume.go` all call it. Four hand-rolled copies is precisely how the ordering
@@ -602,10 +656,59 @@ contrib/
 - **Sleep/resume hook**: `internal/daemon/resume.go` watches for DBus
   `org.freedesktop.login1.Manager.PrepareForSleep` signals. On sleep
   (`PrepareForSleep(true)`), turns off the lightbar via `aura.TurnOff()` (the
-  keyboard turns off automatically in hardware, but the lightbar does not).
-  On resume (`PrepareForSleep(false)`), restores lighting (regardless of profile)
-  and reapplies volatile state: fan curves, TDP, and undervolt (when custom
-  profile is active). Uses `github.com/godbus/dbus/v5`.
+  keyboard turns off automatically in hardware, but the lightbar does not) and
+  calls `releaseVolatileState`. On resume (`PrepareForSleep(false)`),
+  `restoreVolatileState` restores lighting (regardless of profile) and reapplies
+  volatile state through `applyCustomHW` (when a custom profile is active). Uses
+  `github.com/godbus/dbus/v5`.
+- **A custom fan curve must be released before sleep, or the fans never stop.**
+  The Z13 has no `deep` in `/sys/power/mem_sleep` — only `s2idle` — so the EC
+  keeps running its fan loop for the whole suspend. Firmware auto
+  (`pwm_enable=2`) is what makes it stop the fans; with `pwm_enable=1` it goes on
+  driving them from the curve and never learns the machine is asleep. Any curve
+  with non-zero low-temperature points runs the fans all night, and
+  `HighTDPFanCurve` guarantees it — every point is at or above `HighTDPMinPWM`.
+  This was reported as "fans not turning off when I close the lid" on the
+  issue #15 thread, and the docs asserted the *opposite* ("custom PWM curves
+  reset to firmware defaults on sleep") for as long as the bug existed.
+- **`sleepTick` is gated on ownership, and that is what makes sleep and resume
+  symmetric.** `sleepObs.Owned` is `ok && !active.Empty()` from
+  `ActiveCustomProfile()` — exactly the condition `restoreVolatileState` restores
+  under — so the invariant holds both ways: **the sleep hook releases only what
+  `applyCustomHW` will put back.** A hardware-only gate would be a one-way door:
+  a curve set by asusctl while z13ctl sits on a firmware profile also reads
+  `pwm_enable=1`, so releasing it (let alone lowering its PPT) leaves nothing on
+  the resume side to restore either. `reconcileTick`'s `!obs.Custom` gate exists
+  for the same reason. Mode 0 and an unreadable mode are left alone, mirroring
+  `reconcileTick` branch for branch. `internal/daemon/resume_test.go` pins both
+  the table and the symmetry.
+- **The pre-sleep release lowers power before it touches the fans, and fails
+  closed.** Above `TDPMaxSafe` it writes the underlying firmware profile's
+  `StockProfilePPT` row via `restoreStockPPTErr` and *returns without releasing
+  the fans* if that fails — the mirror image of `ApplyTDPSafely`, and the same
+  release order as `applyStockHW`/`handleTDPReset`. `restoreStockPPTErr` treats a
+  profile absent from `StockProfilePPT` as an error rather than the silent no-op
+  `restoreStockPPT` can afford: "there was nothing to write" is not "the limit is
+  now low enough to release the fans".
+- **`d.suspending` stands the reconcile watcher down between the two signals,
+  with a staleness ceiling.** The watcher polls every 2 s and would otherwise
+  re-enable the curve in the window before userspace freezes. `reconcileObs`
+  carries the flag so `reconcileTick` stays pure. The ceiling
+  (`reconcileSuspendMaxTicks`) is counted in *ticks*, not elapsed time, and that
+  is load-bearing: Go timers use `CLOCK_MONOTONIC`, which does not advance across
+  suspend, so 15 ticks is 30 s of *awake* time — unreachable by a real suspend,
+  reachable only by a `PrepareForSleep(false)` that never arrived.
+  `restoreVolatileState` clears the flag via `defer` placed *before* `hwMu` is
+  taken, so the early return for a firmware profile reaches it too.
+- **The daemon holds a logind delay inhibitor, because
+  `PrepareForSleep(true)` is otherwise advisory.** logind emits it and proceeds
+  to freeze; ~34 sysfs writes racing that is how the fix would silently not apply
+  on a fast-suspending system. `takeSleepInhibitor` must be called *before* the
+  signal can arrive (watcher start, and again after each resume), and the fd is
+  closed immediately after `releaseVolatileState` returns — logind suspends as
+  soon as the last delay lock closes, so deferring it to the end of the loop
+  would hold suspend open for `InhibitDelayMaxSec`. Best-effort throughout: a
+  refused `Inhibit` logs at Debug and returns -1.
 - **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
   detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
   loses power when detached; on reattach the firmware does not restore the

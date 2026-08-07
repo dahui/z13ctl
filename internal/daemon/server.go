@@ -389,15 +389,29 @@ func (d *Daemon) handleBrightness(req request) response {
 // Callers must not clear the saved custom TDP in daemon state — only the
 // hardware values are reset, so the user can select "custom" again.
 func restoreStockPPT(profile string) {
+	if err := restoreStockPPTErr(profile); err != nil {
+		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
+	}
+}
+
+// restoreStockPPTErr is restoreStockPPT reporting failure, for the one caller
+// that must not continue without it: releaseVolatileState decides whether
+// releasing the fans is safe from "did the limits actually come down".
+//
+// A profile with no row in cli.StockProfilePPT is an error here, not the silent
+// no-op restoreStockPPT can afford. "There was nothing to write" and "the limits
+// are now at a level the fans need no floor for" are different answers, and only
+// the second one makes a release safe.
+func restoreStockPPTErr(profile string) error {
 	stock, ok := cli.StockProfilePPT[profile]
 	if !ok {
-		return
+		return fmt.Errorf("no stock PPT row for profile %q", profile)
 	}
 	if err := cli.SetTDPState(stock); err != nil {
-		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
-		return
+		return err
 	}
 	slog.Info("restored stock PPT", "profile", profile, "pl1", stock.PL1SPL, "pl2", stock.PL2SPPT)
+	return nil
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
@@ -686,15 +700,23 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 
 	fc := target.Profile.FanCurve
+	var wantCurve []api.FanCurvePoint
+	if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+		wantCurve = fc.Points
+	}
 	if target.Live {
-		// ApplyTDPSafely raises the fans to the 50% floor first when pl1 exceeds
-		// the safe sustained max, and refuses to apply the TDP at all if that
-		// fails.
-		if err := cli.ApplyTDPSafely(tdp); err != nil {
+		// ApplyTDPSafely puts the fans into whatever state the limit requires
+		// before raising power, and refuses to apply the TDP at all if that fails.
+		// wantCurve is the profile's own curve: it is kept when it already
+		// satisfies the floor, and only replaced when it does not.
+		if err := cli.ApplyTDPSafely(tdp, wantCurve); err != nil {
 			return response{OK: false, Error: "tdp: " + err.Error()}
 		}
-		if pl1 > cli.TDPMaxSafe {
-			slog.Warn("fans set to 50%+ curve for high TDP", "pl1", pl1)
+		// Only worth saying when the floor actually changed something. Warning on
+		// pl1 alone told users their curve had been altered when it had not.
+		if cli.FloorAdjustsCurve(pl1, wantCurve) {
+			slog.Warn("fan curve points below the high-TDP floor were raised to it",
+				"pl1", pl1, "min_pwm", cli.HighTDPMinPWM)
 		}
 		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
 	} else {

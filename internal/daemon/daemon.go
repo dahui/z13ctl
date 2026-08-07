@@ -49,20 +49,47 @@ type Daemon struct {
 	dev   *hid.Device // nil if no HID device was found at startup
 	state api.State
 
+	// suspending is set by releaseVolatileState and cleared by
+	// restoreVolatileState. It stands the reconcile watcher down for the window
+	// between PrepareForSleep(true) and the freeze, where re-enabling the custom
+	// curve would undo the release that lets the EC stop the fans.
+	suspending bool
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 
 	buttonCh chan struct{}
+
+	// sleepRelease is false under --no-sleep-release: the fans keep the custom
+	// curve through sleep. Read-only after Run sets it.
+	sleepRelease bool
+
+	// sleepSteps selects which pre-sleep writes run. Diagnostic only — see
+	// parseSleepSteps. Read-only after Run sets it.
+	sleepSteps sleepSteps
+}
+
+// Options configures the daemon. A zero value disables both watchers, so callers
+// state what they want rather than relying on positional bools — Run(ctx, true,
+// false) said nothing about which flag was which.
+type Options struct {
+	// WatchButton starts the Armoury Crate button watcher (--no-button clears it).
+	WatchButton bool
+	// SleepRelease hands the fans back to the firmware before sleep, so the EC
+	// stops them (--no-sleep-release clears it).
+	SleepRelease bool
 }
 
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
 // restores the last-saved state, starts the button watcher, and serves the
 // Unix socket.
-func Run(ctx context.Context, watchBtn bool) error {
+func Run(ctx context.Context, opts Options) error {
 	d := &Daemon{
-		buttonCh: make(chan struct{}, 4),
+		buttonCh:     make(chan struct{}, 4),
+		sleepRelease: opts.SleepRelease,
 	}
 
+	d.applySleepEnv()
 	d.state = loadState()
 
 	dev, err := hid.FindDevice("")
@@ -182,7 +209,7 @@ func Run(ctx context.Context, watchBtn bool) error {
 		d.applyCustomHW(active)
 	}
 
-	if watchBtn {
+	if opts.WatchButton {
 		go watchButton(ctx, d.buttonCh)
 	} else {
 		slog.Info("Armoury Crate button watcher disabled")
@@ -359,6 +386,14 @@ func (d *Daemon) saveAndNotify(s api.State) {
 		slog.Warn("failed to save state", "err", err)
 	}
 	d.notifyStateChanged()
+}
+
+// setSuspending records whether the machine is on its way into sleep. See the
+// field comment on Daemon.suspending.
+func (d *Daemon) setSuspending(v bool) {
+	d.mu.Lock()
+	d.suspending = v
+	d.mu.Unlock()
 }
 
 // normalizeLightingState fills in any field left empty by a partial update,

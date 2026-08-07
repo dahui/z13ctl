@@ -79,28 +79,41 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 //
 // Ordering is the fail-closed part and is not free to rearrange:
 //
-//   - The profile's own curve goes on *before* its TDP, so ApplyTDPSafely's
-//     high-TDP floor is written last and wins if the two disagree.
+//   - The profile's own curve goes on *before* its TDP, and is also handed to
+//     ApplyTDPSafely so that call cannot throw it away. The floor is a per-point
+//     minimum, not a replacement curve: only points below HighTDPMinPWM are raised,
+//     and HighTDPFanCurve is written whole only when there is no curve at all.
+//     Writing the curve first is still what keeps the user's curve in force if the
+//     ApplyTDPSafely call fails.
 //   - Clearing the TDP hands the limits back to the firmware profile underneath,
 //     which lowers power before the fans are touched.
 //   - The fans are released only when no high sustained limit is in force. A
 //     profile with a high TDP and no curve of its own keeps the floor
-//     ApplyTDPSafely just wrote.
+//     ApplyTDPSafely just wrote. That is checked against *hardware* and not only
+//     against p.TDP: highTDP is false whenever ApplyTDPSafely failed, including
+//     when it succeeded at writing HighTDPFanCurve and then failed at
+//     SetTDPState, so trusting it alone would release the floor it just wrote.
+//     cli.CheckFanFloorRelease is the same guard the fancurve handlers use.
 //
 // Individual failures are logged rather than returned: a profile that only
 // partly applies is still the profile the user asked for, and the reconcile
 // watcher keeps trying on the parts it owns.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	hasCurve := p.FanCurve != nil && p.FanCurve.Mode == 1 && len(p.FanCurve.Points) == 8
+	var wantCurve []api.FanCurvePoint
 	if hasCurve {
-		if err := cli.SetBothFanCurves(p.FanCurve.Points); err != nil {
+		wantCurve = p.FanCurve.Points
+		if err := cli.SetBothFanCurves(wantCurve); err != nil {
 			slog.Warn("failed to apply fan curve", "profile", p.Name, "err", err)
 		}
 	}
 
 	highTDP := false
 	if t := p.TDP; t != nil {
-		if err := cli.ApplyTDPSafely(*t); err != nil {
+		// wantCurve is what keeps the profile's own curve from being replaced by
+		// the floor: ApplyTDPSafely honours it whenever it already satisfies the
+		// floor, and substitutes HighTDPFanCurve only when it does not.
+		if err := cli.ApplyTDPSafely(*t, wantCurve); err != nil {
 			slog.Warn("failed to apply TDP", "profile", p.Name, "err", err)
 		} else {
 			highTDP = t.PL1SPL > cli.TDPMaxSafe
@@ -112,7 +125,10 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	if !hasCurve && !highTDP {
-		if err := cli.ResetAllFanCurves(); err != nil {
+		if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+			slog.Warn("keeping the high-TDP fan floor: the sustained limit in hardware still requires it",
+				"profile", p.Name, "err", err)
+		} else if err := cli.ResetAllFanCurves(); err != nil {
 			slog.Warn("failed to release fans to firmware auto", "profile", p.Name, "err", err)
 		}
 	}

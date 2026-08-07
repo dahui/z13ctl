@@ -235,12 +235,15 @@ func DryRunFanCurveReset() {
 
 // DryRunTdp prints the sysfs writes for a TDP set operation.
 //
-// The limits come from TDPStateFor and the fan-floor condition from
-// ApplyTDPSafely, so this cannot drift from what the real path does. It
-// previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
-// --force was given and any limit exceeded the safe max — three separate
-// inaccuracies: the floor is a curve, not full speed; it is driven by the
-// sustained limit alone; and it does not depend on --force.
+// The limits come from TDPStateFor and the fan state from the same
+// FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so this cannot
+// drift from what the real path does. It previously claimed the fans would go to
+// *full speed* (pwm_enable=0) whenever --force was given and any limit exceeded
+// the safe max — three separate inaccuracies: the floor is a curve, not full
+// speed; it is driven by the sustained limit alone; and it does not depend on
+// --force. It then claimed the whole floor curve would always be written above the
+// safe max, which stopped being true once the floor became a per-point minimum
+// rather than a replacement curve.
 func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	s := TDPStateFor(watts, pl1, pl2, pl3)
@@ -253,8 +256,19 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
-		fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
-			HighTDPMinPWM, curveDir)
+		live := LiveFanCurve()
+		switch {
+		case len(live) == 0:
+			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
+				HighTDPMinPWM, curveDir)
+		case FloorAdjustsCurve(s.PL1SPL, live):
+			fmt.Printf("Would raise the current fan curve's points below %d PWM (50%%) to that floor,\n",
+				HighTDPMinPWM)
+			fmt.Printf("  leaving every other point as-is, and write it to both fans in %s\n", curveDir)
+		default:
+			fmt.Printf("Would write the current fan curve back to both fans in %s unchanged:\n", curveDir)
+			fmt.Printf("  it already clears the %d PWM (50%%) floor at every point\n", HighTDPMinPWM)
+		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",
 			s.PL1SPL, TDPMaxSafe)

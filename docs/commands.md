@@ -369,11 +369,17 @@ mixed in the same curve.
     ```
 
 !!! warning "Fan control is restricted above 75 W sustained TDP"
-    While sustained TDP (PL1) is above 75 W, every curve point must be at least
-    127 PWM (50%), and `--reset` is refused — firmware auto mode has no floor,
-    and dropping to it would remove the cooling the power limit depends on.
-    Lower the limit first with [`z13ctl tdp --reset`](#tdp), which restores the
-    balanced profile before releasing the fans.
+    While sustained TDP (PL1) is above 75 W, `fancurve --set` requires every point
+    to be at least 127 PWM (50%) — an up-front refusal so you can see why, rather
+    than storing a curve that would be altered on the way to the hardware. If you
+    raise the limit *after* setting a curve, the points below 127 are quietly
+    raised to it instead and the rest are left alone (see [`tdp`](#tdp)); the curve
+    you saved is kept intact for when the limit comes back down.
+
+    `--reset` is refused outright — firmware auto mode has no floor at all, and
+    dropping to it would remove the cooling the power limit depends on. Lower the
+    limit first with [`z13ctl tdp --reset`](#tdp), which restores the balanced
+    profile before releasing the fans.
 
 ```sh
 # Read current fan curves
@@ -409,7 +415,7 @@ z13ctl tdp [flags]
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, fans are set to a 50% minimum curve; custom curves must keep all PWM values at or above 127 (50%). |
+| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, any fan curve point below 127 PWM (50%) is raised to it; points at or above 127 are left exactly as you set them. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 **PPT attributes:**
@@ -448,15 +454,27 @@ re-selectable.
   127 PWM (50%) before the TDP values are written. If that fan write fails — or
   the kernel accepts it and then drops the curve — the TDP is not applied at all.
   Burst limits above 75W do not trigger this on their own.
-- The floor is only the bottom of the curve. Above 50 °C it climbs steadily and
-  reaches 100% at 80 °C, which is the range a machine actually sustaining more
-  than 75 W spends its time in:
+- **The floor is a per-point minimum, not a replacement curve.** Only points
+  below 127 PWM are raised to it; every point you set at or above 127 is applied
+  exactly as you drew it. A curve at 100% everywhere stays at 100%, and a curve of
+  `35:15%,40:30%,50:70%,60:80%,65:86%,70:92%,75:96%,80:100%` has only its first two
+  points lifted to 127 — the rest are yours.
+
+    z13ctl through v1.3.0 replaced the *whole* curve whenever the sustained limit
+    exceeded 75 W, which is why a custom curve appeared to "reset to stock" after
+    every sleep/resume and every `tdp --set`.
+
+- The built-in floor curve below is written whole only when the profile has no
+  curve of its own — there is nothing to raise, so it is all that is left to
+  write. It is also what `--reset` cannot drop to firmware auto from while a high
+  limit is in force. Above 50 °C it climbs steadily and reaches 100% at 80 °C,
+  which is the range a machine actually sustaining more than 75 W spends its time
+  in:
 
     | Temp | 30 °C | 40 °C | 50 °C | 60 °C | 65 °C | 70 °C | 75 °C | 80 °C |
     |------|-------|-------|-------|-------|-------|-------|-------|-------|
     | PWM  | 127   | 127   | 140   | 165   | 190   | 215   | 235   | 255   |
 
-    A custom curve may replace it as long as every point stays at or above 127.
     The floor was 204 (80%) through v1.2.1 — loud enough that users were turning
     the feature off rather than living with it, which protects nobody.
 

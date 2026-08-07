@@ -163,17 +163,80 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 	return SetTDPState(TDPStateFor(watts, pl1, pl2, pl3))
 }
 
-// ApplyTDPSafely writes s, first raising both fans to HighTDPFanCurve when the
-// sustained limit exceeds TDPMaxSafe. If that fan write fails, the TDP is NOT
-// applied: sustaining more than TDPMaxSafe watts without the HighTDPMinPWM
-// floor is the exact condition HighTDPFanCurve exists to prevent, so failing
-// closed is the only safe outcome.
+// FanCurveForTDP returns the curve that must be in force for a sustained limit of
+// pl1, given the curve the caller intends to run:
 //
-// "Fails" now includes the kernel accepting the write and then dropping the
-// curve: SetBothFanCurves reads pwm_enable back, so a floor lost to a
-// concurrent platform_profile write is a refusal rather than a false success.
-// This function only guarantees the floor at the moment the limit is raised —
-// keeping it in force afterwards is the reconcile watcher's job
+//   - nil when pl1 needs no floor at all — at or below TDPMaxSafe, or unreadable
+//     (-1). "The limit imposes nothing; run whatever you were going to run."
+//   - want with any point below HighTDPMinPWM raised to it, and **every other
+//     point left exactly as drawn**. The floor is a minimum applied per point, not
+//     a curve that replaces yours: a point at 204 is already more cooling than the
+//     floor asks for, so there is no reason to touch it.
+//   - HighTDPFanCurve() when there is no want at all — there is nothing to clamp,
+//     so the built-in curve is the only thing left to write.
+//
+// Clamping preserves the monotonically non-decreasing PWM order ParseFanCurve
+// requires, since max(x, floor) over a non-decreasing x is still non-decreasing.
+// want is never mutated: it aliases the saved profile in daemon state, and
+// clamping in place would rewrite the user's stored curve.
+//
+// This is the single place the rule lives. ApplyTDPSafely and the reconcile
+// watcher both call it; they used to carry separate copies that disagreed, and
+// the apply path's copy was wrong twice over — it treated the floor as an
+// override and replaced *every* curve above TDPMaxSafe. A user curve of 204→255
+// came back as the 127→255 ramp, and a curve at 100% everywhere was downgraded to
+// one that idles at 50%. The watcher would not correct it either: the fans are
+// left in mode 1, which reads as "the curve is live".
+func FanCurveForTDP(pl1 int, want []api.FanCurvePoint) []api.FanCurvePoint {
+	if pl1 <= TDPMaxSafe {
+		return nil
+	}
+	if len(want) == 0 {
+		return HighTDPFanCurve()
+	}
+	out := make([]api.FanCurvePoint, len(want))
+	copy(out, want)
+	for i := range out {
+		if out[i].PWM < HighTDPMinPWM {
+			out[i].PWM = HighTDPMinPWM
+		}
+	}
+	return out
+}
+
+// FloorAdjustsCurve reports whether FanCurveForTDP changes anything about want —
+// either raising one or more sub-floor points, or writing HighTDPFanCurve because
+// there is no want at all.
+//
+// Callers use it to tell the user the floor altered what they asked for, and just
+// as importantly to stay quiet when it did not. Note that an absent curve counts:
+// CheckCurveAgainstTDP alone answers "no problem" for nil, because a curve with no
+// points has none below the floor.
+func FloorAdjustsCurve(pl1 int, want []api.FanCurvePoint) bool {
+	if pl1 <= TDPMaxSafe {
+		return false
+	}
+	return len(want) == 0 || CheckCurveAgainstTDP(want, pl1) != nil
+}
+
+// ApplyTDPSafely writes s, first putting the fans into the state the sustained
+// limit requires — see FanCurveForTDP, which decides between want and the
+// HighTDPFanCurve floor. If that fan write fails, the TDP is NOT applied:
+// sustaining more than TDPMaxSafe watts without the HighTDPMinPWM floor is the
+// exact condition the floor exists to prevent, so failing closed is the only safe
+// outcome.
+//
+// want is the curve the caller intends to have in force — the active profile's
+// own curve, or nil when it has none. Passing it is what keeps the user's own
+// points from being thrown away: only points below the floor are raised. Passing
+// nil asks for HighTDPFanCurve wholesale, which is right only when there is
+// genuinely no curve.
+//
+// "Fails" includes the kernel accepting the write and then dropping the curve:
+// SetBothFanCurves reads pwm_enable back, so a floor lost to a concurrent
+// platform_profile write is a refusal rather than a false success. This function
+// only guarantees the floor at the moment the limit is raised — keeping it in
+// force afterwards is the reconcile watcher's job
 // (internal/daemon/reconcile.go), since a later profile write would otherwise
 // return the fans to firmware auto while the PPT stays high.
 //
@@ -185,9 +248,9 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 //
 // Values are written verbatim via SetTDPState; use TDPStateFor first if PL2
 // should be mirrored into APU/Platform sPPT.
-func ApplyTDPSafely(s api.TDPState) error {
-	if s.PL1SPL > TDPMaxSafe {
-		if err := SetBothFanCurves(HighTDPFanCurve()); err != nil {
+func ApplyTDPSafely(s api.TDPState, want []api.FanCurvePoint) error {
+	if c := FanCurveForTDP(s.PL1SPL, want); c != nil {
+		if err := SetBothFanCurves(c); err != nil {
 			return fmt.Errorf("setting high-TDP fan curve: %w (refusing to apply %dW sustained TDP without the %d PWM floor)",
 				err, s.PL1SPL, HighTDPMinPWM)
 		}

@@ -184,9 +184,12 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		if pl1 > cli.TDPMaxSafe {
-			fmt.Println("Fans set to 50%+ curve for thermal safety (the daemon keeps that floor in")
-			fmt.Println("  force if a power profile change releases it)")
+		// The daemon decided this, so ask the same question it did rather than
+		// asserting an adjustment that may not have happened.
+		if cli.FloorAdjustsCurve(pl1, cli.LiveFanCurve()) {
+			fmt.Printf("Fan curve points below %d PWM (50%%) were raised to that floor; every other\n", cli.HighTDPMinPWM)
+			fmt.Println("  point is unchanged (the daemon keeps the floor in force if a power profile")
+			fmt.Println("  change releases it)")
 		}
 		fmt.Printf("TDP set to %dW\n", watts)
 		return nil
@@ -195,17 +198,28 @@ func runTdpSet() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
-	// Direct path: same helper, so the no-daemon path enforces the 50% fan floor
-	// on the same terms — fans first, and no TDP at all if that write fails.
-	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
+	// Direct path: same helper, so the no-daemon path enforces the fan floor on
+	// the same terms — fans first, and no TDP at all if that write fails.
+	//
+	// LiveFanCurve is what this path has instead of profile state. Without it the
+	// floor would replace a curve the user set moments earlier even when that curve
+	// is well above it.
+	want := cli.LiveFanCurve()
+	adjusted := cli.FloorAdjustsCurve(pl1, want)
+	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
+	if adjusted {
+		fmt.Printf("Fan curve points below %d PWM (50%%) were raised to that floor; every other\n", cli.HighTDPMinPWM)
+		fmt.Println("  point is unchanged")
+	} else if pl1 > cli.TDPMaxSafe {
+		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
+	}
 	if pl1 > cli.TDPMaxSafe {
-		fmt.Println("Fans set to 50%+ curve for thermal safety")
 		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
-		fmt.Println("  power-profiles-daemon, Fn+F5) releases that floor in the kernel driver while")
+		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
 		fmt.Println("  this power limit stays in force, and the z13ctl daemon is not running to")
-		fmt.Println("  restore it. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
+		fmt.Println("  restore them. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil

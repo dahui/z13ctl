@@ -35,6 +35,11 @@ falling back to direct hardware access when it is not.
 Use --no-button to disable the Armoury Crate button watcher, allowing other
 tools to exclusively grab the button device.
 
+Use --no-sleep-release to keep a custom fan curve in force through sleep. The
+daemon normally hands the fans back to the firmware before suspending, because
+the embedded controller only stops them in its own auto mode — with a custom
+curve it keeps driving them for as long as the machine is asleep.
+
 The daemon is intended to be managed by systemd:
 
   systemctl --user enable --now z13ctl.socket
@@ -46,7 +51,11 @@ The contrib/systemd/user/ directory contains ready-to-use unit files.`,
 		defer cancel()
 
 		slog.Info("starting z13ctl daemon")
-		if err := daemon.Run(ctx, !noButtonFlag); err != nil {
+		opts := daemon.Options{
+			WatchButton:  !noButtonFlag,
+			SleepRelease: !noSleepReleaseFlag,
+		}
+		if err := daemon.Run(ctx, opts); err != nil {
 			return err
 		}
 		slog.Info("z13ctl daemon stopped")
