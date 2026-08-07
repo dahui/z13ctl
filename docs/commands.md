@@ -138,6 +138,18 @@ Optimizer settings that z13ctl applies itself. It is **never** written to
 `tdp --set`, or `undervolt --set` made while a firmware profile is active — the
 behaviour z13ctl has always had. `--create` makes more.
 
+!!! note "`--reset` while a firmware profile is active does not touch your profiles"
+    Only `--set` creates and activates `custom`. `fancurve --reset`,
+    `tdp --reset` and `undervolt --reset` run while a firmware profile is
+    selected affect **hardware only**: the fans go to firmware auto, the power
+    limits to that profile's stock values, the Curve Optimizer to zero, and every
+    saved custom profile is left exactly as it was.
+
+    Through v1.3.0 they resolved to `custom` and committed it cleared — so
+    `tdp --reset` on `balanced` silently deleted the fan curve and power limits
+    saved under `custom`, and switched the reported profile to the one it had just
+    emptied. Use `profile --set custom` to recall those settings.
+
 Setting a fan curve, TDP, or undervolt edits the profile you are *running*, and
 the change takes effect and persists immediately. There is no save step;
 `--save-as` copies the active profile under a new name rather than committing
@@ -459,9 +471,14 @@ re-selectable.
   Burst limits above 75W do not trigger this on their own.
 - **The floor is a per-point minimum, not a replacement curve.** Your curve is
   raised point by point to whichever is higher — your value, or the built-in curve's
-  value at that position. Nothing is ever lowered, and a point you set above the
-  built-in curve is applied exactly as you drew it. A curve at 100% everywhere stays
-  at 100%.
+  value **at that point's own temperature**, interpolated between the rows of the
+  table below. Nothing is ever lowered, and a point you set above the built-in curve
+  is applied exactly as you drew it. A curve at 100% everywhere stays at 100%.
+
+    The comparison is by temperature and not by position in the list, so a curve
+    whose points sit at unusual temperatures cannot slip under the ramp: a point at
+    `70:130` is measured against the 215 the floor requires at 70 °C, not against
+    whichever built-in point happens to be seventh.
 
     z13ctl through v1.3.0 replaced the *whole* curve whenever the sustained limit
     exceeded 75 W, which is why a custom curve appeared to "reset to stock" after
@@ -476,8 +493,12 @@ re-selectable.
     |------|-------|-------|-------|-------|-------|-------|-------|-------|
     | PWM  | 127   | 127   | 140   | 165   | 190   | 215   | 235   | 255   |
 
+    Below 30 °C the floor holds at 127 rather than tapering off, and above 80 °C it
+    stays at 255. Between rows it interpolates, so a point at 55 °C is measured
+    against roughly 152.
+
     So a curve flat at 50% clears the *bottom* of the floor everywhere but is still
-    raised from its third point on, because a machine genuinely sustaining more than
+    raised above 40 °C, because a machine genuinely sustaining more than
     75 W lives well past 60 °C — and the ramp, not the 127 minimum, is what protects
     the APU there. A curve like `35:80%,40:99%,50:100%,…` is above the built-in curve
     at every position and is left completely alone.

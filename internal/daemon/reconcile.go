@@ -202,6 +202,35 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 	return st, act
 }
 
+// reconcileCurveFor returns the curve to write once the tick's TDP arm has run,
+// or nil when the fans should be left exactly where the observation found them.
+//
+// It is evaluated against floorLimit — the limit now in force — rather than the
+// one observed at the top of the tick, because a reconcile that lowers a drifted
+// PPT changes what the floor requires. Three outcomes:
+//
+//   - the profile's own curve, raised where the limit still demands it
+//   - the built-in HighTDPFanCurve, when the limit demands a floor and the
+//     profile has no curve to raise
+//   - nil, when the limit demands no floor and the profile has no curve — there
+//     is nothing to put back
+//
+// That third case is the one this function exists for. reconcileOnce used to fall
+// back to the tick's own act.Curve, which was computed against the *drifted*
+// limit: a curveless profile whose PPT had wandered above TDPMaxSafe produced
+// both arms, the TDP arm brought the limit back down to the profile's own 52 W,
+// and the fallback then wrote the high-TDP ramp regardless — pinning both fans to
+// a 50 % minimum on a profile that controls no fan curve. It stuck, because the
+// following tick read pwm_enable=1 as "the curve is live" and the TDP now matched,
+// so nothing corrected it. Pure, so the table in reconcile_test.go can cover it
+// without touching the developer's fan controller.
+func reconcileCurveFor(floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
+	if c := cli.FanCurveForTDP(floorLimit, want); c != nil {
+		return c
+	}
+	return want
+}
+
 // watchReconcile runs until ctx is done, restoring the custom fan curve and
 // high-TDP floor whenever something else removes them.
 func (d *Daemon) watchReconcile(ctx context.Context) {
@@ -304,14 +333,10 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		}
 	}
 	if act.Curve != nil {
-		curve := obs.WantCurve
-		if c := cli.FanCurveForTDP(floorLimit, curve); c != nil {
-			curve = c
-		}
-		if curve == nil {
-			curve = act.Curve // no saved curve: act.Curve is the built-in floor
-		}
-		if err := cli.SetBothFanCurves(curve); err != nil {
+		if curve := reconcileCurveFor(floorLimit, obs.WantCurve); curve == nil {
+			slog.Debug("fan floor no longer required and the profile has no curve of its own; leaving the fans alone",
+				"pl1", floorLimit)
+		} else if err := cli.SetBothFanCurves(curve); err != nil {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply fan curve", "err", err)

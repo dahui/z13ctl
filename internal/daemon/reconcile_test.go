@@ -419,3 +419,94 @@ func TestReconcileOnceIsRaceFree(t *testing.T) {
 		t.Fatalf("state.Profile = %q, want \"balanced\" — this test must never reach the apply path", d.state.Profile)
 	}
 }
+
+// TestReconcileCurveForLeavesCurvelessProfilesAlone pins the third outcome of
+// reconcileCurveFor: with no curve of the profile's own and a limit that needs no
+// floor, nothing is written.
+//
+// The regression it guards is specific. reconcileOnce writes the TDP first and
+// then recomputes the curve against the limit that write established, and it used
+// to fall back to the tick's own act.Curve when the recomputation yielded nothing.
+// act.Curve was computed against the *drifted* limit, so a curveless profile whose
+// PPT had wandered above TDPMaxSafe had both arms fire, the TDP arm restored its own
+// 52W, and the fallback then wrote the built-in high-TDP ramp — leaving both fans
+// pinned to a 50% minimum on a profile that controls no fan curve at all. Nothing
+// corrected it afterwards: pwm_enable read back as 1 ("the curve is live") and the
+// TDP matched, so every later tick was a no-op.
+func TestReconcileCurveForLeavesCurvelessProfilesAlone(t *testing.T) {
+	t.Parallel()
+
+	user := curve(220) // comfortably above the floor everywhere
+
+	cases := []struct {
+		name       string
+		floorLimit int
+		want       []api.FanCurvePoint
+		expect     []api.FanCurvePoint
+	}{
+		{
+			name:       "no curve and a safe limit writes nothing",
+			floorLimit: 52,
+			want:       nil,
+			expect:     nil,
+		},
+		{
+			name:       "no curve and a high limit writes the built-in floor",
+			floorLimit: 90,
+			want:       nil,
+			expect:     cli.HighTDPFanCurve(),
+		},
+		{
+			name:       "a curve at a safe limit is written as drawn",
+			floorLimit: 52,
+			want:       user,
+			expect:     user,
+		},
+		{
+			name:       "a curve at a high limit is raised where the ramp demands it",
+			floorLimit: 90,
+			want:       curve(100),
+			expect:     rampedFrom(100),
+		},
+		{
+			name:       "a curve already above the ramp is untouched at a high limit",
+			floorLimit: 90,
+			want:       user,
+			expect:     user,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := reconcileCurveFor(tc.floorLimit, tc.want)
+			if len(got) != len(tc.expect) {
+				t.Fatalf("got %d points, want %d (got %v)", len(got), len(tc.expect), got)
+			}
+			for i := range got {
+				if got[i] != tc.expect[i] {
+					t.Fatalf("point %d = %v, want %v (got %v)", i, got[i], tc.expect[i], got)
+				}
+			}
+		})
+	}
+}
+
+// TestReconcileCurveForDoesNotMutateSavedCurve guards the same copying rule
+// cli.FanCurveForTDP has: want aliases the profile's points in daemon state, so
+// raising in place would rewrite the curve the user saved and leave nothing to
+// restore when the limit comes back down.
+func TestReconcileCurveForDoesNotMutateSavedCurve(t *testing.T) {
+	t.Parallel()
+
+	saved := curve(100)
+	before := append([]api.FanCurvePoint(nil), saved...)
+
+	reconcileCurveFor(90, saved)
+
+	for i := range saved {
+		if saved[i] != before[i] {
+			t.Fatalf("saved curve was mutated at point %d: %v, want %v", i, saved[i], before[i])
+		}
+	}
+}

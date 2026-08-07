@@ -328,3 +328,176 @@ func TestAutoswitchDisableIsAlwaysAllowed(t *testing.T) {
 		t.Errorf("autoswitch = %+v, want it disabled", d.state.Autoswitch)
 	}
 }
+
+// TestEditTargetActiveDistinguishesCreateFromEdit pins the Live/Active split that
+// the three reset handlers key on.
+//
+// A bare edit made while a firmware profile is active resolves to "custom" and is
+// Live — a --set writes hardware and activates it, which is the pre-existing
+// behaviour and is what users expect from "set a curve while on balanced". It is
+// NOT Active, because no custom profile was selected when the command ran.
+//
+// Collapsing the two made every `--reset` while on a firmware profile commit a
+// cleared "custom" profile: `tdp --reset` on balanced deleted the fan curve and
+// power limits saved under "custom", `fancurve --reset` deleted its curve, and
+// `undervolt --reset` deleted its offset — then switched the reported profile to
+// the profile it had just emptied. All three are reasonable things to type while on
+// a firmware profile and none of them said anything about the loss.
+func TestEditTargetActiveDistinguishesCreateFromEdit(t *testing.T) {
+	t.Parallel()
+
+	profiles := map[string]api.CustomProfile{
+		"custom": {Name: "custom", TDP: &api.TDPState{PL1SPL: 65}},
+		"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 80}},
+	}
+
+	cases := []struct {
+		name       string
+		active     string // state.Profile
+		request    string // the --profile flag
+		wantName   string
+		wantLive   bool
+		wantActive bool
+	}{
+		{"bare edit on a firmware profile creates custom", "balanced", "", "custom", true, false},
+		{"bare edit on custom edits custom", "custom", "", "custom", true, true},
+		{"bare edit on a named profile edits that one", "gaming", "", "gaming", true, true},
+		{"named target that is running", "gaming", "gaming", "gaming", true, true},
+		{"named target that is not running", "balanced", "gaming", "gaming", false, false},
+		{"named target while another custom runs", "custom", "gaming", "gaming", false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := &Daemon{state: api.State{Profile: tc.active, CustomProfiles: profiles}}
+			got, err := d.resolveEditTargetLocked(tc.request)
+			if err != nil {
+				t.Fatalf("resolveEditTargetLocked(%q) on %q: %v", tc.request, tc.active, err)
+			}
+			if got.Name != tc.wantName {
+				t.Errorf("Name = %q, want %q", got.Name, tc.wantName)
+			}
+			if got.Live != tc.wantLive {
+				t.Errorf("Live = %v, want %v", got.Live, tc.wantLive)
+			}
+			if got.Active != tc.wantActive {
+				t.Errorf("Active = %v, want %v", got.Active, tc.wantActive)
+			}
+		})
+	}
+}
+
+// TestActiveImpliesLive states the relationship the reset handlers rely on: a
+// target that was already selected is always one that writes hardware, so gating
+// the *state* commit on Active can never skip a commit for an edit that did write.
+// Only the reverse — Live without Active — is possible, and that is precisely the
+// create-and-activate case.
+func TestActiveImpliesLive(t *testing.T) {
+	t.Parallel()
+
+	profiles := map[string]api.CustomProfile{
+		"custom": {Name: "custom"},
+		"gaming": {Name: "gaming"},
+	}
+	for _, active := range []string{"balanced", "quiet", "performance", "custom", "gaming"} {
+		for _, req := range []string{"", "custom", "gaming"} {
+			d := &Daemon{state: api.State{Profile: active, CustomProfiles: profiles}}
+			got, err := d.resolveEditTargetLocked(req)
+			if err != nil {
+				continue // unknown-profile rejections are covered elsewhere
+			}
+			if got.Active && !got.Live {
+				t.Fatalf("state.Profile=%q --profile=%q gave Active without Live", active, req)
+			}
+		}
+	}
+}
+
+// TestResetProfileTargetStillClearsStoredSettings is the guard for the mistake the
+// Active split invites: gating the state commit on !Active rather than on
+// implicit() also skips a --profile target that is not running, which is the one
+// case where a reset must store and *not* touch hardware.
+//
+// These three handlers stay hermetic for a non-live target by construction:
+// floorLimitFor reads the profile's own stored TDP rather than hardware, the
+// Live branches that write sysfs are skipped, and the only side effect left is
+// the state file, redirected here.
+func TestResetProfileTargetStillClearsStoredSettings(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	full := func() api.CustomProfile {
+		return api.CustomProfile{
+			Name:      "gaming",
+			FanCurve:  &api.FanCurveState{Mode: 1, Points: make([]api.FanCurvePoint, 8)},
+			TDP:       &api.TDPState{PL1SPL: 60, PL2SPPT: 70},
+			Undervolt: &api.UndervoltState{CPUCO: -20},
+		}
+	}
+
+	cases := []struct {
+		name    string
+		call    func(*Daemon) response
+		cleared func(api.CustomProfile) bool
+	}{
+		{
+			name:    "fancurve-reset",
+			call:    func(d *Daemon) response { return d.handleFanCurveReset(request{Profile: "gaming"}) },
+			cleared: func(p api.CustomProfile) bool { return p.FanCurve == nil },
+		},
+		{
+			name:    "tdp-reset",
+			call:    func(d *Daemon) response { return d.handleTDPReset(request{Profile: "gaming"}) },
+			cleared: func(p api.CustomProfile) bool { return p.TDP == nil },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Running "balanced", editing "gaming": not live, not active.
+			d := &Daemon{state: api.State{
+				Profile:        "balanced",
+				CustomProfiles: map[string]api.CustomProfile{"gaming": full()},
+			}}
+			if resp := tc.call(d); !resp.OK {
+				t.Fatalf("%s --profile gaming: %s", tc.name, resp.Error)
+			}
+			got := d.state.CustomProfiles["gaming"]
+			if !tc.cleared(got) {
+				t.Errorf("%s --profile gaming did not clear the stored setting: %+v", tc.name, got)
+			}
+			// And it must not have activated the profile it merely edited.
+			if d.state.Profile != "balanced" {
+				t.Errorf("state.Profile = %q, want \"balanced\": a --profile edit must not activate", d.state.Profile)
+			}
+		})
+	}
+}
+
+// TestResetOnFirmwareProfilePreservesSavedProfile is the other half: a bare reset
+// while a firmware profile is active must leave the saved "custom" profile intact.
+// Only the non-hardware decision is asserted — the handlers themselves take the
+// Live branch here and would write the developer's real fan controller.
+func TestResetOnFirmwareProfilePreservesSavedProfile(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{state: api.State{
+		Profile: "balanced",
+		CustomProfiles: map[string]api.CustomProfile{
+			"custom": {
+				Name:      "custom",
+				FanCurve:  &api.FanCurveState{Mode: 1, Points: make([]api.FanCurvePoint, 8)},
+				TDP:       &api.TDPState{PL1SPL: 65},
+				Undervolt: &api.UndervoltState{CPUCO: -15},
+			},
+		},
+	}}
+	target, err := d.resolveEditTargetLocked("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !target.implicit() {
+		t.Fatalf("bare reset on balanced resolved to %+v; want implicit (Live && !Active), "+
+			"or the handlers will commit a cleared profile over the user's saved settings", target)
+	}
+}

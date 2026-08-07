@@ -544,6 +544,39 @@ contrib/
   unusable without it, since configuring the battery profile would otherwise mean
   applying it first. `resolveEditTargetLocked` + `commitEditLocked`
   (`internal/daemon/profile.go`) are the single place that resolves and commits.
+- **"Create and activate `custom`" is right for `--set` and wrong for `--reset`;
+  `editTarget.implicit()` is the distinction.** `editTarget` carries both `Live`
+  ("this edit writes hardware") and `Active` ("this profile was already
+  selected"), and they differ in exactly one case: a bare edit made while a
+  *firmware* profile is active. A `--set` there should create and activate
+  `custom` — the user is establishing a custom setting. A `--reset` asks to
+  *remove* one, and resolving it the same way made all three reset handlers
+  commit a **cleared** profile: `tdp --reset` on `balanced` deleted the fan curve
+  and power limits saved under `custom` and switched `state.Profile` to the
+  profile it had just emptied, `fancurve --reset` deleted its curve, and
+  `undervolt --reset` its offset. All three are ordinary things to type while on a
+  firmware profile and none of them said anything about the loss. The hardware
+  reset is still correct there; there is simply no profile to edit.
+  The guard is `t.Live && !t.Active`, **not** `!t.Active` — a `--profile <name>`
+  target that is not running is also inactive, and a reset there must still clear
+  the stored setting, which is the entire point of `--profile`. Writing it the
+  short way silently turned `fancurve --reset --profile gaming` into a no-op;
+  `TestResetProfileTargetStillClearsStoredSettings` is the guard, and it can drive
+  the real handlers because a non-live target reads the profile's own stored TDP
+  instead of hardware. `handleUndervoltReset` cannot be tested that way — it opens
+  with `SMUProbeUndervolt()`, which is destructive.
+- **`reconcileCurveFor` may return nil, and the caller must honour that rather
+  than substituting the tick's own `act.Curve`.** `reconcileOnce` writes the TDP
+  first and then recomputes the curve against the limit that write established;
+  `act.Curve` was computed against the *drifted* limit, so falling back to it
+  reintroduced the stale answer. A curveless custom profile whose PPT had wandered
+  above `TDPMaxSafe` fired both arms, the TDP arm restored the profile's own 52 W,
+  and the fallback then wrote `HighTDPFanCurve` anyway — pinning both fans to a
+  50% minimum on a profile that controls no fan curve at all. It stuck, because
+  the next tick read `pwm_enable=1` as "the curve is live" and the TDP now
+  matched. nil means "the limit imposes nothing and the profile has no curve;
+  leave the fans where they are". The helper is pure so the table can cover it
+  without writing the developer's fan controller.
 - **Activating a custom profile *clears* the subsystems it does not set.**
   `applyCustomHW` releases the fans when the profile has no curve, resets the
   Curve Optimizer when it has no offset, and hands the PPT limits back to the
@@ -851,7 +884,9 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
   `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
   sysfs tree (see below).
-- Current coverage: ~88% cli, ~78% aura, ~40% hid, ~21% daemon, ~38% api, ~9% cmd.
+- Current coverage: ~87% cli, ~78% aura, ~40% hid, ~38% daemon, ~29% api, ~9% cmd.
+  Re-measure with `go test -cover ./...` (plus `cd api`) rather than trusting these
+  — they were stale by 17 points on daemon and 9 on api before v1.3.1.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
 ### Fake sysfs (`internal/cli`)

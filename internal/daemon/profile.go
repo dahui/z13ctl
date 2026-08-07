@@ -215,10 +215,33 @@ func setUndervoltActive(s api.State, active bool) {
 // and says whether that profile is the active one — which is what decides
 // whether the command also writes hardware.
 type editTarget struct {
-	Name    string
-	Live    bool
+	Name string
+	Live bool
+	// Active reports whether this profile was already the selected one when the
+	// command ran. It differs from Live in exactly one case: a bare edit made
+	// while a *firmware* profile is active resolves to "custom", which is Live
+	// (a --set writes hardware and activates it) but was not Active.
+	//
+	// The reset handlers need that distinction and the set handlers do not.
+	// "Create and activate custom" is the right reading of `fancurve --set` on a
+	// firmware profile — the user is establishing a custom setting. It is the
+	// wrong reading of `fancurve --reset`, which asks to *remove* one: resolving
+	// it to "custom" and committing the cleared profile deleted whatever the user
+	// had saved there and switched the reported profile to it. See the reset
+	// handlers for the specific damage each one did.
+	Active  bool
 	Profile api.CustomProfile // the profile as it stands before the edit
 }
+
+// implicit reports whether this target was conjured by the command rather than
+// chosen: the bare-edit case on a firmware profile, where a --set creates and
+// activates "custom". It is the exact condition the reset handlers must skip
+// their state commit on.
+//
+// Live && !Active, and not simply !Active — a --profile target that is not
+// running is also inactive, and a reset there must still clear the stored
+// setting. That is the whole point of --profile: edit a profile you are not on.
+func (t editTarget) implicit() bool { return t.Live && !t.Active }
 
 // resolveEditTarget works out which profile a setting command edits.
 //
@@ -235,12 +258,14 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 	if name == "" {
 		// The profile currently running. When a firmware profile is active that
 		// is the default custom profile, created and activated by this very
-		// edit, so the target is live either way.
+		// edit, so the target is live either way — but it was not Active, which
+		// is what the reset handlers key on.
 		name = d.state.Profile
-		if !d.state.IsCustomProfile(name) {
+		active := d.state.IsCustomProfile(name)
+		if !active {
 			name = api.DefaultCustomProfile
 		}
-		return d.editTargetLocked(name, true), nil
+		return d.editTargetLocked(name, true, active), nil
 	}
 	if cli.IsStockProfile(name) {
 		return editTarget{}, fmt.Errorf("%q is a firmware profile and has no custom settings to edit", name)
@@ -248,15 +273,18 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 	if name != api.DefaultCustomProfile && !d.state.IsCustomProfile(name) {
 		return editTarget{}, fmt.Errorf("unknown profile %q; create it with 'z13ctl profile --create %s'", name, name)
 	}
-	return d.editTargetLocked(name, name == d.state.Profile), nil
+	// A named target is Live exactly when it is the selected profile, so the two
+	// coincide here; only the bare-edit path above can separate them.
+	live := name == d.state.Profile
+	return d.editTargetLocked(name, live, live), nil
 }
 
 // editTargetLocked builds the target for a known profile name. Caller must hold
 // d.mu.
-func (d *Daemon) editTargetLocked(name string, live bool) editTarget {
+func (d *Daemon) editTargetLocked(name string, live, active bool) editTarget {
 	p := d.state.CustomProfiles[name]
 	p.Name = name
-	return editTarget{Name: name, Live: live, Profile: cloneCustomProfile(p)}
+	return editTarget{Name: name, Live: live, Active: active, Profile: cloneCustomProfile(p)}
 }
 
 // commitEditLocked writes an edited profile back and, when it is the live one,

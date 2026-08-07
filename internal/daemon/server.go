@@ -602,6 +602,16 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 		slog.Info("fancurve-reset", "profile", target.Name, "applied", false)
 	}
 
+	// A reset made while a firmware profile is active is a hardware-only
+	// operation. Committing the resolved target would create-and-activate
+	// "custom" — the right reading of `--set`, and the wrong one here: it deleted
+	// the curve the user had saved in that profile and left the daemon reporting
+	// "custom" for a machine running the firmware profile's own fan control.
+	if target.implicit() {
+		slog.Info("fancurve-reset: released the fans; no custom profile was active, so none was changed")
+		return response{OK: true}
+	}
+
 	p := target.Profile
 	p.FanCurve = nil
 	d.mu.Lock()
@@ -820,13 +830,22 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// Clear the limits and curve from the profile that was running, not from a
 	// global slot: switching back to it later must not resurrect the TDP this
 	// command just reset in hardware.
-	p := target.Profile
-	p.TDP = nil
-	p.FanCurve = nil
-	if d.state.CustomProfiles == nil {
-		d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
+	//
+	// Only when one actually *was* running. A firmware profile resolves the bare
+	// target to "custom", and clearing that was silent data loss: `tdp --reset` on
+	// balanced — a reasonable "put my power limits back to stock" — deleted the fan
+	// curve and TDP saved in the custom profile the user had not selected, with
+	// nothing in the output to say so. The hardware reset above is still right;
+	// there is simply no profile here to edit.
+	if !target.implicit() {
+		p := target.Profile
+		p.TDP = nil
+		p.FanCurve = nil
+		if d.state.CustomProfiles == nil {
+			d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
+		}
+		d.state.CustomProfiles[target.Name] = p
 	}
-	d.state.CustomProfiles[target.Name] = p
 	d.state.Profile = "balanced"
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
@@ -933,6 +952,14 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 		slog.Info("undervolt-reset", "profile", target.Name)
 	} else {
 		slog.Info("undervolt-reset", "profile", target.Name, "applied", false)
+	}
+
+	// Hardware only when no custom profile is active — see handleFanCurveReset.
+	// Committing here deleted the saved offset the user expects to recall with
+	// "profile --set custom".
+	if target.implicit() {
+		slog.Info("undervolt-reset: cleared the offset in hardware; no custom profile was active, so none was changed")
+		return response{OK: true}
 	}
 
 	p := target.Profile
