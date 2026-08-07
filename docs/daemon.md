@@ -387,17 +387,24 @@ signals from systemd-logind and acts on both edges.
 
 ### On sleep — the fans are handed back to the firmware
 
-A custom fan curve has to be *released* before the machine suspends, or the fans
-never stop.
+On some machines a custom fan curve has to be *released* before the machine
+suspends, or the fans never stop.
 
 The Z13 supports only `s2idle` — there is no `deep` in `/sys/power/mem_sleep` —
 so the embedded controller keeps running its fan control loop for as long as the
 machine is asleep. In firmware auto mode (`pwm_enable=2`) the EC stops the fans.
-With a custom curve (`pwm_enable=1`) it goes on driving them from the curve's PWM
-values, and it has no idea the machine is suspended. Any curve whose
-low-temperature points are above zero therefore keeps the fans turning all night,
+Where a custom curve (`pwm_enable=1`) survives into suspend, the EC goes on driving
+the fans from the curve's PWM values with no idea the machine is asleep. Any curve
+whose low-temperature points are above zero then keeps the fans turning all night,
 and a machine on a high sustained TDP is worse: every point of the high-TDP floor
 curve ([`tdp`](commands.md#tdp) applies it above 75 W) is at or above 50%.
+
+"On some machines" is doing real work in that sentence. On kernels and firmware
+combinations where the custom curve is dropped across the suspend anyway, the fans
+already spin down and this release changes nothing. Which behaviour you get has
+been observed to differ between distributions, so the release is written to be
+harmless where it is unnecessary rather than conditional on detecting which case
+you are in. `--no-sleep-release` turns it off if you would rather keep the curve.
 
 On `PrepareForSleep(true)` the daemon therefore:
 
@@ -425,6 +432,25 @@ systemd-inhibit --list | grep z13ctl
 
 If logind refuses the inhibitor the daemon carries on without it; the writes are
 then racing the freeze, which is how it behaved before v1.3.1.
+
+!!! note "If your machine will not stay asleep"
+    The release writes to `ppt_*` and `pwm_enable` in the window before the
+    suspend, so it is a reasonable first suspect — but on the one machine where
+    this was investigated it was **not** the cause: suspend aborted identically
+    with the daemon stopped entirely. Rule z13ctl in or out with a control run
+    before going further:
+
+    ```sh
+    systemctl --user stop z13ctl.service z13ctl.socket
+    systemctl suspend        # still wakes immediately? not z13ctl
+    ```
+
+    A suspend that aborts before the kernel logs `Freezing user space processes`
+    means a wakeup event was already pending. `cat /sys/power/pm_wakeup_irq` names
+    the interrupt, and `sudo cat /sys/kernel/debug/wakeup_sources` lists every
+    source with a nonzero `wakeup_count` column — the devices that may have
+    aborted a suspend. On the Z13 the touchscreen and the detachable cover are
+    both wakeup-enabled and are the usual answers.
 
 ### On resume — volatile settings are reapplied
 

@@ -19,7 +19,7 @@ api/                         Public client API submodule (github.com/dahui/z13ct
   example_test.go            testable examples for all Send* and Subscribe functions
 main.go                      entry point
 cmd/                         Cobra subcommands
-  root.go                    root command, Version var, dryRunFlag, deviceFlag, noButtonFlag
+  root.go                    root command, Version var, dryRunFlag, deviceFlag, noButtonFlag, noSleepReleaseFlag
   apply.go                   apply lighting effect
   brightness.go              set brightness only
   daemon.go                  start the daemon (z13ctl daemon)
@@ -67,7 +67,7 @@ internal/
                              DryRunAutoswitch, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve,
                              DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
-    daemon.go                Package doc, Daemon struct, Run(), getListener() (socket activation)
+    daemon.go                Package doc, Daemon struct, Options, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
     button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13);
                              eventDevice seam — no Grab method, see issue #10
@@ -140,6 +140,10 @@ contrib/
   When set, the button watcher goroutine is not started and z13ctl does not open
   the Armoury Crate button device at all — for users who would rather the keypress
   reach only their desktop, or who need another tool to manage the device.
+- `--no-sleep-release` is likewise daemon-only: the pre-sleep fan release is
+  skipped and a custom curve stays in force through suspend. Both flags reach the
+  daemon through `daemon.Options` rather than positional bools — `Run(ctx, true,
+  false)` said nothing about which flag was which, and a third would be worse.
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -661,16 +665,36 @@ contrib/
   `restoreVolatileState` restores lighting (regardless of profile) and reapplies
   volatile state through `applyCustomHW` (when a custom profile is active). Uses
   `github.com/godbus/dbus/v5`.
-- **A custom fan curve must be released before sleep, or the fans never stop.**
-  The Z13 has no `deep` in `/sys/power/mem_sleep` — only `s2idle` — so the EC
-  keeps running its fan loop for the whole suspend. Firmware auto
-  (`pwm_enable=2`) is what makes it stop the fans; with `pwm_enable=1` it goes on
-  driving them from the curve and never learns the machine is asleep. Any curve
-  with non-zero low-temperature points runs the fans all night, and
-  `HighTDPFanCurve` guarantees it — every point is at or above `HighTDPMinPWM`.
-  This was reported as "fans not turning off when I close the lid" on the
-  issue #15 thread, and the docs asserted the *opposite* ("custom PWM curves
-  reset to firmware defaults on sleep") for as long as the bug existed.
+- **On some machines a custom fan curve must be released before sleep, or the
+  fans never stop.** The Z13 has no `deep` in `/sys/power/mem_sleep` — only
+  `s2idle` — so the EC keeps running its fan loop for the whole suspend. Firmware
+  auto (`pwm_enable=2`) is what makes it stop the fans; where `pwm_enable=1`
+  survives into the suspend, the EC goes on driving them from the curve and never
+  learns the machine is asleep. Any curve with non-zero low-temperature points then
+  runs the fans all night, and `HighTDPFanCurve` guarantees it — every point is at
+  or above `HighTDPMinPWM`. Reported as "fans not turning off when I close the lid"
+  on the issue #15 thread (Fedora), and the docs asserted the *opposite* ("custom
+  PWM curves reset to firmware defaults on sleep") for as long as the bug existed.
+  **"On some machines" is load-bearing, and was established the hard way.** On the
+  CachyOS development machine the curve is dropped across the suspend regardless,
+  so the fans spin down with the daemon stopped and the release changes nothing
+  observable. The release is therefore written to be *harmless where unnecessary*
+  rather than conditional on detecting which case applies — there is no reliable
+  way to ask "will this kernel keep my curve through s2idle" ahead of time.
+  `--no-sleep-release` is the escape hatch.
+- **Do not blame the sleep hook for a machine that will not stay asleep.** That
+  was diagnosed twice, wrongly, during development: first as an SD card whose
+  `mmc_bus_suspend` returns -84 (real, but present in only one of eight failures
+  and harmless on its own), then as our `ppt_*`/`pwm_enable` writes provoking a
+  delayed EC notification. The control run killed both — suspend aborted
+  identically with the daemon **stopped**. The inference that led there was
+  "suspends were minutes-long in earlier boots and seconds-long today, and today
+  is when the hook landed"; it was unsound because there were no suspends that day
+  *before* the change, so the comparison varied in more than the code. A suspend
+  that aborts before `Freezing user space processes` had a wakeup event already
+  pending; `/sys/power/pm_wakeup_irq` and `/sys/kernel/debug/wakeup_sources`
+  (the `wakeup_count` column) name the source, and on the Z13 the touchscreen
+  (`i2c-ELAN9008:00`) and the detachable cover are both wakeup-enabled.
 - **`sleepTick` is gated on ownership, and that is what makes sleep and resume
   symmetric.** `sleepObs.Owned` is `ok && !active.Empty()` from
   `ActiveCustomProfile()` — exactly the condition `restoreVolatileState` restores
@@ -702,13 +726,19 @@ contrib/
   taken, so the early return for a firmware profile reaches it too.
 - **The daemon holds a logind delay inhibitor, because
   `PrepareForSleep(true)` is otherwise advisory.** logind emits it and proceeds
-  to freeze; ~34 sysfs writes racing that is how the fix would silently not apply
-  on a fast-suspending system. `takeSleepInhibitor` must be called *before* the
-  signal can arrive (watcher start, and again after each resume), and the fd is
-  closed immediately after `releaseVolatileState` returns — logind suspends as
-  soon as the last delay lock closes, so deferring it to the end of the loop
-  would hold suspend open for `InhibitDelayMaxSec`. Best-effort throughout: a
-  refused `Inhibit` logs at Debug and returns -1.
+  to freeze; the release's sysfs writes racing that is how the fix would silently
+  not apply on a fast-suspending system. `takeSleepInhibitor` must be called
+  *before* the signal can arrive (watcher start, and again after each resume), and
+  the fd is closed immediately after `releaseVolatileState` returns — logind
+  suspends as soon as the last delay lock closes, so deferring it to the end of the
+  loop would hold suspend open for `InhibitDelayMaxSec` (5 s by default).
+  Best-effort throughout: a refused `Inhibit` logs at Debug and returns -1.
+  There is deliberately **no settle delay** after the writes. One was added on the
+  theory that the EC answers them with a notification a few hundred milliseconds
+  later, which would land in the window where it aborts the suspend; the control
+  run disproved the premise, and a fixed delay on every suspend with no evidence
+  behind it is cargo cult. If the theory is ever revived it needs the
+  `/sys/power/wakeup_count` measurement to support it, not timing coincidence.
 - **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
   detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
   loses power when detached; on reattach the firmware does not restore the

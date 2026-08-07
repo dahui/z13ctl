@@ -61,12 +61,9 @@ type Daemon struct {
 	buttonCh chan struct{}
 
 	// sleepRelease is false under --no-sleep-release: the fans keep the custom
-	// curve through sleep. Read-only after Run sets it.
+	// curve through sleep. Set once by Run before any watcher starts, and read-only
+	// afterwards, which is what makes it safe to read without a lock.
 	sleepRelease bool
-
-	// sleepSteps selects which pre-sleep writes run. Diagnostic only — see
-	// parseSleepSteps. Read-only after Run sets it.
-	sleepSteps sleepSteps
 }
 
 // Options configures the daemon. A zero value disables both watchers, so callers
@@ -89,7 +86,10 @@ func Run(ctx context.Context, opts Options) error {
 		sleepRelease: opts.SleepRelease,
 	}
 
-	d.applySleepEnv()
+	if !opts.SleepRelease {
+		slog.Info("pre-sleep fan release disabled; the custom curve stays in force through sleep")
+	}
+
 	d.state = loadState()
 
 	dev, err := hid.FindDevice("")

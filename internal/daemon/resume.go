@@ -28,11 +28,7 @@ package daemon
 import (
 	"context"
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 
@@ -103,8 +99,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				if d.sleepRelease {
 					d.releaseVolatileState()
 				} else {
-					slog.Info("sleep: fan release disabled (--no-sleep-release); the custom curve stays in force",
-						"wakeup_count", wakeupCount())
+					slog.Info("sleep: fan release disabled (--no-sleep-release); the custom curve stays in force")
 				}
 
 				// logind suspends as soon as the last delay lock closes, so this
@@ -119,131 +114,6 @@ func (d *Daemon) watchResume(ctx context.Context) {
 		}
 	}
 }
-
-// sysPowerDir is /sys/power, a var so tests can point it at a temp tree.
-var sysPowerDir = "/sys/power"
-
-// wakeupCount reads /sys/power/wakeup_count — the kernel's running count of
-// registered wakeup events. Returns -1 when it cannot be read.
-//
-// This is the measurement the whole sleep path is judged by. systemd-sleep reads
-// this attribute and writes the value back immediately before writing
-// /sys/power/state; a wakeup event registered in between makes the write fail and
-// the suspend abort with pm_wakeup_pending() true — which on this machine shows up
-// as a 21µs "PM: suspend entry" / "PM: suspend exit" pair with no "Freezing" line
-// in between. Sampling the count either side of our own writes is what turns "the
-// EC probably objects to this" into something observed rather than assumed.
-//
-// It is readable by an unprivileged user, so no part of this needs root.
-func wakeupCount() int {
-	return readPowerInt("wakeup_count")
-}
-
-// wakeupIRQ reads /sys/power/pm_wakeup_irq, the IRQ that caused the last wakeup.
-// 9 is the ACPI SCI on this machine, i.e. the embedded controller. Returns -1 when
-// unset or unreadable — it is empty until something has actually woken the system.
-func wakeupIRQ() int {
-	return readPowerInt("pm_wakeup_irq")
-}
-
-func readPowerInt(name string) int {
-	data, err := os.ReadFile(sysPowerDir + "/" + name)
-	if err != nil {
-		return -1
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return -1
-	}
-	return n
-}
-
-// sleepSettleDelay is how long releaseVolatileState waits after its last write
-// before releasing the logind delay lock.
-//
-// The ppt_* and pwm_enable writes are ACPI/WMI calls, and the suspicion this delay
-// tests is that the EC answers them with a notification some hundreds of
-// milliseconds later. Released immediately, that notification lands between
-// systemd reading /sys/power/wakeup_count and writing /sys/power/state, where it
-// aborts the suspend. Waiting here spends part of logind's InhibitDelayMaxSec
-// budget (5s by default) to have the event delivered and counted while the system
-// is still awake.
-//
-// A var so tests can zero it — no test should ever sleep — and so
-// Z13CTL_SLEEP_SETTLE_MS can override it while the mechanism is being pinned down.
-var sleepSettleDelay = 400 * time.Millisecond
-
-// sleepSteps selects which pre-sleep writes run. It exists to isolate which write
-// disturbs the EC and should be deleted once that is known; Z13CTL_SLEEP_STEPS
-// sets it. Both fields default true.
-type sleepSteps struct {
-	PPT  bool
-	Fans bool
-}
-
-// parseSleepSteps reads the Z13CTL_SLEEP_STEPS diagnostic knob: a comma-separated
-// list of "ppt" and "fans", or "none". An empty or unrecognised value keeps both
-// steps enabled — a typo must not silently turn the fan release off, which would
-// look exactly like the bug it was set to investigate. The second return reports
-// whether the value was understood, so the caller can say so.
-func parseSleepSteps(v string) (sleepSteps, bool) {
-	all := sleepSteps{PPT: true, Fans: true}
-	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "" {
-		return all, true
-	}
-	if v == "none" {
-		return sleepSteps{}, true
-	}
-	var out sleepSteps
-	for _, f := range strings.Split(v, ",") {
-		switch strings.TrimSpace(f) {
-		case "ppt":
-			out.PPT = true
-		case "fans":
-			out.Fans = true
-		default:
-			return all, false
-		}
-	}
-	return out, true
-}
-
-// applySleepEnv resolves the sleep-path configuration and echoes it, so every
-// journal makes plain which variant produced it. Called once from Run, before any
-// watcher starts, which is what makes d.sleepSteps safe to read without a lock.
-//
-// The two environment variables are diagnostic knobs for isolating which pre-sleep
-// write disturbs the embedded controller, and should be removed once that is
-// settled. --no-sleep-release is the permanent user-facing switch.
-func (d *Daemon) applySleepEnv() {
-	steps, ok := parseSleepSteps(os.Getenv(envSleepSteps))
-	if !ok {
-		slog.Warn("unrecognised "+envSleepSteps+"; keeping both pre-sleep steps enabled",
-			"value", os.Getenv(envSleepSteps), "valid", "ppt, fans, ppt,fans, none")
-	}
-	d.sleepSteps = steps
-
-	if v := os.Getenv(envSleepSettleMS); v != "" {
-		ms, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil || ms < 0 {
-			slog.Warn("ignoring invalid "+envSleepSettleMS, "value", v)
-		} else {
-			sleepSettleDelay = time.Duration(ms) * time.Millisecond
-		}
-	}
-
-	slog.Info("sleep path configured",
-		"release", d.sleepRelease,
-		"step_ppt", d.sleepSteps.PPT,
-		"step_fans", d.sleepSteps.Fans,
-		"settle_ms", sleepSettleDelay.Milliseconds())
-}
-
-const (
-	envSleepSteps    = "Z13CTL_SLEEP_STEPS"
-	envSleepSettleMS = "Z13CTL_SLEEP_SETTLE_MS"
-)
 
 // sleepObs is what the sleep hook observes before touching anything.
 type sleepObs struct {
@@ -344,19 +214,11 @@ func (d *Daemon) releaseVolatileState() {
 
 	act := sleepTick(obs)
 	if act.none() {
-		// No writes, so nothing to settle for. A machine on a firmware profile must
-		// not pay sleepSettleDelay on every suspend for work that never happened.
-		slog.Info("sleep: nothing to release", "owned", obs.Owned, "fan_mode", obs.CurveMode)
+		slog.Debug("sleep: nothing to release", "owned", obs.Owned, "fan_mode", obs.CurveMode)
 		return
 	}
 
-	// Each step is bracketed by a wakeup_count sample so the journal says which
-	// write, if any, registered a wakeup event. See wakeupCount.
-	start := time.Now()
-	before := wakeupCount()
-	afterPPT := before
-
-	if act.LowerPPT && d.sleepSteps.PPT {
+	if act.LowerPPT {
 		if err := restoreStockPPTErr(obs.Firmware); err != nil {
 			// Fail closed, exactly as ApplyTDPSafely does in the mirror image of
 			// this sequence: a loud suspend is the right trade against leaving a
@@ -365,34 +227,13 @@ func (d *Daemon) releaseVolatileState() {
 				"profile", obs.Firmware, "pl1", obs.PL1, "err", err)
 			return
 		}
-		afterPPT = wakeupCount()
 	}
 
-	afterFans := afterPPT
-	if d.sleepSteps.Fans {
-		if err := cli.ResetAllFanCurves(); err != nil {
-			slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
-			return
-		}
-		afterFans = wakeupCount()
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
+		return
 	}
-
-	slog.Info("sleep: released fans to firmware auto",
-		"reason", act.Reason,
-		"steps_ppt", act.LowerPPT && d.sleepSteps.PPT,
-		"steps_fans", d.sleepSteps.Fans,
-		"wakeup_count_before", before,
-		"wakeup_count_after_ppt", afterPPT,
-		"wakeup_count_after_fans", afterFans,
-		"write_ms", time.Since(start).Milliseconds())
-
-	if sleepSettleDelay > 0 {
-		time.Sleep(sleepSettleDelay)
-		slog.Info("sleep: settled before releasing the inhibitor",
-			"settle_ms", sleepSettleDelay.Milliseconds(),
-			"wakeup_count_after_settle", wakeupCount(),
-			"total_ms", time.Since(start).Milliseconds())
-	}
+	slog.Info("sleep: released fans to firmware auto", "reason", act.Reason)
 }
 
 // takeSleepInhibitor holds a logind delay lock so the daemon's pre-sleep writes
@@ -485,10 +326,6 @@ func (d *Daemon) restoreVolatileState() {
 	// still shut, so logind suspends again within seconds — and these writes (curve,
 	// PPT and the SMU offsets) land shortly before that next attempt. A settle delay
 	// on the sleep side alone would not cover an event provoked here.
-	slog.Info("resume: restoring custom profile", "profile", active.Name,
-		"wakeup_count", wakeupCount(), "wakeup_irq", wakeupIRQ())
-	start := time.Now()
+	slog.Info("resume: restoring custom profile", "profile", active.Name)
 	d.applyCustomHW(active)
-	slog.Info("resume: custom profile restored", "profile", active.Name,
-		"wakeup_count_after", wakeupCount(), "write_ms", time.Since(start).Milliseconds())
 }
