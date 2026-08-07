@@ -1,0 +1,2004 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="RGB lighting and system control for the 2025 ASUS ROG Flow Z13 on Linux.">
+      
+      
+      
+        <link rel="canonical" href="https://dahui.github.io/z13ctl/daemon/">
+      
+      
+        <link rel="prev" href="../commands/">
+      
+      
+        <link rel="next" href="../api/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.3">
+    
+    
+      
+        <title>Daemon - z13ctl</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.d7758b05.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#daemon" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="z13ctl" class="md-header__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            z13ctl
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Daemon
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../commands/" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../protocol/" class="md-tabs__link">
+        
+  
+    
+  
+  Protocol
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="z13ctl" class="md-nav__button md-logo" aria-label="z13ctl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    z13ctl
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dahui/z13ctl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dahui/z13ctl
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Getting Started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Installation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Quick Start
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Commands
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Daemon
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Daemon
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#systemd-setup-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      Systemd setup (recommended)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing the service
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing the service">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#remove-the-user-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Remove the user service
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-without-systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running without systemd
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#socket-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      Socket protocol
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Socket protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lighting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lighting
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      System settings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom profiles
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acbattery-autoswitch" class="md-nav__link">
+    <span class="md-ellipsis">
+      AC/battery autoswitch
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fans-tdp-and-undervolt" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fans, TDP, and undervolt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#state-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      State and events
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimal-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      Minimal client
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#state-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      State file
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sleepresume-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sleep/resume recovery
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sleep/resume recovery">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-sleep-the-fans-are-handed-back-to-the-firmware" class="md-nav__link">
+    <span class="md-ellipsis">
+      On sleep — the fans are handed back to the firmware
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-resume-volatile-settings-are-reapplied" class="md-nav__link">
+    <span class="md-ellipsis">
+      On resume — volatile settings are reapplied
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keyboard-reattach-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyboard reattach recovery
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-fan-curve-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom fan curve reconciliation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acbattery-autoswitch_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      AC/battery autoswitch
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#armoury-crate-button" class="md-nav__link">
+    <span class="md-ellipsis">
+      Armoury Crate button
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Armoury Crate button">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inputplumber-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      InputPlumber compatibility
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../protocol/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Protocol
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#systemd-setup-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      Systemd setup (recommended)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing the service
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing the service">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#remove-the-user-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      Remove the user service
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-without-systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running without systemd
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#socket-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      Socket protocol
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Socket protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lighting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lighting
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      System settings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom profiles
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acbattery-autoswitch" class="md-nav__link">
+    <span class="md-ellipsis">
+      AC/battery autoswitch
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fans-tdp-and-undervolt" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fans, TDP, and undervolt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#state-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      State and events
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimal-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      Minimal client
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#state-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      State file
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sleepresume-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sleep/resume recovery
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sleep/resume recovery">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-sleep-the-fans-are-handed-back-to-the-firmware" class="md-nav__link">
+    <span class="md-ellipsis">
+      On sleep — the fans are handed back to the firmware
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-resume-volatile-settings-are-reapplied" class="md-nav__link">
+    <span class="md-ellipsis">
+      On resume — volatile settings are reapplied
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keyboard-reattach-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keyboard reattach recovery
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-fan-curve-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Custom fan curve reconciliation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acbattery-autoswitch_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      AC/battery autoswitch
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#armoury-crate-button" class="md-nav__link">
+    <span class="md-ellipsis">
+      Armoury Crate button
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Armoury Crate button">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inputplumber-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      InputPlumber compatibility
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="daemon">Daemon</h1>
+<p>The z13ctl daemon is a long-running background process that provides three things
+ordinary one-shot CLI invocations cannot:</p>
+<ul>
+<li><strong>State persistence</strong> — saves your last-applied lighting, profile, battery,
+  fan curve, TDP, and undervolt settings to <code>~/.local/state/z13ctl/state.json</code>
+  and restores them automatically at every boot.</li>
+<li><strong>Sleep/resume recovery</strong> — watches for system resume events via D-Bus and
+  reapplies lighting and volatile settings (fan curves, TDP, undervolt) that
+  are lost during sleep.</li>
+<li><strong>Keyboard reattach recovery</strong> — detects the detachable keyboard being removed
+  and reattached, reopens the HID device, and re-applies the saved keyboard
+  lighting (the firmware does not restore it on its own).</li>
+<li><strong>Custom fan curve reconciliation</strong> — re-applies your custom fan curve (and the
+  high-TDP fan floor) after the kernel driver drops it, which it does on every
+  system power profile change.</li>
+<li><strong>HID device ownership</strong> — holds the hidraw devices open continuously so that
+  commands arrive instantly rather than waiting to reopen the device each time.</li>
+<li><strong>Armoury Crate button events</strong> — captures <code>KEY_PROG3</code> (the dedicated Armoury
+  Crate button) and broadcasts a <code>gui-toggle</code> event to any connected subscribers
+  (see <a href="../api/">API</a>).</li>
+</ul>
+<p>All CLI commands (<code>apply</code>, <code>brightness</code>, <code>off</code>, <code>profile</code>, <code>batterylimit</code>,
+<code>bootsound</code>, <code>paneloverdrive</code>, <code>fancurve</code>, <code>tdp</code>, <code>undervolt</code>, <code>status</code>) automatically route through the
+daemon socket when it is running. If the daemon is not running they fall back to direct hardware or
+sysfs access transparently — there is no user-visible difference other than
+persistence.</p>
+<hr />
+<h2 id="systemd-setup-recommended">Systemd setup (recommended)</h2>
+<p>z13ctl ships two systemd user units that use socket activation:</p>
+<ul>
+<li><strong><code>z13ctl.socket</code></strong> — systemd creates and manages the Unix socket. The daemon
+  is started on first use and does not run if nothing has connected.</li>
+<li><strong><code>z13ctl.service</code></strong> — <code>Type=notify</code>, <code>Restart=on-failure</code>. The daemon sends
+  <code>sd_notify READY</code> when it is listening.</li>
+</ul>
+<p>The units target <code>graphical-session.target</code>, so they work in both desktop
+environments (KDE, GNOME) and Steam Gaming Mode (gamescope session).</p>
+<p>Install and enable:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>install<span class="w"> </span>-Dm644<span class="w"> </span>contrib/systemd/user/z13ctl.socket<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span>~/.config/systemd/user/z13ctl.socket
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>install<span class="w"> </span>-Dm644<span class="w"> </span>contrib/systemd/user/z13ctl.service<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span>~/.config/systemd/user/z13ctl.service
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>daemon-reload
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>systemctl<span class="w"> </span>--user<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>--now<span class="w"> </span>z13ctl.socket<span class="w"> </span>z13ctl.service
+</code></pre></div>
+<p>Or, if you built from source:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>make<span class="w"> </span>install-service
+</code></pre></div>
+<hr />
+<h2 id="managing-the-service">Managing the service</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Check status</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>status<span class="w"> </span>z13ctl.socket
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>status<span class="w"> </span>z13ctl.service
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># View live logs</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>z13ctl<span class="w"> </span>-f
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Restart the daemon (e.g., after a config change)</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>restart<span class="w"> </span>z13ctl.service
+</code></pre></div>
+<h3 id="remove-the-user-service">Remove the user service</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>disable<span class="w"> </span>--now<span class="w"> </span>z13ctl.socket<span class="w"> </span>z13ctl.service
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>rm<span class="w"> </span>-f<span class="w"> </span>~/.config/systemd/user/z13ctl.socket<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">      </span>~/.config/systemd/user/z13ctl.service
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>daemon-reload
+</code></pre></div>
+<hr />
+<h2 id="running-without-systemd">Running without systemd</h2>
+<p>Start the daemon directly for testing or on systems without systemd:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>z13ctl<span class="w"> </span>daemon
+</code></pre></div>
+<p>To disable the Armoury Crate button watcher — because another tool needs
+exclusive access to the device, or because you would rather the keypress reach
+only your desktop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>z13ctl<span class="w"> </span>--no-button<span class="w"> </span>daemon
+</code></pre></div>
+<p>The daemon listens on a Unix socket at:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock
+</code></pre></div>
+<p>(falls back to <code>/tmp/z13ctl/z13ctl.sock</code> if <code>XDG_RUNTIME_DIR</code> is not set).</p>
+<hr />
+<h2 id="socket-protocol">Socket protocol</h2>
+<p>The wire format is newline-delimited JSON: one request object per line, one
+response object per line. Every response carries <code>ok</code> (bool) and, on failure,
+<code>error</code> (string). Commands that return data use <code>value</code> (a string, JSON-encoded
+where the payload is structured).</p>
+<p>Connections are single-shot — the daemon replies once and closes — except
+<code>subscribe</code>, which stays open and streams events.</p>
+<h3 id="lighting">Lighting</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Apply an effect</td>
+<td><code>{"cmd":"apply","mode":"cycle","color":"FF0000","color2":"000000","speed":"normal","brightness":3,"device":"lightbar"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Turn off</td>
+<td><code>{"cmd":"off","device":""}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Brightness only</td>
+<td><code>{"cmd":"brightness","brightness":2,"device":""}</code></td>
+<td><code>ok</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>device</code> accepts <code>"keyboard"</code>, <code>"lightbar"</code>, a <code>/dev/hidrawN</code> path, or <code>""</code> for
+all zones. <code>brightness</code> is 0–3.</p>
+<h3 id="system-settings">System settings</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Set profile</td>
+<td><code>{"cmd":"profile","set":"performance"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get profile</td>
+<td><code>{"cmd":"profile-get"}</code></td>
+<td><code>ok</code>, <code>value</code></td>
+</tr>
+<tr>
+<td>Set battery limit</td>
+<td><code>{"cmd":"batterylimit","set":"80"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get battery limit</td>
+<td><code>{"cmd":"batterylimit-get"}</code></td>
+<td><code>ok</code>, <code>value</code></td>
+</tr>
+<tr>
+<td>Set boot sound</td>
+<td><code>{"cmd":"bootsound","set":"1"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get boot sound</td>
+<td><code>{"cmd":"bootsound-get"}</code></td>
+<td><code>ok</code>, <code>value</code></td>
+</tr>
+<tr>
+<td>Set panel overdrive</td>
+<td><code>{"cmd":"paneloverdrive","set":"1"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get panel overdrive</td>
+<td><code>{"cmd":"paneloverdrive-get"}</code></td>
+<td><code>ok</code>, <code>value</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>profile</code> accepts <code>quiet</code>, <code>balanced</code>, <code>performance</code>, or the name of a custom
+profile (including <code>custom</code>).</p>
+<div class="admonition warning">
+<p class="admonition-title">Unknown profile names are now rejected</p>
+<p>Earlier daemons forwarded any string to <code>platform_profile</code>. A name that is
+neither a firmware profile nor a saved custom profile is now an error, so a
+typo cannot reach the fan-curve reset on its way to failing. A client that
+sent e.g. <code>low-power</code> will need updating.</p>
+</div>
+<h3 id="custom-profiles">Custom profiles</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Create profile</td>
+<td><code>{"cmd":"profile-create","set":"gaming"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Copy active profile</td>
+<td><code>{"cmd":"profile-save","set":"gaming"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Delete profile</td>
+<td><code>{"cmd":"profile-delete","set":"gaming"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>List profiles</td>
+<td><code>{"cmd":"profile-list"}</code></td>
+<td><code>ok</code>, <code>value</code> (JSON)</td>
+</tr>
+</tbody>
+</table>
+<p><code>profile-list</code> returns a JSON array of <code>{name, fan_curve, tdp, undervolt,
+active}</code>. Names are lowercase, 1–32 characters of <code>a-z</code>, <code>0-9</code>, <code>-</code>, <code>_</code>, and
+may not be a firmware profile name or <code>custom</code>; <code>profile-create</code> and
+<code>profile-save</code> validate the name as sent rather than case-folding it.</p>
+<p><code>profile-delete</code> refuses to remove the active profile or one referenced by
+<code>autoswitch</code>.</p>
+<p>Selecting a custom profile puts hardware into the state that profile describes,
+which means a subsystem it leaves unset is <strong>cleared</strong>, not left alone: no fan
+curve releases the fans to firmware auto, no undervolt resets the Curve
+Optimizer, and no TDP hands the power limits back to the firmware profile
+underneath. Without that, switching between two custom profiles would leave the
+previous one's limits and offset in force, and selecting A then B then A would
+not give the same machine as selecting A.</p>
+<h3 id="acbattery-autoswitch">AC/battery autoswitch</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Configure</td>
+<td><code>{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get</td>
+<td><code>{"cmd":"autoswitch-get"}</code></td>
+<td><code>ok</code>, <code>value</code> (JSON: <code>enabled</code>, <code>ac</code>, <code>battery</code>, <code>on_ac</code>, <code>source_known</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>An empty <code>ac</code> or <code>battery</code> leaves the profile alone on that source. Both targets
+are validated against the firmware profiles and the saved custom profiles.</p>
+<h3 id="fans-tdp-and-undervolt">Fans, TDP, and undervolt</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Set fan curve</td>
+<td><code>{"cmd":"fancurve","set":"48:2,55:20,..."}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get fan curve</td>
+<td><code>{"cmd":"fancurve-get"}</code></td>
+<td><code>ok</code>, <code>value</code> (JSON)</td>
+</tr>
+<tr>
+<td>Reset fan curve</td>
+<td><code>{"cmd":"fancurve-reset"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Set TDP</td>
+<td><code>{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get TDP</td>
+<td><code>{"cmd":"tdp-get"}</code></td>
+<td><code>ok</code>, <code>value</code> (JSON)</td>
+</tr>
+<tr>
+<td>Reset TDP</td>
+<td><code>{"cmd":"tdp-reset"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Set undervolt</td>
+<td><code>{"cmd":"undervolt","set":"-20"}</code></td>
+<td><code>ok</code></td>
+</tr>
+<tr>
+<td>Get undervolt</td>
+<td><code>{"cmd":"undervolt-get"}</code></td>
+<td><code>ok</code>, <code>value</code> (JSON: <code>cpu_co</code>, <code>active</code>, <code>profile</code>)</td>
+</tr>
+<tr>
+<td>Reset undervolt</td>
+<td><code>{"cmd":"undervolt-reset"}</code></td>
+<td><code>ok</code></td>
+</tr>
+</tbody>
+</table>
+<p>The <code>pl1</code>/<code>pl2</code>/<code>pl3</code> fields are optional overrides; <code>set</code> alone applies one
+value to all three. <code>force</code> is required for a sustained limit (PL1) above 75 W.</p>
+<p>All six commands accept an optional <code>profile</code> field naming the custom profile to
+edit. Absent or empty means the active profile — which is what every client
+written before this field existed sends, so their behaviour is unchanged. Naming
+a profile that is <em>not</em> active stores the setting and writes nothing to
+hardware; the fan-curve floor is then checked against that profile's own TDP
+rather than against the running machine, so a profile can never be stored in a
+state that would be unsafe when activated.</p>
+<div class="admonition danger">
+<p class="admonition-title">The <code>profile</code> field is silently ignored by older daemons</p>
+<p>It is an additive field, so a daemon from before custom profiles unmarshals
+the request, drops the field, <strong>applies the setting to the running machine</strong>,
+and answers <code>ok</code>. A client that offers profile targeting must probe first —
+<code>profile-list</code> answers <code>unknown command</code> on an older daemon, which is exactly
+what <code>z13ctl</code> itself does before sending any <code>--profile</code> edit.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Fan commands are restricted above 75 W sustained TDP</p>
+<p>While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
+<code>fancurve</code> is rejected if any point falls below that floor, and
+<code>fancurve-reset</code> is rejected outright — firmware auto mode has no minimum.
+<code>tdp-reset</code> is the way out: it lowers the limit before releasing the fans.</p>
+<p><code>tdp</code> applies the same rule in the other direction. Raising PL1 above 75 W
+writes the fan curve <strong>first</strong>, and if that write fails the power limit is not
+applied at all. The floor is a <strong>per-point minimum against the built-in
+high-TDP curve</strong>: each point is raised to that curve's value where it falls
+below it, and left exactly as stored where it does not, so a client sending a
+curve above it gets that curve rather than a substitute. Note this is the whole
+curve and not just its 127 PWM bottom — a curve flat at 50% is still raised at
+higher temperatures. The built-in curve is written whole only when the profile
+has no curve of its own. The same holds for the daemon's own restore paths — startup, resume,
+and selecting a custom profile.</p>
+</div>
+<h3 id="state-and-events">State and events</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full state</td>
+<td><code>{"cmd":"get-state"}</code></td>
+<td><code>ok</code>, <code>state</code></td>
+</tr>
+<tr>
+<td>Subscribe</td>
+<td><code>{"cmd":"subscribe","events":["gui-toggle","power-source","state-changed"]}</code></td>
+<td><code>ok</code>, then streamed events</td>
+</tr>
+</tbody>
+</table>
+<p><code>get-state</code> merges persisted state with live sysfs reads — see
+<a href="#state-file">State file</a>.</p>
+<p>Each streamed event is a full response object with an <code>event</code> field:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="nt">&quot;event&quot;</span><span class="p">:</span><span class="s2">&quot;gui-toggle&quot;</span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Events</strong></p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Emitted when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gui-toggle</code></td>
+<td>the Armoury Crate button is pressed</td>
+</tr>
+<tr>
+<td><code>power-source</code></td>
+<td>the machine moves between mains and battery power</td>
+</tr>
+<tr>
+<td><code>state-changed</code></td>
+<td>the active profile, its settings, the saved profiles, or the autoswitch configuration change</td>
+</tr>
+</tbody>
+</table>
+<p><code>power-source</code> fires on the transition itself, whether or not autoswitch is
+configured, so a client can drive a plug/battery indicator from it alone.</p>
+<p><code>state-changed</code> fires whatever the cause — this client, another client, the CLI,
+autoswitch, or a resume. A client displaying profile, TDP, fan curve, or
+undervolt values should re-read them with <code>get-state</code> when it arrives. Lighting
+is deliberately excluded: a brightness slider drag would emit a burst of events
+describing values the client just set itself.</p>
+<p>Events carry <strong>no payload</strong>. The name says what happened and <code>get-state</code> answers
+with current truth — a payload would describe the moment the event was queued,
+which can already be stale by the time the client handles it.</p>
+<p>The <code>events</code> list is honoured: a client that subscribes to <code>gui-toggle</code> alone is
+never woken by the other two. Subscribing with an empty list receives everything.</p>
+<div class="admonition warning">
+<p class="admonition-title">Switch on the event name</p>
+<p>While <code>gui-toggle</code> was the only event, <code>for range ch { toggle() }</code> was a
+reasonable client loop. It is not any more — it would toggle the window on
+every power-source change. Dispatch on the name.</p>
+</div>
+<p>Discriminate on the presence of <code>event</code> — a command reply never carries it.
+(Events emitted by v1.2.0 and earlier carried <code>"ok":false</code>; clients that gate on
+<code>ok</code> dropped them.)</p>
+<div class="admonition note">
+<p class="admonition-title">Timeouts</p>
+<p>The daemon closes a connection that does not send its request line within
+30 seconds, so a client cannot pin a goroutine by connecting and going
+silent. This deadline is cleared once a <code>subscribe</code> is acknowledged, since
+subscriptions are idle by design between button presses. In the other
+direction, <code>api</code> clients bound a whole command exchange at 10 seconds so a
+wedged daemon cannot hang the caller indefinitely.</p>
+</div>
+<h3 id="minimal-client">Minimal client</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">send</span><span class="p">(</span><span class="n">req</span><span class="p">):</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">r</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">open_unix_connection</span><span class="p">(</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>        <span class="sa">f</span><span class="s2">&quot;/run/user/</span><span class="si">{</span><span class="n">os</span><span class="o">.</span><span class="n">getuid</span><span class="p">()</span><span class="si">}</span><span class="s2">/z13ctl/z13ctl.sock&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">w</span><span class="o">.</span><span class="n">write</span><span class="p">((</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">req</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">drain</span><span class="p">()</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">resp</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="k">await</span> <span class="n">r</span><span class="o">.</span><span class="n">readline</span><span class="p">())</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">w</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="k">return</span> <span class="n">resp</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">send</span><span class="p">({</span><span class="s2">&quot;cmd&quot;</span><span class="p">:</span> <span class="s2">&quot;profile&quot;</span><span class="p">,</span> <span class="s2">&quot;set&quot;</span><span class="p">:</span> <span class="s2">&quot;quiet&quot;</span><span class="p">}))</span>
+</code></pre></div>
+<p>Go callers should use the <a href="../api/"><code>api</code> module</a> rather than speaking the
+protocol directly.</p>
+<hr />
+<h2 id="state-file">State file</h2>
+<p>The daemon persists state to:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>~/.local/state/z13ctl/state.json
+</code></pre></div>
+<p>The file is written atomically after every successful command. It stores:</p>
+<ul>
+<li><code>lighting</code> — mode, color, color2, speed, brightness, enabled flag</li>
+<li><code>devices</code> — per-device overrides (keyboard/lightbar can have independent state)</li>
+<li><code>profile</code> — the active profile: a firmware profile, or a custom profile name</li>
+<li><code>battery_limit</code> — last-set charge limit</li>
+<li><code>custom_profiles</code> — saved custom profiles keyed by name, each holding its own
+  <code>fan_curve</code>, <code>tdp</code>, and <code>undervolt</code>. This is the source of truth for custom
+  settings.</li>
+<li><code>autoswitch</code> — <code>enabled</code>, and the <code>ac</code> and <code>battery</code> profile targets</li>
+<li><code>fan_curve</code>, <code>tdp</code>, <code>undervolt</code> — a <strong>projection</strong>, written for the benefit of
+  clients and daemons from before named profiles existed. They carry the active
+  custom profile's settings, or <code>custom</code>'s when a firmware profile is active —
+  the same values selecting <code>custom</code> would recall, which is what keeps a "saved
+  undervolt, not active" display working and what stops a downgrade taken while
+  on <code>balanced</code> from writing those settings away. They are output only;
+  <code>custom_profiles</code> is what is read back.</li>
+</ul>
+<p>A state file written before named profiles existed has no <code>custom_profiles</code>, so
+its top-level <code>fan_curve</code>/<code>tdp</code>/<code>undervolt</code> are migrated into a profile called
+<code>custom</code> on first load — the same settings, now addressable by name. Nothing
+needs to be done by hand.</p>
+<p>On <code>get-state</code> requests the daemon also populates <code>temperature</code> (APU die
+temperature in °C), <code>fan_rpm</code> (fan speed in RPM), <code>on_ac</code> (whether the charger
+is plugged in), and <code>undervolt_available</code> (whether the <code>ryzen_smu</code> kernel module
+is present) from live sysfs reads. These are not persisted — they are real-time
+sensor values.</p>
+<p>On startup the daemon reads this file, resolves what the current power source
+calls for if autoswitch is configured, and restores all saved settings before
+accepting any connections. If the active profile is a custom one, its fan curve,
+TDP, and undervolt are re-applied to the hardware. If it is a firmware profile,
+that profile's measured PPT values are written instead — the kernel's <code>ppt_*</code>
+attributes come up holding a stale 5 W default after boot, and nothing else
+restores them.</p>
+<div class="admonition warning">
+<p class="admonition-title">Downgrading loses named profiles</p>
+<p>A daemon from before this release reads only the top-level fields and drops
+<code>custom_profiles</code> on its next save. The active profile's settings survive via
+the projection above; any other saved profile does not. Copy <code>state.json</code>
+aside before downgrading.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">A corrupt state file is kept, not discarded</p>
+<p>If <code>state.json</code> exists but cannot be parsed, the daemon renames it to
+<code>state.json.corrupt</code>, logs a warning, and starts from defaults. Without
+that rename the next command would overwrite the damaged file, taking every
+saved setting with it and leaving nothing to inspect. Repair the <code>.corrupt</code>
+copy and move it back to recover.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Raw hidrawN paths are not persisted</p>
+<p>Commands sent with <code>--device /dev/hidraw2</code> (a raw path) are applied but
+not saved — raw device numbers are transient and may change across reboots.
+Use <code>keyboard</code> or <code>lightbar</code> by name for persistent per-zone settings.</p>
+</div>
+<hr />
+<h2 id="sleepresume-recovery">Sleep/resume recovery</h2>
+<p>The daemon monitors D-Bus for <code>org.freedesktop.login1.Manager.PrepareForSleep</code>
+signals from systemd-logind and acts on both edges.</p>
+<h3 id="on-sleep-the-fans-are-handed-back-to-the-firmware">On sleep — the fans are handed back to the firmware</h3>
+<p>On some machines a custom fan curve has to be <em>released</em> before the machine
+suspends, or the fans never stop.</p>
+<p>The Z13 supports only <code>s2idle</code> — there is no <code>deep</code> in <code>/sys/power/mem_sleep</code> —
+so the embedded controller keeps running its fan control loop for as long as the
+machine is asleep. In firmware auto mode (<code>pwm_enable=2</code>) the EC stops the fans.
+Where a custom curve (<code>pwm_enable=1</code>) survives into suspend, the EC goes on driving
+the fans from the curve's PWM values with no idea the machine is asleep. Any curve
+whose low-temperature points are above zero then keeps the fans turning all night,
+and a machine on a high sustained TDP is worse: every point of the high-TDP floor
+curve (<a href="../commands/#tdp"><code>tdp</code></a> applies it above 75 W) is at or above 50%.</p>
+<p>"On some machines" is doing real work in that sentence. On kernels and firmware
+combinations where the custom curve is dropped across the suspend anyway, the fans
+already spin down and this release changes nothing. Which behaviour you get has
+been observed to differ between distributions, so the release is written to be
+harmless where it is unnecessary rather than conditional on detecting which case
+you are in. <code>--no-sleep-release</code> turns it off if you would rather keep the curve.</p>
+<p>On <code>PrepareForSleep(true)</code> the daemon therefore:</p>
+<ol>
+<li>Turns off the lightbar (the keyboard powers down in hardware; the lightbar
+   does not).</li>
+<li>Lowers the power limits to the underlying firmware profile's stock values —
+   but only when the sustained limit is above the safe maximum, since releasing
+   the fans would otherwise drop a thermal floor that limit requires. <strong>If that
+   write fails, the fans are not released.</strong> A loud suspend is the right trade
+   against an unfloored high limit.</li>
+<li>Releases both fans to firmware auto.</li>
+</ol>
+<p>Steps 2 and 3 only happen when the daemon owns the current thermal settings —
+that is, when a custom profile is active. A curve set by another tool (asusctl,
+or a direct sysfs write) while z13ctl is on a firmware profile is left alone,
+because nothing on the resume side would put it back.</p>
+<p>The daemon holds a logind <strong>delay inhibitor</strong> so these writes land before
+userspace is frozen. Without one, <code>PrepareForSleep(true)</code> is only advisory —
+logind emits it and proceeds to suspend. You can confirm it is held:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>systemd-inhibit<span class="w"> </span>--list<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>z13ctl
+</code></pre></div>
+<p>If logind refuses the inhibitor the daemon carries on without it; the writes are
+then racing the freeze, which is how it behaved before v1.3.1.</p>
+<div class="admonition note">
+<p class="admonition-title">If your machine will not stay asleep</p>
+<p>The release writes to <code>ppt_*</code> and <code>pwm_enable</code> in the window before the
+suspend, so it is a reasonable first suspect — but on the one machine where
+this was investigated it was <strong>not</strong> the cause: suspend aborted identically
+with the daemon stopped entirely. Rule z13ctl in or out with a control run
+before going further:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>systemctl<span class="w"> </span>--user<span class="w"> </span>stop<span class="w"> </span>z13ctl.service<span class="w"> </span>z13ctl.socket
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>systemctl<span class="w"> </span><span class="nb">suspend</span><span class="w">        </span><span class="c1"># still wakes immediately? not z13ctl</span>
+</code></pre></div>
+<p>A suspend that aborts before the kernel logs <code>Freezing user space processes</code>
+means a wakeup event was already pending. <code>cat /sys/power/pm_wakeup_irq</code> names
+the interrupt, and <code>sudo cat /sys/kernel/debug/wakeup_sources</code> lists every
+source with a nonzero <code>wakeup_count</code> column — the devices that may have
+aborted a suspend. On the Z13 the touchscreen and the detachable cover are
+both wakeup-enabled and are the usual answers.</p>
+</div>
+<h3 id="on-resume-volatile-settings-are-reapplied">On resume — volatile settings are reapplied</h3>
+<p>These are lost across a sleep cycle and must be rewritten:</p>
+<ul>
+<li><strong>Lighting</strong> — RGB lighting is turned off by the hardware on sleep</li>
+<li><strong>Fan curves</strong> — released by the daemon on sleep, as above (and dropped by
+  every power profile change — see <a href="#custom-fan-curve-reconciliation">reconciliation</a>)</li>
+<li><strong>TDP (PPT)</strong> — lowered by the daemon on sleep when a high limit was in force</li>
+<li><strong>Undervolt (Curve Optimizer)</strong> — CO offsets reset to stock on every sleep cycle</li>
+</ul>
+<p>On <code>PrepareForSleep(false)</code> the daemon restores lighting (regardless of profile)
+and all custom-profile volatile settings from its saved state. Fan curves, TDP,
+and undervolt are only restored when a custom profile is active; under a stock
+profile the firmware manages fan curves, and the profile's stock PPT values were
+already written to hardware when that profile was selected. The curve goes on
+before the TDP, so the high-TDP floor is written last and wins.</p>
+<p>The <a href="#custom-fan-curve-reconciliation">reconciliation watcher</a> stands down between
+the two signals — otherwise it would re-enable the curve within two seconds of the
+release, in the window before userspace freezes. It resumes defending the curve on
+the resume signal, or after about two minutes of awake time if that signal never
+arrives.</p>
+<p>This all happens transparently with no user intervention. You can verify it worked
+by checking the daemon logs after a resume:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>z13ctl<span class="w"> </span>--since<span class="w"> </span><span class="s2">&quot;5 minutes ago&quot;</span>
+</code></pre></div>
+<p>Expect, in order: <code>system entering sleep</code>, <code>sleep: released fans to firmware
+auto</code>, <code>system resumed from sleep, restoring volatile state</code>, and
+<code>resume: restoring custom profile</code>.</p>
+<hr />
+<h2 id="keyboard-reattach-recovery">Keyboard reattach recovery</h2>
+<p>The Z13's keyboard folio is detachable, and it is a separate USB HID device
+(<code>0b05:1a30</code>) from the lightbar (<code>0b05:18c6</code>), which lives in the tablet body.
+When you detach the keyboard it loses power and its RGB goes dark; when you
+reattach it, the firmware brings it back <strong>unlit</strong> — the previously applied
+effect is not restored.</p>
+<p>The daemon opens the hidraw devices once at startup, so a reattached keyboard
+appears as a brand-new device node that the original handle no longer references.
+To recover, the daemon polls sysfs every couple of seconds for the keyboard
+reappearing. On detecting it, the daemon reopens the HID devices and re-applies
+the saved lighting state — honoring per-device overrides, so a keyboard-specific
+color/mode is restored exactly as you last set it.</p>
+<p>This requires no user intervention; the keyboard relights within a few seconds of
+reattachment. If your <code>z13ctl setup</code> udev rules are in place, the reattached node
+is granted access automatically. You can verify it in the daemon logs:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>z13ctl<span class="w"> </span>-f
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1"># On reattach: keyboard reattached; lighting restored</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Daemon required</p>
+<p>This recovery only happens while the daemon is running. Without it, re-run
+your <code>apply</code> command (or press the Armoury Crate button in z13gui) after
+reattaching the keyboard.</p>
+</div>
+<hr />
+<h2 id="custom-fan-curve-reconciliation">Custom fan curve reconciliation</h2>
+<p>The kernel's <code>asus-wmi</code> driver <strong>disables custom fan curves on every
+<code>platform_profile</code> write</strong>. The write handler ends by clearing the driver's
+internal "custom curve enabled" flag for each fan, and the curve is then never
+pushed to the EC again until something re-enables it. Nothing is reported to the
+process that set the curve — your fans simply return to the firmware's own curve.</p>
+<p>This is easy to trigger without meaning to:</p>
+<ul>
+<li>GNOME power modes and <code>power-profiles-daemon</code> write <code>platform_profile</code> on every
+  AC/battery transition and whenever an application requests a profile hold</li>
+<li>Fn+F5 (the ASUS fan-mode hotkey)</li>
+<li><code>asusctl</code>, <code>tuned</code>, or any other tool that manages the platform profile</li>
+</ul>
+<p>The daemon polls the fan curve device's <code>pwm_enable</code> — the driver's own
+"is the custom curve live" flag, so it catches every cause — every two seconds.
+When the curve has been dropped while your saved settings say it should still be
+in force, it writes the curve back — as saved, with only sub-floor points raised
+if a sustained TDP above 75 W requires it. The same applies to the floor itself:
+without this, a power profile change would release the fans while the power limit
+stayed in place.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>z13ctl<span class="w"> </span>-f
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="c1"># After a profile change: reconciling custom thermal settings</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1">#   reason=&quot;saved custom fan curve was disabled&quot; platform_profile=balanced pwm_enable=2</span>
+</code></pre></div>
+<p>The daemon never writes <code>platform_profile</code> itself — your desktop stays in charge
+of the power profile. Reconciliation only runs while the <code>custom</code> profile is
+active, so selecting <code>quiet</code>, <code>balanced</code>, or <code>performance</code> with
+<code>z13ctl profile --set</code> releases the fans to firmware control and keeps them there.</p>
+<p>It also stands down between <code>PrepareForSleep(true)</code> and the matching resume, so it
+does not undo the <a href="#on-sleep-the-fans-are-handed-back-to-the-firmware">pre-sleep fan release</a>
+in the window before userspace freezes. If a resume signal never arrives it starts
+defending the curve again after about two minutes of awake time.</p>
+<div class="admonition note">
+<p class="admonition-title">Daemon required</p>
+<p>Without the daemon, a custom fan curve set with <code>z13ctl fancurve --set</code> lasts
+only until the next power profile change. The CLI warns about this when it
+applies a curve directly. Since z13ctl 1.2.2 the command also fails with an
+error, rather than reporting success, if the kernel refuses to honour the
+curve it just wrote.</p>
+</div>
+<hr />
+<h2 id="acbattery-autoswitch_1">AC/battery autoswitch</h2>
+<p>When <a href="../commands/#autoswitch"><code>z13ctl autoswitch</code></a> is configured, the daemon
+applies the profile that matches the power source on every plug and unplug.</p>
+<p>The watcher is <strong>edge-triggered</strong> on the mains adapter's <code>online</code> attribute
+under <code>/sys/class/power_supply</code>, and never reads or writes <code>platform_profile</code>.
+That is what makes it safe to run alongside <code>power-profiles-daemon</code>: it reacts
+only to a value that neither z13ctl nor PPD nor the desktop can write, so the
+feedback loop that would produce a write-fight does not exist. The visible
+consequence, and the intended semantics, is that a profile you choose by hand
+stays in force until the power source actually changes.</p>
+<p>Detection uses two triggers and one observation. UPower's <code>OnBattery</code> property
+wakes the watcher immediately where UPower is running; a 2-second poll is the
+backstop that keeps this working in Steam Gaming Mode, on a bare session, or
+wherever UPower is absent. Either way the answer comes from sysfs, so there is
+one behaviour to reason about.</p>
+<p>A transition is confirmed on the following observation before anything is
+applied, so a change lands about two seconds after the event. That settle window
+lets the desktop's own transition write land first — a custom fan curve would
+otherwise be dropped in the gap before the <a href="#custom-fan-curve-reconciliation">reconciler</a>
+notices — and stops a loose USB-C connector from driving a full power-limit, fan,
+and SMU write per bounce.</p>
+<p>Devices are selected by their <code>type</code> file, not by having an <code>online</code> file. On the
+Z13 the detachable keyboard registers as <code>hid-*-battery-N</code> and the USB-C ports as
+<code>ucsi-source-psy-*</code>, and all of them expose <code>online</code>; only <code>type</code> <code>Mains</code> is the
+charger. If no <code>Mains</code> supply exists at all — a VM, a desktop, a driver not yet
+bound — the source is treated as <em>unknown</em> and the watcher does nothing, rather
+than concluding the machine is on battery.</p>
+<p>There is deliberately no autoswitch hook in the resume path. Go timers do not
+advance across suspend, so the watcher's armed timer fires promptly after resume
+and handles an unplug-during-sleep on its own; duplicating the logic would race
+it and apply twice for one event.</p>
+<div class="admonition note">
+<p class="admonition-title">GNOME's Automatic Power Saver</p>
+<p>That setting triggers on low battery rather than on unplugging, so it can
+still move a firmware profile after autoswitch has acted. z13ctl yields
+between transitions by design. Give a side an empty target to hand it to your
+desktop entirely.</p>
+</div>
+<hr />
+<h2 id="armoury-crate-button">Armoury Crate button</h2>
+<p>The daemon watches the ASUS WMI hotkeys input device for <code>KEY_PROG3</code> (key code
+202) — the physical Armoury Crate button on the Z13. When pressed, it broadcasts
+a <code>gui-toggle</code> event to all connected subscribers.</p>
+<p>The device is read <strong>non-exclusively</strong>. It also carries <code>SW_TABLET_MODE</code>, and an
+exclusive <code>EVIOCGRAB</code> would take those tablet-mode transitions away from
+libinput — leaving the desktop convinced the machine is still a tablet and
+suppressing the detachable cover keyboard when it is attached after login. z13ctl
+grabbed the device up to v1.2.0 and did exactly that; it no longer does.</p>
+<p>One consequence of reading shared: the Armoury Crate keypress also reaches your
+desktop. No mainstream desktop binds <code>KEY_PROG3</code> by default, but if yours does,
+that binding will fire alongside the <code>gui-toggle</code> event — unbind it there, or run
+the daemon with <code>--no-button</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Silent failure if another process grabs the device</p>
+<p>Because z13ctl no longer grabs, a different process holding an exclusive grab
+will silently receive all events instead, and the watcher will sit idle with
+nothing to report. If button presses do nothing, check what else has the
+device open (<code>sudo fuser -v /dev/input/eventN</code>).</p>
+</div>
+<p>External tools can subscribe to this event via the API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nx">ch</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">api</span><span class="p">.</span><span class="nx">Subscribe</span><span class="p">([]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;gui-toggle&quot;</span><span class="p">})</span>
+</code></pre></div>
+<p>See the <a href="../api/">API</a> page for details.</p>
+<h3 id="inputplumber-compatibility">InputPlumber compatibility</h3>
+<p>On gaming distributions such as Bazzite and ChimeraOS, <a href="https://github.com/ShadowBlip/InputPlumber">InputPlumber</a>
+ships a built-in device profile for the ROG Flow Z13 (<code>50-rog_flow_z13.yaml</code>)
+that grabs <code>"Asus WMI hotkeys"</code> as a managed source device. This creates an
+exclusive evdev conflict: z13ctl cannot open the device and will log:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>button watcher stopped; retrying err=&quot;open /dev/input/eventN: permission denied&quot;
+</code></pre></div>
+<p><strong>Workaround:</strong> Create an override config that marks <code>"Asus WMI hotkeys"</code> as
+<code>ignore: true</code>. This tells InputPlumber to leave that device unmanaged so z13ctl
+can open it, while preserving all other InputPlumber functionality (controller
+emulation, touchpad, etc.).</p>
+<p>First, check whether the built-in config exists on your system:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>cat<span class="w"> </span>/usr/share/inputplumber/devices/50-rog_flow_z13.yaml
+</code></pre></div>
+<p>If found, create the override directory if needed, then save the override file:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>sudo<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>/etc/inputplumber/devices.d
+</code></pre></div>
+<p>Create <code>/etc/inputplumber/devices.d/50-rog_flow_z13.yaml</code> with <code>ignore: true</code> added
+to the keyboard source device:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># /etc/inputplumber/devices.d/50-rog_flow_z13.yaml</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CompositeDevice</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ASUS ROG Flow Z13 (2025)</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="nt">single_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="nt">matches</span><span class="p">:</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dmi_data</span><span class="p">:</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">      </span><span class="nt">board_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GZ302EA</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="w">      </span><span class="nt">sys_vendor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ASUSTeK COMPUTER INC.</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="nt">source_devices</span><span class="p">:</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keyboard</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a><span class="w">    </span><span class="nt">ignore</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">        </span><span class="c1"># leave unmanaged so z13ctl can read this device</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="w">    </span><span class="nt">evdev</span><span class="p">:</span>
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="w">      </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Asus WMI hotkeys</span>
+<a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a><span class="w">      </span><span class="nt">handler</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">event*</span>
+<a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a>
+<a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a><span class="nt">options</span><span class="p">:</span>
+<a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a><span class="w">  </span><span class="nt">auto_manage</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a>
+<a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a><span class="nt">target_devices</span><span class="p">:</span>
+<a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xbox-elite</span>
+<a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">touchpad</span>
+<a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keyboard</span>
+<a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a>
+<a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a><span class="nt">capability_map_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">flw1</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Always place overrides under <code>/etc/inputplumber/devices.d/</code> — never edit files
+under <code>/usr/share/inputplumber/devices/</code> directly, as those are owned by the
+package and will be overwritten on upgrades.</p>
+<p>If your model's <code>board_name</code> differs from <code>GZ302EA</code>, verify it with:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>cat<span class="w"> </span>/sys/class/dmi/id/board_name
+</code></pre></div></p>
+</div>
+<p>After saving the file, restart InputPlumber:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>inputplumber.service
+</code></pre></div>
+<p>Then restore device permissions that the previous InputPlumber instance may have
+changed (InputPlumber restricts device node access while managing a device, and may
+not fully restore permissions on shutdown):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>sudo<span class="w"> </span>z13ctl<span class="w"> </span>setup<span class="w"> </span>--perms-only
+</code></pre></div>
+<p>Then confirm z13ctl can read the button device:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>z13ctl.service<span class="w"> </span>-f
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="c1"># Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN</span>
+</code></pre></div>
+<p>Alternatively, disable the button watcher entirely and let InputPlumber handle
+the button exclusively:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>z13ctl<span class="w"> </span>--no-button<span class="w"> </span>daemon
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.copy"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.f1b6f286.min.js"></script>
+      
+    
+  </body>
+</html>
