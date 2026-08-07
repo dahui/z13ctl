@@ -196,6 +196,25 @@ func ReadBothFanCurves() ([fanCount][]api.FanCurvePoint, error) {
 	return curves, nil
 }
 
+// LiveFanCurve returns the curve currently in force, or nil when the fans are not
+// on a custom curve (firmware auto, forced full speed, or unreadable).
+//
+// It is what the no-daemon CLI path has instead of profile state. Without it,
+// "tdp --set 90" would hand nil to ApplyTDPSafely and so discard a curve the user
+// set moments earlier — the same defect the daemon path had, arrived at from the
+// other direction.
+func LiveFanCurve() []api.FanCurvePoint {
+	modes, err := ReadFanCurveModes()
+	if err != nil || modes[0] != 1 {
+		return nil
+	}
+	curves, err := ReadBothFanCurves()
+	if err != nil {
+		return nil
+	}
+	return curves[0]
+}
+
 // SetBothFanCurves writes the same 8-point fan curve to both fans, enables
 // custom mode (pwm_enable=1) on both, and verifies that the kernel kept it.
 //
@@ -273,9 +292,43 @@ func setAllFanModes(mode int) error {
 	return nil
 }
 
-// ResetAllFanCurves restores firmware auto mode for both fans.
+// ResetAllFanCurves restores firmware auto mode for both fans, and verifies that
+// the kernel kept it.
+//
+// The readback matters for the same reason SetBothFanCurves has one, in the
+// mirror image: a release the driver silently ignores is indistinguishable from
+// success, and the sleep hook (internal/daemon/resume.go) needs the difference.
+// Firmware auto is what lets the EC stop the fans through s2idle, so a release
+// that did not take is the difference between a quiet suspend and a machine that
+// runs its fans all night.
 func ResetAllFanCurves() error {
-	return setAllFanModes(2) // auto/firmware
+	if err := setAllFanModes(2); err != nil { // auto/firmware
+		return err
+	}
+	return verifyFanModeReleased()
+}
+
+// verifyFanModeReleased reports whether both fans are on firmware auto.
+//
+// As in VerifyFanCurveActive, a channel that cannot be read is deliberately not
+// a failure — unverifiable is not the same as failed, and hard-failing there
+// would break fan control on any SKU that does not expose pwm2_enable on the
+// curve device. Mode 0 is also accepted: forced full speed is not a curve, so
+// the release has nothing left to undo.
+func verifyFanModeReleased() error {
+	modes, err := ReadFanCurveModes()
+	if err != nil {
+		return err
+	}
+	for i, m := range modes {
+		if m == -1 || m == 0 || m == 2 {
+			continue
+		}
+		return fmt.Errorf(
+			"fans were released to firmware auto but the kernel is not honouring it (pwm%d_enable = %d, %s)",
+			fanNames[i].index, m, FanModeName(m))
+	}
+	return nil
 }
 
 // SetAllFansFullSpeed forces both fans to maximum speed.

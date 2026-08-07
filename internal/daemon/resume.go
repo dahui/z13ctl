@@ -2,22 +2,44 @@ package daemon
 
 // resume.go — sleep/resume watcher via systemd-logind DBus signals.
 //
-// Listens for org.freedesktop.login1.Manager.PrepareForSleep(false) on the
-// system bus. When the system resumes from sleep, lighting and all volatile
-// settings (undervolt, TDP, fan curves) are reapplied from daemon state.
+// Listens for org.freedesktop.login1.Manager.PrepareForSleep on the system bus.
+// On (false) — resume — lighting and all volatile settings (undervolt, TDP, fan
+// curves) are reapplied from daemon state. On (true) — sleep — the lightbar is
+// turned off and the fans are handed back to firmware auto.
+//
+// The fan release is not housekeeping; without it the fans never stop while the
+// machine is asleep (issue #15 follow-up). The Z13 supports only s2idle — there
+// is no "deep" in /sys/power/mem_sleep — so the EC keeps running its fan control
+// loop the whole time the machine is suspended. In firmware auto mode
+// (pwm_enable=2) the EC stops the fans; with a custom curve (pwm_enable=1) it
+// keeps driving them from the curve's PWM values, and every point of
+// cli.HighTDPFanCurve is at or above 50%, so a machine on a high sustained TDP
+// suspends with both fans at half speed indefinitely.
+//
+// Two things make this delicate rather than a one-line write:
+//
+//   - Releasing the fans while a sustained limit above cli.TDPMaxSafe is in force
+//     would drop the very floor ApplyTDPSafely refuses to run without, so the
+//     limits come down first and a failure there cancels the release.
+//   - PrepareForSleep(true) is advisory unless someone holds a delay inhibitor.
+//     Without one, logind is free to freeze userspace before these writes land,
+//     which looks exactly like the bug being fixed — hence takeSleepInhibitor.
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"syscall"
 
 	"github.com/godbus/dbus/v5"
 
 	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/cli"
 )
 
-// watchResume connects to the system DBus and listens for resume events.
-// When PrepareForSleep(false) is received, restoreVolatileState is called.
-// Blocks until ctx is cancelled.
+// watchResume connects to the system DBus and listens for sleep and resume
+// events. PrepareForSleep(true) calls releaseVolatileState, (false) calls
+// restoreVolatileState. Blocks until ctx is cancelled.
 func (d *Daemon) watchResume(ctx context.Context) {
 	conn, err := dbus.SystemBus()
 	if err != nil {
@@ -35,6 +57,12 @@ func (d *Daemon) watchResume(ctx context.Context) {
 
 	ch := make(chan *dbus.Signal, 4)
 	conn.Signal(ch)
+
+	// Held before the signal can arrive — a delay inhibitor taken after
+	// PrepareForSleep(true) is already too late to delay anything.
+	inhibitor := takeSleepInhibitor(conn)
+	defer releaseSleepInhibitor(&inhibitor)
+
 	slog.Info("resume watcher started (listening for PrepareForSleep)")
 
 	for {
@@ -58,6 +86,14 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				// A (true) with no intervening (false) — a retried suspend, an
+				// aborted one, or a lost resume signal — leaves us holding nothing.
+				// Re-taking is too late to delay *this* suspend, but it restores the
+				// invariant for the next one instead of never holding a lock again.
+				if inhibitor < 0 {
+					slog.Debug("no sleep inhibitor held at PrepareForSleep(true); re-taking for the next cycle")
+					inhibitor = takeSleepInhibitor(conn)
+				}
 				// d.dev is guarded by d.mu: the hotplug watcher closes and
 				// replaces it on keyboard reattach, so an unlocked read here
 				// races with that swap and can write to a closed descriptor.
@@ -68,12 +104,235 @@ func (d *Daemon) watchResume(ctx context.Context) {
 					}
 				}
 				d.mu.Unlock()
+
+				if d.sleepRelease {
+					d.releaseVolatileState()
+				} else {
+					slog.Info("sleep: fan release disabled (--no-sleep-release); the custom curve stays in force")
+				}
+
+				// logind suspends as soon as the last delay lock closes, so this
+				// must happen here rather than on the way out of the loop — the
+				// whole point is that the writes above have already landed.
+				releaseSleepInhibitor(&inhibitor)
 				continue
 			}
 			slog.Info("system resumed from sleep, restoring volatile state")
 			d.restoreVolatileState()
+			// Release before re-taking. The sleep branch normally leaves this at -1,
+			// but nothing guarantees the two edges alternate — a (false) with no
+			// preceding (true) would otherwise overwrite a still-open fd, leaking it
+			// and leaving logind counting a delay lock nobody can release.
+			releaseSleepInhibitor(&inhibitor)
+			inhibitor = takeSleepInhibitor(conn)
 		}
 	}
+}
+
+// sleepObs is what the sleep hook observes before touching anything.
+type sleepObs struct {
+	Owned     bool   // daemon state says a non-empty custom profile is active
+	CurveMode int    // curve device pwm1_enable; -1 if unreadable
+	PL1       int    // effective sustained limit in watts; -1 if unreadable
+	Firmware  string // platform_profile underneath, naming the stock PPT row
+}
+
+// sleepAction is what a sleep decided to do. A zero value means "leave the
+// hardware alone", which is the case for a machine on a firmware profile.
+type sleepAction struct {
+	LowerPPT    bool
+	ReleaseFans bool
+	Reason      string
+}
+
+// none reports whether the action would touch anything.
+func (a sleepAction) none() bool { return !a.LowerPPT && !a.ReleaseFans }
+
+// sleepTick decides what to release from one observation. It is pure — no sysfs,
+// no locks, no logging — for the same reason reconcileTick is: internal/cli's
+// path vars are unexported, so a daemon test that reached the apply path would
+// write the developer's actual fan hardware.
+func sleepTick(obs sleepObs) sleepAction {
+	// The ownership gate is what keeps sleep and resume symmetric. Owned is the
+	// same condition restoreVolatileState restores under, so the invariant holds
+	// in both directions: the sleep hook releases only what applyCustomHW will
+	// put back. Without it the release is a one-way door — a curve set by asusctl
+	// while z13ctl sits on a firmware profile also reads pwm_enable=1, and
+	// releasing it (let alone lowering its PPT) leaves nothing on the resume side
+	// to restore either. reconcileTick's !obs.Custom gate exists for this reason.
+	if !obs.Owned {
+		return sleepAction{}
+	}
+
+	switch obs.CurveMode {
+	case -1:
+		// Unreadable: never act on an unknown, as reconcileTick does not.
+		return sleepAction{}
+	case 0:
+		// Someone deliberately forced full speed. We did not write it and have
+		// nothing to restore it from, so it is not ours to undo.
+		return sleepAction{}
+	case 2:
+		// Already on firmware auto, which is what the EC needs to stop the fans.
+		return sleepAction{}
+	}
+
+	act := sleepAction{ReleaseFans: true, Reason: "custom fan curve keeps the fans running through s2idle"}
+	if obs.PL1 == -1 || obs.PL1 > cli.TDPMaxSafe {
+		// Dropping to firmware auto removes the floor a high limit requires, so the
+		// limit comes down first.
+		//
+		// An unreadable PL1 lands here too, which is a change: it used to release the
+		// fans and leave the limit alone, on the reasoning that a read failure must
+		// not leave the fans running. That is the one place in this codebase that
+		// failed *open* — an unreadable PPT could be 93W, and releasing the fans then
+		// is precisely what ApplyTDPSafely refuses to do and what CheckFanFloorRelease
+		// refuses for a `fancurve --reset`. Lowering first costs nothing when the
+		// limit was already safe, and the fail-closed path below means a machine whose
+		// PPT cannot be read suspends loud rather than unfloored.
+		act.LowerPPT = true
+		act.Reason = "custom fan curve keeps the fans running through s2idle, and the sustained limit needs the floor lowered first"
+	}
+	return act
+}
+
+// releaseVolatileState hands the fans back to firmware auto before sleep, so the
+// EC stops them. See the file comment for why that does not happen on its own.
+//
+// Daemon state is deliberately left alone: it still describes the profile the
+// user selected, which is what restoreVolatileState reapplies and what a --get
+// should keep reporting while the machine is asleep. No saveAndNotify either — a
+// state-changed event for a transition that reverses itself on resume would only
+// make clients redraw twice.
+func (d *Daemon) releaseVolatileState() {
+	// hwMu before d.mu, always — this writes the same attributes the socket
+	// handlers and the reconcile watcher do.
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+
+	d.mu.Lock()
+	active, ok := d.state.ActiveCustomProfile()
+	d.mu.Unlock()
+
+	obs := sleepObs{
+		Owned:     ok && !active.Empty(),
+		CurveMode: -1,
+		PL1:       -1,
+		Firmware:  readProfileFromSysfs(),
+	}
+	// d.effectiveProfile() takes d.mu, which is why it is called with only hwMu
+	// held.
+	if modes, err := cli.ReadFanCurveModes(); err == nil {
+		obs.CurveMode = modes[0]
+	}
+	if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
+		obs.PL1 = tdp.PL1SPL
+	}
+
+	act := sleepTick(obs)
+	if act.none() {
+		slog.Debug("sleep: nothing to release", "owned", obs.Owned, "fan_mode", obs.CurveMode)
+		return
+	}
+
+	// Armed only now, and only because something is about to be written. Arming it
+	// unconditionally at the top stood both watchers down for suspends that release
+	// nothing — a machine on a firmware profile, or one already on firmware auto —
+	// and a stand-down is not free: the power-source watcher skips a tick while it
+	// is set, and a lost resume signal leaves it set for the whole staleness
+	// ceiling. Setting it here is still early enough, because hwMu is held from
+	// above until after the writes land, and every watcher that could undo them
+	// needs hwMu to do so.
+	d.setSuspending(true)
+
+	if act.LowerPPT {
+		if err := lowerLimitForRelease(obs.Firmware); err != nil {
+			// Fail closed, exactly as ApplyTDPSafely does in the mirror image of
+			// this sequence: a loud suspend is the right trade against leaving a
+			// sustained limit above TDPMaxSafe with the fans on firmware auto.
+			slog.Warn("sleep: not releasing the fans — could not lower the sustained limit first",
+				"profile", obs.Firmware, "pl1", obs.PL1, "err", err)
+			return
+		}
+	}
+
+	if err := cli.ResetAllFanCurves(); err != nil {
+		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
+		return
+	}
+	slog.Info("sleep: released fans to firmware auto", "reason", act.Reason)
+}
+
+// lowerLimitForRelease brings the sustained limit down far enough that releasing
+// the fans to firmware auto is safe, so that the release can go ahead.
+//
+// The stock row for the firmware profile underneath is the preferred landing
+// place, since that is where the machine belongs while asleep. But
+// restoreStockPPTErr fails for any profile absent from cli.StockProfilePPT —
+// including the empty string a platform_profile read failure returns — and simply
+// giving up there abandoned the fan release and reintroduced the all-night-fans
+// bug on an error path. Clamping PL1 to TDPMaxSafe is enough to satisfy the guard,
+// leaves every other limit alone, and is undone on resume by applyCustomHW
+// rewriting the profile's own TDP.
+func lowerLimitForRelease(firmware string) error {
+	stockErr := restoreStockPPTErr(firmware)
+	if stockErr == nil {
+		return nil
+	}
+	slog.Debug("sleep: no stock PPT row; clamping the sustained limit instead",
+		"profile", firmware, "err", stockErr)
+
+	cur, err := cli.ReadAllPPT()
+	if err != nil {
+		return fmt.Errorf("reading current PPT to clamp it: %w", err)
+	}
+	if cur.PL1SPL <= cli.TDPMaxSafe {
+		return nil // already low enough; the guard is satisfied
+	}
+	cur.PL1SPL = cli.TDPMaxSafe
+	if err := cli.SetTDPState(cur); err != nil {
+		return fmt.Errorf("clamping the sustained limit to %dW: %w", cli.TDPMaxSafe, err)
+	}
+	slog.Info("sleep: clamped the sustained limit so the fans could be released",
+		"pl1", cli.TDPMaxSafe, "profile", firmware)
+	return nil
+}
+
+// takeSleepInhibitor holds a logind delay lock so the daemon's pre-sleep writes
+// land before userspace is frozen. PrepareForSleep(true) is otherwise advisory:
+// logind emits it and proceeds, so on a fast-suspending system the fan release
+// may never run — which looks exactly like the bug it fixes.
+//
+// Best-effort by design. A system where Inhibit is refused behaves as it did
+// before this existed, so the failure is logged at Debug and -1 returned.
+func takeSleepInhibitor(conn *dbus.Conn) int {
+	if !conn.SupportsUnixFDs() {
+		slog.Debug("no sleep delay inhibitor: DBus connection does not support file descriptor passing")
+		return -1
+	}
+	var fd dbus.UnixFD
+	err := conn.Object("org.freedesktop.login1", "/org/freedesktop/login1").Call(
+		"org.freedesktop.login1.Manager.Inhibit", 0,
+		"sleep", "z13ctl", "releasing custom fan curve before sleep", "delay",
+	).Store(&fd)
+	if err != nil {
+		slog.Debug("could not take a sleep delay inhibitor", "err", err)
+		return -1
+	}
+	slog.Debug("holding a sleep delay inhibitor")
+	return int(fd)
+}
+
+// releaseSleepInhibitor closes the delay lock and marks it released. logind
+// suspends once the last delay lock is gone, so the call site decides when.
+func releaseSleepInhibitor(fd *int) {
+	if *fd < 0 {
+		return
+	}
+	if err := syscall.Close(*fd); err != nil {
+		slog.Debug("failed to close the sleep delay inhibitor", "err", err)
+	}
+	*fd = -1
 }
 
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
@@ -83,6 +342,14 @@ func (d *Daemon) restoreVolatileState() {
 	// socket handlers and the reconcile watcher do.
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	// Registered *after* the hwMu defer so LIFO runs it first — while the lock is
+	// still held. Clearing the flag after releasing hwMu left a window in which a
+	// watcher already blocked on the lock acquired it and still saw a suspend in
+	// progress, standing itself down for a machine that had finished resuming.
+	// Every return path below reaches this, including the early one for a firmware
+	// profile.
+	defer d.setSuspending(false)
 
 	// Both d.dev and d.state are guarded by d.mu, and applyLightingState reads
 	// them directly, so hold the lock across it — the same discipline the socket
@@ -115,8 +382,8 @@ func (d *Daemon) restoreVolatileState() {
 	// Through the same helper as the socket command, the autoswitch watcher and
 	// daemon startup. Resume used to carry its own copy of the apply sequence,
 	// which is how the four drifted apart in the first place; every fix to the
-	// ordering or the clearing rules now lands here too. hwMu is already held,
-	// which is what applyCustomHW requires.
+	// ordering or the clearing rules now lands here too. hwMu is already held and
+	// d.mu is not, which is what applyCustomHW requires.
 	slog.Info("resume: restoring custom profile", "profile", active.Name)
 	d.applyCustomHW(active)
 }

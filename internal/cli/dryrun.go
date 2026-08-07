@@ -235,13 +235,30 @@ func DryRunFanCurveReset() {
 
 // DryRunTdp prints the sysfs writes for a TDP set operation.
 //
-// The limits come from TDPStateFor and the fan-floor condition from
-// ApplyTDPSafely, so this cannot drift from what the real path does. It
-// previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
+// The limits come from TDPStateFor and the fan state from the same
+// FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so the *rule*
+// cannot drift from the real path. The input can: live is the curve the caller
+// intends to run — the CLI passes LiveFanCurve() — while the daemon applies the
+// active profile's *stored* curve. The two agree whenever that profile is the one
+// in force, which is the normal case, and a preview is allowed to be approximate
+// where a real write is not.
+//
+// live is a parameter rather than a LiveFanCurve() call in here, mirroring
+// ApplyTDPSafely's own want parameter, because reading hwmon made this function —
+// and so dryrun_test.go, which is an external test package and cannot reach
+// newFakeSysfs — depend on the developer's fan mode. That was not theoretical:
+// only the len(live) == 0 branch below prints HighTDPMinPWM, and
+// TestDryRunTdp_HighSustained asserts on it, so the test passed only while the
+// machine happened to be on firmware auto and failed outright with a curve live.
+//
+// It previously claimed the fans would go to *full speed* (pwm_enable=0) whenever
 // --force was given and any limit exceeded the safe max — three separate
 // inaccuracies: the floor is a curve, not full speed; it is driven by the
-// sustained limit alone; and it does not depend on --force.
-func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
+// sustained limit alone; and it does not depend on --force. It then claimed the
+// whole floor curve would always be written above the safe max, which stopped
+// being true once the floor became a per-point minimum rather than a replacement
+// curve.
+func DryRunTdp(watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	s := TDPStateFor(watts, pl1, pl2, pl3)
 	if force {
@@ -253,8 +270,17 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
-		fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
-			HighTDPMinPWM, curveDir)
+		switch {
+		case len(live) == 0:
+			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
+				HighTDPMinPWM, curveDir)
+		case FloorAdjustsCurve(s.PL1SPL, live):
+			fmt.Println("Would raise the current fan curve's points below the built-in high-TDP curve")
+			fmt.Printf("  to it, leaving every other point as-is, and write it to both fans in %s\n", curveDir)
+		default:
+			fmt.Printf("Would write the current fan curve back to both fans in %s unchanged:\n", curveDir)
+			fmt.Println("  it already clears the built-in high-TDP curve at every temperature")
+		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",
 			s.PL1SPL, TDPMaxSafe)

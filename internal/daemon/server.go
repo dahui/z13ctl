@@ -389,15 +389,38 @@ func (d *Daemon) handleBrightness(req request) response {
 // Callers must not clear the saved custom TDP in daemon state — only the
 // hardware values are reset, so the user can select "custom" again.
 func restoreStockPPT(profile string) {
+	// A profile with no row is a deliberate silent no-op here, as it was before
+	// restoreStockPPTErr existed. applyCustomHW calls this with
+	// readProfileFromSysfs(), which is "" whenever platform_profile cannot be read,
+	// so warning on the missing row logged a failure on every curveless-profile
+	// apply, resume and daemon start on a machine that had never run `setup`.
+	// Only lowerLimitForRelease needs the miss to be an error.
+	if _, ok := cli.StockProfilePPT[profile]; !ok {
+		return
+	}
+	if err := restoreStockPPTErr(profile); err != nil {
+		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
+	}
+}
+
+// restoreStockPPTErr is restoreStockPPT reporting failure, for the one caller
+// that must not continue without it: releaseVolatileState decides whether
+// releasing the fans is safe from "did the limits actually come down".
+//
+// A profile with no row in cli.StockProfilePPT is an error here, not the silent
+// no-op restoreStockPPT can afford. "There was nothing to write" and "the limits
+// are now at a level the fans need no floor for" are different answers, and only
+// the second one makes a release safe.
+func restoreStockPPTErr(profile string) error {
 	stock, ok := cli.StockProfilePPT[profile]
 	if !ok {
-		return
+		return fmt.Errorf("no stock PPT row for profile %q", profile)
 	}
 	if err := cli.SetTDPState(stock); err != nil {
-		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
-		return
+		return err
 	}
 	slog.Info("restored stock PPT", "profile", profile, "pl1", stock.PL1SPL, "pl2", stock.PL2SPPT)
+	return nil
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
@@ -579,6 +602,16 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 		slog.Info("fancurve-reset", "profile", target.Name, "applied", false)
 	}
 
+	// A reset made while a firmware profile is active is a hardware-only
+	// operation. Committing the resolved target would create-and-activate
+	// "custom" — the right reading of `--set`, and the wrong one here: it deleted
+	// the curve the user had saved in that profile and left the daemon reporting
+	// "custom" for a machine running the firmware profile's own fan control.
+	if target.implicit() {
+		slog.Info("fancurve-reset: released the fans; no custom profile was active, so none was changed")
+		return response{OK: true}
+	}
+
 	p := target.Profile
 	p.FanCurve = nil
 	d.mu.Lock()
@@ -686,15 +719,30 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 
 	fc := target.Profile.FanCurve
+	var wantCurve []api.FanCurvePoint
+	if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+		wantCurve = fc.Points
+	}
 	if target.Live {
-		// ApplyTDPSafely raises the fans to the 50% floor first when pl1 exceeds
-		// the safe sustained max, and refuses to apply the TDP at all if that
-		// fails.
-		if err := cli.ApplyTDPSafely(tdp); err != nil {
+		// ApplyTDPSafely puts the fans into whatever state the limit requires
+		// before raising power, and refuses to apply the TDP at all if that fails.
+		// wantCurve is the profile's own curve: it is kept when it already
+		// satisfies the floor, and only replaced when it does not.
+		if err := cli.ApplyTDPSafely(tdp, wantCurve); err != nil {
 			return response{OK: false, Error: "tdp: " + err.Error()}
 		}
-		if pl1 > cli.TDPMaxSafe {
-			slog.Warn("fans set to 50%+ curve for high TDP", "pl1", pl1)
+		// Only worth saying when the floor actually changed something, and the three
+		// outcomes are different: warning on pl1 alone told users their curve had
+		// been altered when it had not, and warning on FloorAdjustsCurve alone said
+		// "points were raised" for a profile with no curve, whose points were
+		// substituted rather than raised. cmd/tdp.go and DryRunTdp split the same
+		// three ways.
+		switch {
+		case pl1 <= cli.TDPMaxSafe:
+		case len(wantCurve) == 0:
+			slog.Info("no custom fan curve to keep; wrote the built-in high-TDP curve", "pl1", pl1)
+		case cli.FloorAdjustsCurve(pl1, wantCurve):
+			slog.Warn("fan curve points below the high-TDP floor were raised to it", "pl1", pl1)
 		}
 		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
 	} else {
@@ -782,13 +830,22 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// Clear the limits and curve from the profile that was running, not from a
 	// global slot: switching back to it later must not resurrect the TDP this
 	// command just reset in hardware.
-	p := target.Profile
-	p.TDP = nil
-	p.FanCurve = nil
-	if d.state.CustomProfiles == nil {
-		d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
+	//
+	// Only when one actually *was* running. A firmware profile resolves the bare
+	// target to "custom", and clearing that was silent data loss: `tdp --reset` on
+	// balanced — a reasonable "put my power limits back to stock" — deleted the fan
+	// curve and TDP saved in the custom profile the user had not selected, with
+	// nothing in the output to say so. The hardware reset above is still right;
+	// there is simply no profile here to edit.
+	if !target.implicit() {
+		p := target.Profile
+		p.TDP = nil
+		p.FanCurve = nil
+		if d.state.CustomProfiles == nil {
+			d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
+		}
+		d.state.CustomProfiles[target.Name] = p
 	}
-	d.state.CustomProfiles[target.Name] = p
 	d.state.Profile = "balanced"
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
@@ -895,6 +952,14 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 		slog.Info("undervolt-reset", "profile", target.Name)
 	} else {
 		slog.Info("undervolt-reset", "profile", target.Name, "applied", false)
+	}
+
+	// Hardware only when no custom profile is active — see handleFanCurveReset.
+	// Committing here deleted the saved offset the user expects to recall with
+	// "profile --set custom".
+	if target.implicit() {
+		slog.Info("undervolt-reset: cleared the offset in hardware; no custom profile was active, so none was changed")
+		return response{OK: true}
 	}
 
 	p := target.Profile

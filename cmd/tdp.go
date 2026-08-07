@@ -167,7 +167,7 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag)
+		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag, cli.LiveFanCurve())
 		return nil
 	}
 
@@ -176,6 +176,13 @@ func runTdpSet() error {
 	if err := ensureProfileTargetSupported(tdpProfileFlag); err != nil {
 		return err
 	}
+
+	// Sampled *before* the send. Asking after it is meaningless: the daemon has
+	// already written the clamped curve, so the live curve then satisfies the floor
+	// by construction and FloorAdjustsCurve is always false — except when the read
+	// fails and nil makes it spuriously true, which is exactly backwards.
+	preCurve := cli.LiveFanCurve()
+
 	if handled, err := api.SendTdpSetFor(tdpProfileFlag, tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
@@ -184,10 +191,7 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		if pl1 > cli.TDPMaxSafe {
-			fmt.Println("Fans set to 50%+ curve for thermal safety (the daemon keeps that floor in")
-			fmt.Println("  force if a power profile change releases it)")
-		}
+		printFloorNotice(pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)
 		return nil
 	}
@@ -195,20 +199,54 @@ func runTdpSet() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
-	// Direct path: same helper, so the no-daemon path enforces the 50% fan floor
-	// on the same terms — fans first, and no TDP at all if that write fails.
-	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3)); err != nil {
+	// Direct path: same helper, so the no-daemon path enforces the fan floor on
+	// the same terms — fans first, and no TDP at all if that write fails.
+	//
+	// LiveFanCurve is what this path has instead of profile state. Without it the
+	// floor would replace a curve the user set moments earlier even when that curve
+	// is well above it. preCurve was sampled before the socket attempt, which never
+	// wrote anything on this branch, so it is still current.
+	want := preCurve
+	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
+	printFloorNotice(pl1, want, false)
 	if pl1 > cli.TDPMaxSafe {
-		fmt.Println("Fans set to 50%+ curve for thermal safety")
 		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
-		fmt.Println("  power-profiles-daemon, Fn+F5) releases that floor in the kernel driver while")
+		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
 		fmt.Println("  this power limit stays in force, and the z13ctl daemon is not running to")
-		fmt.Println("  restore it. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
+		fmt.Println("  restore them. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil
+}
+
+// printFloorNotice explains what the high-TDP floor did to the fan curve, if
+// anything. want is the curve that was in force before the change.
+//
+// The three outcomes are genuinely different and were previously collapsed into
+// two: with no custom curve at all the whole built-in floor curve is written, and
+// saying "points below 127 PWM were raised; every other point is unchanged" there
+// described points the user never set. DryRunTdp already distinguished the case.
+func printFloorNotice(pl1 int, want []api.FanCurvePoint, daemon bool) {
+	if pl1 <= cli.TDPMaxSafe {
+		return
+	}
+	switch {
+	case len(want) == 0:
+		fmt.Printf("Fans set to the built-in high-TDP curve: a %d PWM (50%%) floor rising to 100%% at 80°C\n",
+			cli.HighTDPMinPWM)
+		fmt.Println("  (no custom fan curve was in force to keep)")
+	case cli.FloorAdjustsCurve(pl1, want):
+		fmt.Println("Fan curve points below the built-in high-TDP curve were raised to it; every")
+		fmt.Printf("  other point is unchanged. The floor rises with temperature — %d PWM (50%%) when\n", cli.HighTDPMinPWM)
+		fmt.Println("  cool, 255 (100%) at 80°C — so a point can be raised even well above 50%")
+	default:
+		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
+	}
+	if daemon {
+		fmt.Println("  (the daemon keeps the floor in force if a power profile change releases it)")
+	}
 }
 
 func runTdpReset() error {

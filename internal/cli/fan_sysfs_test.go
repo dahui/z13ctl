@@ -117,6 +117,69 @@ func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	}
 }
 
+// TestResetAllFanCurvesFailsWhenReleaseDoesNotStick is the mirror of
+// TestSetBothFanCurvesFailsWhenCurveDoesNotStick. A release the driver silently
+// ignores used to be indistinguishable from success, which on the sleep path is
+// the difference between a quiet suspend and a machine that runs its fans all
+// night — firmware auto is what lets the EC stop them through s2idle.
+func TestResetAllFanCurvesFailsWhenReleaseDoesNotStick(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.seedFanCurveFiles(t, 40, 100)
+
+	// Custom mode, then a kernel that accepts the write and changes nothing.
+	if err := setAllFanModes(1); err != nil {
+		t.Fatalf("setAllFanModes(1) = %v", err)
+	}
+	orig := fanWriteInt
+	fanWriteInt = func(string, int) error { return nil }
+	t.Cleanup(func() { fanWriteInt = orig })
+
+	err := ResetAllFanCurves()
+	if err == nil {
+		t.Fatal("ResetAllFanCurves() = nil, want an error when the kernel does not honour the release")
+	}
+	if !strings.Contains(err.Error(), "pwm1_enable") {
+		t.Errorf("error %q does not name the attribute that proved it", err)
+	}
+}
+
+// TestVerifyFanModeReleased covers the readback's tolerances. Mode 0 counts as
+// released because forced full speed is not a curve, and an unreadable channel is
+// deliberately not a failure — the same stance VerifyFanCurveActive takes, so
+// that a SKU without pwm2_enable on the curve device keeps working.
+func TestVerifyFanModeReleased(t *testing.T) {
+	cases := []struct {
+		name    string
+		modes   [fanCount]int
+		wantErr bool
+	}{
+		{name: "both auto", modes: [fanCount]int{2, 2}},
+		{name: "forced full speed is not a curve", modes: [fanCount]int{0, 0}},
+		{name: "unreadable is not a failure", modes: [fanCount]int{-1, -1}},
+		{name: "still custom on fan1", modes: [fanCount]int{1, 2}, wantErr: true},
+		{name: "still custom on fan2", modes: [fanCount]int{2, 1}, wantErr: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeSysfs(t)
+			f.seedFanCurveFiles(t, 40, 100)
+			for i, m := range tt.modes {
+				if m == -1 {
+					if err := os.Remove(f.hwmon + "/pwm" + itoa(fanNames[i].index) + "_enable"); err != nil {
+						t.Fatalf("removing pwm%d_enable: %v", fanNames[i].index, err)
+					}
+					continue
+				}
+				f.writeFile(t, f.hwmon+"/pwm"+itoa(fanNames[i].index)+"_enable", itoa(m)+"\n")
+			}
+			err := verifyFanModeReleased()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("verifyFanModeReleased() = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestSetFanModeLeavesReadingsDeviceAlone is the direct guard on the mode-1/2
 // path: nothing but the curve device may be written, because the base device's
 // store handler clears the driver's custom-curve enabled flag as a side effect.

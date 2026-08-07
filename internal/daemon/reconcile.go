@@ -23,6 +23,13 @@ package daemon
 // transition would be worse than the bug. It also acts only while daemon state
 // says the profile is "custom", so a deliberate switch to a stock profile is
 // left alone by construction.
+//
+// It stands down entirely while d.suspending is set. The sleep hook releases the
+// fans on purpose — firmware auto is the only mode in which the EC stops them
+// through s2idle (see resume.go) — and this watcher would otherwise put the curve
+// back within two seconds, in the window before userspace freezes. The stand-down
+// expires after reconcileSuspendMaxTicks so a missed resume signal cannot leave a
+// live curve undefended forever.
 
 import (
 	"context"
@@ -43,33 +50,64 @@ const reconcilePollInterval = 2 * time.Second
 // permissions, an unbound driver — would otherwise fill the journal forever.
 const reconcileQuietAfter = 3
 
+// reconcileSuspendMaxTicks is how many consecutive suspending ticks the watcher
+// stands down for before deciding the flag is stale and defending the fans
+// again. It is a backstop for a PrepareForSleep(false) that never arrives, which
+// would otherwise leave the watcher inert for the rest of the daemon's life.
+//
+// The ceiling is safe because Go timers use CLOCK_MONOTONIC, which does not
+// advance across suspend — so these are *awake* ticks, and the only awake window
+// inside a suspend is the one logind's delay lock holds open.
+//
+// It must therefore exceed logind's InhibitDelayMaxSec, or the "stale flag"
+// backstop fires inside a real pre-freeze window and re-enables the curve — the
+// very thing it exists to prevent. 60 ticks is 120 s of awake time against a
+// default InhibitDelayMaxSec of 5 s, with room for the 30 s and 60 s values people
+// configure. Only a PrepareForSleep(false) that never arrives can reach it, and
+// the cost of the larger margin is that such a daemon defends a live curve two
+// minutes later than it otherwise would.
+const reconcileSuspendMaxTicks = 60
+
 // reconcileObs is one observation: what daemon state says should be in force,
 // and what the hardware currently reports.
 type reconcileObs struct {
-	Custom    bool                // daemon state says a custom profile is active
-	WantCurve []api.FanCurvePoint // that profile's curve; nil if none
-	WantTDP   *api.TDPState       // that profile's TDP; nil if none
-	CurveMode int                 // curve device pwm1_enable; -1 if unreadable
-	PL1       int                 // effective sustained limit in watts; -1 if unreadable
-	ProfileHW string              // platform_profile, for logging only
+	Custom     bool                // daemon state says a custom profile is active
+	Suspending bool                // the sleep hook has released the fans on purpose
+	SuspendGen int                 // increments per suspend; see the gate in reconcileTick
+	WantCurve  []api.FanCurvePoint // that profile's curve; nil if none
+	WantTDP    *api.TDPState       // that profile's TDP; nil if none
+	WantCO     *int                // that profile's Curve Optimizer offset; nil if none
+	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
+	PL1        int                 // effective sustained limit in watts; -1 if unreadable
+	ProfileHW  string              // platform_profile, for logging only
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
 // "leave the hardware alone", which is the common case.
 type reconcileAction struct {
-	Curve  []api.FanCurvePoint
-	TDP    *api.TDPState
-	Reason string
+	Curve []api.FanCurvePoint
+	TDP   *api.TDPState
+	// Undervolt re-applies the Curve Optimizer offset. Unlike Curve and TDP this
+	// is never driven by an observation, because there is no CO readback in the
+	// ryzen_smu interface at all — SetCurveOptimizer and ResetCurveOptimizer are
+	// write-only. It is set on exactly one path: a stand-down that expired,
+	// meaning a PrepareForSleep(false) never arrived. See reconcileTick.
+	Undervolt *int
+	Reason    string
 }
 
 // none reports whether the action would touch anything.
-func (a reconcileAction) none() bool { return a.Curve == nil && a.TDP == nil }
+func (a reconcileAction) none() bool {
+	return a.Curve == nil && a.TDP == nil && a.Undervolt == nil
+}
 
 // reconcileState is the latched watcher state carried between ticks.
 type reconcileState struct {
-	failures int    // consecutive unsuccessful restorations
-	quiet    bool   // stop logging repeated failures
-	lastHW   string // last observed platform_profile
+	failures       int    // consecutive unsuccessful restorations
+	quiet          bool   // stop logging repeated failures
+	lastHW         string // last observed platform_profile
+	suspendedTicks int    // ticks observed during the current suspend
+	suspendGen     int    // the suspend suspendedTicks is counting for
 }
 
 // reconcileTick decides what to restore from one observation. It is pure — no
@@ -80,6 +118,35 @@ type reconcileState struct {
 func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, reconcileAction) {
 	st := prev
 	st.lastHW = obs.ProfileHW
+
+	// The sleep hook released the fans deliberately so the EC can stop them
+	// through s2idle; re-enabling the curve here would undo it in the window
+	// before userspace freezes. Falling through past the ceiling is the backstop
+	// for a resume signal that never arrived — see reconcileSuspendMaxTicks.
+	//
+	// The budget is per-suspend, and obs.SuspendGen is what makes that true. A
+	// machine that flaps sleep→wake→sleep faster than the 2s poll never presents an
+	// idle tick to reset on, so counting alone let the budget accumulate across
+	// suspends until it expired *inside* a real pre-freeze window and the watcher
+	// undid the release.
+	if obs.SuspendGen != st.suspendGen {
+		st.suspendGen = obs.SuspendGen
+		st.suspendedTicks = 0
+	}
+	staleResume := false
+	if obs.Suspending {
+		st.suspendedTicks++
+		if st.suspendedTicks < reconcileSuspendMaxTicks {
+			return st, reconcileAction{}
+		}
+		// The budget is gone, so no PrepareForSleep(false) arrived. Either the
+		// suspend was abandoned before the freeze, or the machine slept and the
+		// resume signal was lost — and nothing here can tell those apart. The fan
+		// curve and TDP arms below repair themselves from observations; the Curve
+		// Optimizer cannot, so it is repaired from this signal instead.
+		staleResume = true
+	}
+	st.suspendedTicks = 0
 
 	// Only a custom profile means the daemon is claiming ownership of fans and
 	// PPT. Every route to a stock profile — handleProfile, handleTDPReset,
@@ -95,33 +162,44 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 
 	var act reconcileAction
 
-	switch {
-	case obs.CurveMode == -1:
+	switch obs.CurveMode {
+	case -1:
 		// Unreadable: never act on an unknown.
-	case obs.CurveMode == 1:
+	case 1:
 		// Curve is live.
-	case obs.CurveMode == 0:
+	case 0:
 		// Someone deliberately forced full speed. That is more cooling than
 		// any curve we would write, so leave it.
-	case obs.WantCurve != nil && obs.PL1 > cli.TDPMaxSafe && curveBelowFloor(obs.WantCurve):
-		// The saved curve is not always safe to restore. CheckFanCurveFloor
-		// only vets a curve against the limit in force when it is *saved*, and
-		// raising the TDP afterwards does not rewrite it — handleTDP applies
-		// HighTDPFanCurve to hardware but deliberately keeps the user's curve
-		// in state for when the limit comes back down. Restoring it here would
-		// undo the floor at exactly the moment it is needed.
-		act.Curve = cli.HighTDPFanCurve()
-		act.Reason = "fan curve was disabled and the saved curve is below the high-TDP floor"
-	case obs.WantCurve != nil:
-		act.Curve = obs.WantCurve
-		act.Reason = "saved custom fan curve was disabled"
-	case obs.PL1 > cli.TDPMaxSafe:
-		// No saved curve, but the sustained limit still requires the floor.
-		// This is the half of ApplyTDPSafely's fail-closed guard that was
-		// missing: the floor was written once and could then be silently
-		// dropped while the PPT stayed high.
-		act.Curve = cli.HighTDPFanCurve()
-		act.Reason = "high-TDP fan floor was released while the limit is still in force"
+	default:
+		// The saved curve is restored as drawn, except that any point below the
+		// high-TDP floor is raised to it — cli.FanCurveForTDP, the same rule the
+		// apply path uses. The clamp is needed because CheckFanCurveFloor only vets
+		// a curve against the limit in force when the curve is *saved*: raising the
+		// TDP afterwards leaves sub-floor points in state, and handleTDP deliberately
+		// keeps them for when the limit comes back down. With no saved curve at all
+		// FanCurveForTDP yields HighTDPFanCurve, which is the other half of
+		// ApplyTDPSafely's fail-closed guard — the floor was written once and could
+		// then be dropped while the PPT stayed high.
+		want := obs.WantCurve
+		if c := cli.FanCurveForTDP(obs.PL1, obs.WantCurve); c != nil {
+			want = c
+		}
+		// Guarded: with no saved curve and a safe limit there is nothing to put
+		// back, and want stays nil. Setting act.Reason unconditionally here made a
+		// PPT-only reconcile on a curveless profile log "high-TDP fan floor was
+		// released while the limit is still in force" for a machine at 52W, because
+		// the TDP arm below only fills in a reason when one is not already set.
+		if want != nil {
+			act.Curve = want
+			switch {
+			case obs.WantCurve == nil:
+				act.Reason = "high-TDP fan floor was released while the limit is still in force"
+			case cli.FloorAdjustsCurve(obs.PL1, obs.WantCurve):
+				act.Reason = "fan curve was disabled and its sub-floor points were raised to the high-TDP floor"
+			default:
+				act.Reason = "saved custom fan curve was disabled"
+			}
+		}
 	}
 
 	// PPT is defended against third parties (asusctl, ryzenadj), not against
@@ -133,6 +211,23 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		}
 	}
 
+	// Curve Optimizer offsets are volatile — hardware loses them across a suspend
+	// — and restoreVolatileState is what normally puts them back. When its signal
+	// never arrives the offset stays at stock while daemon state goes on reporting
+	// it applied, and no later tick notices, because there is nothing to read back.
+	//
+	// This deliberately fires only on the expired stand-down and not on every tick.
+	// A watcher that re-sent the offset periodically would be writing the CPU
+	// voltage curve on no evidence at all, which is a worse trade than the gap it
+	// closes. Re-sending it here is idempotent in the case we cannot distinguish:
+	// if the suspend was abandoned the offset is already in force.
+	if staleResume && obs.WantCO != nil {
+		act.Undervolt = obs.WantCO
+		if act.Reason == "" {
+			act.Reason = "no resume signal arrived, so volatile settings may have been lost"
+		}
+	}
+
 	if act.none() {
 		st.failures = 0
 		st.quiet = false
@@ -140,15 +235,33 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 	return st, act
 }
 
-// curveBelowFloor reports whether any point sits under the PWM floor that a
-// sustained limit above cli.TDPMaxSafe requires.
-func curveBelowFloor(points []api.FanCurvePoint) bool {
-	for _, p := range points {
-		if p.PWM < cli.HighTDPMinPWM {
-			return true
-		}
+// reconcileCurveFor returns the curve to write once the tick's TDP arm has run,
+// or nil when the fans should be left exactly where the observation found them.
+//
+// It is evaluated against floorLimit — the limit now in force — rather than the
+// one observed at the top of the tick, because a reconcile that lowers a drifted
+// PPT changes what the floor requires. Three outcomes:
+//
+//   - the profile's own curve, raised where the limit still demands it
+//   - the built-in HighTDPFanCurve, when the limit demands a floor and the
+//     profile has no curve to raise
+//   - nil, when the limit demands no floor and the profile has no curve — there
+//     is nothing to put back
+//
+// That third case is the one this function exists for. reconcileOnce used to fall
+// back to the tick's own act.Curve, which was computed against the *drifted*
+// limit: a curveless profile whose PPT had wandered above TDPMaxSafe produced
+// both arms, the TDP arm brought the limit back down to the profile's own 52 W,
+// and the fallback then wrote the high-TDP ramp regardless — pinning both fans to
+// a 50 % minimum on a profile that controls no fan curve. It stuck, because the
+// following tick read pwm_enable=1 as "the curve is live" and the TDP now matched,
+// so nothing corrected it. Pure, so the table in reconcile_test.go can cover it
+// without touching the developer's fan controller.
+func reconcileCurveFor(floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
+	if c := cli.FanCurveForTDP(floorLimit, want); c != nil {
+		return c
 	}
-	return false
+	return want
 }
 
 // watchReconcile runs until ctx is done, restoring the custom fan curve and
@@ -176,11 +289,14 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 
 	d.mu.Lock()
 	s := cloneState(d.state) // must clone: FanCurve.Points and TDP alias live state
+	suspending, suspendGen := d.suspending, d.suspendGen
 	d.mu.Unlock()
 
 	obs := reconcileObs{
-		CurveMode: -1,
-		PL1:       -1,
+		Suspending: suspending,
+		SuspendGen: suspendGen,
+		CurveMode:  -1,
+		PL1:        -1,
 	}
 	if active, ok := s.ActiveCustomProfile(); ok {
 		obs.Custom = true
@@ -188,6 +304,12 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			obs.WantCurve = fc.Points
 		}
 		obs.WantTDP = active.TDP
+		// A plain state read, so it costs nothing on the common path; the SMU is
+		// only consulted if the tick actually asks for a re-apply.
+		if uv := active.Undervolt; uv != nil && uv.CPUCO != 0 {
+			co := uv.CPUCO
+			obs.WantCO = &co
+		}
 	}
 
 	// Cheap enough to read unconditionally, and reading them even when the
@@ -201,6 +323,16 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	obs.ProfileHW = readProfileFromSysfs()
 
 	st, act := reconcileTick(prev, obs)
+
+	// The tick decided the suspending flag is stale — a PrepareForSleep(false)
+	// that never arrived. Clear it so the flag stops suppressing anything else
+	// that consults it, and say so once rather than every 2s.
+	if suspending && st.suspendedTicks == 0 {
+		slog.Warn("clearing a stale suspending flag: no resume signal arrived",
+			"after_ticks", reconcileSuspendMaxTicks)
+		d.setSuspending(false)
+	}
+
 	if act.none() {
 		return st
 	}
@@ -214,21 +346,54 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		"platform_profile", obs.ProfileHW,
 		"pwm_enable", obs.CurveMode)
 
+	// The TDP goes first, and the curve is then recomputed against the limit that
+	// is now in force rather than the one observed at the top of the tick.
+	//
+	// Writing act.Curve first was wrong whenever both arms fired: act.Curve was
+	// floored against obs.PL1 — the *drifted* limit — so restoring a profile whose
+	// own limit is 52W while hardware sat at 90W wrote the 90W ramp and then
+	// lowered the limit, leaving a loud curve the profile does not describe. The
+	// next tick then read pwm_enable=1 as "the curve is live" and never corrected
+	// it. ApplyTDPSafely still raises its own floor before raising power, so
+	// ordering it first opens no unfloored window.
 	ok := true
+	floorLimit := obs.PL1
+	if act.TDP != nil {
+		// obs.WantCurve, not nil: restoring a drifted PPT must not throw away a
+		// live user curve that already satisfies the floor. Passing nil here was
+		// the same defect as on the apply path, reached from the other direction.
+		if err := cli.ApplyTDPSafely(*act.TDP, obs.WantCurve); err != nil {
+			ok = false
+			if !st.quiet {
+				slog.Warn("failed to re-apply TDP", "err", err)
+			}
+		} else {
+			floorLimit = act.TDP.PL1SPL
+		}
+	}
 	if act.Curve != nil {
-		if err := cli.SetBothFanCurves(act.Curve); err != nil {
+		if curve := reconcileCurveFor(floorLimit, obs.WantCurve); curve == nil {
+			slog.Debug("fan floor no longer required and the profile has no curve of its own; leaving the fans alone",
+				"pl1", floorLimit)
+		} else if err := cli.SetBothFanCurves(curve); err != nil {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply fan curve", "err", err)
 			}
 		}
 	}
-	if act.TDP != nil {
-		if err := cli.ApplyTDPSafely(*act.TDP); err != nil {
+	if act.Undervolt != nil && cli.SMUProbeUndervolt() {
+		// Probed once at daemon startup and cached behind a sync.Once, so this is a
+		// bool read rather than the destructive no-op write the probe would
+		// otherwise be. It is called here and not in the observe step so the common
+		// path never touches it at all.
+		if err := cli.SetCurveOptimizer(*act.Undervolt); err != nil {
 			ok = false
 			if !st.quiet {
-				slog.Warn("failed to re-apply TDP", "err", err)
+				slog.Warn("failed to re-apply the Curve Optimizer offset", "cpu_co", *act.Undervolt, "err", err)
 			}
+		} else {
+			slog.Info("re-applied the Curve Optimizer offset after a missing resume signal", "cpu_co", *act.Undervolt)
 		}
 	}
 

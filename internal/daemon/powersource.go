@@ -194,11 +194,20 @@ func (d *Daemon) watchPowerSource(ctx context.Context) {
 	}
 }
 
+// sourceName renders a power source for a log line.
+func sourceName(onAC bool) string {
+	if onAC {
+		return "AC"
+	}
+	return "battery"
+}
+
 // powerSourceOnce performs one observe-decide-apply cycle and returns the new
 // latched state. It is the only part of the watcher that touches hardware.
+//
+// hwMu before d.mu, always: applyProfileLocked writes the same sysfs attributes
+// the socket handlers do.
 func (d *Daemon) powerSourceOnce(prev powerState) powerState {
-	// hwMu before d.mu, always: applyProfileLocked writes the same sysfs
-	// attributes the socket handlers do.
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
 
@@ -208,7 +217,28 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 		auto := *a
 		obs.Auto = &auto
 	}
+	suspending := d.suspending
 	d.mu.Unlock()
+
+	// Stand down *before* powerTick, returning prev untouched — this watcher is
+	// edge-triggered, so consuming the edge is the same as discarding the action.
+	//
+	// The sleep hook released the fans on purpose and holds logind's delay lock
+	// while it does; applying a profile now would put pwm_enable back to 1 before
+	// the freeze and the fans would run for the whole s2idle period. That is the
+	// same race d.suspending stands the reconcile watcher down for, reached through
+	// a second watcher.
+	//
+	// An earlier attempt ran powerTick first and dropped only the apply. That does
+	// not defer anything: powerTick latches st.onAC on the confirming tick, so
+	// every later tick computes sourceChanged == false and the transition is lost
+	// for the rest of the session — the machine runs the AC profile on battery until
+	// the charger is physically cycled. Returning prev leaves the edge unobserved,
+	// so it is re-detected and confirmed after the resume, one settle window later.
+	if suspending {
+		slog.Debug("power source watcher standing down: the machine is entering sleep")
+		return prev
+	}
 
 	if onAC, err := cli.OnACPower(); err == nil {
 		obs.OnAC = onAC
@@ -220,10 +250,7 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 		return st
 	}
 
-	source := "battery"
-	if obs.OnAC {
-		source = "AC"
-	}
+	source := sourceName(obs.OnAC)
 	if act.SourceChanged {
 		slog.Info("power source changed", "source", source)
 		d.broadcast(response{OK: true, Event: api.EventPowerSource})

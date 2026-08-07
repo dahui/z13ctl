@@ -228,9 +228,15 @@ state that would be unsafe when activated.
     `tdp-reset` is the way out: it lowers the limit before releasing the fans.
 
     `tdp` applies the same rule in the other direction. Raising PL1 above 75 W
-    writes the high-TDP curve **first**, and if that write fails the power limit
-    is not applied at all. The same holds for the daemon's own restore paths —
-    startup, resume, and selecting a custom profile.
+    writes the fan curve **first**, and if that write fails the power limit is not
+    applied at all. The floor is a **per-point minimum against the built-in
+    high-TDP curve**: each point is raised to that curve's value where it falls
+    below it, and left exactly as stored where it does not, so a client sending a
+    curve above it gets that curve rather than a substitute. Note this is the whole
+    curve and not just its 127 PWM bottom — a curve flat at 50% is still raised at
+    higher temperatures. The built-in curve is written whole only when the profile
+    has no curve of its own. The same holds for the daemon's own restore paths — startup, resume,
+    and selecting a custom profile.
 
 ### State and events
 
@@ -378,29 +384,109 @@ restores them.
 
 ## Sleep/resume recovery
 
-Several hardware settings are volatile — they are lost when the system enters
-sleep (suspend/hibernate) and must be reapplied on resume:
+The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
+signals from systemd-logind and acts on both edges.
+
+### On sleep — the fans are handed back to the firmware
+
+On some machines a custom fan curve has to be *released* before the machine
+suspends, or the fans never stop.
+
+The Z13 supports only `s2idle` — there is no `deep` in `/sys/power/mem_sleep` —
+so the embedded controller keeps running its fan control loop for as long as the
+machine is asleep. In firmware auto mode (`pwm_enable=2`) the EC stops the fans.
+Where a custom curve (`pwm_enable=1`) survives into suspend, the EC goes on driving
+the fans from the curve's PWM values with no idea the machine is asleep. Any curve
+whose low-temperature points are above zero then keeps the fans turning all night,
+and a machine on a high sustained TDP is worse: every point of the high-TDP floor
+curve ([`tdp`](commands.md#tdp) applies it above 75 W) is at or above 50%.
+
+"On some machines" is doing real work in that sentence. On kernels and firmware
+combinations where the custom curve is dropped across the suspend anyway, the fans
+already spin down and this release changes nothing. Which behaviour you get has
+been observed to differ between distributions, so the release is written to be
+harmless where it is unnecessary rather than conditional on detecting which case
+you are in. `--no-sleep-release` turns it off if you would rather keep the curve.
+
+On `PrepareForSleep(true)` the daemon therefore:
+
+1. Turns off the lightbar (the keyboard powers down in hardware; the lightbar
+   does not).
+2. Lowers the power limits to the underlying firmware profile's stock values —
+   but only when the sustained limit is above the safe maximum, since releasing
+   the fans would otherwise drop a thermal floor that limit requires. **If that
+   write fails, the fans are not released.** A loud suspend is the right trade
+   against an unfloored high limit.
+3. Releases both fans to firmware auto.
+
+Steps 2 and 3 only happen when the daemon owns the current thermal settings —
+that is, when a custom profile is active. A curve set by another tool (asusctl,
+or a direct sysfs write) while z13ctl is on a firmware profile is left alone,
+because nothing on the resume side would put it back.
+
+The daemon holds a logind **delay inhibitor** so these writes land before
+userspace is frozen. Without one, `PrepareForSleep(true)` is only advisory —
+logind emits it and proceeds to suspend. You can confirm it is held:
+
+```sh
+systemd-inhibit --list | grep z13ctl
+```
+
+If logind refuses the inhibitor the daemon carries on without it; the writes are
+then racing the freeze, which is how it behaved before v1.3.1.
+
+!!! note "If your machine will not stay asleep"
+    The release writes to `ppt_*` and `pwm_enable` in the window before the
+    suspend, so it is a reasonable first suspect — but on the one machine where
+    this was investigated it was **not** the cause: suspend aborted identically
+    with the daemon stopped entirely. Rule z13ctl in or out with a control run
+    before going further:
+
+    ```sh
+    systemctl --user stop z13ctl.service z13ctl.socket
+    systemctl suspend        # still wakes immediately? not z13ctl
+    ```
+
+    A suspend that aborts before the kernel logs `Freezing user space processes`
+    means a wakeup event was already pending. `cat /sys/power/pm_wakeup_irq` names
+    the interrupt, and `sudo cat /sys/kernel/debug/wakeup_sources` lists every
+    source with a nonzero `wakeup_count` column — the devices that may have
+    aborted a suspend. On the Z13 the touchscreen and the detachable cover are
+    both wakeup-enabled and are the usual answers.
+
+### On resume — volatile settings are reapplied
+
+These are lost across a sleep cycle and must be rewritten:
 
 - **Lighting** — RGB lighting is turned off by the hardware on sleep
-- **Fan curves** — custom PWM curves reset to firmware defaults on sleep (and on
+- **Fan curves** — released by the daemon on sleep, as above (and dropped by
   every power profile change — see [reconciliation](#custom-fan-curve-reconciliation))
-- **TDP (PPT)** — power limits are lost and must be rewritten
+- **TDP (PPT)** — lowered by the daemon on sleep when a high limit was in force
 - **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep cycle
 
-The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
-signals from systemd-logind. When the system resumes (`PrepareForSleep(false)`),
-the daemon restores lighting (regardless of profile) and all custom-profile
-volatile settings from its saved state. Fan curves, TDP, and undervolt are only
-restored when the `custom` profile is active; under a stock profile the firmware
-manages fan curves, and the profile's stock PPT values were already written to
-hardware when that profile was selected.
+On `PrepareForSleep(false)` the daemon restores lighting (regardless of profile)
+and all custom-profile volatile settings from its saved state. Fan curves, TDP,
+and undervolt are only restored when a custom profile is active; under a stock
+profile the firmware manages fan curves, and the profile's stock PPT values were
+already written to hardware when that profile was selected. The curve goes on
+before the TDP, so the high-TDP floor is written last and wins.
 
-This happens transparently with no user intervention. You can verify it worked
+The [reconciliation watcher](#custom-fan-curve-reconciliation) stands down between
+the two signals — otherwise it would re-enable the curve within two seconds of the
+release, in the window before userspace freezes. It resumes defending the curve on
+the resume signal, or after about two minutes of awake time if that signal never
+arrives.
+
+This all happens transparently with no user intervention. You can verify it worked
 by checking the daemon logs after a resume:
 
 ```sh
 journalctl --user -u z13ctl --since "5 minutes ago"
 ```
+
+Expect, in order: `system entering sleep`, `sleep: released fans to firmware
+auto`, `system resumed from sleep, restoring volatile state`, and
+`resume: restoring custom profile`.
 
 ---
 
@@ -453,9 +539,10 @@ This is easy to trigger without meaning to:
 The daemon polls the fan curve device's `pwm_enable` — the driver's own
 "is the custom curve live" flag, so it catches every cause — every two seconds.
 When the curve has been dropped while your saved settings say it should still be
-in force, it writes the curve back. The same applies to the 50% PWM floor that a
-sustained TDP above 75 W requires: without this, a power profile change would
-release the fans while the power limit stayed in place.
+in force, it writes the curve back — as saved, with only sub-floor points raised
+if a sustained TDP above 75 W requires it. The same applies to the floor itself:
+without this, a power profile change would release the fans while the power limit
+stayed in place.
 
 ```sh
 journalctl --user -u z13ctl -f
@@ -467,6 +554,11 @@ The daemon never writes `platform_profile` itself — your desktop stays in char
 of the power profile. Reconciliation only runs while the `custom` profile is
 active, so selecting `quiet`, `balanced`, or `performance` with
 `z13ctl profile --set` releases the fans to firmware control and keeps them there.
+
+It also stands down between `PrepareForSleep(true)` and the matching resume, so it
+does not undo the [pre-sleep fan release](#on-sleep-the-fans-are-handed-back-to-the-firmware)
+in the window before userspace freezes. If a resume signal never arrives it starts
+defending the curve again after about two minutes of awake time.
 
 !!! note "Daemon required"
     Without the daemon, a custom fan curve set with `z13ctl fancurve --set` lasts

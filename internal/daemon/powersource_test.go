@@ -315,3 +315,46 @@ func TestAutoswitchTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestAutoswitchDeferralSurvivesTheSuspend is the regression test for a "deferral"
+// that permanently discarded the transition.
+//
+// powerSourceOnce must stand down *before* powerTick, returning prev untouched.
+// The watcher is edge-triggered: powerTick latches st.onAC on the confirming tick,
+// so an implementation that ran powerTick and dropped only the apply consumed the
+// edge — every later tick then computed sourceChanged == false and the machine ran
+// the AC profile on battery until the charger was physically cycled.
+func TestAutoswitchDeferralSurvivesTheSuspend(t *testing.T) {
+	t.Parallel()
+
+	auto := &api.AutoswitchState{Enabled: true, AC: "balanced", Battery: "quiet"}
+	obs := powerObs{OnAC: false, Known: true, Auto: auto, Current: "balanced"}
+	onAC := powerState{known: true, onAC: true, enabled: true}
+
+	// What the watcher does while suspending: prev is returned, powerTick unrun.
+	suspended := onAC
+
+	// After the resume the edge must still be there to find: one tick to arm the
+	// settle window, the next to confirm and apply.
+	st, act := powerTick(suspended, obs)
+	if !act.none() {
+		t.Fatalf("acted on an unconfirmed transition after resume: %+v", act)
+	}
+	_, act = powerTick(st, obs)
+	if act.Profile != "quiet" {
+		t.Fatalf("after the resume the battery profile was never applied (Profile=%q); "+
+			"the transition was consumed by the suspend instead of deferred", act.Profile)
+	}
+
+	// And the contrast: consuming the edge (what the broken version returned) loses
+	// it for good, however many ticks follow.
+	consumed, _ := powerTick(onAC, obs)
+	consumed, _ = powerTick(consumed, obs) // confirms, latching onAC=false
+	for i := 1; i <= 4; i++ {
+		var a powerAction
+		consumed, a = powerTick(consumed, obs)
+		if !a.none() {
+			t.Fatalf("tick %d after a consumed edge produced %+v; this test's premise is wrong", i, a)
+		}
+	}
+}

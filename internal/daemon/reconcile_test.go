@@ -8,12 +8,29 @@ package daemon
 // the apply path would write the developer's actual fan hardware.
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
 )
+
+// rampedFrom is curve(pwm) after the high-TDP ramp has raised the points it
+// exceeds. The PWM values are cli.HighTDPFanCurve's, written out rather than
+// computed, so the test states the expected outcome instead of restating the rule.
+func rampedFrom(pwm int) []api.FanCurvePoint {
+	// cli.FloorPWMAt evaluated at curve()'s temperatures (30,35,…,65), written out
+	// rather than computed so the test states the outcome instead of the rule.
+	ramp := []int{127, 127, 127, 133, 140, 152, 165, 190}
+	out := curve(pwm)
+	for i := range out {
+		if out[i].PWM < ramp[i] {
+			out[i].PWM = ramp[i]
+		}
+	}
+	return out
+}
 
 func curve(pwm int) []api.FanCurvePoint {
 	points := make([]api.FanCurvePoint, 8)
@@ -64,8 +81,11 @@ func TestReconcileTick(t *testing.T) {
 		name      string
 		obs       reconcileObs
 		wantCurve bool
-		wantFloor bool // the restored curve must be HighTDPFanCurve
-		wantTDP   bool
+		// expect is the exact curve that must be restored. Leave it nil to mean
+		// "obs.WantCurve, untouched" — the common case, and the one the floor rule
+		// must not disturb.
+		expect  []api.FanCurvePoint
+		wantTDP bool
 	}{
 		{
 			name: "stock profile is left alone even with hardware in auto",
@@ -94,26 +114,31 @@ func TestReconcileTick(t *testing.T) {
 			wantCurve: true,
 		},
 		{
+			// Nothing to clamp, so the whole built-in floor curve is written.
 			name:      "no saved curve but the high-TDP floor is required",
 			obs:       reconcileObs{Custom: true, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
-			wantFloor: true,
+			expect:    cli.HighTDPFanCurve(),
 		},
 		{
-			// Caught on hardware: the saved curve is only vetted against the
-			// limit in force when it is saved, and raising the TDP afterwards
-			// leaves a sub-floor curve in state. Restoring it would undo the
-			// floor at the moment it is needed.
-			name:      "saved curve below the floor while the limit is high",
+			// Caught on hardware: the saved curve is only vetted against the limit in
+			// force when it is saved, and raising the TDP afterwards leaves sub-ramp
+			// points in state. Each point comes up to the ramp — and only the ones
+			// below it do; the temperatures stay as the user drew them, which is why
+			// this expects the raised saved curve rather than HighTDPFanCurve.
+			name:      "saved curve below the ramp while the limit is high",
 			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
-			wantFloor: true,
+			expect:    rampedFrom(120),
 		},
 		{
-			name:      "saved curve already meets the floor",
+			// Flat at the scalar minimum clears it everywhere and still falls under
+			// the ramp from the third point on, so the ramp raises it. Accepting this
+			// curve verbatim is what let a 93W limit run 50% fans at 90°C.
+			name:      "saved curve flat at the minimum is raised to the ramp",
 			obs:       reconcileObs{Custom: true, WantCurve: curve(cli.HighTDPMinPWM), CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
-			wantFloor: true, // its own points are at the floor
+			expect:    rampedFrom(cli.HighTDPMinPWM),
 		},
 		{
 			name: "no saved curve and the limit is safe",
@@ -136,6 +161,35 @@ func TestReconcileTick(t *testing.T) {
 			name: "unreadable PPT is not a TDP mismatch",
 			obs:  reconcileObs{Custom: true, CurveMode: 1, PL1: -1, WantTDP: floorTDP},
 		},
+		{
+			// The floor is a minimum, not an override. This case did not exist and
+			// is the watcher-side half of the reported bug: a saved curve well above
+			// the floor must be restored as drawn even under a high limit, which is
+			// also what cli.ApplyTDPSafely now does on the apply path.
+			name:      "high limit restores a saved curve, raising only the ramp's top",
+			obs:       reconcileObs{Custom: true, WantCurve: curve(204), CurveMode: 2, PL1: 90},
+			wantCurve: true,
+			expect:    rampedFrom(204),
+		},
+		{
+			// And the PPT arm must not throw that curve away either — it used to
+			// hand nil to ApplyTDPSafely, which then wrote the floor over a live
+			// curve that already cleared it.
+			name:      "high limit restores the curve and the drifted PPT together",
+			obs:       reconcileObs{Custom: true, WantCurve: curve(204), CurveMode: 2, PL1: 60, WantTDP: floorTDP},
+			wantCurve: true,
+			wantTDP:   true,
+		},
+		{
+			// The sleep hook released the fans on purpose so the EC can stop them
+			// through s2idle. Restoring the curve here is the bug.
+			name: "suspending: the deliberate release is not undone",
+			obs:  reconcileObs{Custom: true, Suspending: true, WantCurve: saved, CurveMode: 2, PL1: 35},
+		},
+		{
+			name: "suspending: a drifted PPT is left alone too",
+			obs:  reconcileObs{Custom: true, Suspending: true, CurveMode: 1, PL1: 35, WantTDP: floorTDP},
+		},
 	}
 
 	for _, tt := range tests {
@@ -149,12 +203,21 @@ func TestReconcileTick(t *testing.T) {
 				t.Errorf("restored TDP = %v, want %v", got, tt.wantTDP)
 			}
 			if act.Curve != nil {
-				if tt.wantFloor {
-					if act.Curve[0].PWM != cli.HighTDPMinPWM {
-						t.Errorf("restored curve starts at PWM %d, want the %d floor", act.Curve[0].PWM, cli.HighTDPMinPWM)
+				// The whole curve, not just point 0. Comparing the first point alone
+				// could not tell HighTDPFanCurve from a saved curve that happens to
+				// start at the floor, which is exactly the distinction the reported
+				// bug turned on — and it could not see a clamp at all.
+				want := tt.obs.WantCurve
+				if tt.expect != nil {
+					want = tt.expect
+				}
+				if len(act.Curve) != len(want) {
+					t.Fatalf("restored %d points, want %d", len(act.Curve), len(want))
+				}
+				for i := range act.Curve {
+					if act.Curve[i] != want[i] {
+						t.Errorf("restored point %d = %+v, want %+v", i+1, act.Curve[i], want[i])
 					}
-				} else if act.Curve[0].PWM != saved[0].PWM {
-					t.Errorf("restored curve starts at PWM %d, want the saved %d", act.Curve[0].PWM, saved[0].PWM)
 				}
 				if act.Reason == "" {
 					t.Error("an action was returned with no reason to log")
@@ -189,6 +252,125 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 	}
 	if st.quiet || st.failures != 0 {
 		t.Errorf("state after a clean tick = %+v, want failures 0 and quiet false", st)
+	}
+}
+
+// TestReconcileReasonDescribesWhatWasDone is the regression test for a log line
+// that lied. The curve branch used to set act.Reason unconditionally, so a
+// PPT-only reconcile on a curveless custom profile at a safe limit reported
+// "high-TDP fan floor was released while the limit is still in force" — the TDP
+// arm only fills in a reason when one is not already set, so the fan text won.
+func TestReconcileReasonDescribesWhatWasDone(t *testing.T) {
+	t.Parallel()
+
+	_, act := reconcileTick(reconcileState{}, reconcileObs{
+		Custom: true, WantCurve: nil, CurveMode: 2, PL1: 52,
+		WantTDP: &api.TDPState{PL1SPL: 67},
+	})
+	if act.Curve != nil {
+		t.Errorf("restored a curve for a profile that has none at a safe limit: %+v", act.Curve)
+	}
+	if act.TDP == nil {
+		t.Fatal("the drifted PPT was not restored")
+	}
+	if strings.Contains(act.Reason, "fan") {
+		t.Errorf("reason mentions fans for a PPT-only action: %q", act.Reason)
+	}
+}
+
+// TestReconcileSuspendBudgetIsPerSuspend is the regression test for a stand-down
+// budget that accumulated across suspends. reconcileState resets on a
+// non-suspending tick, but a machine flapping sleep→wake→sleep faster than the 2 s
+// poll never presents one — so the counter climbed until it expired *inside* a real
+// pre-freeze window and the watcher undid the release. obs.SuspendGen fixes it.
+func TestReconcileSuspendBudgetIsPerSuspend(t *testing.T) {
+	t.Parallel()
+
+	var st reconcileState
+	// Well past the ceiling, each iteration a distinct suspend, and never an idle
+	// tick in between — the flap loop that used to defeat the counter.
+	for gen := 1; gen <= reconcileSuspendMaxTicks*3; gen++ {
+		var act reconcileAction
+		st, act = reconcileTick(st, reconcileObs{
+			Custom: true, Suspending: true, SuspendGen: gen,
+			WantCurve: curve(204), CurveMode: 2, PL1: 52,
+		})
+		if !act.none() {
+			t.Fatalf("suspend %d: re-enabled the curve mid-suspend, undoing the release", gen)
+		}
+		if st.suspendedTicks != 1 {
+			t.Fatalf("suspend %d: suspendedTicks = %d, want 1 — the budget carried over", gen, st.suspendedTicks)
+		}
+	}
+
+	// The ceiling must still fire within a *single* suspend, which is the missed
+	// resume signal it exists for.
+	st = reconcileState{}
+	for i := 1; i <= reconcileSuspendMaxTicks; i++ {
+		var act reconcileAction
+		st, act = reconcileTick(st, reconcileObs{
+			Custom: true, Suspending: true, SuspendGen: 7,
+			WantCurve: curve(204), CurveMode: 2, PL1: 52,
+		})
+		if i < reconcileSuspendMaxTicks && !act.none() {
+			t.Fatalf("tick %d of one suspend acted before the ceiling", i)
+		}
+		if i == reconcileSuspendMaxTicks && act.none() {
+			t.Fatal("the ceiling never fired within a single suspend, so a missed resume leaves the curve undefended")
+		}
+	}
+}
+
+// TestReconcileSuspendCeiling covers the backstop for a PrepareForSleep(false)
+// that never arrives. Standing down while suspending is what keeps the sleep
+// release from being undone; standing down *forever* would leave a custom curve
+// undefended for the rest of the daemon's life, so the flag expires.
+//
+// The ceiling is counted in ticks rather than elapsed time because Go timers use
+// CLOCK_MONOTONIC, which does not advance across suspend — these are awake ticks,
+// and a real suspend consumes one or two of them.
+func TestReconcileSuspendCeiling(t *testing.T) {
+	obs := reconcileObs{Custom: true, Suspending: true, WantCurve: curve(120), CurveMode: 2, PL1: 35}
+
+	var st reconcileState
+	for i := 1; i < reconcileSuspendMaxTicks; i++ {
+		var act reconcileAction
+		st, act = reconcileTick(st, obs)
+		if !act.none() {
+			t.Fatalf("tick %d acted while suspending: %+v", i, act)
+		}
+		if st.suspendedTicks != i {
+			t.Fatalf("suspendedTicks after tick %d = %d, want %d", i, st.suspendedTicks, i)
+		}
+	}
+
+	st, act := reconcileTick(st, obs)
+	if act.none() {
+		t.Fatalf("the watcher never resumed defending the curve after %d suspending ticks",
+			reconcileSuspendMaxTicks)
+	}
+	// reconcileOnce keys its "stale flag" log and the daemon-side clear on the
+	// counter being back to zero, so the reset is part of the contract.
+	if st.suspendedTicks != 0 {
+		t.Errorf("suspendedTicks = %d after falling through, want 0", st.suspendedTicks)
+	}
+}
+
+// TestReconcileSuspendClearsOnResume covers the ordinary path: the flag goes away
+// on resume, and the counter goes with it so the next suspend gets a full window.
+func TestReconcileSuspendClearsOnResume(t *testing.T) {
+	st, _ := reconcileTick(reconcileState{},
+		reconcileObs{Custom: true, Suspending: true, WantCurve: curve(120), CurveMode: 2, PL1: 35})
+	if st.suspendedTicks != 1 {
+		t.Fatalf("suspendedTicks = %d, want 1", st.suspendedTicks)
+	}
+
+	st, act := reconcileTick(st, reconcileObs{Custom: true, WantCurve: curve(120), CurveMode: 2, PL1: 35})
+	if act.none() {
+		t.Error("the curve was not defended again after the suspending flag cleared")
+	}
+	if st.suspendedTicks != 0 {
+		t.Errorf("suspendedTicks = %d, want 0 once no longer suspending", st.suspendedTicks)
 	}
 }
 
@@ -236,4 +418,192 @@ func TestReconcileOnceIsRaceFree(t *testing.T) {
 	if d.state.Profile != "balanced" {
 		t.Fatalf("state.Profile = %q, want \"balanced\" — this test must never reach the apply path", d.state.Profile)
 	}
+}
+
+// TestReconcileCurveForLeavesCurvelessProfilesAlone pins the third outcome of
+// reconcileCurveFor: with no curve of the profile's own and a limit that needs no
+// floor, nothing is written.
+//
+// The regression it guards is specific. reconcileOnce writes the TDP first and
+// then recomputes the curve against the limit that write established, and it used
+// to fall back to the tick's own act.Curve when the recomputation yielded nothing.
+// act.Curve was computed against the *drifted* limit, so a curveless profile whose
+// PPT had wandered above TDPMaxSafe had both arms fire, the TDP arm restored its own
+// 52W, and the fallback then wrote the built-in high-TDP ramp — leaving both fans
+// pinned to a 50% minimum on a profile that controls no fan curve at all. Nothing
+// corrected it afterwards: pwm_enable read back as 1 ("the curve is live") and the
+// TDP matched, so every later tick was a no-op.
+func TestReconcileCurveForLeavesCurvelessProfilesAlone(t *testing.T) {
+	t.Parallel()
+
+	user := curve(220) // comfortably above the floor everywhere
+
+	cases := []struct {
+		name       string
+		floorLimit int
+		want       []api.FanCurvePoint
+		expect     []api.FanCurvePoint
+	}{
+		{
+			name:       "no curve and a safe limit writes nothing",
+			floorLimit: 52,
+			want:       nil,
+			expect:     nil,
+		},
+		{
+			name:       "no curve and a high limit writes the built-in floor",
+			floorLimit: 90,
+			want:       nil,
+			expect:     cli.HighTDPFanCurve(),
+		},
+		{
+			name:       "a curve at a safe limit is written as drawn",
+			floorLimit: 52,
+			want:       user,
+			expect:     user,
+		},
+		{
+			name:       "a curve at a high limit is raised where the ramp demands it",
+			floorLimit: 90,
+			want:       curve(100),
+			expect:     rampedFrom(100),
+		},
+		{
+			name:       "a curve already above the ramp is untouched at a high limit",
+			floorLimit: 90,
+			want:       user,
+			expect:     user,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := reconcileCurveFor(tc.floorLimit, tc.want)
+			if len(got) != len(tc.expect) {
+				t.Fatalf("got %d points, want %d (got %v)", len(got), len(tc.expect), got)
+			}
+			for i := range got {
+				if got[i] != tc.expect[i] {
+					t.Fatalf("point %d = %v, want %v (got %v)", i, got[i], tc.expect[i], got)
+				}
+			}
+		})
+	}
+}
+
+// TestReconcileCurveForDoesNotMutateSavedCurve guards the same copying rule
+// cli.FanCurveForTDP has: want aliases the profile's points in daemon state, so
+// raising in place would rewrite the curve the user saved and leave nothing to
+// restore when the limit comes back down.
+func TestReconcileCurveForDoesNotMutateSavedCurve(t *testing.T) {
+	t.Parallel()
+
+	saved := curve(100)
+	before := append([]api.FanCurvePoint(nil), saved...)
+
+	reconcileCurveFor(90, saved)
+
+	for i := range saved {
+		if saved[i] != before[i] {
+			t.Fatalf("saved curve was mutated at point %d: %v, want %v", i, saved[i], before[i])
+		}
+	}
+}
+
+// TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing pins the one path
+// that may re-send a Curve Optimizer offset.
+//
+// CO is write-only in the ryzen_smu interface — there is no readback — so the
+// watcher cannot observe that hardware has lost it. A suspend clears it and
+// restoreVolatileState puts it back; if that signal never arrives the offset stays
+// at stock while daemon state reports it applied, and no observation can notice.
+// The expired stand-down is the only evidence available, so it is the only trigger.
+//
+// The negative half matters as much as the positive: re-sending the offset on
+// ordinary ticks would mean writing the CPU voltage curve every two seconds on no
+// evidence at all.
+func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
+	t.Parallel()
+
+	co := -25
+	base := reconcileObs{
+		Custom:    true,
+		WantCO:    &co,
+		CurveMode: 1, // curve live, so no fan action of its own
+		PL1:       52,
+	}
+
+	t.Run("not on an ordinary tick", func(t *testing.T) {
+		t.Parallel()
+		_, act := reconcileTick(reconcileState{}, base)
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d on a tick with no suspend in progress", *act.Undervolt)
+		}
+	})
+
+	t.Run("not while standing down", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		for i := 1; i < reconcileSuspendMaxTicks; i++ {
+			var act reconcileAction
+			st, act = reconcileTick(st, obs)
+			if act.Undervolt != nil {
+				t.Fatalf("tick %d: Undervolt re-applied inside the stand-down window", i)
+			}
+		}
+	})
+
+	t.Run("once the stand-down expires", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		var act reconcileAction
+		for range reconcileSuspendMaxTicks {
+			st, act = reconcileTick(st, obs)
+		}
+		if act.Undervolt == nil {
+			t.Fatal("Undervolt was not re-applied after the stand-down expired")
+		}
+		if *act.Undervolt != co {
+			t.Errorf("Undervolt = %d, want %d", *act.Undervolt, co)
+		}
+		if !strings.Contains(act.Reason, "resume") {
+			t.Errorf("Reason = %q, want it to mention the missing resume", act.Reason)
+		}
+	})
+
+	t.Run("nothing to re-apply when the profile sets no offset", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.WantCO = nil
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		var act reconcileAction
+		for range reconcileSuspendMaxTicks {
+			st, act = reconcileTick(st, obs)
+		}
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d for a profile with no offset", *act.Undervolt)
+		}
+	})
+
+	t.Run("a real resume clears the budget without re-applying", func(t *testing.T) {
+		t.Parallel()
+		obs := base
+		obs.Suspending, obs.SuspendGen = true, 1
+		var st reconcileState
+		for range reconcileSuspendMaxTicks - 1 {
+			st, _ = reconcileTick(st, obs)
+		}
+		// PrepareForSleep(false) arrived: the flag drops before the budget expires.
+		obs.Suspending = false
+		_, act := reconcileTick(st, obs)
+		if act.Undervolt != nil {
+			t.Fatalf("Undervolt = %d after a resume that did arrive", *act.Undervolt)
+		}
+	})
 }

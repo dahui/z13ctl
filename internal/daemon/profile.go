@@ -32,8 +32,10 @@ import (
 //
 // The caller must hold d.hwMu and must NOT hold d.mu. This function takes d.mu
 // itself, and the lock order in this package is hwMu then d.mu, always. For the
-// same reason nothing reached from here may call d.effectiveProfile(), which
-// takes d.mu.
+// same reason nothing reached from here may call d.effectiveProfile() — which
+// takes d.mu — *while d.mu is held*. applyCustomHW does call it, from a stretch
+// where it holds only hwMu; that is legal, and the distinction is what this
+// sentence used to get wrong by forbidding the call outright.
 func (d *Daemon) applyProfileLocked(profile string) error {
 	// Stock first, before the map is consulted at all. This is the last of the
 	// four layers that keep a custom profile from shadowing a firmware one, and
@@ -79,28 +81,46 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 //
 // Ordering is the fail-closed part and is not free to rearrange:
 //
-//   - The profile's own curve goes on *before* its TDP, so ApplyTDPSafely's
-//     high-TDP floor is written last and wins if the two disagree.
+//   - The profile's own curve goes on *before* its TDP, and is also handed to
+//     ApplyTDPSafely so that call cannot throw it away. The floor is a per-point
+//     minimum against the whole HighTDPFanCurve, not a replacement curve: a point is
+//     raised only where it falls below that curve's value *at its own temperature*,
+//     and HighTDPFanCurve is written whole only when there is no curve at all.
+//     Writing the curve first is still what keeps the user's curve in force if the
+//     ApplyTDPSafely call fails.
 //   - Clearing the TDP hands the limits back to the firmware profile underneath,
 //     which lowers power before the fans are touched.
 //   - The fans are released only when no high sustained limit is in force. A
 //     profile with a high TDP and no curve of its own keeps the floor
-//     ApplyTDPSafely just wrote.
+//     ApplyTDPSafely just wrote. That is checked against *hardware* and not only
+//     against p.TDP: highTDP is false whenever ApplyTDPSafely failed, including
+//     when it succeeded at writing HighTDPFanCurve and then failed at
+//     SetTDPState, so trusting it alone would release the floor it just wrote.
+//     cli.CheckFanFloorRelease is the same guard the fancurve handlers use.
 //
 // Individual failures are logged rather than returned: a profile that only
 // partly applies is still the profile the user asked for, and the reconcile
 // watcher keeps trying on the parts it owns.
+//
+// The caller must hold d.hwMu and must NOT hold d.mu: this takes d.mu itself for
+// the state commit at the end, and calls d.effectiveProfile() — which also takes
+// it — for the fan-floor check before that.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	hasCurve := p.FanCurve != nil && p.FanCurve.Mode == 1 && len(p.FanCurve.Points) == 8
+	var wantCurve []api.FanCurvePoint
 	if hasCurve {
-		if err := cli.SetBothFanCurves(p.FanCurve.Points); err != nil {
+		wantCurve = p.FanCurve.Points
+		if err := cli.SetBothFanCurves(wantCurve); err != nil {
 			slog.Warn("failed to apply fan curve", "profile", p.Name, "err", err)
 		}
 	}
 
 	highTDP := false
 	if t := p.TDP; t != nil {
-		if err := cli.ApplyTDPSafely(*t); err != nil {
+		// wantCurve is what keeps the profile's own curve from being replaced by
+		// the floor: ApplyTDPSafely honours it whenever it already satisfies the
+		// floor, and substitutes HighTDPFanCurve only when it does not.
+		if err := cli.ApplyTDPSafely(*t, wantCurve); err != nil {
 			slog.Warn("failed to apply TDP", "profile", p.Name, "err", err)
 		} else {
 			highTDP = t.PL1SPL > cli.TDPMaxSafe
@@ -112,7 +132,10 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	if !hasCurve && !highTDP {
-		if err := cli.ResetAllFanCurves(); err != nil {
+		if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+			slog.Warn("keeping the high-TDP fan floor: the sustained limit in hardware still requires it",
+				"profile", p.Name, "err", err)
+		} else if err := cli.ResetAllFanCurves(); err != nil {
 			slog.Warn("failed to release fans to firmware auto", "profile", p.Name, "err", err)
 		}
 	}
@@ -192,10 +215,33 @@ func setUndervoltActive(s api.State, active bool) {
 // and says whether that profile is the active one — which is what decides
 // whether the command also writes hardware.
 type editTarget struct {
-	Name    string
-	Live    bool
+	Name string
+	Live bool
+	// Active reports whether this profile was already the selected one when the
+	// command ran. It differs from Live in exactly one case: a bare edit made
+	// while a *firmware* profile is active resolves to "custom", which is Live
+	// (a --set writes hardware and activates it) but was not Active.
+	//
+	// The reset handlers need that distinction and the set handlers do not.
+	// "Create and activate custom" is the right reading of `fancurve --set` on a
+	// firmware profile — the user is establishing a custom setting. It is the
+	// wrong reading of `fancurve --reset`, which asks to *remove* one: resolving
+	// it to "custom" and committing the cleared profile deleted whatever the user
+	// had saved there and switched the reported profile to it. See the reset
+	// handlers for the specific damage each one did.
+	Active  bool
 	Profile api.CustomProfile // the profile as it stands before the edit
 }
+
+// implicit reports whether this target was conjured by the command rather than
+// chosen: the bare-edit case on a firmware profile, where a --set creates and
+// activates "custom". It is the exact condition the reset handlers must skip
+// their state commit on.
+//
+// Live && !Active, and not simply !Active — a --profile target that is not
+// running is also inactive, and a reset there must still clear the stored
+// setting. That is the whole point of --profile: edit a profile you are not on.
+func (t editTarget) implicit() bool { return t.Live && !t.Active }
 
 // resolveEditTarget works out which profile a setting command edits.
 //
@@ -212,12 +258,14 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 	if name == "" {
 		// The profile currently running. When a firmware profile is active that
 		// is the default custom profile, created and activated by this very
-		// edit, so the target is live either way.
+		// edit, so the target is live either way — but it was not Active, which
+		// is what the reset handlers key on.
 		name = d.state.Profile
-		if !d.state.IsCustomProfile(name) {
+		active := d.state.IsCustomProfile(name)
+		if !active {
 			name = api.DefaultCustomProfile
 		}
-		return d.editTargetLocked(name, true), nil
+		return d.editTargetLocked(name, true, active), nil
 	}
 	if cli.IsStockProfile(name) {
 		return editTarget{}, fmt.Errorf("%q is a firmware profile and has no custom settings to edit", name)
@@ -225,15 +273,18 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 	if name != api.DefaultCustomProfile && !d.state.IsCustomProfile(name) {
 		return editTarget{}, fmt.Errorf("unknown profile %q; create it with 'z13ctl profile --create %s'", name, name)
 	}
-	return d.editTargetLocked(name, name == d.state.Profile), nil
+	// A named target is Live exactly when it is the selected profile, so the two
+	// coincide here; only the bare-edit path above can separate them.
+	live := name == d.state.Profile
+	return d.editTargetLocked(name, live, live), nil
 }
 
 // editTargetLocked builds the target for a known profile name. Caller must hold
 // d.mu.
-func (d *Daemon) editTargetLocked(name string, live bool) editTarget {
+func (d *Daemon) editTargetLocked(name string, live, active bool) editTarget {
 	p := d.state.CustomProfiles[name]
 	p.Name = name
-	return editTarget{Name: name, Live: live, Profile: cloneCustomProfile(p)}
+	return editTarget{Name: name, Live: live, Active: active, Profile: cloneCustomProfile(p)}
 }
 
 // commitEditLocked writes an edited profile back and, when it is the live one,

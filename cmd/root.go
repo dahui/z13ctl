@@ -73,9 +73,10 @@ func profileEditMessage(profile, applied string) string {
 var Version = "1.0.0-beta"
 
 var (
-	deviceFlag   string
-	dryRunFlag   bool
-	noButtonFlag bool
+	deviceFlag         string
+	dryRunFlag         bool
+	noButtonFlag       bool
+	noSleepReleaseFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -100,4 +101,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target device: keyboard, lightbar, or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
 	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the Armoury Crate button watcher (daemon only)")
+	rootCmd.PersistentFlags().BoolVar(&noSleepReleaseFlag, "no-sleep-release", false,
+		"Keep the custom fan curve through sleep instead of handing the fans back to the firmware (daemon only)")
 }

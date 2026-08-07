@@ -49,18 +49,53 @@ type Daemon struct {
 	dev   *hid.Device // nil if no HID device was found at startup
 	state api.State
 
+	// suspending is set by releaseVolatileState and cleared by
+	// restoreVolatileState. It stands the reconcile watcher down for the window
+	// between PrepareForSleep(true) and the freeze, where re-enabling the custom
+	// curve would undo the release that lets the EC stop the fans.
+	suspending bool
+
+	// suspendGen increments on every transition into suspending. The reconcile
+	// watcher uses it to tell one suspend from the next, which a bool cannot do:
+	// its stand-down budget is per-suspend, and on a machine that flaps
+	// sleep→wake→sleep faster than the 2s poll the watcher may never observe an
+	// idle tick to reset on. Without this the budget accumulated across suspends
+	// and eventually expired *inside* a real pre-freeze window.
+	suspendGen int
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 
 	buttonCh chan struct{}
+
+	// sleepRelease is false under --no-sleep-release: the fans keep the custom
+	// curve through sleep. Set once by Run before any watcher starts, and read-only
+	// afterwards, which is what makes it safe to read without a lock.
+	sleepRelease bool
+}
+
+// Options configures the daemon. A zero value disables both watchers, so callers
+// state what they want rather than relying on positional bools — Run(ctx, true,
+// false) said nothing about which flag was which.
+type Options struct {
+	// WatchButton starts the Armoury Crate button watcher (--no-button clears it).
+	WatchButton bool
+	// SleepRelease hands the fans back to the firmware before sleep, so the EC
+	// stops them (--no-sleep-release clears it).
+	SleepRelease bool
 }
 
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
 // restores the last-saved state, starts the button watcher, and serves the
 // Unix socket.
-func Run(ctx context.Context, watchBtn bool) error {
+func Run(ctx context.Context, opts Options) error {
 	d := &Daemon{
-		buttonCh: make(chan struct{}, 4),
+		buttonCh:     make(chan struct{}, 4),
+		sleepRelease: opts.SleepRelease,
+	}
+
+	if !opts.SleepRelease {
+		slog.Info("pre-sleep fan release disabled; the custom curve stays in force through sleep")
 	}
 
 	d.state = loadState()
@@ -90,16 +125,13 @@ func Run(ctx context.Context, watchBtn bool) error {
 	// observation: the restore below already skips a redundant platform_profile
 	// write, and that write costs a WMI fan-controller reset (see the comment on
 	// the restore).
-	leftCustom := false
+	leftCustom, autoswitched := false, false
 	if onAC, acErr := cli.OnACPower(); acErr == nil {
 		if target := autoswitchTarget(d.state, onAC); target != "" {
-			source := "battery"
-			if onAC {
-				source = "AC"
-			}
-			slog.Info("autoswitch: selecting startup profile", "source", source, "profile", target)
+			slog.Info("autoswitch: selecting startup profile", "source", sourceName(onAC), "profile", target)
 			leftCustom = d.state.InCustomProfile() && !d.state.IsCustomProfile(target)
 			d.state.Profile = target
+			autoswitched = true
 		}
 	}
 
@@ -180,9 +212,20 @@ func Run(ctx context.Context, watchBtn bool) error {
 	if active, ok := d.state.ActiveCustomProfile(); ok && !active.Empty() {
 		slog.Info("restoring custom profile", "profile", active.Name)
 		d.applyCustomHW(active)
+	} else if autoswitched {
+		// Persist the startup autoswitch decision. A custom target is saved by
+		// applyCustomHW above, but a firmware target had no such path, so the
+		// daemon acted on a decision it never recorded: the state file kept naming
+		// the profile from the previous session. That is self-correcting only while
+		// autoswitch stays enabled and configured the same way — disable it, or
+		// clear one side, and the next start restores a profile the machine had
+		// already been switched away from.
+		if saveErr := saveState(cloneState(d.state)); saveErr != nil {
+			slog.Warn("failed to save the startup autoswitch profile", "err", saveErr)
+		}
 	}
 
-	if watchBtn {
+	if opts.WatchButton {
 		go watchButton(ctx, d.buttonCh)
 	} else {
 		slog.Info("Armoury Crate button watcher disabled")
@@ -359,6 +402,18 @@ func (d *Daemon) saveAndNotify(s api.State) {
 		slog.Warn("failed to save state", "err", err)
 	}
 	d.notifyStateChanged()
+}
+
+// setSuspending records whether the machine is on its way into sleep, bumping the
+// generation on each entry so the reconcile watcher can tell suspends apart. See
+// the field comments on Daemon.suspending and Daemon.suspendGen.
+func (d *Daemon) setSuspending(v bool) {
+	d.mu.Lock()
+	if v && !d.suspending {
+		d.suspendGen++
+	}
+	d.suspending = v
+	d.mu.Unlock()
 }
 
 // normalizeLightingState fills in any field left empty by a partial update,
