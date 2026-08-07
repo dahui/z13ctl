@@ -267,12 +267,11 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool) {
 			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
 				HighTDPMinPWM, curveDir)
 		case FloorAdjustsCurve(s.PL1SPL, live):
-			fmt.Printf("Would raise the current fan curve's points below %d PWM (50%%) to that floor,\n",
-				HighTDPMinPWM)
-			fmt.Printf("  leaving every other point as-is, and write it to both fans in %s\n", curveDir)
+			fmt.Println("Would raise the current fan curve's points below the built-in high-TDP curve")
+			fmt.Printf("  to it, leaving every other point as-is, and write it to both fans in %s\n", curveDir)
 		default:
 			fmt.Printf("Would write the current fan curve back to both fans in %s unchanged:\n", curveDir)
-			fmt.Printf("  it already clears the %d PWM (50%%) floor at every point\n", HighTDPMinPWM)
+			fmt.Println("  it already clears the built-in high-TDP curve at every temperature")
 		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",

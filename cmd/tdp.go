@@ -191,11 +191,7 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		if cli.FloorAdjustsCurve(pl1, preCurve) {
-			fmt.Printf("Fan curve points below %d PWM (50%%) were raised to that floor; every other\n", cli.HighTDPMinPWM)
-			fmt.Println("  point is unchanged (the daemon keeps the floor in force if a power profile")
-			fmt.Println("  change releases it)")
-		}
+		printFloorNotice(pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)
 		return nil
 	}
@@ -211,16 +207,10 @@ func runTdpSet() error {
 	// is well above it. preCurve was sampled before the socket attempt, which never
 	// wrote anything on this branch, so it is still current.
 	want := preCurve
-	adjusted := cli.FloorAdjustsCurve(pl1, want)
 	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	if adjusted {
-		fmt.Printf("Fan curve points below %d PWM (50%%) were raised to that floor; every other\n", cli.HighTDPMinPWM)
-		fmt.Println("  point is unchanged")
-	} else if pl1 > cli.TDPMaxSafe {
-		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
-	}
+	printFloorNotice(pl1, want, false)
 	if pl1 > cli.TDPMaxSafe {
 		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
 		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
@@ -229,6 +219,34 @@ func runTdpSet() error {
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil
+}
+
+// printFloorNotice explains what the high-TDP floor did to the fan curve, if
+// anything. want is the curve that was in force before the change.
+//
+// The three outcomes are genuinely different and were previously collapsed into
+// two: with no custom curve at all the whole built-in floor curve is written, and
+// saying "points below 127 PWM were raised; every other point is unchanged" there
+// described points the user never set. DryRunTdp already distinguished the case.
+func printFloorNotice(pl1 int, want []api.FanCurvePoint, daemon bool) {
+	if pl1 <= cli.TDPMaxSafe {
+		return
+	}
+	switch {
+	case len(want) == 0:
+		fmt.Printf("Fans set to the built-in high-TDP curve: a %d PWM (50%%) floor rising to 100%% at 80°C\n",
+			cli.HighTDPMinPWM)
+		fmt.Println("  (no custom fan curve was in force to keep)")
+	case cli.FloorAdjustsCurve(pl1, want):
+		fmt.Println("Fan curve points below the built-in high-TDP curve were raised to it; every")
+		fmt.Printf("  other point is unchanged. The floor rises with temperature — %d PWM (50%%) when\n", cli.HighTDPMinPWM)
+		fmt.Println("  cool, 255 (100%) at 80°C — so a point can be raised even well above 50%")
+	default:
+		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
+	}
+	if daemon {
+		fmt.Println("  (the daemon keeps the floor in force if a power profile change releases it)")
+	}
 }
 
 func runTdpReset() error {

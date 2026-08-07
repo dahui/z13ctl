@@ -356,8 +356,8 @@ func TestApplyTDPSafely(t *testing.T) {
 func TestFanCurveForTDP(t *testing.T) {
 	t.Parallel()
 
-	// A realistic mixed curve: two points under the floor, six the user tuned
-	// above it. Only the first two may change.
+	// A realistic mixed curve: two points under the ramp, six the user tuned above
+	// it. Only the first two may change.
 	mixed := []api.FanCurvePoint{
 		{Temp: 35, PWM: 40}, {Temp: 40, PWM: 100}, {Temp: 50, PWM: 180}, {Temp: 60, PWM: 204},
 		{Temp: 65, PWM: 220}, {Temp: 70, PWM: 235}, {Temp: 75, PWM: 245}, {Temp: 80, PWM: 255},
@@ -367,14 +367,30 @@ func TestFanCurveForTDP(t *testing.T) {
 		{Temp: 50, PWM: 180}, {Temp: 60, PWM: 204},
 		{Temp: 65, PWM: 220}, {Temp: 70, PWM: 235}, {Temp: 75, PWM: 245}, {Temp: 80, PWM: 255},
 	}
-	above := make([]api.FanCurvePoint, 8)
-	for i := range above {
-		above[i] = api.FanCurvePoint{Temp: 35 + i*5, PWM: 204}
+	// The reported curve: 204 rising to 255, above the ramp at every index, so the
+	// floor must not touch a single point of it.
+	mixed2 := []api.FanCurvePoint{
+		{Temp: 35, PWM: 204}, {Temp: 40, PWM: 254}, {Temp: 50, PWM: 255}, {Temp: 60, PWM: 255},
+		{Temp: 65, PWM: 255}, {Temp: 70, PWM: 255}, {Temp: 75, PWM: 255}, {Temp: 80, PWM: 255},
 	}
-	atFloor := make([]api.FanCurvePoint, 8)
-	for i := range atFloor {
-		atFloor[i] = api.FanCurvePoint{Temp: 35 + i*5, PWM: HighTDPMinPWM}
+	// Flat curves are the interesting shapes, because they clear the *scalar*
+	// minimum everywhere while falling under the ramp at the top — which is where
+	// a machine sustaining more than TDPMaxSafe actually lives.
+	flat := func(pwm int) []api.FanCurvePoint {
+		out := make([]api.FanCurvePoint, 8)
+		for i := range out {
+			out[i] = api.FanCurvePoint{Temp: 35 + i*5, PWM: pwm}
+		}
+		return out
 	}
+	pwms := func(temps []int, vals []int) []api.FanCurvePoint {
+		out := make([]api.FanCurvePoint, len(temps))
+		for i := range temps {
+			out[i] = api.FanCurvePoint{Temp: temps[i], PWM: vals[i]}
+		}
+		return out
+	}
+	flatTemps := []int{35, 40, 45, 50, 55, 60, 65, 70}
 
 	tests := []struct {
 		name string
@@ -388,20 +404,33 @@ func TestFanCurveForTDP(t *testing.T) {
 		{name: "well under the safe limit imposes nothing", pl1: 35, want: nil},
 		{name: "unreadable limit imposes nothing", pl1: -1, want: mixed},
 		{
-			name: "high limit keeps a curve above the floor",
-			pl1:  82, want: above, expect: above,
-		},
-		{
-			// Exactly at the floor is not below it.
-			name: "high limit keeps a curve sitting on the floor",
-			pl1:  82, want: atFloor, expect: atFloor,
-		},
-		{
-			// The point of the clamp: the two sub-floor points come up, the six the
-			// user tuned above it are untouched. Substituting HighTDPFanCurve here
+			// The point of the whole rule: the user's tuned points survive, and only
+			// the ones the ramp exceeds come up. Substituting HighTDPFanCurve here
 			// would throw away 180/204/220/235/245 for 140/165/190/215/235.
-			name: "high limit raises only the points below the floor",
+			name: "high limit raises only the points the ramp exceeds",
 			pl1:  82, want: mixed, expect: clamped, adjusted: true,
+		},
+		{
+			// Above the ramp everywhere, so untouched. This is the shape of a real
+			// tuned curve — and of the one that prompted the fix.
+			name: "high limit keeps a curve above the ramp",
+			pl1:  82, want: mixed2, expect: mixed2,
+		},
+		{
+			// The case a scalar 127 minimum got wrong: flat 204 clears it everywhere,
+			// yet the ramp wants 215/235/255 at the top. Only those three move.
+			name: "high limit raises a flat curve's top to the ramp",
+			pl1:  82, want: flat(204),
+			expect:   pwms(flatTemps, []int{204, 204, 204, 204, 204, 204, 204, 215}),
+			adjusted: true,
+		},
+		{
+			// Flat at exactly the scalar minimum: the ramp replaces it from 45°C up.
+			// Under the old scalar rule this ran 50% fans at 90°C on a 93W limit.
+			name: "high limit raises a curve flat at the minimum",
+			pl1:  82, want: flat(HighTDPMinPWM),
+			expect:   pwms(flatTemps, []int{127, 127, 133, 140, 152, 165, 190, 215}),
+			adjusted: true,
 		},
 		{
 			name: "high limit with no curve gets the whole floor curve",
@@ -585,4 +614,62 @@ func TestReadEffectivePPT(t *testing.T) {
 			t.Errorf("PL1SPL = %d, want %d for an unknown profile", got.PL1SPL, TDPMin)
 		}
 	})
+}
+
+// TestFloorPWMAtIsTemperatureIndexed is the regression test for a floor read at the
+// matching slice index instead of the matching temperature.
+//
+// Index matching accepted a curve of 70:130,75:135,80:140,… — every point clears the
+// index-matched comparison — and left the machine sustaining 93 W on 55% fans at
+// 80 °C, weaker than the wholesale replacement it replaced. The floor's whole
+// justification is stated in temperature terms, and the published table only means
+// something if the comparison is too.
+func TestFloorPWMAtIsTemperatureIndexed(t *testing.T) {
+	t.Parallel()
+
+	floor := HighTDPFanCurve()
+	// Exact at every built-in point.
+	for _, p := range floor {
+		if got := FloorPWMAt(p.Temp); got != p.PWM {
+			t.Errorf("FloorPWMAt(%d) = %d, want %d (the built-in curve's own value)", p.Temp, got, p.PWM)
+		}
+	}
+	// A floor, not a taper: below the first point it holds rather than falling away.
+	if got := FloorPWMAt(0); got != floor[0].PWM {
+		t.Errorf("FloorPWMAt(0) = %d, want %d — the floor must not taper off when cool", got, floor[0].PWM)
+	}
+	// Above the last point it holds at full speed.
+	if got := FloorPWMAt(120); got != 255 {
+		t.Errorf("FloorPWMAt(120) = %d, want 255", got)
+	}
+	// Non-decreasing across the whole range, which is what keeps a raised curve
+	// parseable by ParseFanCurve.
+	prev := 0
+	for temp := 0; temp <= 120; temp++ {
+		got := FloorPWMAt(temp)
+		if got < prev {
+			t.Fatalf("FloorPWMAt(%d) = %d, below FloorPWMAt(%d) = %d", temp, got, temp-1, prev)
+		}
+		prev = got
+	}
+
+	// The curve that defeated index matching: its points sit above the built-in
+	// temperatures, so each must be measured where it actually applies.
+	shifted := []api.FanCurvePoint{
+		{Temp: 70, PWM: 130}, {Temp: 75, PWM: 135}, {Temp: 80, PWM: 140}, {Temp: 85, PWM: 145},
+		{Temp: 90, PWM: 150}, {Temp: 95, PWM: 160}, {Temp: 100, PWM: 170}, {Temp: 105, PWM: 180},
+	}
+	got := FanCurveForTDP(93, shifted)
+	want := []int{215, 235, 255, 255, 255, 255, 255, 255}
+	for i := range got {
+		if got[i].PWM != want[i] {
+			t.Errorf("point %d (%d°C) = %d PWM, want %d — the ramp was not applied at this temperature",
+				i+1, got[i].Temp, got[i].PWM, want[i])
+		}
+	}
+	// And the edit-time guard must refuse it up front rather than storing it.
+	if CheckCurveAgainstTDP(shifted, 93) == nil {
+		t.Error("CheckCurveAgainstTDP accepted a curve the apply path has to raise; " +
+			"fancurve --set would write it verbatim and reconcile would read it as live")
+	}
 }

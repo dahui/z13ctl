@@ -168,25 +168,45 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 //
 //   - nil when pl1 needs no floor at all — at or below TDPMaxSafe, or unreadable
 //     (-1). "The limit imposes nothing; run whatever you were going to run."
-//   - want with any point below HighTDPMinPWM raised to it, and **every other
-//     point left exactly as drawn**. The floor is a minimum applied per point, not
-//     a curve that replaces yours: a point at 204 is already more cooling than the
-//     floor asks for, so there is no reason to touch it.
-//   - HighTDPFanCurve() when there is no want at all — there is nothing to clamp,
-//     so the built-in curve is the only thing left to write.
+//   - want raised point-by-point to HighTDPFanCurve, so each point ends at
+//     whichever of the two is *higher*. A point the user set above the floor curve
+//     is theirs and is left alone; a point below it comes up. Nothing is ever
+//     lowered.
+//   - HighTDPFanCurve() when there is no want at all — nothing to raise, so the
+//     built-in curve is the only thing left to write.
 //
-// Clamping preserves the monotonically non-decreasing PWM order ParseFanCurve
-// requires, since max(x, floor) over a non-decreasing x is still non-decreasing.
-// want is never mutated: it aliases the saved profile in daemon state, and
-// clamping in place would rewrite the user's stored curve.
+// The floor is the whole HighTDPFanCurve, not the scalar HighTDPMinPWM, and that
+// distinction is load-bearing. CLAUDE.md's rationale for lowering the minimum from
+// 204 to 127 is that "the *ramp* is what protects the APU, since a machine actually
+// sustaining >75W is well past 60°C where the curve is far above the floor anyway".
+// Clamping to the scalar alone honoured the first half and threw away the second: a
+// curve flat at 127 satisfied it everywhere, so 93W sustained at 90°C ran the fans
+// at 50% where every pre-1.3.1 path would have reached 100%.
 //
-// This is the single place the rule lives. ApplyTDPSafely and the reconcile
-// watcher both call it; they used to carry separate copies that disagreed, and
-// the apply path's copy was wrong twice over — it treated the floor as an
-// override and replaced *every* curve above TDPMaxSafe. A user curve of 204→255
-// came back as the 127→255 ramp, and a curve at 100% everywhere was downgraded to
-// one that idles at 50%. The watcher would not correct it either: the fans are
-// left in mode 1, which reads as "the curve is live".
+// Raising preserves the monotonically non-decreasing PWM order ParseFanCurve
+// requires, because FloorPWMAt is itself non-decreasing in temperature and the
+// pointwise max of two non-decreasing sequences is non-decreasing. Temperatures are
+// the user's throughout — only PWM values move.
+//
+// The floor is evaluated at each point's *temperature*, via FloorPWMAt, not at the
+// matching slice index. Index matching was the first attempt and is wrong whenever
+// the user's temperatures differ from HighTDPFanCurve's: a curve of
+// 70:130,75:135,80:140,… clears every index-matched comparison and still runs 55%
+// fans at 80°C, where the built-in curve demands 100%. Since the whole
+// justification is stated in temperature terms — a machine sustaining more than
+// TDPMaxSafe lives well past 60°C — the comparison has to be too, and the published
+// floor table only means anything if it is.
+//
+// want is never mutated: it aliases the saved profile in daemon state, and raising
+// in place would rewrite the user's stored curve.
+//
+// This is the single place the rule lives. ApplyTDPSafely and the reconcile watcher
+// both call it; they used to carry separate copies that disagreed, and the apply
+// path's copy was wrong — it treated the floor as an override and replaced *every*
+// curve above TDPMaxSafe. A user curve of 204→255 came back as the 127→255 ramp,
+// and a curve at 100% everywhere was downgraded to one that idles at 50%. The
+// watcher would not correct it either: the fans are left in mode 1, which reads as
+// "the curve is live".
 func FanCurveForTDP(pl1 int, want []api.FanCurvePoint) []api.FanCurvePoint {
 	if pl1 <= TDPMaxSafe {
 		return nil
@@ -197,26 +217,66 @@ func FanCurveForTDP(pl1 int, want []api.FanCurvePoint) []api.FanCurvePoint {
 	out := make([]api.FanCurvePoint, len(want))
 	copy(out, want)
 	for i := range out {
-		if out[i].PWM < HighTDPMinPWM {
-			out[i].PWM = HighTDPMinPWM
+		if lowest := FloorPWMAt(out[i].Temp); out[i].PWM < lowest {
+			out[i].PWM = lowest
 		}
 	}
 	return out
 }
 
+// FloorPWMAt returns the minimum PWM the high-TDP floor requires at temp, reading
+// HighTDPFanCurve as the piecewise-linear curve the EC treats it as.
+//
+// Below the curve's first point it returns that point's PWM — the floor is a floor,
+// so it does not taper off at low temperature — and above the last point it returns
+// the last PWM, which is 255. Between points it interpolates, so a user point at
+// 55°C is measured against roughly halfway between the 50°C and 60°C values rather
+// than against whichever built-in point happens to share its index.
+func FloorPWMAt(temp int) int {
+	floor := HighTDPFanCurve()
+	if temp <= floor[0].Temp {
+		return floor[0].PWM
+	}
+	for i := 1; i < len(floor); i++ {
+		if temp > floor[i].Temp {
+			continue
+		}
+		lo, hi := floor[i-1], floor[i]
+		span := hi.Temp - lo.Temp
+		if span <= 0 {
+			return hi.PWM
+		}
+		return lo.PWM + (hi.PWM-lo.PWM)*(temp-lo.Temp)/span
+	}
+	return floor[len(floor)-1].PWM
+}
+
 // FloorAdjustsCurve reports whether FanCurveForTDP changes anything about want —
-// either raising one or more sub-floor points, or writing HighTDPFanCurve because
-// there is no want at all.
+// either raising one or more points to the floor curve, or writing HighTDPFanCurve
+// whole because there is no want at all.
 //
 // Callers use it to tell the user the floor altered what they asked for, and just
-// as importantly to stay quiet when it did not. Note that an absent curve counts:
-// CheckCurveAgainstTDP alone answers "no problem" for nil, because a curve with no
-// points has none below the floor.
+// as importantly to stay quiet when it did not. It is derived from FanCurveForTDP
+// rather than reimplementing the comparison, so the two cannot disagree about what
+// counts as an adjustment — which is how the scalar version came to answer "no
+// problem" for a curve the ramp does raise.
+//
+// An absent curve counts as adjusted; CheckCurveAgainstTDP alone answers "no
+// problem" for nil, because a curve with no points has none below the floor.
 func FloorAdjustsCurve(pl1 int, want []api.FanCurvePoint) bool {
-	if pl1 <= TDPMaxSafe {
-		return false
+	got := FanCurveForTDP(pl1, want)
+	if got == nil {
+		return false // the limit imposes nothing
 	}
-	return len(want) == 0 || CheckCurveAgainstTDP(want, pl1) != nil
+	if len(want) != len(got) {
+		return true // no curve of its own, so the whole floor curve was written
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplyTDPSafely writes s, first putting the fans into the state the sustained
@@ -274,7 +334,7 @@ func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 	return CheckCurveAgainstTDP(points, tdp.PL1SPL)
 }
 
-// CheckCurveAgainstTDP rejects a curve holding any point below HighTDPMinPWM
+// CheckCurveAgainstTDP rejects a curve holding any point below the high-TDP floor
 // while pl1 is above TDPMaxSafe. It reads nothing, which is what makes it usable
 // for a custom profile that is not currently applied: hardware says nothing
 // about a profile that is not running, so the limit to check against is the one
@@ -283,14 +343,23 @@ func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 // Applying that check when a profile is *edited* means no profile can be saved
 // in a state that would be unsafe when it is later activated. ApplyTDPSafely
 // still fails closed at activation; this is the earlier, friendlier refusal.
+//
+// It measures against FloorPWMAt — the same floor FanCurveForTDP raises to — and
+// not against the scalar HighTDPMinPWM. Using the scalar left `fancurve --set` as an
+// open door around the apply-time rule: a curve flat at 127 clears 127 everywhere,
+// so handleFanCurve accepted it and wrote it verbatim, and the reconcile watcher
+// then read pwm_enable=1 as "the curve is live" and never corrected it. The machine
+// sustained 93W at 90°C on 50% fans — the exact failure FanCurveForTDP was rewritten
+// to prevent, reached through the one write path that did not consult it.
 func CheckCurveAgainstTDP(points []api.FanCurvePoint, pl1 int) error {
 	if pl1 <= TDPMaxSafe {
 		return nil
 	}
 	for _, p := range points {
-		if p.PWM < HighTDPMinPWM {
-			return fmt.Errorf("PWM %d at %d°C is below minimum %d (50%%) required when sustained TDP is above %dW",
-				p.PWM, p.Temp, HighTDPMinPWM, TDPMaxSafe)
+		if lowest := FloorPWMAt(p.Temp); p.PWM < lowest {
+			return fmt.Errorf("PWM %d at %d°C is below the %d required there when sustained TDP is above %dW "+
+				"(the floor rises with temperature, from %d at %d°C to 255 at 80°C)",
+				p.PWM, p.Temp, lowest, TDPMaxSafe, HighTDPMinPWM, HighTDPFanCurve()[0].Temp)
 		}
 	}
 	return nil

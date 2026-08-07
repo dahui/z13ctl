@@ -83,7 +83,8 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 //
 //   - The profile's own curve goes on *before* its TDP, and is also handed to
 //     ApplyTDPSafely so that call cannot throw it away. The floor is a per-point
-//     minimum, not a replacement curve: only points below HighTDPMinPWM are raised,
+//     minimum against the whole HighTDPFanCurve, not a replacement curve: a point is
+//     raised only where it falls below that curve's value *at its own temperature*,
 //     and HighTDPFanCurve is written whole only when there is no curve at all.
 //     Writing the curve first is still what keeps the user's curve in force if the
 //     ApplyTDPSafely call fails.

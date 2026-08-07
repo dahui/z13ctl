@@ -389,6 +389,15 @@ func (d *Daemon) handleBrightness(req request) response {
 // Callers must not clear the saved custom TDP in daemon state — only the
 // hardware values are reset, so the user can select "custom" again.
 func restoreStockPPT(profile string) {
+	// A profile with no row is a deliberate silent no-op here, as it was before
+	// restoreStockPPTErr existed. applyCustomHW calls this with
+	// readProfileFromSysfs(), which is "" whenever platform_profile cannot be read,
+	// so warning on the missing row logged a failure on every curveless-profile
+	// apply, resume and daemon start on a machine that had never run `setup`.
+	// Only lowerLimitForRelease needs the miss to be an error.
+	if _, ok := cli.StockProfilePPT[profile]; !ok {
+		return
+	}
 	if err := restoreStockPPTErr(profile); err != nil {
 		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
 	}
@@ -712,11 +721,18 @@ func (d *Daemon) handleTDP(req request) response {
 		if err := cli.ApplyTDPSafely(tdp, wantCurve); err != nil {
 			return response{OK: false, Error: "tdp: " + err.Error()}
 		}
-		// Only worth saying when the floor actually changed something. Warning on
-		// pl1 alone told users their curve had been altered when it had not.
-		if cli.FloorAdjustsCurve(pl1, wantCurve) {
-			slog.Warn("fan curve points below the high-TDP floor were raised to it",
-				"pl1", pl1, "min_pwm", cli.HighTDPMinPWM)
+		// Only worth saying when the floor actually changed something, and the three
+		// outcomes are different: warning on pl1 alone told users their curve had
+		// been altered when it had not, and warning on FloorAdjustsCurve alone said
+		// "points were raised" for a profile with no curve, whose points were
+		// substituted rather than raised. cmd/tdp.go and DryRunTdp split the same
+		// three ways.
+		switch {
+		case pl1 <= cli.TDPMaxSafe:
+		case len(wantCurve) == 0:
+			slog.Info("no custom fan curve to keep; wrote the built-in high-TDP curve", "pl1", pl1)
+		case cli.FloorAdjustsCurve(pl1, wantCurve):
+			slog.Warn("fan curve points below the high-TDP floor were raised to it", "pl1", pl1)
 		}
 		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
 	} else {

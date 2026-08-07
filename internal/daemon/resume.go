@@ -27,6 +27,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"syscall"
 
@@ -85,6 +86,14 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				// A (true) with no intervening (false) — a retried suspend, an
+				// aborted one, or a lost resume signal — leaves us holding nothing.
+				// Re-taking is too late to delay *this* suspend, but it restores the
+				// invariant for the next one instead of never holding a lock again.
+				if inhibitor < 0 {
+					slog.Debug("no sleep inhibitor held at PrepareForSleep(true); re-taking for the next cycle")
+					inhibitor = takeSleepInhibitor(conn)
+				}
 				// d.dev is guarded by d.mu: the hotplug watcher closes and
 				// replaces it on keyboard reattach, so an unlocked read here
 				// races with that swap and can write to a closed descriptor.
@@ -169,11 +178,18 @@ func sleepTick(obs sleepObs) sleepAction {
 	}
 
 	act := sleepAction{ReleaseFans: true, Reason: "custom fan curve keeps the fans running through s2idle"}
-	if obs.PL1 > cli.TDPMaxSafe {
-		// Dropping to firmware auto removes the floor this limit requires, so the
-		// limit comes down first. A PL1 of -1 deliberately does not land here: an
-		// unreadable PPT must not leave the fans running, the same stance
-		// CheckFanCurveFloor takes on a read failure.
+	if obs.PL1 == -1 || obs.PL1 > cli.TDPMaxSafe {
+		// Dropping to firmware auto removes the floor a high limit requires, so the
+		// limit comes down first.
+		//
+		// An unreadable PL1 lands here too, which is a change: it used to release the
+		// fans and leave the limit alone, on the reasoning that a read failure must
+		// not leave the fans running. That is the one place in this codebase that
+		// failed *open* — an unreadable PPT could be 93W, and releasing the fans then
+		// is precisely what ApplyTDPSafely refuses to do and what CheckFanFloorRelease
+		// refuses for a `fancurve --reset`. Lowering first costs nothing when the
+		// limit was already safe, and the fail-closed path below means a machine whose
+		// PPT cannot be read suspends loud rather than unfloored.
 		act.LowerPPT = true
 		act.Reason = "custom fan curve keeps the fans running through s2idle, and the sustained limit needs the floor lowered first"
 	}
@@ -189,10 +205,6 @@ func sleepTick(obs sleepObs) sleepAction {
 // state-changed event for a transition that reverses itself on resume would only
 // make clients redraw twice.
 func (d *Daemon) releaseVolatileState() {
-	// Before any hardware write: the reconcile watcher polls every 2s and would
-	// otherwise re-enable the curve in the window before userspace freezes.
-	d.setSuspending(true)
-
 	// hwMu before d.mu, always — this writes the same attributes the socket
 	// handlers and the reconcile watcher do.
 	d.hwMu.Lock()
@@ -223,8 +235,18 @@ func (d *Daemon) releaseVolatileState() {
 		return
 	}
 
+	// Armed only now, and only because something is about to be written. Arming it
+	// unconditionally at the top stood both watchers down for suspends that release
+	// nothing — a machine on a firmware profile, or one already on firmware auto —
+	// and a stand-down is not free: the power-source watcher skips a tick while it
+	// is set, and a lost resume signal leaves it set for the whole staleness
+	// ceiling. Setting it here is still early enough, because hwMu is held from
+	// above until after the writes land, and every watcher that could undo them
+	// needs hwMu to do so.
+	d.setSuspending(true)
+
 	if act.LowerPPT {
-		if err := restoreStockPPTErr(obs.Firmware); err != nil {
+		if err := lowerLimitForRelease(obs.Firmware); err != nil {
 			// Fail closed, exactly as ApplyTDPSafely does in the mirror image of
 			// this sequence: a loud suspend is the right trade against leaving a
 			// sustained limit above TDPMaxSafe with the fans on firmware auto.
@@ -239,6 +261,41 @@ func (d *Daemon) releaseVolatileState() {
 		return
 	}
 	slog.Info("sleep: released fans to firmware auto", "reason", act.Reason)
+}
+
+// lowerLimitForRelease brings the sustained limit down far enough that releasing
+// the fans to firmware auto is safe, so that the release can go ahead.
+//
+// The stock row for the firmware profile underneath is the preferred landing
+// place, since that is where the machine belongs while asleep. But
+// restoreStockPPTErr fails for any profile absent from cli.StockProfilePPT —
+// including the empty string a platform_profile read failure returns — and simply
+// giving up there abandoned the fan release and reintroduced the all-night-fans
+// bug on an error path. Clamping PL1 to TDPMaxSafe is enough to satisfy the guard,
+// leaves every other limit alone, and is undone on resume by applyCustomHW
+// rewriting the profile's own TDP.
+func lowerLimitForRelease(firmware string) error {
+	stockErr := restoreStockPPTErr(firmware)
+	if stockErr == nil {
+		return nil
+	}
+	slog.Debug("sleep: no stock PPT row; clamping the sustained limit instead",
+		"profile", firmware, "err", stockErr)
+
+	cur, err := cli.ReadAllPPT()
+	if err != nil {
+		return fmt.Errorf("reading current PPT to clamp it: %w", err)
+	}
+	if cur.PL1SPL <= cli.TDPMaxSafe {
+		return nil // already low enough; the guard is satisfied
+	}
+	cur.PL1SPL = cli.TDPMaxSafe
+	if err := cli.SetTDPState(cur); err != nil {
+		return fmt.Errorf("clamping the sustained limit to %dW: %w", cli.TDPMaxSafe, err)
+	}
+	slog.Info("sleep: clamped the sustained limit so the fans could be released",
+		"pl1", cli.TDPMaxSafe, "profile", firmware)
+	return nil
 }
 
 // takeSleepInhibitor holds a logind delay lock so the daemon's pre-sleep writes
@@ -281,16 +338,18 @@ func releaseSleepInhibitor(fd *int) {
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
 // lighting, fan curves, TDP, and Curve Optimizer offsets.
 func (d *Daemon) restoreVolatileState() {
-	// Cleared first, and via defer, so every return path below reaches it —
-	// including the early one for a machine on a firmware profile. A suspending
-	// flag left set would keep the reconcile watcher standing down, which is what
-	// its own staleness ceiling is the backstop for.
-	defer d.setSuspending(false)
-
 	// hwMu before d.mu: the fan/TDP block below writes the same attributes the
 	// socket handlers and the reconcile watcher do.
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	// Registered *after* the hwMu defer so LIFO runs it first — while the lock is
+	// still held. Clearing the flag after releasing hwMu left a window in which a
+	// watcher already blocked on the lock acquired it and still saw a suspend in
+	// progress, standing itself down for a machine that had finished resuming.
+	// Every return path below reaches this, including the early one for a firmware
+	// profile.
+	defer d.setSuspending(false)
 
 	// Both d.dev and d.state are guarded by d.mu, and applyLightingState reads
 	// them directly, so hold the lock across it — the same discipline the socket

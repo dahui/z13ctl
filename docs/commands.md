@@ -371,11 +371,13 @@ mixed in the same curve.
 
 !!! warning "Fan control is restricted above 75 W sustained TDP"
     While sustained TDP (PL1) is above 75 W, `fancurve --set` requires every point
-    to be at least 127 PWM (50%) — an up-front refusal so you can see why, rather
+    to clear the built-in high-TDP curve — an up-front refusal so you can see why, rather
     than storing a curve that would be altered on the way to the hardware. If you
     raise the limit *after* setting a curve, the points below 127 are quietly
     raised to it instead and the rest are left alone (see [`tdp`](#tdp)); the curve
-    you saved is kept intact for when the limit comes back down.
+    you saved is kept intact for when the limit comes back down. "Below the floor"
+    means below the built-in curve's value *at that temperature*, not below its
+    127 PWM bottom.
 
     `--reset` is refused outright — firmware auto mode has no floor at all, and
     dropping to it would remove the cooling the power limit depends on. Lower the
@@ -416,7 +418,7 @@ z13ctl tdp [flags]
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, any fan curve point below 127 PWM (50%) is raised to it; points at or above 127 are left exactly as you set them. |
+| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 **PPT attributes:**
@@ -455,29 +457,36 @@ re-selectable.
   127 PWM (50%) before the TDP values are written. If that fan write fails — or
   the kernel accepts it and then drops the curve — the TDP is not applied at all.
   Burst limits above 75W do not trigger this on their own.
-- **The floor is a per-point minimum, not a replacement curve.** Only points
-  below 127 PWM are raised to it; every point you set at or above 127 is applied
-  exactly as you drew it. A curve at 100% everywhere stays at 100%, and a curve of
-  `35:15%,40:30%,50:70%,60:80%,65:86%,70:92%,75:96%,80:100%` has only its first two
-  points lifted to 127 — the rest are yours.
+- **The floor is a per-point minimum, not a replacement curve.** Your curve is
+  raised point by point to whichever is higher — your value, or the built-in curve's
+  value at that position. Nothing is ever lowered, and a point you set above the
+  built-in curve is applied exactly as you drew it. A curve at 100% everywhere stays
+  at 100%.
 
     z13ctl through v1.3.0 replaced the *whole* curve whenever the sustained limit
     exceeded 75 W, which is why a custom curve appeared to "reset to stock" after
     every sleep/resume and every `tdp --set`.
 
-- The built-in floor curve below is written whole only when the profile has no
-  curve of its own — there is nothing to raise, so it is all that is left to
-  write. It is also what `--reset` cannot drop to firmware auto from while a high
-  limit is in force. Above 50 °C it climbs steadily and reaches 100% at 80 °C,
-  which is the range a machine actually sustaining more than 75 W spends its time
-  in:
+- The built-in curve is the floor, and the whole of it matters — not just its 127
+  PWM bottom. It is written whole only when the profile has no curve of its own,
+  but its rising section is what your curve is measured against at higher
+  temperatures:
 
     | Temp | 30 °C | 40 °C | 50 °C | 60 °C | 65 °C | 70 °C | 75 °C | 80 °C |
     |------|-------|-------|-------|-------|-------|-------|-------|-------|
     | PWM  | 127   | 127   | 140   | 165   | 190   | 215   | 235   | 255   |
 
-    The floor was 204 (80%) through v1.2.1 — loud enough that users were turning
-    the feature off rather than living with it, which protects nobody.
+    So a curve flat at 50% clears the *bottom* of the floor everywhere but is still
+    raised from its third point on, because a machine genuinely sustaining more than
+    75 W lives well past 60 °C — and the ramp, not the 127 minimum, is what protects
+    the APU there. A curve like `35:80%,40:99%,50:100%,…` is above the built-in curve
+    at every position and is left completely alone.
+
+    The 127 bottom was 204 (80%) through v1.2.1 — loud enough that users were
+    turning the feature off rather than living with it, which protects nobody.
+
+- `--reset` cannot drop to firmware auto while a high limit is in force, since
+  firmware auto has no floor at all.
 
 !!! danger "Run the daemon when sustaining above 75 W"
     The kernel releases custom fan curves on every `platform_profile` write, and

@@ -56,10 +56,17 @@ const reconcileQuietAfter = 3
 // would otherwise leave the watcher inert for the rest of the daemon's life.
 //
 // The ceiling is safe because Go timers use CLOCK_MONOTONIC, which does not
-// advance across suspend — so these are *awake* ticks. A real suspend consumes
-// one or two of them in the window before userspace freezes; 15 is 30 s of
-// wall-clock awake time, which only a missed resume signal can reach.
-const reconcileSuspendMaxTicks = 15
+// advance across suspend — so these are *awake* ticks, and the only awake window
+// inside a suspend is the one logind's delay lock holds open.
+//
+// It must therefore exceed logind's InhibitDelayMaxSec, or the "stale flag"
+// backstop fires inside a real pre-freeze window and re-enables the curve — the
+// very thing it exists to prevent. 60 ticks is 120 s of awake time against a
+// default InhibitDelayMaxSec of 5 s, with room for the 30 s and 60 s values people
+// configure. Only a PrepareForSleep(false) that never arrives can reach it, and
+// the cost of the larger margin is that such a daemon defends a live curve two
+// minutes later than it otherwise would.
+const reconcileSuspendMaxTicks = 60
 
 // reconcileObs is one observation: what daemon state says should be in force,
 // and what the hardware currently reports.
@@ -271,15 +278,18 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		"platform_profile", obs.ProfileHW,
 		"pwm_enable", obs.CurveMode)
 
+	// The TDP goes first, and the curve is then recomputed against the limit that
+	// is now in force rather than the one observed at the top of the tick.
+	//
+	// Writing act.Curve first was wrong whenever both arms fired: act.Curve was
+	// floored against obs.PL1 — the *drifted* limit — so restoring a profile whose
+	// own limit is 52W while hardware sat at 90W wrote the 90W ramp and then
+	// lowered the limit, leaving a loud curve the profile does not describe. The
+	// next tick then read pwm_enable=1 as "the curve is live" and never corrected
+	// it. ApplyTDPSafely still raises its own floor before raising power, so
+	// ordering it first opens no unfloored window.
 	ok := true
-	if act.Curve != nil {
-		if err := cli.SetBothFanCurves(act.Curve); err != nil {
-			ok = false
-			if !st.quiet {
-				slog.Warn("failed to re-apply fan curve", "err", err)
-			}
-		}
-	}
+	floorLimit := obs.PL1
 	if act.TDP != nil {
 		// obs.WantCurve, not nil: restoring a drifted PPT must not throw away a
 		// live user curve that already satisfies the floor. Passing nil here was
@@ -288,6 +298,23 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply TDP", "err", err)
+			}
+		} else {
+			floorLimit = act.TDP.PL1SPL
+		}
+	}
+	if act.Curve != nil {
+		curve := obs.WantCurve
+		if c := cli.FanCurveForTDP(floorLimit, curve); c != nil {
+			curve = c
+		}
+		if curve == nil {
+			curve = act.Curve // no saved curve: act.Curve is the built-in floor
+		}
+		if err := cli.SetBothFanCurves(curve); err != nil {
+			ok = false
+			if !st.quiet {
+				slog.Warn("failed to re-apply fan curve", "err", err)
 			}
 		}
 	}

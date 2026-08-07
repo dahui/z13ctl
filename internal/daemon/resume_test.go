@@ -10,6 +10,7 @@ package daemon
 
 import (
 	"testing"
+	"time"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -41,12 +42,13 @@ func TestSleepTick(t *testing.T) {
 			releaseFans: true,
 		},
 		{
-			// An unreadable PPT must not leave the fans running: the guard is
-			// best-effort, the same stance CheckFanCurveFloor takes.
-			name: "an unreadable limit still releases",
+			// Fail closed: an unreadable PPT could be above the safe max, so the limit
+			// is lowered before the fans are released rather than after. This is the
+			// one path that used to fail open.
+			name: "an unreadable limit lowers power first",
 			obs:  sleepObs{Owned: true, CurveMode: 1, PL1: -1, Firmware: "balanced"},
 
-			releaseFans: true,
+			lowerPPT: true, releaseFans: true,
 		},
 		{
 			name: "already on firmware auto",
@@ -218,5 +220,24 @@ func TestSetSuspendingBumpsGenerationOnEntry(t *testing.T) {
 	d.setSuspending(true)
 	if _, gen = read(); gen != 2 {
 		t.Errorf("the next suspend got generation %d, want 2", gen)
+	}
+}
+
+// TestSuspendCeilingExceedsInhibitDelay guards the relationship the stand-down
+// ceiling depends on and cannot check at runtime.
+//
+// The ceiling counts *awake* ticks, and the only awake window inside a suspend is
+// the one logind's delay lock holds open — bounded by InhibitDelayMaxSec. If the
+// ceiling is the shorter of the two, the "stale flag" backstop fires inside a real
+// pre-freeze window and re-enables the curve, which is precisely what it exists to
+// prevent. 60 s covers the configured values people actually use; the default is 5.
+func TestSuspendCeilingExceedsInhibitDelay(t *testing.T) {
+	t.Parallel()
+	const longestPlausibleInhibitDelay = 60 * time.Second
+	budget := time.Duration(reconcileSuspendMaxTicks) * reconcilePollInterval
+	if budget <= longestPlausibleInhibitDelay {
+		t.Errorf("stand-down budget is %v, which does not exceed a %v InhibitDelayMaxSec: "+
+			"the ceiling would fire inside a real pre-freeze window",
+			budget, longestPlausibleInhibitDelay)
 	}
 }

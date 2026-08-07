@@ -341,10 +341,11 @@ contrib/
   (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
   (PL1) exceeds 75W, both fans must be on a curve that holds a 50% PWM floor,
   written with `pwm_enable=1` before the PPT writes, and the TDP is not applied at
-  all if that fails (see `ApplyTDPSafely`). The floor is applied per point: a
-  curve's sub-floor points are raised to `HighTDPMinPWM` and the rest are left as
-  drawn, and `HighTDPFanCurve` — the 50% floor ramping to 100% at 80°C — is written
-  whole only when the profile has no curve of its own (see `FanCurveForTDP`). The floor was
+  all if that fails (see `ApplyTDPSafely`). The floor is applied per point against
+  `HighTDPFanCurve` — the 50% bottom ramping to 100% at 80°C: a curve's points are
+  raised to that curve's value wherever they fall below it and left as drawn
+  wherever they do not, and it is written whole only when the profile has no curve
+  of its own (see `FanCurveForTDP`). The bottom of that curve was
   80% (204) through v1.2.1 and users reported it as loud enough that they simply
   stopped using high TDP, so it is now 127; the *ramp* is what protects the APU,
   since a machine actually sustaining >75W is well past 60°C where the curve is
@@ -352,12 +353,39 @@ contrib/
   `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
   calls any more; the docs, the dry-run output, and this file all described it
   for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
-- **The high-TDP fan floor is a *per-point minimum*, not a replacement curve.**
-  `cli.FanCurveForTDP` is the single place that rule lives: above `TDPMaxSafe` it
-  returns the caller's own curve with any point below `HighTDPMinPWM` raised to it
-  and **every other point left exactly as drawn**. `HighTDPFanCurve()` is returned
-  whole only when there is no curve at all — nothing to clamp, so it is all that is
-  left to write. `ApplyTDPSafely` and `reconcileTick` both call it.
+- **The high-TDP fan floor is a *per-point minimum against the whole
+  `HighTDPFanCurve`*, not against its `HighTDPMinPWM` bottom, and not a replacement
+  curve.** `cli.FanCurveForTDP` is the single place that rule lives: above
+  `TDPMaxSafe` it returns the caller's own curve with each point raised to
+  `HighTDPFanCurve`'s value at the matching index where it falls below it, and
+  **every point above it left exactly as drawn**. Nothing is ever lowered.
+  `HighTDPFanCurve()` is returned whole only when there is no curve at all —
+  nothing to raise, so it is all that is left to write. `ApplyTDPSafely` and
+  `reconcileTick` both call it.
+  **The comparison is at each point's *temperature*, via `FloorPWMAt`, not at the
+  matching slice index.** Index matching was the first attempt: a curve of
+  `70:130,75:135,80:140,…` clears every index-matched comparison and still runs 55%
+  fans at 80°C, *weaker* than the wholesale replacement it replaced. Since the
+  justification is stated in temperature terms, and `docs/commands.md` publishes the
+  floor as a temperature table, the comparison has to be too.
+  **Clamping to the scalar minimum alone was wrong and shipped briefly during
+  development.** It honoured the first half of the rationale for lowering the
+  minimum from 204 to 127 and threw away the second: "the *ramp* is what protects
+  the APU, since a machine actually sustaining >75W is well past 60°C". A curve flat
+  at 127 satisfied a scalar 127 everywhere, so 93W sustained at 90°C ran the fans at
+  50% where every pre-1.3.1 path would have reached 100%. Temperatures are always
+  the user's — only PWM values move — and the floor is read at the matching *index*
+  rather than interpolated, which keeps the function pure and total.
+  `FloorAdjustsCurve` is derived from `FanCurveForTDP` rather than reimplementing
+  the comparison, so the two cannot disagree about what counts as an adjustment;
+  the scalar version answered "no problem" for curves the ramp does raise.
+  **`CheckCurveAgainstTDP` must measure against the same floor.** It is the
+  *edit-time* refusal, and while it used the scalar minimum `fancurve --set` was an
+  open door around the whole rule: a curve flat at 127 cleared 127 everywhere, so
+  `handleFanCurve` accepted it and wrote it verbatim, and the reconcile watcher then
+  read `pwm_enable=1` as "the curve is live" and never corrected it — 93W at 90°C on
+  50% fans, through the one write path that did not consult `FanCurveForTDP`. Any
+  new path that writes a curve must go through one of the two.
   They used to carry separate copies that disagreed — the watcher honoured a curve
   above the floor, the apply path replaced *every* curve above `TDPMaxSafe` — and
   the apply path was the one users saw. A saved curve of 204→255 came back as the
@@ -731,10 +759,32 @@ contrib/
   carries the flag so `reconcileTick` stays pure. The ceiling
   (`reconcileSuspendMaxTicks`) is counted in *ticks*, not elapsed time, and that
   is load-bearing: Go timers use `CLOCK_MONOTONIC`, which does not advance across
-  suspend, so 15 ticks is 30 s of *awake* time — unreachable by a real suspend,
-  reachable only by a `PrepareForSleep(false)` that never arrived.
+  suspend, so the count is of *awake* ticks, reachable only by a
+  `PrepareForSleep(false)` that never arrived. It must also **exceed logind's
+  `InhibitDelayMaxSec`**, since the delay lock is the only awake window inside a
+  suspend: a shorter ceiling fires inside a real pre-freeze window and re-enables
+  the curve, the very thing it guards against. 60 ticks is 120 s against a default
+  of 5 s, with room for the 30 s and 60 s values people configure.
+  `internal/daemon/resume_test.go:TestSuspendCeilingExceedsInhibitDelay` pins it.
   `restoreVolatileState` clears the flag via `defer` placed *before* `hwMu` is
   taken, so the early return for a firmware profile reaches it too.
+  **Every watcher that writes fan hardware must consult it, not just
+  `reconcileOnce`.** `powerSourceOnce` was missed: unplug the charger and suspend
+  immediately, and it confirmed the edge, took `hwMu` after `releaseVolatileState`
+  dropped it, and `applyCustomHW` put `pwm_enable` back to 1 before the freeze — the
+  fans then ran for the whole s2idle period. A third watcher added later needs the
+  same treatment.
+  **It must stand down *before* `powerTick`, returning `prev` untouched.** The first
+  attempt ran the tick and dropped only the apply, which discarded the transition
+  permanently: this watcher is edge-triggered, `powerTick` latches `st.onAC` on the
+  confirming tick, and every later tick then computed `sourceChanged == false`. The
+  machine ran the AC profile on battery until the charger was physically cycled.
+  Leaving the edge unobserved is what lets it be re-detected after the resume.
+  `TestAutoswitchDeferralSurvivesTheSuspend` asserts the re-application, not just
+  that an action was once produced — the test that missed this only checked the
+  latter. The same reasoning applies to `d.suspending` being armed only once
+  `sleepTick` has decided to write something: arming it unconditionally stood both
+  watchers down for suspends that released nothing.
   **The budget is per-suspend, and `d.suspendGen` is what makes it so.** Resetting
   the counter on the first non-suspending tick looks sufficient and is not: a
   machine flapping sleep→wake→sleep faster than the 2 s poll never presents an idle

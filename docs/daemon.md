@@ -229,11 +229,13 @@ state that would be unsafe when activated.
 
     `tdp` applies the same rule in the other direction. Raising PL1 above 75 W
     writes the fan curve **first**, and if that write fails the power limit is not
-    applied at all. The floor is a **per-point minimum**: points below 127 PWM are
-    raised to it and every other point is applied exactly as stored, so a client
-    that sends a curve above the floor gets that curve, not a substitute. The
-    built-in high-TDP curve is written whole only when the profile has no curve of
-    its own. The same holds for the daemon's own restore paths — startup, resume,
+    applied at all. The floor is a **per-point minimum against the built-in
+    high-TDP curve**: each point is raised to that curve's value where it falls
+    below it, and left exactly as stored where it does not, so a client sending a
+    curve above it gets that curve rather than a substitute. Note this is the whole
+    curve and not just its 127 PWM bottom — a curve flat at 50% is still raised at
+    higher temperatures. The built-in curve is written whole only when the profile
+    has no curve of its own. The same holds for the daemon's own restore paths — startup, resume,
     and selecting a custom profile.
 
 ### State and events
@@ -472,7 +474,7 @@ before the TDP, so the high-TDP floor is written last and wins.
 The [reconciliation watcher](#custom-fan-curve-reconciliation) stands down between
 the two signals — otherwise it would re-enable the curve within two seconds of the
 release, in the window before userspace freezes. It resumes defending the curve on
-the resume signal, or after about 30 seconds of awake time if that signal never
+the resume signal, or after about two minutes of awake time if that signal never
 arrives.
 
 This all happens transparently with no user intervention. You can verify it worked
@@ -556,7 +558,7 @@ active, so selecting `quiet`, `balanced`, or `performance` with
 It also stands down between `PrepareForSleep(true)` and the matching resume, so it
 does not undo the [pre-sleep fan release](#on-sleep-the-fans-are-handed-back-to-the-firmware)
 in the window before userspace freezes. If a resume signal never arrives it starts
-defending the curve again after about 30 seconds of awake time.
+defending the curve again after about two minutes of awake time.
 
 !!! note "Daemon required"
     Without the daemon, a custom fan curve set with `z13ctl fancurve --set` lasts

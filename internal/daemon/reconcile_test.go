@@ -16,6 +16,22 @@ import (
 	"github.com/dahui/z13ctl/internal/cli"
 )
 
+// rampedFrom is curve(pwm) after the high-TDP ramp has raised the points it
+// exceeds. The PWM values are cli.HighTDPFanCurve's, written out rather than
+// computed, so the test states the expected outcome instead of restating the rule.
+func rampedFrom(pwm int) []api.FanCurvePoint {
+	// cli.FloorPWMAt evaluated at curve()'s temperatures (30,35,…,65), written out
+	// rather than computed so the test states the outcome instead of the rule.
+	ramp := []int{127, 127, 127, 133, 140, 152, 165, 190}
+	out := curve(pwm)
+	for i := range out {
+		if out[i].PWM < ramp[i] {
+			out[i].PWM = ramp[i]
+		}
+	}
+	return out
+}
+
 func curve(pwm int) []api.FanCurvePoint {
 	points := make([]api.FanCurvePoint, 8)
 	for i := range points {
@@ -106,25 +122,23 @@ func TestReconcileTick(t *testing.T) {
 		},
 		{
 			// Caught on hardware: the saved curve is only vetted against the limit in
-			// force when it is saved, and raising the TDP afterwards leaves sub-floor
-			// points in state. They are raised to the floor — and only they are; the
-			// temperatures and every at-or-above-floor point stay as the user drew
-			// them, which is why this expects the clamped saved curve rather than
-			// HighTDPFanCurve.
-			name:      "saved curve below the floor while the limit is high",
+			// force when it is saved, and raising the TDP afterwards leaves sub-ramp
+			// points in state. Each point comes up to the ramp — and only the ones
+			// below it do; the temperatures stay as the user drew them, which is why
+			// this expects the raised saved curve rather than HighTDPFanCurve.
+			name:      "saved curve below the ramp while the limit is high",
 			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
-			expect:    curve(cli.HighTDPMinPWM),
+			expect:    rampedFrom(120),
 		},
 		{
-			// Exactly at the floor is not below it, so this curve is kept as drawn
-			// rather than replaced. It reads as a near-tie only at point 0; from
-			// 50°C HighTDPFanCurve ramps well above a flat 127, so the two are
-			// genuinely different curves and the assertion below compares all eight
-			// points.
-			name:      "saved curve sitting exactly at the floor is kept",
+			// Flat at the scalar minimum clears it everywhere and still falls under
+			// the ramp from the third point on, so the ramp raises it. Accepting this
+			// curve verbatim is what let a 93W limit run 50% fans at 90°C.
+			name:      "saved curve flat at the minimum is raised to the ramp",
 			obs:       reconcileObs{Custom: true, WantCurve: curve(cli.HighTDPMinPWM), CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
 			wantCurve: true,
+			expect:    rampedFrom(cli.HighTDPMinPWM),
 		},
 		{
 			name: "no saved curve and the limit is safe",
@@ -152,9 +166,10 @@ func TestReconcileTick(t *testing.T) {
 			// is the watcher-side half of the reported bug: a saved curve well above
 			// the floor must be restored as drawn even under a high limit, which is
 			// also what cli.ApplyTDPSafely now does on the apply path.
-			name:      "high limit restores a saved curve that clears the floor",
+			name:      "high limit restores a saved curve, raising only the ramp's top",
 			obs:       reconcileObs{Custom: true, WantCurve: curve(204), CurveMode: 2, PL1: 90},
 			wantCurve: true,
+			expect:    rampedFrom(204),
 		},
 		{
 			// And the PPT arm must not throw that curve away either — it used to
