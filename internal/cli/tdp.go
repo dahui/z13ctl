@@ -199,43 +199,46 @@ func FloorAdjustsCurve(pl1 int, want []api.FanCurvePoint) bool {
 	return safety.FloorAdjustsCurve(z13Envelope(), pl1, want)
 }
 
+// z13Fans and z13Power adapt this package's sysfs helpers to the narrow
+// interfaces safety.Engine consumes. They are the seed of the asusz13 driver:
+// when the driver extraction moves the sysfs code out of this package, these
+// become that driver's FanController and PowerLimiter and this file keeps only
+// forwarders. Until then they are what keeps ApplyTDPSafely a single
+// implementation rather than a copy of the engine's ordering — the drift
+// between duplicated apply paths is exactly what the engine exists to end.
+type z13Fans struct{}
+
+// ApplyCurve implements safety.Fans. SetBothFanCurves verifies the curve took
+// effect, which is what the engine's fail-closed contract requires.
+func (z13Fans) ApplyCurve(pts []api.FanCurvePoint) error { return SetBothFanCurves(pts) }
+
+// Release implements safety.Fans; ResetAllFanCurves verifies the release.
+func (z13Fans) Release() error { return ResetAllFanCurves() }
+
+type z13Power struct{}
+
+// Read implements safety.Power.
+func (z13Power) Read() (api.TDPState, error) { return ReadAllPPT() }
+
+// Apply implements safety.Power. Raw write; reachable only through the engine.
+func (z13Power) Apply(s api.TDPState) error { return SetTDPState(s) }
+
+// Envelope implements safety.Power.
+func (z13Power) Envelope() driver.PowerEnvelope { return z13Envelope() }
+
+// z13Engine binds the Z13 adapters. Callers in this package and its dependents
+// go through the returned engine's orderings, never around them.
+func z13Engine() safety.Engine {
+	return safety.Engine{Fans: z13Fans{}, Power: z13Power{}}
+}
+
 // ApplyTDPSafely writes s, first putting the fans into the state the sustained
-// limit requires — see FanCurveForTDP, which decides between want and the
-// HighTDPFanCurve floor. If that fan write fails, the TDP is NOT applied:
-// sustaining more than TDPMaxSafe watts without the HighTDPMinPWM floor is the
-// exact condition the floor exists to prevent, so failing closed is the only safe
-// outcome.
-//
-// want is the curve the caller intends to have in force — the active profile's
-// own curve, or nil when it has none. Passing it is what keeps the user's own
-// points from being thrown away: only points below the floor are raised. Passing
-// nil asks for HighTDPFanCurve wholesale, which is right only when there is
-// genuinely no curve.
-//
-// "Fails" includes the kernel accepting the write and then dropping the curve:
-// SetBothFanCurves reads pwm_enable back, so a floor lost to a concurrent
-// platform_profile write is a refusal rather than a false success. This function
-// only guarantees the floor at the moment the limit is raised — keeping it in
-// force afterwards is the reconcile watcher's job
-// (internal/daemon/reconcile.go), since a later profile write would otherwise
-// return the fans to firmware auto while the PPT stays high.
-//
-// This is the single entry point for every path that applies a custom TDP —
-// the socket handler, the "custom" profile recall, daemon startup, resume, and
-// the no-daemon CLI path. They previously enforced the floor four different
-// ways, including one that raised power before raising the fans and discarded
-// the fan error.
-//
-// Values are written verbatim via SetTDPState; use TDPStateFor first if PL2
-// should be mirrored into APU/Platform sPPT.
+// limit requires, and refuses the whole operation if the fan write fails. The
+// rule, the ordering, and their history live in safety.Engine.ApplyTDPSafely;
+// this forwards through the Z13 adapters, so the fake-sysfs tests in this
+// package exercise the engine end to end.
 func ApplyTDPSafely(s api.TDPState, want []api.FanCurvePoint) error {
-	if c := FanCurveForTDP(s.PL1SPL, want); c != nil {
-		if err := SetBothFanCurves(c); err != nil {
-			return fmt.Errorf("setting high-TDP fan curve: %w (refusing to apply %dW sustained TDP without the %d PWM floor)",
-				err, s.PL1SPL, HighTDPMinPWM)
-		}
-	}
-	return SetTDPState(s)
+	return z13Engine().ApplyTDPSafely(s, want)
 }
 
 // CheckFanCurveFloor rejects a curve holding any point below HighTDPMinPWM

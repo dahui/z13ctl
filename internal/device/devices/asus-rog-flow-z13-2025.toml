@@ -1,0 +1,91 @@
+# 2025 ASUS ROG Flow Z13 (GZ302 series, Strix Halo).
+#
+# Every number here is measured or verified on hardware; sources are noted per
+# block. While internal/cli still carries these values as constants, the test
+# suite pins this file against them (TestZ13FileMatchesCliConstants) — change
+# both together until the constants are deleted.
+
+[device]
+id    = "asus-rog-flow-z13-2025"
+model = "GZ302"
+
+# product_name carries the SKU twice ("ROG Flow Z13 GZ302EA_GZ302EA"), so the
+# prefix form covers every GZ302 variant.
+[[device.match]]
+vendor         = "ASUSTeK COMPUTER INC."
+product_prefix = "ROG Flow Z13 GZ302"
+
+# Two hwmon devices under asus-nb-wmi; both fans cool the same APU, so one
+# curve always drives both. Temperature axis is the curve editor's.
+[fans]
+method   = "asus-nb-wmi"
+points   = 8
+temp_min = 35
+temp_max = 105
+
+# PPT limits via the asus-nb-wmi platform device attributes (NOT
+# firmware-attributes, whose calibration data is empty on this machine).
+# Limits are G-Helper's for the GZ302E. The floor curve is what the fans must
+# hold while sustained TDP exceeds tdp_max_safe: 50% at idle temperatures,
+# full speed by 80°C — the ramp is what protects the APU, the bottom is what
+# keeps it quiet.
+[power]
+method         = "asus-nb-wmi-ppt"
+tdp_min        = 5
+tdp_max_safe   = 75
+tdp_max_forced = 93
+tdp_default    = 50
+floor_curve    = [[30, 127], [40, 127], [50, 140], [60, 165], [65, 190], [70, 215], [75, 235], [80, 255]]
+
+# Measured with ryzenadj; authoritative on write, because the firmware does
+# not re-apply per-profile limits on a platform_profile change and the kernel's
+# PPT attributes boot holding a stale 5W cache. APU/Platform sPPT are 70 across
+# all three profiles while PL2 varies — write these rows verbatim, never mirror.
+[power.stock_ppt]
+quiet       = { pl1 = 40, pl2 = 55, fppt = 55, apu = 70, platform = 70 }
+balanced    = { pl1 = 52, pl2 = 71, fppt = 70, apu = 70, platform = 70 }
+performance = { pl1 = 70, pl2 = 86, fppt = 86, apu = 70, platform = 70 }
+
+[profiles]
+method = "platform-profile"
+names  = ["quiet", "balanced", "performance"]
+
+# Aura HID: keyboard 0b05:1a30 (detachable — powers off when removed),
+# lightbar 0b05:18c6. Both zones are always addressed; each device ignores the
+# other zone's packets.
+[lighting]
+method = "aura-hid"
+zones  = ["keyboard", "lightbar"]
+
+# asus-armoury firmware-attributes (mainline since Linux 6.19).
+[toggles]
+method = "asus-armoury"
+
+[[toggles.entries]]
+id    = "boot_sound"
+label = "POST boot sound"
+
+[[toggles.entries]]
+id    = "panel_overdrive"
+label = "Panel overdrive"
+
+[battery]
+method = "power-supply"
+
+# CPU Curve Optimizer via ryzen_smu (amkillam fork required on Strix Halo);
+# iGPU CO is unsupported on this silicon.
+[undervolt]
+method = "ryzen-smu-co"
+min    = -40
+max    = 0
+
+[telemetry]
+method = "hwmon-rapl"
+
+# The Armoury Crate button: KEY_PROG3 on the "Asus WMI hotkeys" input device
+# (older ASUS models use KEY_PROG1). The same node carries SW_TABLET_MODE —
+# never grab it exclusively (issue #10).
+[button]
+method  = "evdev-key"
+device  = "Asus WMI hotkeys"
+keycode = 202

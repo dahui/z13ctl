@@ -1,0 +1,297 @@
+package device
+
+// config.go — the devices/*.toml schema and its validation. One file per
+// device family; a capability block that is absent means the device does not
+// have that capability, which is exactly what the daemon reports to clients.
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/driver"
+)
+
+// Config is one parsed devices/*.toml. Capability blocks are pointers so that
+// absence is representable: nil means "this device does not have this", and
+// the assembled Device carries a nil interface for it — discovery by absence,
+// all the way from data file to socket client.
+type Config struct {
+	Device    Meta             `toml:"device"`
+	Fans      *FansConfig      `toml:"fans"`
+	Power     *PowerConfig     `toml:"power"`
+	Profiles  *ProfilesConfig  `toml:"profiles"`
+	Lighting  *LightingConfig  `toml:"lighting"`
+	Toggles   *TogglesConfig   `toml:"toggles"`
+	Battery   *BatteryConfig   `toml:"battery"`
+	Undervolt *UndervoltConfig `toml:"undervolt"`
+	Telemetry *TelemetryConfig `toml:"telemetry"`
+	Button    *ButtonConfig    `toml:"button"`
+}
+
+// Meta identifies the device family and how to recognize it.
+type Meta struct {
+	// ID is the stable device identifier served to clients ("asus-rog-flow-
+	// z13-2025"). Bug reports and logs key on it; never reuse or rename one.
+	ID string `toml:"id"`
+
+	// Model is the short hardware name for display ("GZ302").
+	Model string `toml:"model"`
+
+	// Match lists DMI patterns; any one matching claims the machine.
+	Match []Match `toml:"match"`
+}
+
+// Match is one DMI pattern. Vendor must match exactly; the product matches
+// either exactly (Product) or by prefix (ProductPrefix) — prefix is the common
+// case, since vendors encode SKU suffixes into product_name ("ROG Flow Z13
+// GZ302EA_GZ302EA").
+type Match struct {
+	Vendor        string `toml:"vendor"`
+	Product       string `toml:"product"`
+	ProductPrefix string `toml:"product_prefix"`
+}
+
+// FansConfig selects and parameterizes the fan driver.
+type FansConfig struct {
+	Method  string `toml:"method"`
+	Points  int    `toml:"points"`
+	TempMin int    `toml:"temp_min"` // curve editor axis, Celsius
+	TempMax int    `toml:"temp_max"`
+}
+
+// Shape returns the driver.FanShape this config describes.
+func (c FansConfig) Shape() driver.FanShape {
+	return driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255}
+}
+
+// StockRow is one profile's firmware PPT defaults, measured on hardware.
+type StockRow struct {
+	PL1      int `toml:"pl1"`
+	PL2      int `toml:"pl2"`
+	FPPT     int `toml:"fppt"`
+	APU      int `toml:"apu"`
+	Platform int `toml:"platform"`
+}
+
+// PowerConfig selects and parameterizes the power-limit driver.
+type PowerConfig struct {
+	Method       string              `toml:"method"`
+	TDPMin       int                 `toml:"tdp_min"`
+	TDPMaxSafe   int                 `toml:"tdp_max_safe"`
+	TDPMaxForced int                 `toml:"tdp_max_forced"`
+	TDPDefault   int                 `toml:"tdp_default"`
+	FloorCurve   [][]int             `toml:"floor_curve"` // [[temp, pwm], ...]
+	StockPPT     map[string]StockRow `toml:"stock_ppt"`
+}
+
+// Envelope returns the driver.PowerEnvelope this config describes.
+func (c PowerConfig) Envelope() driver.PowerEnvelope {
+	env := driver.PowerEnvelope{
+		TDPMin:       c.TDPMin,
+		TDPMaxSafe:   c.TDPMaxSafe,
+		TDPMaxForced: c.TDPMaxForced,
+	}
+	if len(c.StockPPT) > 0 {
+		env.StockProfilePPT = make(map[string]api.TDPState, len(c.StockPPT))
+		for name, r := range c.StockPPT {
+			env.StockProfilePPT[name] = api.TDPState{
+				PL1SPL: r.PL1, PL2SPPT: r.PL2, FPPT: r.FPPT, APUSPPT: r.APU, PlatformSPPT: r.Platform,
+			}
+		}
+	}
+	for _, p := range c.FloorCurve {
+		env.FloorCurve = append(env.FloorCurve, api.FanCurvePoint{Temp: p[0], PWM: p[1]})
+	}
+	return env
+}
+
+// ProfilesConfig selects the platform-profile driver and names the firmware
+// profiles — which are also the reserved names no custom profile may take.
+type ProfilesConfig struct {
+	Method string   `toml:"method"`
+	Names  []string `toml:"names"`
+}
+
+// LightingConfig selects the lighting driver.
+type LightingConfig struct {
+	Method string   `toml:"method"`
+	Zones  []string `toml:"zones"`
+}
+
+// ToggleEntry is one firmware toggle the device offers.
+type ToggleEntry struct {
+	ID    string `toml:"id"`
+	Label string `toml:"label"`
+}
+
+// TogglesConfig selects the firmware-toggles driver and lists its toggles.
+type TogglesConfig struct {
+	Method  string        `toml:"method"`
+	Entries []ToggleEntry `toml:"entries"`
+}
+
+// BatteryConfig selects the battery driver.
+type BatteryConfig struct {
+	Method string `toml:"method"`
+}
+
+// UndervoltConfig selects the undervolt driver and its offset bounds.
+type UndervoltConfig struct {
+	Method string `toml:"method"`
+	Min    int    `toml:"min"`
+	Max    int    `toml:"max"`
+}
+
+// TelemetryConfig selects the telemetry driver.
+type TelemetryConfig struct {
+	Method string `toml:"method"`
+}
+
+// ButtonConfig selects the hardware-button driver.
+type ButtonConfig struct {
+	Method  string `toml:"method"`
+	Device  string `toml:"device"`  // input device name to find by sysfs
+	Keycode int    `toml:"keycode"` // key code to watch for
+}
+
+// Validate reports everything wrong with a config at once, so a device data PR
+// gets one round of feedback rather than one error per push. A valid config is
+// one the registry can assemble without further checks.
+func (c Config) Validate() error {
+	var errs []error
+	fail := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+
+	if c.Device.ID == "" {
+		fail("device.id is required")
+	}
+	if c.Device.Model == "" {
+		fail("device.model is required")
+	}
+	if len(c.Device.Match) == 0 {
+		fail("device.match needs at least one pattern")
+	}
+	for i, m := range c.Device.Match {
+		if m.Vendor == "" {
+			fail("device.match[%d]: vendor is required", i)
+		}
+		if (m.Product == "") == (m.ProductPrefix == "") {
+			fail("device.match[%d]: exactly one of product or product_prefix is required", i)
+		}
+	}
+
+	if c.Fans != nil {
+		if c.Fans.Method == "" {
+			fail("fans.method is required")
+		}
+		if c.Fans.Points <= 0 {
+			fail("fans.points must be positive")
+		}
+		// One degree per point, or a curve cannot hold strictly increasing
+		// temperatures — the same bound the GUI's Sanitized enforces.
+		if c.Fans.TempMax-c.Fans.TempMin < c.Fans.Points-1 {
+			fail("fans temperature range %d–%d is too narrow for %d points", c.Fans.TempMin, c.Fans.TempMax, c.Fans.Points)
+		}
+	}
+
+	if c.Power != nil {
+		p := c.Power
+		if p.Method == "" {
+			fail("power.method is required")
+		}
+		if p.TDPMin <= 0 || p.TDPMin >= p.TDPMaxSafe || p.TDPMaxSafe > p.TDPMaxForced {
+			fail("power limits must satisfy 0 < tdp_min < tdp_max_safe <= tdp_max_forced (got %d/%d/%d)",
+				p.TDPMin, p.TDPMaxSafe, p.TDPMaxForced)
+		}
+		if p.TDPDefault != 0 && (p.TDPDefault < p.TDPMin || p.TDPDefault > p.TDPMaxSafe) {
+			fail("power.tdp_default %d outside [%d, %d]", p.TDPDefault, p.TDPMin, p.TDPMaxSafe)
+		}
+		for i, pt := range p.FloorCurve {
+			if len(pt) != 2 {
+				fail("power.floor_curve[%d] must be a [temp, pwm] pair", i)
+				continue
+			}
+			if pt[1] < 0 || pt[1] > 255 {
+				fail("power.floor_curve[%d] PWM %d outside [0, 255]", i, pt[1])
+			}
+			if i > 0 && len(p.FloorCurve[i-1]) == 2 {
+				if pt[0] <= p.FloorCurve[i-1][0] {
+					fail("power.floor_curve temperatures must strictly increase (index %d)", i)
+				}
+				if pt[1] < p.FloorCurve[i-1][1] {
+					fail("power.floor_curve PWMs must not decrease (index %d)", i)
+				}
+			}
+		}
+		// A floor with no fan control cannot be satisfied, only refused —
+		// safety.Engine would deny every high-TDP request. Refuse the data
+		// instead, at review time.
+		if len(p.FloorCurve) > 0 && c.Fans == nil {
+			fail("power.floor_curve requires a fans block: a floor without fan control cannot be enforced")
+		}
+		// The stock table is authoritative on write (the firmware does not
+		// restore per-profile limits itself), so every selectable firmware
+		// profile needs a row or switching to it leaves stale limits in force.
+		if c.Profiles != nil {
+			for _, name := range c.Profiles.Names {
+				if _, ok := p.StockPPT[name]; !ok {
+					fail("power.stock_ppt is missing profile %q", name)
+				}
+			}
+		}
+	}
+
+	if c.Profiles != nil {
+		if c.Profiles.Method == "" {
+			fail("profiles.method is required")
+		}
+		if len(c.Profiles.Names) == 0 {
+			fail("profiles.names must list the firmware profile names")
+		}
+	}
+	if c.Lighting != nil {
+		if c.Lighting.Method == "" {
+			fail("lighting.method is required")
+		}
+		if len(c.Lighting.Zones) == 0 {
+			fail("lighting.zones must name at least one zone")
+		}
+	}
+	if c.Toggles != nil {
+		if c.Toggles.Method == "" {
+			fail("toggles.method is required")
+		}
+		if len(c.Toggles.Entries) == 0 {
+			fail("toggles block with no entries; drop the block instead")
+		}
+		for i, e := range c.Toggles.Entries {
+			if e.ID == "" || e.Label == "" {
+				fail("toggles.entries[%d] needs both id and label", i)
+			}
+		}
+	}
+	if c.Battery != nil && c.Battery.Method == "" {
+		fail("battery.method is required")
+	}
+	if c.Undervolt != nil {
+		if c.Undervolt.Method == "" {
+			fail("undervolt.method is required")
+		}
+		if c.Undervolt.Min > c.Undervolt.Max || c.Undervolt.Max > 0 {
+			fail("undervolt bounds must satisfy min <= max <= 0 (got %d..%d)", c.Undervolt.Min, c.Undervolt.Max)
+		}
+	}
+	if c.Telemetry != nil && c.Telemetry.Method == "" {
+		fail("telemetry.method is required")
+	}
+	if c.Button != nil {
+		if c.Button.Method == "" {
+			fail("button.method is required")
+		}
+		if c.Button.Device == "" || c.Button.Keycode <= 0 {
+			fail("button needs both device and a positive keycode")
+		}
+	}
+
+	return errors.Join(errs...)
+}
