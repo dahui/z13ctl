@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dahui/z13ctl/internal/daemon"
+
+	// The Z13 driver registers its factories here; the daemon's device assembly
+	// fails loudly at startup for any capability whose factory a binary does not
+	// carry. Registration is a per-binary choice by design.
+	_ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
 )
 
 var daemonCmd = &cobra.Command{

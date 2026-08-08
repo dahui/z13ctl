@@ -19,7 +19,7 @@ package daemon
 // Detection has two triggers and one observation. UPower's OnBattery property
 // wakes the loop immediately where UPower is running; a 2 s poll is the backstop
 // that keeps this working in Steam Gaming Mode, on a bare session, or wherever
-// UPower is absent. Either way the answer comes from cli.OnACPower() reading
+// UPower is absent. Either way the answer comes from the battery driver reading
 // sysfs, so there is one code path to reason about and one to test.
 //
 // An observed edge is confirmed on the following observation before anything is
@@ -38,7 +38,6 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 const (
@@ -84,7 +83,7 @@ type powerAction struct {
 func (a powerAction) none() bool { return a.Profile == "" && !a.SourceChanged }
 
 // powerTick decides whether a power-source observation calls for a profile
-// change. It is pure — no sysfs, no locks, no logging — because internal/cli's
+// change. It is pure — no sysfs, no locks, no logging — because the driver's
 // path vars are unexported, so a daemon test that reached the apply path would
 // rewrite the developer's actual machine.
 func powerTick(prev powerState, obs powerObs) (powerState, powerAction) {
@@ -240,7 +239,7 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 		return prev
 	}
 
-	if onAC, err := cli.OnACPower(); err == nil {
+	if onAC, known := d.acPower(); known {
 		obs.OnAC = onAC
 		obs.Known = true
 	}
@@ -341,7 +340,7 @@ func autoswitchTarget(s api.State, onAC bool) string {
 	if target == "" || target == s.Profile {
 		return ""
 	}
-	if cli.IsStockProfile(target) {
+	if api.IsStockProfileName(target) {
 		return target
 	}
 	if !s.IsCustomProfile(target) {
@@ -372,7 +371,7 @@ func (d *Daemon) handleAutoswitch(req request) response {
 			if side.name == "" {
 				continue
 			}
-			if !cli.IsStockProfile(side.name) && !d.state.IsCustomProfile(side.name) {
+			if !api.IsStockProfileName(side.name) && !d.state.IsCustomProfile(side.name) {
 				d.mu.Unlock()
 				return response{OK: false, Error: "autoswitch: unknown " + side.slot + " profile " + side.name}
 			}
@@ -401,7 +400,7 @@ func (d *Daemon) handleAutoswitchGet() response {
 		OnAC  bool `json:"on_ac"`
 		Known bool `json:"source_known"`
 	}{AutoswitchState: a}
-	if onAC, err := cli.OnACPower(); err == nil {
+	if onAC, known := d.acPower(); known {
 		out.OnAC = onAC
 		out.Known = true
 	}

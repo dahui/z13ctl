@@ -4,7 +4,7 @@ package daemon
 // to firmware auto so the EC stops them through s2idle.
 //
 // Every case here goes through the pure sleepTick. That is deliberate:
-// internal/cli's sysfs path vars are unexported, so a daemon test that reached
+// the Z13 driver's sysfs path vars are unexported, so a daemon test that reached
 // releaseVolatileState would lower the developer's real power limits and rewrite
 // their fan mode.
 
@@ -76,7 +76,7 @@ func TestSleepTick(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			act := sleepTick(tt.obs)
+			act := sleepTick(tt.obs, testEnv)
 			if act.LowerPPT != tt.lowerPPT {
 				t.Errorf("LowerPPT = %v, want %v", act.LowerPPT, tt.lowerPPT)
 			}
@@ -137,7 +137,7 @@ func TestSleepReleasesOnlyWhatResumeRestores(t *testing.T) {
 
 			// Hardware is in custom mode, because either the profile's own curve or
 			// ApplyTDPSafely's floor put it there.
-			act := sleepTick(sleepObs{Owned: true, CurveMode: 1, PL1: tt.pl1, Firmware: "balanced"})
+			act := sleepTick(sleepObs{Owned: true, CurveMode: 1, PL1: tt.pl1, Firmware: "balanced"}, testEnv)
 			if !act.ReleaseFans {
 				t.Fatal("the fans were not released, so this profile would suspend loud")
 			}

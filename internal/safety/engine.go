@@ -51,6 +51,69 @@ func (e Engine) Read() (api.TDPState, error) {
 	return e.Power.Read()
 }
 
+// ReadEffective returns the current power limits, substituting the envelope's
+// stock row when hardware reports the stale boot cache. The asus-nb-wmi PPT
+// attributes come up holding the envelope's minimum (5W on the Z13) after
+// module load and do not reflect the EC's real per-profile limits until
+// something writes them, so a raw read straight after boot is wrong in the
+// most alarming way possible.
+//
+// profile must be the *effective* profile — for daemon callers the daemon's
+// own state ("custom", or a custom profile's name, when one is active), NOT
+// the raw platform_profile value. platform_profile never names a custom
+// profile, so passing it would make a legitimate minimum-watts custom TDP
+// indistinguishable from the stale cache and report the stock table instead.
+// Any profile name absent from the envelope's StockProfilePPT disables the
+// fallback, which is exactly what a custom profile needs.
+func (e Engine) ReadEffective(profile string) (api.TDPState, error) {
+	s, err := e.Power.Read()
+	if err != nil {
+		return s, err
+	}
+	if s.PL1SPL == e.Power.Envelope().TDPMin {
+		if stock, ok := e.Power.Envelope().StockProfilePPT[profile]; ok {
+			return stock, nil
+		}
+	}
+	return s, nil
+}
+
+// CheckFanFloorRelease reports whether the fans may be released to firmware
+// auto — i.e. whether a fan curve reset is allowed — judged against the
+// sustained limit hardware currently reports for the effective profile.
+// Firmware auto is precisely what the envelope's floor exists to override, so
+// dropping to it while the limit is high would remove the thermal floor the
+// limit requires; lowering the limit first remains the way out.
+//
+// A PPT read failure is deliberately not a refusal: the guard is best-effort
+// and must not make fan control unavailable when sysfs cannot be read at all.
+// The pure CheckFanFloorReleaseAt is the variant for a profile that is not
+// running, whose limit hardware knows nothing about.
+func (e Engine) CheckFanFloorRelease(profile string) error {
+	tdp, err := e.ReadEffective(profile)
+	if err != nil {
+		return nil
+	}
+	return CheckFanFloorReleaseAt(e.Power.Envelope(), tdp.PL1SPL)
+}
+
+// RestoreStock writes the envelope's stock PPT row for a firmware profile
+// verbatim. The firmware does not re-apply per-profile limits on a profile
+// change and the attributes have no "reset to default" operation, so this
+// write is what keeps a custom TDP from leaking into every stock profile.
+//
+// It is a raw write on purpose: stock rows are the firmware's own defaults,
+// at or below the safe maximum, so no floor decision applies. A profile with
+// no row in the envelope is an error — the caller decides whether that means
+// "nothing to do" or "the limit did not come down".
+func (e Engine) RestoreStock(profile string) error {
+	stock, ok := e.Power.Envelope().StockProfilePPT[profile]
+	if !ok {
+		return fmt.Errorf("no stock PPT row for profile %q", profile)
+	}
+	return e.Power.Apply(stock)
+}
+
 // Envelope returns the device's power envelope.
 func (e Engine) Envelope() driver.PowerEnvelope {
 	return e.Power.Envelope()

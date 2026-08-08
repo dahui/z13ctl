@@ -3,7 +3,7 @@ package daemon
 // powersource_test.go — decision coverage for the AC/battery autoswitch watcher.
 //
 // Every case goes through the pure powerTick. That is deliberate and not
-// negotiable: internal/cli's sysfs path vars are unexported, so a daemon test
+// negotiable: the Z13 driver's sysfs path vars are unexported, so a daemon test
 // that reached applyProfileLocked would rewrite the developer's actual power
 // limits, fan mode, and Curve Optimizer offset.
 

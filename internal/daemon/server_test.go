@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 func TestDispatchUnknownCommand(t *testing.T) {
@@ -42,7 +41,7 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Daemon{}
+			d := &Daemon{hw: testDev}
 			resp := d.handleTDP(tt.req)
 			if resp.OK {
 				t.Fatalf("handleTDP(%+v).OK = true, want a rejection", tt.req)
@@ -59,11 +58,11 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 //
 // Only rejection cases belong here. handleTDP writes straight to the real
 // /sys/devices/platform/asus-nb-wmi/ppt_* nodes once validation passes, and
-// internal/cli's path vars are unexported, so a case that gets past validation
+// the Z13 driver's path vars are unexported, so a case that gets past validation
 // would change the developer's actual power limits as a test side effect.
-// Accepted-input behaviour is covered hermetically in internal/cli/tdp_test.go.
+// Accepted-input behaviour is covered hermetically in internal/drivers/asusz13/tdp_test.go.
 func TestHandleTDPForceBoundaryRejections(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: testDev}
 	for _, watts := range []string{"76", "80", "93"} {
 		if resp := d.handleTDP(request{Cmd: "tdp", Set: watts}); resp.OK {
 			t.Errorf("PL1 %sW without the force flag was accepted, want a rejection", watts)
@@ -79,12 +78,12 @@ func TestHandleTDPForceBoundaryRejections(t *testing.T) {
 // safe to exercise here: a malformed curve string is rejected by ParseFanCurve
 // before anything reaches hwmon.
 //
-// The thermal-floor guards this handler now applies — cli.CheckFanCurveFloor on
-// set and cli.CheckFanFloorRelease on reset — cannot be driven from this package
-// without changing the machine's real fan mode, because whether they refuse
-// depends on the actual ppt_* values and internal/cli's path vars are
-// unexported. Both are covered hermetically in internal/cli/tdp_test.go against
-// the fake sysfs tree.
+// The thermal-floor guards this handler now applies — the curve-vs-limit check
+// on set and the floor-release check on reset — cannot be driven from this
+// package without changing the machine's real fan mode, because whether they
+// refuse depends on the actual ppt_* values and the Z13 driver's path vars are
+// unexported. Both are covered hermetically in internal/drivers/asusz13 and
+// internal/safety against the fake sysfs tree.
 func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -155,13 +154,14 @@ func TestHandleBatteryLimitRejectsOutOfRange(t *testing.T) {
 // TestRestoreStockPPTIgnoresUnknownProfiles guards the lookup that keeps the
 // virtual "custom" profile from being handed the stock table.
 func TestRestoreStockPPTIgnoresUnknownProfiles(t *testing.T) {
+	d := &Daemon{hw: testDev}
 	for _, p := range []string{"custom", "", "turbo", "unknown"} {
 		t.Run(p, func(t *testing.T) {
-			if _, ok := cli.StockProfilePPT[p]; ok {
-				t.Fatalf("%q is in StockProfilePPT; this test needs a name that is not", p)
+			if _, ok := d.env().StockProfilePPT[p]; ok {
+				t.Fatalf("%q is in the stock PPT table; this test needs a name that is not", p)
 			}
 			// Must be a no-op: no lookup hit means no PPT write and no panic.
-			restoreStockPPT(p)
+			d.restoreStockPPT(p)
 		})
 	}
 }
@@ -218,7 +218,7 @@ func TestRequestUnmarshalsProtocolShape(t *testing.T) {
 }
 
 // The profile handlers below stay strictly on validation and refusal paths.
-// internal/cli's sysfs path vars are unexported, so a daemon test that got past
+// the Z13 driver's sysfs path vars are unexported, so a daemon test that got past
 // validation into applyProfileLocked would rewrite the developer's real power
 // limits, fan mode, and Curve Optimizer offset — the same warning as
 // TestHandleTDPForceBoundaryRejections.

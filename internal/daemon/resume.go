@@ -12,13 +12,13 @@ package daemon
 // is no "deep" in /sys/power/mem_sleep — so the EC keeps running its fan control
 // loop the whole time the machine is suspended. In firmware auto mode
 // (pwm_enable=2) the EC stops the fans; with a custom curve (pwm_enable=1) it
-// keeps driving them from the curve's PWM values, and every point of
-// cli.HighTDPFanCurve is at or above 50%, so a machine on a high sustained TDP
-// suspends with both fans at half speed indefinitely.
+// keeps driving them from the curve's PWM values, and every point of the
+// envelope's floor curve is at or above 50%, so a machine on a high sustained
+// TDP suspends with both fans at half speed indefinitely.
 //
 // Two things make this delicate rather than a one-line write:
 //
-//   - Releasing the fans while a sustained limit above cli.TDPMaxSafe is in force
+//   - Releasing the fans while a sustained limit above the safe max is in force
 //     would drop the very floor ApplyTDPSafely refuses to run without, so the
 //     limits come down first and a failure there cancels the release.
 //   - PrepareForSleep(true) is advisory unless someone holds a delay inhibitor.
@@ -34,7 +34,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/driver"
 )
 
 // watchResume connects to the system DBus and listens for sleep and resume
@@ -148,11 +148,12 @@ type sleepAction struct {
 // none reports whether the action would touch anything.
 func (a sleepAction) none() bool { return !a.LowerPPT && !a.ReleaseFans }
 
-// sleepTick decides what to release from one observation. It is pure — no sysfs,
-// no locks, no logging — for the same reason reconcileTick is: internal/cli's
-// path vars are unexported, so a daemon test that reached the apply path would
-// write the developer's actual fan hardware.
-func sleepTick(obs sleepObs) sleepAction {
+// sleepTick decides what to release from one observation, judged against the
+// device's power envelope. It is pure — no sysfs, no locks, no logging — for
+// the same reason reconcileTick is: the driver's path vars are unexported, so
+// a daemon test that reached the apply path would write the developer's actual
+// fan hardware.
+func sleepTick(obs sleepObs, env driver.PowerEnvelope) sleepAction {
 	// The ownership gate is what keeps sleep and resume symmetric. Owned is the
 	// same condition restoreVolatileState restores under, so the invariant holds
 	// in both directions: the sleep hook releases only what applyCustomHW will
@@ -178,18 +179,20 @@ func sleepTick(obs sleepObs) sleepAction {
 	}
 
 	act := sleepAction{ReleaseFans: true, Reason: "custom fan curve keeps the fans running through s2idle"}
-	if obs.PL1 == -1 || obs.PL1 > cli.TDPMaxSafe {
+	if len(env.FloorCurve) > 0 && (obs.PL1 == -1 || obs.PL1 > env.TDPMaxSafe) {
 		// Dropping to firmware auto removes the floor a high limit requires, so the
-		// limit comes down first.
+		// limit comes down first. A device that declares no floor curve has no such
+		// coupling — its release needs no power write at all, which is also what
+		// keeps a fans-only device able to release before sleep.
 		//
 		// An unreadable PL1 lands here too, which is a change: it used to release the
 		// fans and leave the limit alone, on the reasoning that a read failure must
 		// not leave the fans running. That is the one place in this codebase that
 		// failed *open* — an unreadable PPT could be 93W, and releasing the fans then
-		// is precisely what ApplyTDPSafely refuses to do and what CheckFanFloorRelease
-		// refuses for a `fancurve --reset`. Lowering first costs nothing when the
-		// limit was already safe, and the fail-closed path below means a machine whose
-		// PPT cannot be read suspends loud rather than unfloored.
+		// is precisely what ApplyTDPSafely refuses to do and what the floor-release
+		// guard refuses for a `fancurve --reset`. Lowering first costs nothing when
+		// the limit was already safe, and the fail-closed path below means a machine
+		// whose PPT cannot be read suspends loud rather than unfloored.
 		act.LowerPPT = true
 		act.Reason = "custom fan curve keeps the fans running through s2idle, and the sustained limit needs the floor lowered first"
 	}
@@ -218,18 +221,22 @@ func (d *Daemon) releaseVolatileState() {
 		Owned:     ok && !active.Empty(),
 		CurveMode: -1,
 		PL1:       -1,
-		Firmware:  readProfileFromSysfs(),
+		Firmware:  d.profileHW(),
 	}
 	// d.effectiveProfile() takes d.mu, which is why it is called with only hwMu
 	// held.
-	if modes, err := cli.ReadFanCurveModes(); err == nil {
-		obs.CurveMode = modes[0]
+	if d.hw != nil && d.hw.Fans != nil {
+		if mode, err := d.hw.Fans.ReadMode(); err == nil {
+			obs.CurveMode = mode
+		}
 	}
-	if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-		obs.PL1 = tdp.PL1SPL
+	if d.hw != nil && d.hw.Power != nil {
+		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
+			obs.PL1 = tdp.PL1SPL
+		}
 	}
 
-	act := sleepTick(obs)
+	act := sleepTick(obs, d.env())
 	if act.none() {
 		slog.Debug("sleep: nothing to release", "owned", obs.Owned, "fan_mode", obs.CurveMode)
 		return
@@ -246,17 +253,18 @@ func (d *Daemon) releaseVolatileState() {
 	d.setSuspending(true)
 
 	if act.LowerPPT {
-		if err := lowerLimitForRelease(obs.Firmware); err != nil {
+		if err := d.lowerLimitForRelease(obs.Firmware); err != nil {
 			// Fail closed, exactly as ApplyTDPSafely does in the mirror image of
 			// this sequence: a loud suspend is the right trade against leaving a
-			// sustained limit above TDPMaxSafe with the fans on firmware auto.
+			// sustained limit above the safe max with the fans on firmware auto.
 			slog.Warn("sleep: not releasing the fans — could not lower the sustained limit first",
 				"profile", obs.Firmware, "pl1", obs.PL1, "err", err)
 			return
 		}
 	}
 
-	if err := cli.ResetAllFanCurves(); err != nil {
+	// act.ReleaseFans requires a readable curve mode, so Fans is present here.
+	if err := d.hw.Fans.Release(); err != nil {
 		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
 		return
 	}
@@ -268,33 +276,39 @@ func (d *Daemon) releaseVolatileState() {
 //
 // The stock row for the firmware profile underneath is the preferred landing
 // place, since that is where the machine belongs while asleep. But
-// restoreStockPPTErr fails for any profile absent from cli.StockProfilePPT —
-// including the empty string a platform_profile read failure returns — and simply
-// giving up there abandoned the fan release and reintroduced the all-night-fans
-// bug on an error path. Clamping PL1 to TDPMaxSafe is enough to satisfy the guard,
-// leaves every other limit alone, and is undone on resume by applyCustomHW
-// rewriting the profile's own TDP.
-func lowerLimitForRelease(firmware string) error {
-	stockErr := restoreStockPPTErr(firmware)
+// restoreStockPPTErr fails for any profile absent from the envelope's stock
+// table — including the empty string a platform_profile read failure returns —
+// and simply giving up there abandoned the fan release and reintroduced the
+// all-night-fans bug on an error path. Clamping PL1 to the safe max is enough
+// to satisfy the guard, leaves every other limit alone, and is undone on resume
+// by applyCustomHW rewriting the profile's own TDP. The clamp goes through
+// ApplyTDPSafely, which at exactly the safe max requires no floor and so is a
+// plain write — the engine deliberately offers no rawer path.
+func (d *Daemon) lowerLimitForRelease(firmware string) error {
+	stockErr := d.restoreStockPPTErr(firmware)
 	if stockErr == nil {
 		return nil
 	}
 	slog.Debug("sleep: no stock PPT row; clamping the sustained limit instead",
 		"profile", firmware, "err", stockErr)
 
-	cur, err := cli.ReadAllPPT()
+	if d.hw == nil || d.hw.Power == nil {
+		return stockErr
+	}
+	cur, err := d.hw.Power.Read()
 	if err != nil {
 		return fmt.Errorf("reading current PPT to clamp it: %w", err)
 	}
-	if cur.PL1SPL <= cli.TDPMaxSafe {
+	maxSafe := d.env().TDPMaxSafe
+	if cur.PL1SPL <= maxSafe {
 		return nil // already low enough; the guard is satisfied
 	}
-	cur.PL1SPL = cli.TDPMaxSafe
-	if err := cli.SetTDPState(cur); err != nil {
-		return fmt.Errorf("clamping the sustained limit to %dW: %w", cli.TDPMaxSafe, err)
+	cur.PL1SPL = maxSafe
+	if err := d.hw.Power.ApplyTDPSafely(cur, nil); err != nil {
+		return fmt.Errorf("clamping the sustained limit to %dW: %w", maxSafe, err)
 	}
 	slog.Info("sleep: clamped the sustained limit so the fans could be released",
-		"pl1", cli.TDPMaxSafe, "profile", firmware)
+		"pl1", maxSafe, "profile", firmware)
 	return nil
 }
 

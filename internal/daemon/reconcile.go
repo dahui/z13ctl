@@ -37,7 +37,8 @@ import (
 	"time"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/z13ctl/internal/safety"
 )
 
 // reconcilePollInterval is how often watchReconcile compares hardware against
@@ -110,12 +111,13 @@ type reconcileState struct {
 	suspendGen     int    // the suspend suspendedTicks is counting for
 }
 
-// reconcileTick decides what to restore from one observation. It is pure — no
-// sysfs, no locks, no logging — so every branch below is unit-testable without
-// hardware, which is the only way daemon-side logic can be tested in this
-// project (internal/cli's path vars are unexported, so a daemon test that
-// reaches hardware writes the developer's actual machine).
-func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, reconcileAction) {
+// reconcileTick decides what to restore from one observation, judged against
+// the device's power envelope. It is pure — no sysfs, no locks, no logging —
+// so every branch below is unit-testable without hardware, which is the only
+// way daemon-side logic can be tested in this project (the driver's path vars
+// are unexported, so a daemon test that reaches hardware writes the
+// developer's actual machine).
+func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelope) (reconcileState, reconcileAction) {
 	st := prev
 	st.lastHW = obs.ProfileHW
 
@@ -172,16 +174,17 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		// any curve we would write, so leave it.
 	default:
 		// The saved curve is restored as drawn, except that any point below the
-		// high-TDP floor is raised to it — cli.FanCurveForTDP, the same rule the
-		// apply path uses. The clamp is needed because CheckFanCurveFloor only vets
-		// a curve against the limit in force when the curve is *saved*: raising the
-		// TDP afterwards leaves sub-floor points in state, and handleTDP deliberately
-		// keeps them for when the limit comes back down. With no saved curve at all
-		// FanCurveForTDP yields HighTDPFanCurve, which is the other half of
-		// ApplyTDPSafely's fail-closed guard — the floor was written once and could
-		// then be dropped while the PPT stayed high.
+		// high-TDP floor is raised to it — safety.FanCurveForTDP, the same rule
+		// the apply path uses. The clamp is needed because the edit-time check
+		// only vets a curve against the limit in force when the curve is *saved*:
+		// raising the TDP afterwards leaves sub-floor points in state, and
+		// handleTDP deliberately keeps them for when the limit comes back down.
+		// With no saved curve at all FanCurveForTDP yields the envelope's floor
+		// curve, which is the other half of ApplyTDPSafely's fail-closed guard —
+		// the floor was written once and could then be dropped while the PPT
+		// stayed high.
 		want := obs.WantCurve
-		if c := cli.FanCurveForTDP(obs.PL1, obs.WantCurve); c != nil {
+		if c := safety.FanCurveForTDP(env, obs.PL1, obs.WantCurve); c != nil {
 			want = c
 		}
 		// Guarded: with no saved curve and a safe limit there is nothing to put
@@ -194,7 +197,7 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 			switch {
 			case obs.WantCurve == nil:
 				act.Reason = "high-TDP fan floor was released while the limit is still in force"
-			case cli.FloorAdjustsCurve(obs.PL1, obs.WantCurve):
+			case safety.FloorAdjustsCurve(env, obs.PL1, obs.WantCurve):
 				act.Reason = "fan curve was disabled and its sub-floor points were raised to the high-TDP floor"
 			default:
 				act.Reason = "saved custom fan curve was disabled"
@@ -243,7 +246,7 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 // PPT changes what the floor requires. Three outcomes:
 //
 //   - the profile's own curve, raised where the limit still demands it
-//   - the built-in HighTDPFanCurve, when the limit demands a floor and the
+//   - the envelope's floor curve, when the limit demands a floor and the
 //     profile has no curve to raise
 //   - nil, when the limit demands no floor and the profile has no curve — there
 //     is nothing to put back
@@ -257,8 +260,8 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 // following tick read pwm_enable=1 as "the curve is live" and the TDP now matched,
 // so nothing corrected it. Pure, so the table in reconcile_test.go can cover it
 // without touching the developer's fan controller.
-func reconcileCurveFor(floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
-	if c := cli.FanCurveForTDP(floorLimit, want); c != nil {
+func reconcileCurveFor(env driver.PowerEnvelope, floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
+	if c := safety.FanCurveForTDP(env, floorLimit, want); c != nil {
 		return c
 	}
 	return want
@@ -300,7 +303,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	}
 	if active, ok := s.ActiveCustomProfile(); ok {
 		obs.Custom = true
-		if fc := active.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+		if fc := active.FanCurve; d.hasApplicableCurve(fc) {
 			obs.WantCurve = fc.Points
 		}
 		obs.WantTDP = active.TDP
@@ -313,16 +316,22 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	}
 
 	// Cheap enough to read unconditionally, and reading them even when the
-	// profile is stock keeps lastHW meaningful for the log line.
-	if modes, err := cli.ReadFanCurveModes(); err == nil {
-		obs.CurveMode = modes[0]
+	// profile is stock keeps lastHW meaningful for the log line. A capability
+	// the device does not have observes as unreadable, which the tick never
+	// acts on — the watcher is inert per missing capability by construction.
+	if d.hw != nil && d.hw.Fans != nil {
+		if mode, err := d.hw.Fans.ReadMode(); err == nil {
+			obs.CurveMode = mode
+		}
 	}
-	if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-		obs.PL1 = tdp.PL1SPL
+	if d.hw != nil && d.hw.Power != nil {
+		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
+			obs.PL1 = tdp.PL1SPL
+		}
 	}
-	obs.ProfileHW = readProfileFromSysfs()
+	obs.ProfileHW = d.profileHW()
 
-	st, act := reconcileTick(prev, obs)
+	st, act := reconcileTick(prev, obs, d.env())
 
 	// The tick decided the suspending flag is stale — a PrepareForSleep(false)
 	// that never arrived. Clear it so the flag stops suppressing anything else
@@ -356,13 +365,16 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// next tick then read pwm_enable=1 as "the curve is live" and never corrected
 	// it. ApplyTDPSafely still raises its own floor before raising power, so
 	// ordering it first opens no unfloored window.
+	// act.TDP requires a readable PL1 and act.Curve a readable mode, so the
+	// Power and Fans capabilities are present whenever those arms fire; the
+	// guards keep that reasoning local rather than load-bearing at a distance.
 	ok := true
 	floorLimit := obs.PL1
-	if act.TDP != nil {
+	if act.TDP != nil && d.hw != nil && d.hw.Power != nil {
 		// obs.WantCurve, not nil: restoring a drifted PPT must not throw away a
 		// live user curve that already satisfies the floor. Passing nil here was
 		// the same defect as on the apply path, reached from the other direction.
-		if err := cli.ApplyTDPSafely(*act.TDP, obs.WantCurve); err != nil {
+		if err := d.hw.Power.ApplyTDPSafely(*act.TDP, obs.WantCurve); err != nil {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply TDP", "err", err)
@@ -371,23 +383,23 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			floorLimit = act.TDP.PL1SPL
 		}
 	}
-	if act.Curve != nil {
-		if curve := reconcileCurveFor(floorLimit, obs.WantCurve); curve == nil {
+	if act.Curve != nil && d.hw != nil && d.hw.Fans != nil {
+		if curve := reconcileCurveFor(d.env(), floorLimit, obs.WantCurve); curve == nil {
 			slog.Debug("fan floor no longer required and the profile has no curve of its own; leaving the fans alone",
 				"pl1", floorLimit)
-		} else if err := cli.SetBothFanCurves(curve); err != nil {
+		} else if err := d.hw.Fans.ApplyCurve(curve); err != nil {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply fan curve", "err", err)
 			}
 		}
 	}
-	if act.Undervolt != nil && cli.SMUProbeUndervolt() {
-		// Probed once at daemon startup and cached behind a sync.Once, so this is a
-		// bool read rather than the destructive no-op write the probe would
+	if act.Undervolt != nil && d.uvAvailable() {
+		// The driver probed once at daemon startup and caches the answer, so this
+		// is a bool read rather than the destructive no-op write the probe would
 		// otherwise be. It is called here and not in the observe step so the common
 		// path never touches it at all.
-		if err := cli.SetCurveOptimizer(*act.Undervolt); err != nil {
+		if err := d.hw.Undervolt.Apply(*act.Undervolt); err != nil {
 			ok = false
 			if !st.quiet {
 				slog.Warn("failed to re-apply the Curve Optimizer offset", "cpu_co", *act.Undervolt, "err", err)

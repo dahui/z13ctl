@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/safety"
 )
 
 // request and response mirror the unexported types in api/client.go.
@@ -117,7 +117,7 @@ func (d *Daemon) dispatch(req request) response {
 	case "profile":
 		return d.handleProfile(req)
 	case "profile-get":
-		return handleProfileGet()
+		return d.handleProfileGet()
 	case "profile-create":
 		return d.handleProfileCreate(req)
 	case "profile-save":
@@ -133,19 +133,19 @@ func (d *Daemon) dispatch(req request) response {
 	case "batterylimit":
 		return d.handleBatteryLimit(req)
 	case "batterylimit-get":
-		return handleBatteryLimitGet()
+		return d.handleBatteryLimitGet()
 	case "bootsound":
-		return handleBootSound(req)
+		return d.handleBootSound(req)
 	case "bootsound-get":
-		return handleBootSoundGet()
+		return d.handleBootSoundGet()
 	case "paneloverdrive":
 		return d.handlePanelOverdrive(req)
 	case "paneloverdrive-get":
-		return handlePanelOverdriveGet()
+		return d.handlePanelOverdriveGet()
 	case "fancurve":
 		return d.handleFanCurve(req)
 	case "fancurve-get":
-		return handleFanCurveGet()
+		return d.handleFanCurveGet()
 	case "fancurve-reset":
 		return d.handleFanCurveReset(req)
 	case "tdp":
@@ -168,28 +168,49 @@ func (d *Daemon) dispatch(req request) response {
 		// overwritten with live sysfs readings below.
 		s := withLegacyProjection(cloneState(d.state))
 		d.mu.Unlock()
-		if onAC, acErr := cli.OnACPower(); acErr == nil {
+		if onAC, known := d.acPower(); known {
 			s.OnAC = onAC
 		}
-		// Populate firmware-managed fields from sysfs (not cached in daemon state).
-		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
-		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
-		// Populate fan curve from sysfs for ground truth.
-		s.FanCurve = readFanCurveFromSysfs()
+		// Populate firmware-managed fields from hardware (not cached in daemon
+		// state); a failed read reports zero, as it always has.
+		s.BootSound, s.PanelOverdrive = 0, 0
+		if d.hw != nil && d.hw.Toggles != nil {
+			if v, err := d.hw.Toggles.Get("boot_sound"); err == nil {
+				s.BootSound = v
+			}
+			if v, err := d.hw.Toggles.Get("panel_overdrive"); err == nil {
+				s.PanelOverdrive = v
+			}
+		}
+		// Populate fan curve from hardware for ground truth.
+		s.FanCurve = d.readFanCurveHW()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
 		// Pass the daemon's own profile: platform_profile is never "custom", so
 		// using it would report the stock table for a legitimate 5W custom TDP.
-		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-			s.TDP = &tdp
+		if d.hw != nil && d.hw.Power != nil {
+			if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
+				s.TDP = &tdp
+			}
 		}
 		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
-		s.UndervoltAvailable = cli.SMUProbeUndervolt()
-		// Populate APU temperature and fan RPM from sysfs.
-		if temp, err := cli.ReadAPUTemperature(); err == nil {
-			s.Temperature = temp
+		s.UndervoltAvailable = d.uvAvailable()
+		// Populate APU temperature and fan RPM from hardware. A sample fails only
+		// when the temperature is unreadable, so fall back to the fan controller
+		// for RPM there — the two readings were always independent on the wire.
+		sampled := false
+		if d.hw != nil && d.hw.Telemetry != nil {
+			if sample, err := d.hw.Telemetry.Sample(); err == nil {
+				sampled = true
+				s.Temperature = sample.TempC
+				if len(sample.RPM) > 0 {
+					s.FanRPM = sample.RPM[0]
+				}
+			}
 		}
-		if rpms, err := cli.ReadBothFanRPM(); err == nil {
-			s.FanRPM = rpms[0]
+		if !sampled && d.hw != nil && d.hw.Fans != nil {
+			if rpms, err := d.hw.Fans.ReadRPM(); err == nil && len(rpms) > 0 {
+				s.FanRPM = rpms[0]
+			}
 		}
 		return response{OK: true, State: &s}
 	default:
@@ -197,24 +218,30 @@ func (d *Daemon) dispatch(req request) response {
 	}
 }
 
-// handleProfileGet reads the current performance profile from sysfs.
-// Reading from sysfs (not daemon state) ensures accurate values even if
-// the profile was changed by another process.
-func handleProfileGet() response {
-	data, err := os.ReadFile(cli.FindProfilePath())
+// handleProfileGet reads the current performance profile from hardware.
+// Reading hardware (not daemon state) ensures accurate values even if the
+// profile was changed by another process.
+func (d *Daemon) handleProfileGet() response {
+	if d.hw == nil || d.hw.Profiles == nil {
+		return response{OK: false, Error: "reading profile: no platform profile control on this device"}
+	}
+	p, err := d.hw.Profiles.Get()
 	if err != nil {
 		return response{OK: false, Error: "reading profile: " + err.Error()}
 	}
-	return response{OK: true, Value: strings.TrimSpace(string(data))}
+	return response{OK: true, Value: p}
 }
 
-// handleBatteryLimitGet reads the current battery charge limit from sysfs.
-func handleBatteryLimitGet() response {
-	data, err := os.ReadFile(cli.FindBatteryThresholdPath())
+// handleBatteryLimitGet reads the current battery charge limit from hardware.
+func (d *Daemon) handleBatteryLimitGet() response {
+	if d.hw == nil || d.hw.Battery == nil {
+		return response{OK: false, Error: "reading battery limit: no battery charge control on this device"}
+	}
+	limit, err := d.hw.Battery.ChargeLimit()
 	if err != nil {
 		return response{OK: false, Error: "reading battery limit: " + err.Error()}
 	}
-	return response{OK: true, Value: strings.TrimSpace(string(data))}
+	return response{OK: true, Value: strconv.Itoa(limit)}
 }
 
 func (d *Daemon) handleApply(req request) response {
@@ -380,25 +407,25 @@ func (d *Daemon) handleBrightness(req request) response {
 }
 
 // restoreStockPPT writes the measured stock PPT values for a stock profile back
-// to hardware. The asus-nb-wmi PPT attributes have no "reset to firmware
-// default" operation and the firmware does not re-apply per-profile limits on a
-// platform_profile change, so without this a custom TDP leaks into every stock
-// profile. Failures are logged and swallowed: a profile switch must not
-// hard-fail because the PPT restore did not take.
+// to hardware. The PPT attributes have no "reset to firmware default" operation
+// and the firmware does not re-apply per-profile limits on a platform_profile
+// change, so without this a custom TDP leaks into every stock profile. Failures
+// are logged and swallowed: a profile switch must not hard-fail because the PPT
+// restore did not take.
 //
 // Callers must not clear the saved custom TDP in daemon state — only the
 // hardware values are reset, so the user can select "custom" again.
-func restoreStockPPT(profile string) {
+func (d *Daemon) restoreStockPPT(profile string) {
 	// A profile with no row is a deliberate silent no-op here, as it was before
-	// restoreStockPPTErr existed. applyCustomHW calls this with
-	// readProfileFromSysfs(), which is "" whenever platform_profile cannot be read,
-	// so warning on the missing row logged a failure on every curveless-profile
-	// apply, resume and daemon start on a machine that had never run `setup`.
-	// Only lowerLimitForRelease needs the miss to be an error.
-	if _, ok := cli.StockProfilePPT[profile]; !ok {
+	// restoreStockPPTErr existed. applyCustomHW calls this with d.profileHW(),
+	// which is "" whenever platform_profile cannot be read, so warning on the
+	// missing row logged a failure on every curveless-profile apply, resume and
+	// daemon start on a machine that had never run `setup`. Only
+	// lowerLimitForRelease needs the miss to be an error.
+	if _, ok := d.env().StockProfilePPT[profile]; !ok {
 		return
 	}
-	if err := restoreStockPPTErr(profile); err != nil {
+	if err := d.restoreStockPPTErr(profile); err != nil {
 		slog.Warn("failed to restore stock PPT values", "profile", profile, "err", err)
 	}
 }
@@ -407,18 +434,18 @@ func restoreStockPPT(profile string) {
 // that must not continue without it: releaseVolatileState decides whether
 // releasing the fans is safe from "did the limits actually come down".
 //
-// A profile with no row in cli.StockProfilePPT is an error here, not the silent
-// no-op restoreStockPPT can afford. "There was nothing to write" and "the limits
-// are now at a level the fans need no floor for" are different answers, and only
-// the second one makes a release safe.
-func restoreStockPPTErr(profile string) error {
-	stock, ok := cli.StockProfilePPT[profile]
-	if !ok {
-		return fmt.Errorf("no stock PPT row for profile %q", profile)
+// A profile with no row in the envelope's stock table is an error here, not
+// the silent no-op restoreStockPPT can afford. "There was nothing to write"
+// and "the limits are now at a level the fans need no floor for" are different
+// answers, and only the second one makes a release safe.
+func (d *Daemon) restoreStockPPTErr(profile string) error {
+	if d.hw == nil || d.hw.Power == nil {
+		return fmt.Errorf("no power limit control on this device")
 	}
-	if err := cli.SetTDPState(stock); err != nil {
+	if err := d.hw.Power.RestoreStock(profile); err != nil {
 		return err
 	}
+	stock := d.env().StockProfilePPT[profile]
 	slog.Info("restored stock PPT", "profile", profile, "pl1", stock.PL1SPL, "pl2", stock.PL2SPPT)
 	return nil
 }
@@ -428,7 +455,10 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	if err != nil || limit < 40 || limit > 100 {
 		return response{OK: false, Error: "battery limit must be an integer 40–100"}
 	}
-	if err := os.WriteFile(cli.FindBatteryThresholdPath(), []byte(req.Set+"\n"), 0o644); err != nil {
+	if d.hw == nil || d.hw.Battery == nil {
+		return response{OK: false, Error: "batterylimit: no battery charge control on this device"}
+	}
+	if err := d.hw.Battery.SetChargeLimit(limit); err != nil {
 		return response{OK: false, Error: "batterylimit: " + err.Error()}
 	}
 	slog.Info("batterylimit", "set", limit)
@@ -440,32 +470,41 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	return response{OK: true}
 }
 
-func handleBootSoundGet() response {
-	data, err := os.ReadFile(cli.FindBootSoundPath())
+func (d *Daemon) handleBootSoundGet() response {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return response{OK: false, Error: "reading boot sound: no firmware toggles on this device"}
+	}
+	v, err := d.hw.Toggles.Get("boot_sound")
 	if err != nil {
 		return response{OK: false, Error: "reading boot sound: " + err.Error()}
 	}
-	return response{OK: true, Value: strings.TrimSpace(string(data))}
+	return response{OK: true, Value: strconv.Itoa(v)}
 }
 
-func handleBootSound(req request) response {
+func (d *Daemon) handleBootSound(req request) response {
 	value, err := strconv.Atoi(req.Set)
 	if err != nil || (value != 0 && value != 1) {
 		return response{OK: false, Error: "boot sound must be 0 or 1"}
 	}
-	if err := cli.SetBootSound(value); err != nil {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return response{OK: false, Error: "bootsound: no firmware toggles on this device"}
+	}
+	if err := d.hw.Toggles.Set("boot_sound", value); err != nil {
 		return response{OK: false, Error: "bootsound: " + err.Error()}
 	}
 	slog.Info("bootsound", "set", value)
 	return response{OK: true}
 }
 
-func handlePanelOverdriveGet() response {
-	data, err := os.ReadFile(cli.FindPanelOverdrivePath())
+func (d *Daemon) handlePanelOverdriveGet() response {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return response{OK: false, Error: "reading panel overdrive: no firmware toggles on this device"}
+	}
+	v, err := d.hw.Toggles.Get("panel_overdrive")
 	if err != nil {
 		return response{OK: false, Error: "reading panel overdrive: " + err.Error()}
 	}
-	return response{OK: true, Value: strings.TrimSpace(string(data))}
+	return response{OK: true, Value: strconv.Itoa(v)}
 }
 
 func (d *Daemon) handlePanelOverdrive(req request) response {
@@ -473,7 +512,10 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	if err != nil || (value != 0 && value != 1) {
 		return response{OK: false, Error: "panel overdrive must be 0 or 1"}
 	}
-	if err := cli.SetPanelOverdrive(value); err != nil {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return response{OK: false, Error: "paneloverdrive: no firmware toggles on this device"}
+	}
+	if err := d.hw.Toggles.Set("panel_overdrive", value); err != nil {
 		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
 	}
 	slog.Info("paneloverdrive", "set", value)
@@ -485,23 +527,9 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	return response{OK: true}
 }
 
-// readIntSysfs reads a sysfs file, trims whitespace, and parses it as an int.
-// Returns 0 on any error (file missing, unreadable, or non-numeric content).
-func readIntSysfs(path string) int {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	v, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// handleFanCurveGet reads the current fan curve from sysfs (both fans).
-func handleFanCurveGet() response {
-	fc := readFanCurveFromSysfs()
+// handleFanCurveGet reads the current fan curve from hardware (both fans).
+func (d *Daemon) handleFanCurveGet() response {
+	fc := d.readFanCurveHW()
 	if fc == nil {
 		return response{OK: false, Error: "failed to read fan curve from sysfs"}
 	}
@@ -509,21 +537,22 @@ func handleFanCurveGet() response {
 	return response{OK: true, Value: string(data)}
 }
 
-// readFanCurveFromSysfs reads the fan curve and mode from sysfs.
-// Returns fan 1's curve (both fans share the same curve).
-func readFanCurveFromSysfs() *api.FanCurveState {
-	modes, modeErr := cli.ReadBothFanModes()
-	curves, curveErr := cli.ReadBothFanCurves()
+// readFanCurveHW reads the fan curve and mode from hardware. Returns fan 1's
+// curve (both fans share the same curve), with the mode folded across fans by
+// the driver — custom only when every fan honours the curve, which is the same
+// truth VerifyFanCurveActive and the reconcile watcher act on. nil when
+// neither the mode nor the curve is readable, or the device has no fans.
+func (d *Daemon) readFanCurveHW() *api.FanCurveState {
+	if d.hw == nil || d.hw.Fans == nil {
+		return nil
+	}
+	mode, modeErr := d.hw.Fans.ReadMode()
+	points, curveErr := d.hw.Fans.LiveCurve()
 	if modeErr != nil && curveErr != nil {
 		return nil
 	}
-	mode := 0
-	if modeErr == nil {
-		mode = modes[0]
-	}
-	var points []api.FanCurvePoint
-	if curveErr == nil {
-		points = curves[0]
+	if modeErr != nil || mode == -1 {
+		mode = 0
 	}
 	return &api.FanCurveState{Mode: mode, Points: points}
 }
@@ -532,6 +561,9 @@ func (d *Daemon) handleFanCurve(req request) response {
 	points, err := cli.ParseFanCurve(req.Set)
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
+	}
+	if d.hw == nil || d.hw.Fans == nil {
+		return response{OK: false, Error: "fancurve: no fan control on this device"}
 	}
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
@@ -550,12 +582,12 @@ func (d *Daemon) handleFanCurve(req request) response {
 	// a TDP set while the daemon was down, or a reset state file. For any other
 	// profile it comes from that profile's own saved TDP, so a profile can never
 	// be stored in a state that would be unsafe the moment it is activated.
-	if err := cli.CheckCurveAgainstTDP(points, d.floorLimitFor(target)); err != nil {
+	if err := safety.CheckCurveAgainstTDP(d.env(), points, d.floorLimitFor(target)); err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
 
 	if target.Live {
-		if err := cli.SetBothFanCurves(points); err != nil {
+		if err := d.hw.Fans.ApplyCurve(points); err != nil {
 			return response{OK: false, Error: "fancurve: " + err.Error()}
 		}
 		slog.Info("fancurve", "fans", "both", "profile", target.Name)
@@ -589,12 +621,15 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 	// curve provides. "tdp --reset" is the way out — it lowers power first. The
 	// same reasoning applies to clearing the curve from a profile that keeps a
 	// high TDP: it would be unsafe the moment that profile is activated.
-	if err := cli.CheckFanFloorReleaseAt(d.floorLimitFor(target)); err != nil {
+	if err := safety.CheckFanFloorReleaseAt(d.env(), d.floorLimitFor(target)); err != nil {
 		return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 	}
 
 	if target.Live {
-		if err := cli.ResetAllFanCurves(); err != nil {
+		if d.hw == nil || d.hw.Fans == nil {
+			return response{OK: false, Error: "fancurve-reset: no fan control on this device"}
+		}
+		if err := d.hw.Fans.Release(); err != nil {
 			return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 		}
 		slog.Info("fancurve-reset", "fans", "both", "profile", target.Name)
@@ -622,7 +657,10 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 }
 
 func (d *Daemon) handleTDPGet() response {
-	tdp, err := cli.ReadEffectivePPT(d.effectiveProfile())
+	if d.hw == nil || d.hw.Power == nil {
+		return response{OK: false, Error: "reading TDP: no power limit control on this device"}
+	}
+	tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile())
 	if err != nil {
 		return response{OK: false, Error: "reading TDP: " + err.Error()}
 	}
@@ -642,16 +680,7 @@ func (d *Daemon) effectiveProfile() string {
 	if p != "" {
 		return p
 	}
-	return readProfileFromSysfs()
-}
-
-// readProfileFromSysfs reads the current platform_profile value.
-func readProfileFromSysfs() string {
-	data, err := os.ReadFile(cli.FindProfilePath())
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return d.profileHW()
 }
 
 func (d *Daemon) handleTDP(req request) response {
@@ -677,20 +706,26 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	// PL1 (sustained) requires force flag above 75W. PL2/PL3 (burst) allowed up to hardware max.
-	pl1Max := cli.TDPMaxSafe
-	if req.Force {
-		pl1Max = cli.TDPMaxForced
+	if d.hw == nil || d.hw.Power == nil {
+		return response{OK: false, Error: "tdp: no power limit control on this device"}
 	}
-	if pl1 < cli.TDPMin || pl1 > pl1Max {
-		if pl1 > cli.TDPMaxSafe && !req.Force {
-			return response{OK: false, Error: fmt.Sprintf("PL1 %dW exceeds safe sustained max (%dW); use force flag", pl1, cli.TDPMaxSafe)}
+	env := d.env()
+
+	// PL1 (sustained) requires force flag above the safe max. PL2/PL3 (burst)
+	// allowed up to the hardware max.
+	pl1Max := env.TDPMaxSafe
+	if req.Force {
+		pl1Max = env.TDPMaxForced
+	}
+	if pl1 < env.TDPMin || pl1 > pl1Max {
+		if pl1 > env.TDPMaxSafe && !req.Force {
+			return response{OK: false, Error: fmt.Sprintf("PL1 %dW exceeds safe sustained max (%dW); use force flag", pl1, env.TDPMaxSafe)}
 		}
-		return response{OK: false, Error: fmt.Sprintf("PL1 %dW out of range %d–%d", pl1, cli.TDPMin, pl1Max)}
+		return response{OK: false, Error: fmt.Sprintf("PL1 %dW out of range %d–%d", pl1, env.TDPMin, pl1Max)}
 	}
 	for _, v := range []int{pl2, pl3} {
-		if v < cli.TDPMin || v > cli.TDPMaxForced {
-			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, cli.TDPMin, cli.TDPMaxForced)}
+		if v < env.TDPMin || v > env.TDPMaxForced {
+			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, env.TDPMin, env.TDPMaxForced)}
 		}
 	}
 
@@ -713,14 +748,14 @@ func (d *Daemon) handleTDP(req request) response {
 	// the user can see why. The live profile needs no equivalent check —
 	// ApplyTDPSafely raises the floor itself.
 	if !target.Live && target.Profile.FanCurve != nil {
-		if err := cli.CheckCurveAgainstTDP(target.Profile.FanCurve.Points, pl1); err != nil {
+		if err := safety.CheckCurveAgainstTDP(env, target.Profile.FanCurve.Points, pl1); err != nil {
 			return response{OK: false, Error: "tdp: " + err.Error() + " (stored in profile " + target.Name + ")"}
 		}
 	}
 
 	fc := target.Profile.FanCurve
 	var wantCurve []api.FanCurvePoint
-	if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
+	if d.hasApplicableCurve(fc) {
 		wantCurve = fc.Points
 	}
 	if target.Live {
@@ -728,7 +763,7 @@ func (d *Daemon) handleTDP(req request) response {
 		// before raising power, and refuses to apply the TDP at all if that fails.
 		// wantCurve is the profile's own curve: it is kept when it already
 		// satisfies the floor, and only replaced when it does not.
-		if err := cli.ApplyTDPSafely(tdp, wantCurve); err != nil {
+		if err := d.hw.Power.ApplyTDPSafely(tdp, wantCurve); err != nil {
 			return response{OK: false, Error: "tdp: " + err.Error()}
 		}
 		// Only worth saying when the floor actually changed something, and the three
@@ -738,10 +773,10 @@ func (d *Daemon) handleTDP(req request) response {
 		// substituted rather than raised. cmd/tdp.go and DryRunTdp split the same
 		// three ways.
 		switch {
-		case pl1 <= cli.TDPMaxSafe:
+		case pl1 <= env.TDPMaxSafe:
 		case len(wantCurve) == 0:
 			slog.Info("no custom fan curve to keep; wrote the built-in high-TDP curve", "pl1", pl1)
-		case cli.FloorAdjustsCurve(pl1, wantCurve):
+		case safety.FloorAdjustsCurve(env, pl1, wantCurve):
 			slog.Warn("fan curve points below the high-TDP floor were raised to it", "pl1", pl1)
 		}
 		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
@@ -762,14 +797,14 @@ func (d *Daemon) handleTDP(req request) response {
 	// high-TDP floor stayed applied to a profile holding no curve, so the same
 	// profile gave a different machine depending on whether it was reached by
 	// lowering the TDP or by selecting it, which applyCustomHW does not do.
-	if target.Live && pl1 <= cli.TDPMaxSafe {
-		if fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
-			if err := cli.SetBothFanCurves(fc.Points); err != nil {
+	if target.Live && pl1 <= env.TDPMaxSafe && d.hw.Fans != nil {
+		if d.hasApplicableCurve(fc) {
+			if err := d.hw.Fans.ApplyCurve(fc.Points); err != nil {
 				slog.Warn("failed to restore fan curve after TDP change", "err", err)
 			} else {
 				slog.Info("fan curve restored after TDP reduced to safe levels")
 			}
-		} else if err := cli.ResetAllFanCurves(); err != nil {
+		} else if err := d.hw.Fans.Release(); err != nil {
 			slog.Warn("failed to release fans after TDP reduced to safe levels", "err", err)
 		}
 	}
@@ -803,9 +838,9 @@ func (d *Daemon) handleTDPReset(req request) response {
 	}
 
 	// Lower power first, then release the fans: balanced's sustained limit is
-	// below TDPMaxSafe, so by the time the fans drop to firmware auto the limit
-	// that required the 50% floor is gone. Doing it the other way round leaves a
-	// window at full power with no floor, and a failed profile switch would
+	// below the safe max, so by the time the fans drop to firmware auto the
+	// limit that required the floor is gone. Doing it the other way round leaves
+	// a window at full power with no floor, and a failed profile switch would
 	// leave it that way. The firmware manages fan curves on a profile change but
 	// does not restore PPT, so restoreStockPPT has to be explicit.
 	// Reset the undervolt too. This lands on "balanced", a stock profile, and
@@ -813,17 +848,22 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// would leak a custom setting into a stock profile (the defect class behind
 	// #12) and leave undervolt --get reporting "active" on a stock profile.
 	// Saved values are kept in state so "custom" stays re-selectable.
-	if cli.SMUProbeUndervolt() {
-		if err := cli.ResetCurveOptimizer(); err != nil {
+	if d.uvAvailable() {
+		if err := d.hw.Undervolt.Reset(); err != nil {
 			slog.Warn("failed to reset undervolt after TDP reset", "err", err)
 		}
 	}
-	if err := cli.SetProfile("balanced"); err != nil {
+	if d.hw == nil || d.hw.Profiles == nil {
+		return response{OK: false, Error: "tdp-reset: no platform profile control on this device"}
+	}
+	if err := d.hw.Profiles.Set("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
 	}
-	restoreStockPPT("balanced")
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+	d.restoreStockPPT("balanced")
+	if d.hw.Fans != nil {
+		if err := d.hw.Fans.Release(); err != nil {
+			slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+		}
 	}
 	slog.Info("tdp-reset", "profile", "balanced")
 	d.mu.Lock()
@@ -855,7 +895,7 @@ func (d *Daemon) handleTDPReset(req request) response {
 }
 
 func (d *Daemon) handleUndervoltGet() response {
-	if !cli.SMUProbeUndervolt() {
+	if !d.uvAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 	d.mu.Lock()
@@ -881,7 +921,7 @@ func (d *Daemon) handleUndervoltGet() response {
 }
 
 func (d *Daemon) handleUndervolt(req request) response {
-	if !cli.SMUProbeUndervolt() {
+	if !d.uvAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
@@ -894,8 +934,10 @@ func (d *Daemon) handleUndervolt(req request) response {
 		cpuOffset = v
 	}
 
-	if err := cli.ValidateCOValues(cpuOffset); err != nil {
-		return response{OK: false, Error: err.Error()}
+	// The same message the CLI-side validation produces, with the bounds coming
+	// from device data rather than constants.
+	if lo, hi := d.hw.Undervolt.Range(); cpuOffset < lo || cpuOffset > hi {
+		return response{OK: false, Error: fmt.Sprintf("CPU undervolt %d out of range %d to %d", cpuOffset, lo, hi)}
 	}
 
 	d.hwMu.Lock()
@@ -911,7 +953,7 @@ func (d *Daemon) handleUndervolt(req request) response {
 
 	active := false
 	if target.Live {
-		if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
+		if err := d.hw.Undervolt.Apply(cpuOffset); err != nil {
 			return response{OK: false, Error: "undervolt: " + err.Error()}
 		}
 		active = true
@@ -930,7 +972,7 @@ func (d *Daemon) handleUndervolt(req request) response {
 }
 
 func (d *Daemon) handleUndervoltReset(req request) response {
-	if !cli.SMUProbeUndervolt() {
+	if !d.uvAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
@@ -946,7 +988,7 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 	d.mu.Unlock()
 
 	if target.Live {
-		if err := cli.ResetCurveOptimizer(); err != nil {
+		if err := d.hw.Undervolt.Reset(); err != nil {
 			return response{OK: false, Error: "undervolt-reset: " + err.Error()}
 		}
 		slog.Info("undervolt-reset", "profile", target.Name)

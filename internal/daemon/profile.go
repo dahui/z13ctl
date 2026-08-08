@@ -41,7 +41,7 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 	// four layers that keep a custom profile from shadowing a firmware one, and
 	// the only one that still holds if a hand-edited state file gets past the
 	// other three.
-	if cli.IsStockProfile(profile) {
+	if api.IsStockProfileName(profile) {
 		return d.applyStockHW(profile)
 	}
 
@@ -83,20 +83,20 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 //
 //   - The profile's own curve goes on *before* its TDP, and is also handed to
 //     ApplyTDPSafely so that call cannot throw it away. The floor is a per-point
-//     minimum against the whole HighTDPFanCurve, not a replacement curve: a point is
-//     raised only where it falls below that curve's value *at its own temperature*,
-//     and HighTDPFanCurve is written whole only when there is no curve at all.
-//     Writing the curve first is still what keeps the user's curve in force if the
-//     ApplyTDPSafely call fails.
+//     minimum against the envelope's whole floor curve, not a replacement curve:
+//     a point is raised only where it falls below that curve's value *at its own
+//     temperature*, and the floor curve is written whole only when there is no
+//     curve at all. Writing the curve first is still what keeps the user's curve
+//     in force if the ApplyTDPSafely call fails.
 //   - Clearing the TDP hands the limits back to the firmware profile underneath,
 //     which lowers power before the fans are touched.
 //   - The fans are released only when no high sustained limit is in force. A
 //     profile with a high TDP and no curve of its own keeps the floor
 //     ApplyTDPSafely just wrote. That is checked against *hardware* and not only
 //     against p.TDP: highTDP is false whenever ApplyTDPSafely failed, including
-//     when it succeeded at writing HighTDPFanCurve and then failed at
-//     SetTDPState, so trusting it alone would release the floor it just wrote.
-//     cli.CheckFanFloorRelease is the same guard the fancurve handlers use.
+//     when it succeeded at writing the floor curve and then failed at the power
+//     write, so trusting it alone would release the floor it just wrote.
+//     d.checkFanFloorRelease is the same guard the fancurve handlers use.
 //
 // Individual failures are logged rather than returned: a profile that only
 // partly applies is still the profile the user asked for, and the reconcile
@@ -106,11 +106,11 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 // the state commit at the end, and calls d.effectiveProfile() — which also takes
 // it — for the fan-floor check before that.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
-	hasCurve := p.FanCurve != nil && p.FanCurve.Mode == 1 && len(p.FanCurve.Points) == 8
+	hasCurve := d.hasApplicableCurve(p.FanCurve)
 	var wantCurve []api.FanCurvePoint
 	if hasCurve {
 		wantCurve = p.FanCurve.Points
-		if err := cli.SetBothFanCurves(wantCurve); err != nil {
+		if err := d.hw.Fans.ApplyCurve(wantCurve); err != nil {
 			slog.Warn("failed to apply fan curve", "profile", p.Name, "err", err)
 		}
 	}
@@ -119,36 +119,38 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	if t := p.TDP; t != nil {
 		// wantCurve is what keeps the profile's own curve from being replaced by
 		// the floor: ApplyTDPSafely honours it whenever it already satisfies the
-		// floor, and substitutes HighTDPFanCurve only when it does not.
-		if err := cli.ApplyTDPSafely(*t, wantCurve); err != nil {
+		// floor, and substitutes the envelope's floor curve only when it does not.
+		if d.hw == nil || d.hw.Power == nil {
+			slog.Warn("no power limit control on this device; profile TDP not applied", "profile", p.Name)
+		} else if err := d.hw.Power.ApplyTDPSafely(*t, wantCurve); err != nil {
 			slog.Warn("failed to apply TDP", "profile", p.Name, "err", err)
 		} else {
-			highTDP = t.PL1SPL > cli.TDPMaxSafe
+			highTDP = t.PL1SPL > d.env().TDPMaxSafe
 		}
 	} else {
 		// Not controlled here, so hand the limits back to the firmware profile
 		// underneath rather than leaving the previous profile's watts in force.
-		restoreStockPPT(readProfileFromSysfs())
+		d.restoreStockPPT(d.profileHW())
 	}
 
-	if !hasCurve && !highTDP {
-		if err := cli.CheckFanFloorRelease(d.effectiveProfile()); err != nil {
+	if !hasCurve && !highTDP && d.hw != nil && d.hw.Fans != nil {
+		if err := d.checkFanFloorRelease(d.effectiveProfile()); err != nil {
 			slog.Warn("keeping the high-TDP fan floor: the sustained limit in hardware still requires it",
 				"profile", p.Name, "err", err)
-		} else if err := cli.ResetAllFanCurves(); err != nil {
+		} else if err := d.hw.Fans.Release(); err != nil {
 			slog.Warn("failed to release fans to firmware auto", "profile", p.Name, "err", err)
 		}
 	}
 
 	uvActive := false
-	if cli.SMUProbeUndervolt() {
+	if d.uvAvailable() {
 		if uv := p.Undervolt; uv != nil {
-			if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
+			if err := d.hw.Undervolt.Apply(uv.CPUCO); err != nil {
 				slog.Warn("failed to apply undervolt", "profile", p.Name, "err", err)
 			} else {
 				uvActive = true
 			}
-		} else if err := cli.ResetCurveOptimizer(); err != nil {
+		} else if err := d.hw.Undervolt.Reset(); err != nil {
 			slog.Warn("failed to reset undervolt", "profile", p.Name, "err", err)
 		}
 	}
@@ -177,17 +179,22 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 // persists across the switch. Release the fans to firmware auto *last*, so they
 // are never dropped to auto while a high custom TDP is still in force.
 func (d *Daemon) applyStockHW(profile string) error {
-	if cli.SMUProbeUndervolt() {
-		if err := cli.ResetCurveOptimizer(); err != nil {
+	if d.uvAvailable() {
+		if err := d.hw.Undervolt.Reset(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
 		}
 	}
-	if err := cli.SetProfile(profile); err != nil {
+	if d.hw == nil || d.hw.Profiles == nil {
+		return fmt.Errorf("no platform profile control on this device")
+	}
+	if err := d.hw.Profiles.Set(profile); err != nil {
 		return err
 	}
-	restoreStockPPT(profile)
-	if err := cli.ResetAllFanCurves(); err != nil {
-		slog.Warn("failed to reset fan curves to auto", "err", err)
+	d.restoreStockPPT(profile)
+	if d.hw.Fans != nil {
+		if err := d.hw.Fans.Release(); err != nil {
+			slog.Warn("failed to reset fan curves to auto", "err", err)
+		}
 	}
 
 	d.mu.Lock()
@@ -267,7 +274,7 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 		}
 		return d.editTargetLocked(name, true, active), nil
 	}
-	if cli.IsStockProfile(name) {
+	if api.IsStockProfileName(name) {
 		return editTarget{}, fmt.Errorf("%q is a firmware profile and has no custom settings to edit", name)
 	}
 	if name != api.DefaultCustomProfile && !d.state.IsCustomProfile(name) {
@@ -311,7 +318,11 @@ func (d *Daemon) commitEditLocked(t editTarget, p api.CustomProfile) api.State {
 // unsafe the moment it is activated.
 func (d *Daemon) floorLimitFor(t editTarget) int {
 	if t.Live {
-		tdp, err := cli.ReadEffectivePPT(t.Name)
+		if d.hw == nil || d.hw.Power == nil {
+			// No power control means no limit to clear.
+			return 0
+		}
+		tdp, err := d.hw.Power.ReadEffective(t.Name)
 		if err != nil {
 			// A PPT read failure is deliberately not a refusal: the guard is
 			// best-effort and must not make fan control unavailable.

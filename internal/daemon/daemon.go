@@ -21,7 +21,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +30,8 @@ import (
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/z13ctl/internal/driver"
 	"github.com/dahui/z13ctl/internal/hid"
 )
 
@@ -44,6 +45,18 @@ type Daemon struct {
 	//
 	// Lock order is hwMu then d.mu. Never acquire hwMu while holding d.mu.
 	hwMu sync.Mutex
+
+	// hw is the assembled device: the per-class drivers the device data
+	// selected for this machine, with power control wrapped in the safety
+	// engine. Set once by Run before any watcher or handler can run (tests
+	// inject it), read-only afterwards, so it needs no lock. A nil capability
+	// field means the device does not have it; a nil hw altogether (bare test
+	// Daemons) reads as a device with no capabilities at all.
+	//
+	// Lighting and buttons are not yet driven through it — their drivers still
+	// live in this package (d.dev, watchButton) — so Run assembles with those
+	// two capabilities stripped. See internal/drivers/asusz13/register.
+	hw *device.Device
 
 	mu    sync.Mutex
 	dev   *hid.Device // nil if no HID device was found at startup
@@ -85,6 +98,43 @@ type Options struct {
 	SleepRelease bool
 }
 
+// fallbackDeviceID is the device assumed when no device file matches this
+// machine. Transitional: z13ctl has only ever supported the Z13 and every
+// earlier version ran best-effort on anything else, so the Z13 config —
+// whose drivers all fail soft on absent sysfs — preserves that exactly. The
+// multi-device milestone replaces this with a conservative generic device.
+const fallbackDeviceID = "asus-rog-flow-z13-2025"
+
+// assembleDevice matches this machine against the embedded device data and
+// assembles its drivers. Lighting and buttons are stripped before assembly
+// while their drivers still live inside this package; TestZ13AssemblyGap in
+// internal/drivers/asusz13/register pins the moment that changes. Assembly
+// itself can only fail on a build defect — a device file naming a factory this
+// binary does not register — so an error here is worth refusing to start over.
+func assembleDevice() (*device.Device, error) {
+	c, err := device.MatchConfig()
+	if err != nil {
+		slog.Warn("no device file matches this machine; assuming the ASUS ROG Flow Z13", "err", err)
+		configs, cfgErr := device.Configs()
+		if cfgErr != nil {
+			return nil, cfgErr
+		}
+		found := false
+		for _, cand := range configs {
+			if cand.Device.ID == fallbackDeviceID {
+				c, found = cand, true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("fallback device %q is not in the embedded device data", fallbackDeviceID)
+		}
+	}
+	c.Lighting = nil
+	c.Button = nil
+	return device.Assemble(c)
+}
+
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
 // restores the last-saved state, starts the button watcher, and serves the
 // Unix socket.
@@ -97,6 +147,13 @@ func Run(ctx context.Context, opts Options) error {
 	if !opts.SleepRelease {
 		slog.Info("pre-sleep fan release disabled; the custom curve stays in force through sleep")
 	}
+
+	hw, err := assembleDevice()
+	if err != nil {
+		return fmt.Errorf("assembling device drivers: %w", err)
+	}
+	d.hw = hw
+	slog.Info("device assembled", "id", hw.ID, "model", hw.Model)
 
 	d.state = loadState()
 
@@ -126,7 +183,7 @@ func Run(ctx context.Context, opts Options) error {
 	// write, and that write costs a WMI fan-controller reset (see the comment on
 	// the restore).
 	leftCustom, autoswitched := false, false
-	if onAC, acErr := cli.OnACPower(); acErr == nil {
+	if onAC, known := d.acPower(); known {
 		if target := autoswitchTarget(d.state, onAC); target != "" {
 			slog.Info("autoswitch: selecting startup profile", "source", sourceName(onAC), "profile", target)
 			leftCustom = d.state.InCustomProfile() && !d.state.IsCustomProfile(target)
@@ -143,13 +200,15 @@ func Run(ctx context.Context, opts Options) error {
 	// and undervolt while the daemon reports a firmware profile, and the
 	// reconcile watcher stays inert because the profile is no longer custom.
 	if leftCustom {
-		if cli.SMUProbeUndervolt() {
-			if uvErr := cli.ResetCurveOptimizer(); uvErr != nil {
+		if d.uvAvailable() {
+			if uvErr := d.hw.Undervolt.Reset(); uvErr != nil {
 				slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
 			}
 		}
-		if fanErr := cli.ResetAllFanCurves(); fanErr != nil {
-			slog.Warn("failed to release fans leaving the custom profile", "err", fanErr)
+		if d.hw.Fans != nil {
+			if fanErr := d.hw.Fans.Release(); fanErr != nil {
+				slog.Warn("failed to release fans leaving the custom profile", "err", fanErr)
+			}
 		}
 	}
 
@@ -163,13 +222,9 @@ func Run(ctx context.Context, opts Options) error {
 	// that is neither — one deleted by hand, or lost in a downgrade — would
 	// otherwise be written straight to platform_profile, where the kernel rejects
 	// it. Only a firmware profile name may ever reach that attribute.
-	if cli.IsStockProfile(d.state.Profile) {
-		current := ""
-		if data, readErr := os.ReadFile(cli.FindProfilePath()); readErr == nil {
-			current = strings.TrimSpace(string(data))
-		}
-		if current != d.state.Profile {
-			if profileErr := cli.SetProfile(d.state.Profile); profileErr != nil {
+	if api.IsStockProfileName(d.state.Profile) && d.hw.Profiles != nil {
+		if current := d.profileHW(); current != d.state.Profile {
+			if profileErr := d.hw.Profiles.Set(d.state.Profile); profileErr != nil {
 				slog.Warn("failed to restore profile", "err", profileErr)
 			} else {
 				slog.Info("profile restored", "profile", d.state.Profile)
@@ -177,15 +232,14 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		// Write the profile's stock PPT even when platform_profile already
 		// matches: the kernel's PPT attributes come up holding a stale 5W cache
-		// after boot, and nothing else restores them. Unlike SetProfile this is
-		// not a WMI call, so it does not disturb the fan controller.
-		restoreStockPPT(d.state.Profile)
+		// after boot, and nothing else restores them. Unlike a profile write this
+		// is not a WMI call, so it does not disturb the fan controller.
+		d.restoreStockPPT(d.state.Profile)
 	}
 
 	// Restore battery charge limit if saved.
-	if d.state.Battery > 0 {
-		path := cli.FindBatteryThresholdPath()
-		if batErr := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", d.state.Battery)), 0o644); batErr != nil {
+	if d.state.Battery > 0 && d.hw.Battery != nil {
+		if batErr := d.hw.Battery.SetChargeLimit(d.state.Battery); batErr != nil {
 			slog.Warn("failed to restore battery limit", "err", batErr)
 		} else {
 			slog.Info("battery limit restored", "limit", d.state.Battery)
@@ -193,8 +247,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	// Restore panel overdrive if enabled (firmware may not persist this across reboot).
-	if d.state.PanelOverdrive != 0 {
-		if poErr := cli.SetPanelOverdrive(d.state.PanelOverdrive); poErr != nil {
+	if d.state.PanelOverdrive != 0 && d.hw.Toggles != nil {
+		if poErr := d.hw.Toggles.Set("panel_overdrive", d.state.PanelOverdrive); poErr != nil {
 			slog.Warn("failed to restore panel overdrive", "err", poErr)
 		} else {
 			slog.Info("panel overdrive restored", "value", d.state.PanelOverdrive)
@@ -414,6 +468,75 @@ func (d *Daemon) setSuspending(v bool) {
 	}
 	d.suspending = v
 	d.mu.Unlock()
+}
+
+// env returns the device's power envelope, or the zero envelope when the
+// device has no power control. The zero value declares no limits and no floor
+// curve, which makes every safety check a pass-through — the correct reading
+// of "this device imposes nothing".
+func (d *Daemon) env() driver.PowerEnvelope {
+	if d.hw == nil || d.hw.Power == nil {
+		return driver.PowerEnvelope{}
+	}
+	return d.hw.Power.Envelope()
+}
+
+// acPower reports the power source, with known=false when it cannot be
+// observed — no battery capability, or no readable Mains supply. Callers must
+// treat unknown as "do nothing", never as "on battery": a machine with no
+// mains device (a VM, a desktop, a driver not yet bound) would otherwise run
+// the battery profile forever.
+func (d *Daemon) acPower() (onAC, known bool) {
+	if d.hw == nil || d.hw.Battery == nil {
+		return false, false
+	}
+	st, err := d.hw.Battery.Status()
+	if err != nil {
+		return false, false
+	}
+	return st.OnAC, st.ACKnown
+}
+
+// uvAvailable reports whether the Curve Optimizer path actually works on this
+// machine. The underlying probe may write hardware, but the driver caches its
+// answer for the process lifetime, so after the first call — made on the apply
+// path at startup, never speculatively — this is a plain bool read.
+func (d *Daemon) uvAvailable() bool {
+	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.ProbeAvailable()
+}
+
+// profileHW reads the platform profile from hardware, or "" when the device
+// has no profile control or the read fails.
+func (d *Daemon) profileHW() string {
+	if d.hw == nil || d.hw.Profiles == nil {
+		return ""
+	}
+	p, err := d.hw.Profiles.Get()
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// hasApplicableCurve reports whether fc carries a curve the device's fan
+// controller can apply: custom mode, and exactly the point count the fan shape
+// declares. A device with no fan control can apply nothing.
+func (d *Daemon) hasApplicableCurve(fc *api.FanCurveState) bool {
+	if fc == nil || fc.Mode != 1 || d.hw == nil || d.hw.Fans == nil {
+		return false
+	}
+	return len(fc.Points) == d.hw.Fans.Shape().Points
+}
+
+// checkFanFloorRelease reports whether the fans may be released to firmware
+// auto, judged against the limit hardware reports for the effective profile.
+// A device without power control imposes nothing; a PPT read failure is
+// deliberately not a refusal (see safety.Engine.CheckFanFloorRelease).
+func (d *Daemon) checkFanFloorRelease(profile string) error {
+	if d.hw == nil || d.hw.Power == nil {
+		return nil
+	}
+	return d.hw.Power.CheckFanFloorRelease(profile)
 }
 
 // normalizeLightingState fills in any field left empty by a partial update,

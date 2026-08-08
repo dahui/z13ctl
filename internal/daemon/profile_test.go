@@ -74,7 +74,7 @@ func TestProfileMutatorsTakeHwMu(t *testing.T) {
 // TestApplyCustomHWClearsWhatTheProfileDoesNotSet states the invariant that
 // makes switching between two custom profiles predictable. It asserts on the
 // decision inputs rather than calling applyCustomHW, which writes hardware:
-// internal/cli's path vars are unexported, so invoking it here would change the
+// the Z13 driver's path vars are unexported, so invoking it here would change the
 // developer's real power limits, fan mode, and Curve Optimizer offset.
 //
 // The bug it guards: going from a profile with a 90 W limit and a -25 offset to
@@ -454,8 +454,11 @@ func TestResetProfileTargetStillClearsStoredSettings(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Running "balanced", editing "gaming": not live, not active.
-			d := &Daemon{state: api.State{
+			// Running "balanced", editing "gaming": not live, not active. The real
+			// device is safe here because a non-live target reads the profile's own
+			// stored TDP rather than hardware, and the Live write branches are
+			// skipped.
+			d := &Daemon{hw: testDev, state: api.State{
 				Profile:        "balanced",
 				CustomProfiles: map[string]api.CustomProfile{"gaming": full()},
 			}}

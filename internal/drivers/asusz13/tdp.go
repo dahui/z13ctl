@@ -52,30 +52,13 @@ var StockProfilePPT = map[string]api.TDPState{
 	"performance": {PL1SPL: 70, PL2SPPT: 86, FPPT: 86, APUSPPT: 70, PlatformSPPT: 70},
 }
 
-// ReadEffectivePPT returns the current PPT values. If sysfs returns the stale
-// kernel cache (PL1 == 5) and the active profile is a known stock profile,
-// the measured per-profile defaults are returned instead. This fallback still
-// matters after a fresh boot, before any z13ctl profile switch has written real
-// values to the attributes.
-//
-// profile must be the *effective* profile, which for daemon callers is the
-// daemon's own state ("custom" when a custom TDP is active) — NOT the raw
-// platform_profile value. platform_profile is never "custom" (it is a virtual
-// profile that is deliberately not written to sysfs), so passing it would make a
-// legitimate 5W custom TDP indistinguishable from the stale cache and report the
-// stock table instead. Any profile name not in StockProfilePPT disables the
-// fallback, which is the desired behaviour for "custom".
+// ReadEffectivePPT returns the current PPT values, substituting the measured
+// per-profile defaults when sysfs returns the stale kernel cache (PL1 == 5).
+// The rule — and the reason profile must be the *effective* profile, never raw
+// platform_profile — lives in safety.Engine.ReadEffective; this forwards
+// through the Z13 engine.
 func ReadEffectivePPT(profile string) (api.TDPState, error) {
-	s, err := ReadAllPPT()
-	if err != nil {
-		return s, err
-	}
-	if s.PL1SPL == TDPMin {
-		if stock, ok := StockProfilePPT[profile]; ok {
-			return stock, nil
-		}
-	}
-	return s, nil
+	return z13Engine().ReadEffective(profile)
 }
 
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.

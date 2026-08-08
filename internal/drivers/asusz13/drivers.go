@@ -31,28 +31,51 @@ func (fanController) ReadRPM() ([]int, error) {
 }
 
 // ReadMode reports the curve device's pwm_enable folded to one value: custom
-// (1) only when every fan reports the curve active — the VerifyFanCurveActive
-// rule — otherwise the first non-custom mode observed. A curve half-dropped by
-// the kernel therefore reads as "not live", which is the answer the reconcile
-// watcher needs to act on.
+// (1) only when every readable fan reports the curve active — the
+// VerifyFanCurveActive rule — otherwise the first readable non-custom mode. A
+// curve half-dropped by the kernel therefore reads as "not live", which is the
+// answer the reconcile watcher needs to act on.
+//
+// Unreadable channels (-1) are skipped, exactly as VerifyFanCurveActive skips
+// them: a SKU that exposes only the CPU curve channel is a supported
+// configuration, and folding its permanently-unreadable second channel into
+// the answer would leave the reconcile watcher and the sleep hook blind on the
+// channel the machine does have. Only when no channel is readable at all does
+// this return -1, meaning unknown.
 func (fanController) ReadMode() (int, error) {
 	modes, err := ReadFanCurveModes()
 	if err != nil {
 		return 0, err
 	}
+	mode := -1
 	for _, m := range modes {
+		if m == -1 {
+			continue
+		}
 		if m != 1 {
 			return m, nil
 		}
+		mode = 1
 	}
-	return 1, nil
+	return mode, nil
 }
 
 func (fanController) ApplyCurve(pts []api.FanCurvePoint) error { return SetBothFanCurves(pts) }
 
 func (fanController) Release() error { return ResetAllFanCurves() }
 
-func (fanController) LiveCurve() ([]api.FanCurvePoint, error) { return LiveFanCurve(), nil }
+// LiveCurve returns the curve programmed into the curve registers whether or
+// not it is active — the interface's contract, since the registers survive a
+// release on the Z13. "The curve in force" is a composition the caller makes
+// from this plus ReadMode; LiveFanCurve (the mode-gated read the no-daemon
+// CLI uses) is that composition, not this method.
+func (fanController) LiveCurve() ([]api.FanCurvePoint, error) {
+	curves, err := ReadBothFanCurves()
+	if err != nil {
+		return nil, err
+	}
+	return curves[0], nil
+}
 
 // NewPowerLimiter returns the asus-nb-wmi PPT driver, whose envelope comes
 // from device data rather than this package's constants — the drift guard in

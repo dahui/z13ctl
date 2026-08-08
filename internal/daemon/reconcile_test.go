@@ -4,7 +4,7 @@ package daemon
 // curve back after the kernel drops it.
 //
 // Every case here goes through the pure reconcileTick. That is deliberate:
-// internal/cli's sysfs path vars are unexported, so a daemon test that reached
+// the Z13 driver's sysfs path vars are unexported, so a daemon test that reached
 // the apply path would write the developer's actual fan hardware.
 
 import (
@@ -15,6 +15,18 @@ import (
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
 )
+
+// tick is reconcileTick judged against the Z13 envelope, which is what every
+// table case in this file describes. The envelope parameter exists for other
+// devices; the decisions under test do not vary with it beyond the numbers.
+func tick(prev reconcileState, obs reconcileObs) (reconcileState, reconcileAction) {
+	return reconcileTick(prev, obs, testEnv)
+}
+
+// curveFor is reconcileCurveFor against the same envelope.
+func curveFor(floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
+	return reconcileCurveFor(testEnv, floorLimit, want)
+}
 
 // rampedFrom is curve(pwm) after the high-TDP ramp has raised the points it
 // exceeds. The PWM values are cli.HighTDPFanCurve's, written out rather than
@@ -43,8 +55,8 @@ func curve(pwm int) []api.FanCurvePoint {
 // TestReconcileCustomFlagFollowsTheProfileMap covers what feeds obs.Custom:
 // reconcileOnce derives it from ActiveCustomProfile, so a named profile must
 // be defended exactly as "custom" is, and a stale or reserved name must not be.
-// The apply path itself cannot be exercised here — internal/cli's path vars are
-// unexported, so it would write the developer's real fan hardware.
+// The apply path itself cannot be exercised here — the Z13 driver's path vars
+// are unexported, so it would write the developer's real fan hardware.
 func TestReconcileCustomFlagFollowsTheProfileMap(t *testing.T) {
 	profiles := map[string]api.CustomProfile{
 		"battery-uv": {Name: "battery-uv", FanCurve: &api.FanCurveState{Mode: 1, Points: curve(120)}},
@@ -194,7 +206,7 @@ func TestReconcileTick(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, act := reconcileTick(reconcileState{}, tt.obs)
+			_, act := tick(reconcileState{}, tt.obs)
 
 			if got := act.Curve != nil; got != tt.wantCurve {
 				t.Errorf("restored a curve = %v, want %v", got, tt.wantCurve)
@@ -236,7 +248,7 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 	// The loop increments failures itself; the tick must not clear them while
 	// the hardware still disagrees.
 	st := reconcileState{failures: reconcileQuietAfter, quiet: true}
-	st, act := reconcileTick(st, obs)
+	st, act := tick(st, obs)
 	if act.none() {
 		t.Fatal("tick stopped acting once quiet; it must keep restoring, only stop logging")
 	}
@@ -246,7 +258,7 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 
 	// A tick with nothing to do clears the latch, so the next real failure is
 	// logged again.
-	st, act = reconcileTick(st, reconcileObs{Custom: true, CurveMode: 1, PL1: 35})
+	st, act = tick(st, reconcileObs{Custom: true, CurveMode: 1, PL1: 35})
 	if !act.none() {
 		t.Fatalf("tick acted on a live curve: %+v", act)
 	}
@@ -263,7 +275,7 @@ func TestReconcileTickQuietsAfterRepeatedFailure(t *testing.T) {
 func TestReconcileReasonDescribesWhatWasDone(t *testing.T) {
 	t.Parallel()
 
-	_, act := reconcileTick(reconcileState{}, reconcileObs{
+	_, act := tick(reconcileState{}, reconcileObs{
 		Custom: true, WantCurve: nil, CurveMode: 2, PL1: 52,
 		WantTDP: &api.TDPState{PL1SPL: 67},
 	})
@@ -291,7 +303,7 @@ func TestReconcileSuspendBudgetIsPerSuspend(t *testing.T) {
 	// tick in between — the flap loop that used to defeat the counter.
 	for gen := 1; gen <= reconcileSuspendMaxTicks*3; gen++ {
 		var act reconcileAction
-		st, act = reconcileTick(st, reconcileObs{
+		st, act = tick(st, reconcileObs{
 			Custom: true, Suspending: true, SuspendGen: gen,
 			WantCurve: curve(204), CurveMode: 2, PL1: 52,
 		})
@@ -308,7 +320,7 @@ func TestReconcileSuspendBudgetIsPerSuspend(t *testing.T) {
 	st = reconcileState{}
 	for i := 1; i <= reconcileSuspendMaxTicks; i++ {
 		var act reconcileAction
-		st, act = reconcileTick(st, reconcileObs{
+		st, act = tick(st, reconcileObs{
 			Custom: true, Suspending: true, SuspendGen: 7,
 			WantCurve: curve(204), CurveMode: 2, PL1: 52,
 		})
@@ -335,7 +347,7 @@ func TestReconcileSuspendCeiling(t *testing.T) {
 	var st reconcileState
 	for i := 1; i < reconcileSuspendMaxTicks; i++ {
 		var act reconcileAction
-		st, act = reconcileTick(st, obs)
+		st, act = tick(st, obs)
 		if !act.none() {
 			t.Fatalf("tick %d acted while suspending: %+v", i, act)
 		}
@@ -344,7 +356,7 @@ func TestReconcileSuspendCeiling(t *testing.T) {
 		}
 	}
 
-	st, act := reconcileTick(st, obs)
+	st, act := tick(st, obs)
 	if act.none() {
 		t.Fatalf("the watcher never resumed defending the curve after %d suspending ticks",
 			reconcileSuspendMaxTicks)
@@ -359,13 +371,13 @@ func TestReconcileSuspendCeiling(t *testing.T) {
 // TestReconcileSuspendClearsOnResume covers the ordinary path: the flag goes away
 // on resume, and the counter goes with it so the next suspend gets a full window.
 func TestReconcileSuspendClearsOnResume(t *testing.T) {
-	st, _ := reconcileTick(reconcileState{},
+	st, _ := tick(reconcileState{},
 		reconcileObs{Custom: true, Suspending: true, WantCurve: curve(120), CurveMode: 2, PL1: 35})
 	if st.suspendedTicks != 1 {
 		t.Fatalf("suspendedTicks = %d, want 1", st.suspendedTicks)
 	}
 
-	st, act := reconcileTick(st, reconcileObs{Custom: true, WantCurve: curve(120), CurveMode: 2, PL1: 35})
+	st, act := tick(st, reconcileObs{Custom: true, WantCurve: curve(120), CurveMode: 2, PL1: 35})
 	if act.none() {
 		t.Error("the curve was not defended again after the suspending flag cleared")
 	}
@@ -375,7 +387,7 @@ func TestReconcileSuspendClearsOnResume(t *testing.T) {
 }
 
 func TestReconcileTickTracksProfileForLogging(t *testing.T) {
-	st, _ := reconcileTick(reconcileState{lastHW: "performance"},
+	st, _ := tick(reconcileState{lastHW: "performance"},
 		reconcileObs{Custom: true, CurveMode: 1, ProfileHW: "balanced"})
 	if st.lastHW != "balanced" {
 		t.Errorf("lastHW = %q, want \"balanced\"", st.lastHW)
@@ -479,7 +491,7 @@ func TestReconcileCurveForLeavesCurvelessProfilesAlone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := reconcileCurveFor(tc.floorLimit, tc.want)
+			got := curveFor(tc.floorLimit, tc.want)
 			if len(got) != len(tc.expect) {
 				t.Fatalf("got %d points, want %d (got %v)", len(got), len(tc.expect), got)
 			}
@@ -502,7 +514,7 @@ func TestReconcileCurveForDoesNotMutateSavedCurve(t *testing.T) {
 	saved := curve(100)
 	before := append([]api.FanCurvePoint(nil), saved...)
 
-	reconcileCurveFor(90, saved)
+	curveFor(90, saved)
 
 	for i := range saved {
 		if saved[i] != before[i] {
@@ -536,7 +548,7 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 
 	t.Run("not on an ordinary tick", func(t *testing.T) {
 		t.Parallel()
-		_, act := reconcileTick(reconcileState{}, base)
+		_, act := tick(reconcileState{}, base)
 		if act.Undervolt != nil {
 			t.Fatalf("Undervolt = %d on a tick with no suspend in progress", *act.Undervolt)
 		}
@@ -549,7 +561,7 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 		var st reconcileState
 		for i := 1; i < reconcileSuspendMaxTicks; i++ {
 			var act reconcileAction
-			st, act = reconcileTick(st, obs)
+			st, act = tick(st, obs)
 			if act.Undervolt != nil {
 				t.Fatalf("tick %d: Undervolt re-applied inside the stand-down window", i)
 			}
@@ -563,7 +575,7 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 		var st reconcileState
 		var act reconcileAction
 		for range reconcileSuspendMaxTicks {
-			st, act = reconcileTick(st, obs)
+			st, act = tick(st, obs)
 		}
 		if act.Undervolt == nil {
 			t.Fatal("Undervolt was not re-applied after the stand-down expired")
@@ -584,7 +596,7 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 		var st reconcileState
 		var act reconcileAction
 		for range reconcileSuspendMaxTicks {
-			st, act = reconcileTick(st, obs)
+			st, act = tick(st, obs)
 		}
 		if act.Undervolt != nil {
 			t.Fatalf("Undervolt = %d for a profile with no offset", *act.Undervolt)
@@ -597,11 +609,11 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 		obs.Suspending, obs.SuspendGen = true, 1
 		var st reconcileState
 		for range reconcileSuspendMaxTicks - 1 {
-			st, _ = reconcileTick(st, obs)
+			st, _ = tick(st, obs)
 		}
 		// PrepareForSleep(false) arrived: the flag drops before the budget expires.
 		obs.Suspending = false
-		_, act := reconcileTick(st, obs)
+		_, act := tick(st, obs)
 		if act.Undervolt != nil {
 			t.Fatalf("Undervolt = %d after a resume that did arrive", *act.Undervolt)
 		}

@@ -93,24 +93,38 @@ func Configs() ([]Config, error) {
 	return configsAll, configsErr
 }
 
-// Detect identifies this machine and assembles its Device. It returns
-// ErrUnknownDevice (wrapped with the DMI strings, so a bug report contains
-// exactly what a new device file needs) when no device file matches.
-func Detect() (*Device, error) {
+// MatchConfig identifies this machine and returns its device config,
+// unassembled. It returns ErrUnknownDevice (wrapped with the DMI strings, so a
+// bug report contains exactly what a new device file needs) when no device
+// file matches.
+//
+// Most callers want Detect. MatchConfig exists for the transitional daemon,
+// which strips the capabilities whose drivers still live inside it before
+// assembling; it goes away when that gap closes.
+func MatchConfig() (Config, error) {
 	configs, err := Configs()
 	if err != nil {
-		return nil, err
+		return Config{}, err
 	}
 	vendor, product, err := readDMI()
 	if err != nil {
-		return nil, fmt.Errorf("reading DMI identity: %w", err)
+		return Config{}, fmt.Errorf("reading DMI identity: %w", err)
 	}
 	for _, c := range configs {
 		if c.matches(vendor, product) {
-			return Assemble(c)
+			return c, nil
 		}
 	}
-	return nil, fmt.Errorf("%w (vendor %q, product %q)", ErrUnknownDevice, vendor, product)
+	return Config{}, fmt.Errorf("%w (vendor %q, product %q)", ErrUnknownDevice, vendor, product)
+}
+
+// Detect identifies this machine and assembles its Device.
+func Detect() (*Device, error) {
+	c, err := MatchConfig()
+	if err != nil {
+		return nil, err
+	}
+	return Assemble(c)
 }
 
 // Assemble builds a Device from a validated config by running each present
