@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 )
 
 // The DMI strings of the machine this project started on, verbatim from
@@ -36,38 +36,38 @@ func TestEmbeddedConfigsParseAndValidate(t *testing.T) {
 	}
 }
 
-// TestZ13FileMatchesCliConstants is the bridge guard for the driver
-// extraction: while internal/cli still carries the Z13's numbers as constants,
+// TestZ13FileMatchesDriverConstants is the bridge guard for the driver
+// extraction: while internal/drivers/asusz13 still carries the Z13's numbers as constants,
 // the device file must agree with them exactly. When the constants are deleted
 // and the file becomes authoritative, this test goes with them.
-func TestZ13FileMatchesCliConstants(t *testing.T) {
+func TestZ13FileMatchesDriverConstants(t *testing.T) {
 	c := z13Config(t)
 
 	env := c.Power.Envelope()
-	if env.TDPMin != cli.TDPMin || env.TDPMaxSafe != cli.TDPMaxSafe || env.TDPMaxForced != cli.TDPMaxForced {
-		t.Errorf("power limits %d/%d/%d, cli says %d/%d/%d",
-			env.TDPMin, env.TDPMaxSafe, env.TDPMaxForced, cli.TDPMin, cli.TDPMaxSafe, cli.TDPMaxForced)
+	if env.TDPMin != asusz13.TDPMin || env.TDPMaxSafe != asusz13.TDPMaxSafe || env.TDPMaxForced != asusz13.TDPMaxForced {
+		t.Errorf("power limits %d/%d/%d, driver says %d/%d/%d",
+			env.TDPMin, env.TDPMaxSafe, env.TDPMaxForced, asusz13.TDPMin, asusz13.TDPMaxSafe, asusz13.TDPMaxForced)
 	}
-	if c.Power.TDPDefault != cli.TDPDefault {
-		t.Errorf("tdp_default %d, cli says %d", c.Power.TDPDefault, cli.TDPDefault)
+	if c.Power.TDPDefault != asusz13.TDPDefault {
+		t.Errorf("tdp_default %d, driver says %d", c.Power.TDPDefault, asusz13.TDPDefault)
 	}
 
-	floor := cli.HighTDPFanCurve()
+	floor := asusz13.HighTDPFanCurve()
 	if len(env.FloorCurve) != len(floor) {
-		t.Fatalf("floor_curve has %d points, cli.HighTDPFanCurve has %d", len(env.FloorCurve), len(floor))
+		t.Fatalf("floor_curve has %d points, asusz13.HighTDPFanCurve has %d", len(env.FloorCurve), len(floor))
 	}
 	for i := range floor {
 		if env.FloorCurve[i] != floor[i] {
-			t.Errorf("floor_curve[%d] = %+v, cli says %+v", i, env.FloorCurve[i], floor[i])
+			t.Errorf("floor_curve[%d] = %+v, driver says %+v", i, env.FloorCurve[i], floor[i])
 		}
 	}
 
-	if len(env.StockProfilePPT) != len(cli.StockProfilePPT) {
-		t.Fatalf("stock_ppt has %d rows, cli has %d", len(env.StockProfilePPT), len(cli.StockProfilePPT))
+	if len(env.StockProfilePPT) != len(asusz13.StockProfilePPT) {
+		t.Fatalf("stock_ppt has %d rows, driver has %d", len(env.StockProfilePPT), len(asusz13.StockProfilePPT))
 	}
-	for name, want := range cli.StockProfilePPT {
+	for name, want := range asusz13.StockProfilePPT {
 		if got := env.StockProfilePPT[name]; got != want {
-			t.Errorf("stock_ppt.%s = %+v, cli says %+v", name, got, want)
+			t.Errorf("stock_ppt.%s = %+v, driver says %+v", name, got, want)
 		}
 	}
 }
@@ -111,8 +111,8 @@ func TestDetectAssemblesTheZ13(t *testing.T) {
 		t.Errorf("assembled device has nil capabilities: %+v", d)
 	}
 	// …and the engine must be wired to the real envelope, not a zero value.
-	if env := d.Power.Envelope(); env.TDPMaxSafe != cli.TDPMaxSafe {
-		t.Errorf("engine envelope TDPMaxSafe = %d, want %d", env.TDPMaxSafe, cli.TDPMaxSafe)
+	if env := d.Power.Envelope(); env.TDPMaxSafe != asusz13.TDPMaxSafe {
+		t.Errorf("engine envelope TDPMaxSafe = %d, want %d", env.TDPMaxSafe, asusz13.TDPMaxSafe)
 	}
 }
 

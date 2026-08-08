@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // power.go — mains/battery power source discovery, and the profile-name rules
 // shared by cmd/ and internal/daemon/.

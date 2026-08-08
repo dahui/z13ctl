@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // fan.go — hwmon sysfs path discovery and I/O helpers for ASUS fan curves.
 // Discovers hwmon devices by name attribute (not by number, which is unstable).

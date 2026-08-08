@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // sysfs_fake_test.go — a temporary directory tree standing in for the sysfs
 // nodes this package reads and writes, so the hardware-facing helpers can be

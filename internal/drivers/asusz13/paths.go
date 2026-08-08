@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // paths.go — sysfs roots used by this package.
 //

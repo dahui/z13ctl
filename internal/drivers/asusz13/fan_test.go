@@ -1,14 +1,14 @@
-package cli_test
+package asusz13_test
 
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 )
 
 func TestParseFanCurve_Valid(t *testing.T) {
 	curve := "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
-	points, err := cli.ParseFanCurve(curve)
+	points, err := asusz13.ParseFanCurve(curve)
 	if err != nil {
 		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
 	}
@@ -24,7 +24,7 @@ func TestParseFanCurve_Valid(t *testing.T) {
 }
 
 func TestParseFanCurve_WrongPointCount(t *testing.T) {
-	_, err := cli.ParseFanCurve("48:2,53:22,57:30")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,57:30")
 	if err == nil {
 		t.Error("expected error for 3 points")
 	}
@@ -32,7 +32,7 @@ func TestParseFanCurve_WrongPointCount(t *testing.T) {
 
 func TestParseFanCurve_NonMonotonicTemp(t *testing.T) {
 	// Point 2 temp (50) is less than point 1 temp (53)
-	_, err := cli.ParseFanCurve("48:2,53:22,50:30,60:43,63:56,65:68,70:89,76:102")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,50:30,60:43,63:56,65:68,70:89,76:102")
 	if err == nil {
 		t.Error("expected error for non-monotonic temps")
 	}
@@ -40,28 +40,28 @@ func TestParseFanCurve_NonMonotonicTemp(t *testing.T) {
 
 func TestParseFanCurve_DecreasingPWM(t *testing.T) {
 	// Point 2 pwm (20) is less than point 1 pwm (22)
-	_, err := cli.ParseFanCurve("48:2,53:22,57:20,60:43,63:56,65:68,70:89,76:102")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,57:20,60:43,63:56,65:68,70:89,76:102")
 	if err == nil {
 		t.Error("expected error for decreasing PWM")
 	}
 }
 
 func TestParseFanCurve_TempOutOfRange(t *testing.T) {
-	_, err := cli.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,130:102")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,130:102")
 	if err == nil {
 		t.Error("expected error for temp > 120")
 	}
 }
 
 func TestParseFanCurve_PWMOutOfRange(t *testing.T) {
-	_, err := cli.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:300")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:300")
 	if err == nil {
 		t.Error("expected error for PWM > 255")
 	}
 }
 
 func TestParseFanCurve_InvalidFormat(t *testing.T) {
-	_, err := cli.ParseFanCurve("48-2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
+	_, err := asusz13.ParseFanCurve("48-2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
 	if err == nil {
 		t.Error("expected error for invalid format")
 	}
@@ -69,7 +69,7 @@ func TestParseFanCurve_InvalidFormat(t *testing.T) {
 
 func TestParseFanCurve_Percentage(t *testing.T) {
 	curve := "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
-	points, err := cli.ParseFanCurve(curve)
+	points, err := asusz13.ParseFanCurve(curve)
 	if err != nil {
 		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
 	}
@@ -85,7 +85,7 @@ func TestParseFanCurve_Percentage(t *testing.T) {
 func TestParseFanCurve_MixedFormats(t *testing.T) {
 	// Mix PWM and percentage in the same curve.
 	curve := "48:1%,53:22,57:12%,60:43,63:22%,65:68,70:35%,76:102"
-	points, err := cli.ParseFanCurve(curve)
+	points, err := asusz13.ParseFanCurve(curve)
 	if err != nil {
 		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
 	}
@@ -98,7 +98,7 @@ func TestParseFanCurve_MixedFormats(t *testing.T) {
 }
 
 func TestParseFanCurve_PercentageOutOfRange(t *testing.T) {
-	_, err := cli.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:101%")
+	_, err := asusz13.ParseFanCurve("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:101%")
 	if err == nil {
 		t.Error("expected error for percentage > 100")
 	}
@@ -106,7 +106,7 @@ func TestParseFanCurve_PercentageOutOfRange(t *testing.T) {
 
 func TestParseFanCurve_Percentage100(t *testing.T) {
 	curve := "30:100%,40:100%,50:100%,60:100%,65:100%,70:100%,75:100%,80:100%"
-	points, err := cli.ParseFanCurve(curve)
+	points, err := asusz13.ParseFanCurve(curve)
 	if err != nil {
 		t.Fatalf("ParseFanCurve(%q) = error %v", curve, err)
 	}
@@ -126,7 +126,7 @@ func TestFanModeName(t *testing.T) {
 		{99, "unknown(99)"},
 	}
 	for _, tt := range tests {
-		got := cli.FanModeName(tt.mode)
+		got := asusz13.FanModeName(tt.mode)
 		if got != tt.want {
 			t.Errorf("FanModeName(%d) = %q, want %q", tt.mode, got, tt.want)
 		}

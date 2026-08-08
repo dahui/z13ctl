@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // sysfs.go — sysfs path discovery helpers shared by cmd/ and internal/daemon/.
 

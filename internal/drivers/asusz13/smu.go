@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // smu.go — ryzen_smu kernel module sysfs interface for sending AMD SMU commands.
 //

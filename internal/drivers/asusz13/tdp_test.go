@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // tdp_test.go — PPT write-path tests. These use a temp directory in place of
 // the real sysfs node, so no hardware is required.

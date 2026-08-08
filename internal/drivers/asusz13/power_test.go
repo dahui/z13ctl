@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // power_test.go — mains discovery and profile-name rules, against the fake
 // sysfs tree. The decoy devices seeded by newFakeSysfs are the point of most of

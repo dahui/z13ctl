@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // undervolt.go — AMD Curve Optimizer (CO) control via the ryzen_smu kernel module.
 //

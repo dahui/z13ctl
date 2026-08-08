@@ -12,6 +12,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 	"github.com/dahui/z13ctl/internal/hid"
 )
 
@@ -93,8 +94,8 @@ func DryRunProfile(profile string) {
 	primary := FindProfilePath()
 	// Name-mapped, as SetProfile does for every device including the primary —
 	// printing the raw name here showed "quiet" where "low-power" gets written.
-	fmt.Printf("Would write %q to %s\n", profileNameForDevice(filepath.Dir(primary), profile), primary)
-	dir := sysProfileDir
+	fmt.Printf("Would write %q to %s\n", asusz13.ProfileNameForDevice(filepath.Dir(primary), profile), primary)
+	dir := asusz13.SysProfileDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -108,7 +109,7 @@ func DryRunProfile(profile string) {
 		if _, err := os.Stat(p); err != nil {
 			continue
 		}
-		name := profileNameForDevice(base, profile)
+		name := asusz13.ProfileNameForDevice(base, profile)
 		fmt.Printf("Would write %q to %s\n", name, p)
 	}
 	ppd := map[string]string{
@@ -211,12 +212,12 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	for _, f := range fanNames {
+	for _, idx := range asusz13.FanPWMIndices() {
 		for i, p := range points {
-			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, f.index, i+1)
-			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, f.index, i+1)
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, idx, i+1)
+			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, idx, i+1)
 		}
-		fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, f.index)
+		fmt.Printf("Would write 1 (custom) to %s/pwm%d_enable\n", curveDir, idx)
 	}
 	fmt.Printf("Would read %s/pwm*_enable back to confirm the kernel kept the curve\n", curveDir)
 }
@@ -228,8 +229,8 @@ func DryRunFanCurveReset() {
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	for _, f := range fanNames {
-		fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, f.index)
+	for _, idx := range asusz13.FanPWMIndices() {
+		fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
 	}
 }
 
@@ -325,7 +326,7 @@ func DryRunTdpReset() {
 // "no changes" here told users the opposite of what the command does.
 func DryRunUndervolt(cpu int) {
 	fmt.Println("=== DRY RUN (no SMU write) ===")
-	encoded := encodeCOValue(cpu)
+	encoded := asusz13.EncodeCOValue(cpu)
 	if cpu == 0 {
 		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO 0 — clears any active undervolt)\n", encoded)
 		return
@@ -336,7 +337,7 @@ func DryRunUndervolt(cpu int) {
 // DryRunUndervoltReset prints the SMU commands that would be sent to reset CO.
 func DryRunUndervoltReset() {
 	fmt.Println("=== DRY RUN (no SMU write) ===")
-	encoded := encodeCOValue(0)
+	encoded := asusz13.EncodeCOValue(0)
 	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (reset CPU CO)\n", encoded)
 }
 

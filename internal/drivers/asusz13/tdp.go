@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // tdp.go — PPT sysfs path discovery and I/O helpers for ASUS TDP control.
 // Uses the asus-nb-wmi platform device attributes (NOT firmware-attributes,

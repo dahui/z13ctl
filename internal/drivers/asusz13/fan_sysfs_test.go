@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // fan_sysfs_test.go — hwmon and platform-profile helpers exercised against the
 // fake sysfs tree from sysfs_fake_test.go.

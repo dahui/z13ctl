@@ -1,4 +1,4 @@
-package cli
+package asusz13
 
 // smu_test.go — ryzen_smu mailbox protocol and Curve Optimizer command paths,
 // driven by the fakeSMU mailbox from sysfs_fake_test.go.
