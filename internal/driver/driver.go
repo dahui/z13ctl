@@ -174,11 +174,17 @@ type Toggles interface {
 // BatteryStatus is a point-in-time battery reading. Fields the hardware does
 // not report are zero; ChargeFull and ChargeFullDesign together give state of
 // health.
+//
+// OnAC is only meaningful when ACKnown is true. On machines with no Mains
+// supply (VMs, desktops, a driver not yet bound) the source cannot be
+// observed, and the established invariant is that unknown must never be read
+// as "on battery" — a bool alone cannot say that.
 type BatteryStatus struct {
 	Capacity         int     // percent
 	ChargeFull       int     // µAh, current full-charge capacity
 	ChargeFullDesign int     // µAh, design capacity
-	OnAC             bool    // mains power attached
+	OnAC             bool    // mains power attached; meaningless unless ACKnown
+	ACKnown          bool    // whether the power source could be observed
 	PowerNowW        float64 // instantaneous draw or charge rate, watts
 }
 
