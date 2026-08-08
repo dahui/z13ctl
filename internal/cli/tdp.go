@@ -9,7 +9,23 @@ import (
 	"os"
 
 	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/z13ctl/internal/safety"
 )
+
+// z13Envelope is the Z13's power envelope in the form internal/safety consumes.
+// The floor family below forwards through it; when the device registry lands,
+// the envelope comes from the detected device instead and these forwarders go
+// away with the rest of this package's Z13 constants.
+func z13Envelope() driver.PowerEnvelope {
+	return driver.PowerEnvelope{
+		TDPMin:          TDPMin,
+		TDPMaxSafe:      TDPMaxSafe,
+		TDPMaxForced:    TDPMaxForced,
+		StockProfilePPT: StockProfilePPT,
+		FloorCurve:      HighTDPFanCurve(),
+	}
+}
 
 // TDP safety limits in watts, derived from G-Helper's model config for the
 // 2025 ROG Flow Z13 (GZ302E) and Armoury Crate custom mode limits.
@@ -163,120 +179,24 @@ func SetTDP(watts, pl1, pl2, pl3 int) error {
 	return SetTDPState(TDPStateFor(watts, pl1, pl2, pl3))
 }
 
-// FanCurveForTDP returns the curve that must be in force for a sustained limit of
-// pl1, given the curve the caller intends to run:
-//
-//   - nil when pl1 needs no floor at all — at or below TDPMaxSafe, or unreadable
-//     (-1). "The limit imposes nothing; run whatever you were going to run."
-//   - want raised point-by-point to HighTDPFanCurve, so each point ends at
-//     whichever of the two is *higher*. A point the user set above the floor curve
-//     is theirs and is left alone; a point below it comes up. Nothing is ever
-//     lowered.
-//   - HighTDPFanCurve() when there is no want at all — nothing to raise, so the
-//     built-in curve is the only thing left to write.
-//
-// The floor is the whole HighTDPFanCurve, not the scalar HighTDPMinPWM, and that
-// distinction is load-bearing. CLAUDE.md's rationale for lowering the minimum from
-// 204 to 127 is that "the *ramp* is what protects the APU, since a machine actually
-// sustaining >75W is well past 60°C where the curve is far above the floor anyway".
-// Clamping to the scalar alone honoured the first half and threw away the second: a
-// curve flat at 127 satisfied it everywhere, so 93W sustained at 90°C ran the fans
-// at 50% where every pre-1.3.1 path would have reached 100%.
-//
-// Raising preserves the monotonically non-decreasing PWM order ParseFanCurve
-// requires, because FloorPWMAt is itself non-decreasing in temperature and the
-// pointwise max of two non-decreasing sequences is non-decreasing. Temperatures are
-// the user's throughout — only PWM values move.
-//
-// The floor is evaluated at each point's *temperature*, via FloorPWMAt, not at the
-// matching slice index. Index matching was the first attempt and is wrong whenever
-// the user's temperatures differ from HighTDPFanCurve's: a curve of
-// 70:130,75:135,80:140,… clears every index-matched comparison and still runs 55%
-// fans at 80°C, where the built-in curve demands 100%. Since the whole
-// justification is stated in temperature terms — a machine sustaining more than
-// TDPMaxSafe lives well past 60°C — the comparison has to be too, and the published
-// floor table only means anything if it is.
-//
-// want is never mutated: it aliases the saved profile in daemon state, and raising
-// in place would rewrite the user's stored curve.
-//
-// This is the single place the rule lives. ApplyTDPSafely and the reconcile watcher
-// both call it; they used to carry separate copies that disagreed, and the apply
-// path's copy was wrong — it treated the floor as an override and replaced *every*
-// curve above TDPMaxSafe. A user curve of 204→255 came back as the 127→255 ramp,
-// and a curve at 100% everywhere was downgraded to one that idles at 50%. The
-// watcher would not correct it either: the fans are left in mode 1, which reads as
-// "the curve is live".
+// FanCurveForTDP returns the curve that must be in force for a sustained limit
+// of pl1, given the curve the caller intends to run. The rule — and the essay
+// explaining why the floor is a temperature-matched curve rather than a scalar
+// — lives in safety.FanCurveForTDP; this forwards the Z13's envelope.
 func FanCurveForTDP(pl1 int, want []api.FanCurvePoint) []api.FanCurvePoint {
-	if pl1 <= TDPMaxSafe {
-		return nil
-	}
-	if len(want) == 0 {
-		return HighTDPFanCurve()
-	}
-	out := make([]api.FanCurvePoint, len(want))
-	copy(out, want)
-	for i := range out {
-		if lowest := FloorPWMAt(out[i].Temp); out[i].PWM < lowest {
-			out[i].PWM = lowest
-		}
-	}
-	return out
+	return safety.FanCurveForTDP(z13Envelope(), pl1, want)
 }
 
-// FloorPWMAt returns the minimum PWM the high-TDP floor requires at temp, reading
-// HighTDPFanCurve as the piecewise-linear curve the EC treats it as.
-//
-// Below the curve's first point it returns that point's PWM — the floor is a floor,
-// so it does not taper off at low temperature — and above the last point it returns
-// the last PWM, which is 255. Between points it interpolates, so a user point at
-// 55°C is measured against roughly halfway between the 50°C and 60°C values rather
-// than against whichever built-in point happens to share its index.
+// FloorPWMAt returns the minimum PWM the Z13's high-TDP floor requires at
+// temp. See safety.FloorPWMAt for the interpolation semantics.
 func FloorPWMAt(temp int) int {
-	floor := HighTDPFanCurve()
-	if temp <= floor[0].Temp {
-		return floor[0].PWM
-	}
-	for i := 1; i < len(floor); i++ {
-		if temp > floor[i].Temp {
-			continue
-		}
-		lo, hi := floor[i-1], floor[i]
-		span := hi.Temp - lo.Temp
-		if span <= 0 {
-			return hi.PWM
-		}
-		return lo.PWM + (hi.PWM-lo.PWM)*(temp-lo.Temp)/span
-	}
-	return floor[len(floor)-1].PWM
+	return safety.FloorPWMAt(HighTDPFanCurve(), temp)
 }
 
-// FloorAdjustsCurve reports whether FanCurveForTDP changes anything about want —
-// either raising one or more points to the floor curve, or writing HighTDPFanCurve
-// whole because there is no want at all.
-//
-// Callers use it to tell the user the floor altered what they asked for, and just
-// as importantly to stay quiet when it did not. It is derived from FanCurveForTDP
-// rather than reimplementing the comparison, so the two cannot disagree about what
-// counts as an adjustment — which is how the scalar version came to answer "no
-// problem" for a curve the ramp does raise.
-//
-// An absent curve counts as adjusted; CheckCurveAgainstTDP alone answers "no
-// problem" for nil, because a curve with no points has none below the floor.
+// FloorAdjustsCurve reports whether FanCurveForTDP changes anything about
+// want. See safety.FloorAdjustsCurve.
 func FloorAdjustsCurve(pl1 int, want []api.FanCurvePoint) bool {
-	got := FanCurveForTDP(pl1, want)
-	if got == nil {
-		return false // the limit imposes nothing
-	}
-	if len(want) != len(got) {
-		return true // no curve of its own, so the whole floor curve was written
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return true
-		}
-	}
-	return false
+	return safety.FloorAdjustsCurve(z13Envelope(), pl1, want)
 }
 
 // ApplyTDPSafely writes s, first putting the fans into the state the sustained
@@ -334,35 +254,12 @@ func CheckFanCurveFloor(profile string, points []api.FanCurvePoint) error {
 	return CheckCurveAgainstTDP(points, tdp.PL1SPL)
 }
 
-// CheckCurveAgainstTDP rejects a curve holding any point below the high-TDP floor
-// while pl1 is above TDPMaxSafe. It reads nothing, which is what makes it usable
-// for a custom profile that is not currently applied: hardware says nothing
-// about a profile that is not running, so the limit to check against is the one
-// stored in the same profile.
-//
-// Applying that check when a profile is *edited* means no profile can be saved
-// in a state that would be unsafe when it is later activated. ApplyTDPSafely
-// still fails closed at activation; this is the earlier, friendlier refusal.
-//
-// It measures against FloorPWMAt — the same floor FanCurveForTDP raises to — and
-// not against the scalar HighTDPMinPWM. Using the scalar left `fancurve --set` as an
-// open door around the apply-time rule: a curve flat at 127 clears 127 everywhere,
-// so handleFanCurve accepted it and wrote it verbatim, and the reconcile watcher
-// then read pwm_enable=1 as "the curve is live" and never corrected it. The machine
-// sustained 93W at 90°C on 50% fans — the exact failure FanCurveForTDP was rewritten
-// to prevent, reached through the one write path that did not consult it.
+// CheckCurveAgainstTDP rejects a curve holding any point below the high-TDP
+// floor while pl1 is above TDPMaxSafe. It reads nothing, which is what makes
+// it usable for a custom profile that is not currently applied. See
+// safety.CheckCurveAgainstTDP for the rule and its history.
 func CheckCurveAgainstTDP(points []api.FanCurvePoint, pl1 int) error {
-	if pl1 <= TDPMaxSafe {
-		return nil
-	}
-	for _, p := range points {
-		if lowest := FloorPWMAt(p.Temp); p.PWM < lowest {
-			return fmt.Errorf("PWM %d at %d°C is below the %d required there when sustained TDP is above %dW "+
-				"(the floor rises with temperature, from %d at %d°C to 255 at 80°C)",
-				p.PWM, p.Temp, lowest, TDPMaxSafe, HighTDPMinPWM, HighTDPFanCurve()[0].Temp)
-		}
-	}
-	return nil
+	return safety.CheckCurveAgainstTDP(z13Envelope(), points, pl1)
 }
 
 // CheckFanFloorRelease reports whether the fans may be released to firmware
@@ -382,14 +279,8 @@ func CheckFanFloorRelease(profile string) error {
 }
 
 // CheckFanFloorReleaseAt is CheckFanFloorRelease against a known sustained
-// limit rather than one read from hardware. It is what a custom profile that is
-// not currently applied has to be checked against: hardware says nothing about
-// a profile that is not running, and clearing the curve from a profile that
-// keeps a high limit would be unsafe the moment that profile is activated.
+// limit rather than one read from hardware — what a custom profile that is not
+// currently applied has to be checked against. See safety.CheckFanFloorReleaseAt.
 func CheckFanFloorReleaseAt(pl1 int) error {
-	if pl1 <= TDPMaxSafe {
-		return nil
-	}
-	return fmt.Errorf("sustained TDP is %dW (above %dW), so fans must stay at or above %d PWM; lower it first with 'z13ctl tdp --reset'",
-		pl1, TDPMaxSafe, HighTDPMinPWM)
+	return safety.CheckFanFloorReleaseAt(z13Envelope(), pl1)
 }
