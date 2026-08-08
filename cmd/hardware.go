@@ -60,11 +60,6 @@ func hardware() (*device.Device, error) {
 				return
 			}
 		}
-		// Lighting and buttons still live inside internal/daemon (the CLI's
-		// lighting commands drive HID directly), so their factories are not
-		// registered yet; strip them or assembly fails on the gap.
-		c.Lighting = nil
-		c.Button = nil
 		hwDev, hwErr = device.Assemble(c)
 	})
 	return hwDev, hwErr

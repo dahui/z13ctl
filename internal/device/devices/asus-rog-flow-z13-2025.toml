@@ -89,3 +89,4 @@ method = "hwmon-rapl"
 method  = "evdev-key"
 device  = "Asus WMI hotkeys"
 keycode = 202
+kind    = "armoury-crate"

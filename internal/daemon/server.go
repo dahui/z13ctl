@@ -245,20 +245,19 @@ func (d *Daemon) handleBatteryLimitGet() response {
 }
 
 func (d *Daemon) handleApply(req request) response {
-	mode, err := aura.ModeFromString(req.Mode)
-	if err != nil {
+	// The lighting driver parses these again inside Apply; validating here
+	// first keeps the wire protocol's field-specific error prefixes, which the
+	// driver's single return cannot distinguish.
+	if _, err := aura.ModeFromString(req.Mode); err != nil {
 		return response{OK: false, Error: "mode: " + err.Error()}
 	}
-	speed, err := aura.SpeedFromString(req.Speed)
-	if err != nil {
+	if _, err := aura.SpeedFromString(req.Speed); err != nil {
 		return response{OK: false, Error: "speed: " + err.Error()}
 	}
-	r, g, b, err := cli.ParseColor(req.Color)
-	if err != nil {
+	if _, _, _, err := aura.ParseColor(req.Color); err != nil {
 		return response{OK: false, Error: "color: " + err.Error()}
 	}
-	r2, g2, b2, err := cli.ParseColor(req.Color2)
-	if err != nil {
+	if _, _, _, err := aura.ParseColor(req.Color2); err != nil {
 		return response{OK: false, Error: "color2: " + err.Error()}
 	}
 	if req.Brightness < 0 || req.Brightness > 3 {
@@ -268,21 +267,9 @@ func (d *Daemon) handleApply(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.dev == nil {
+	if d.hw == nil || d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	target, err := d.dev.FilteredView(req.Device)
-	if err != nil {
-		return response{OK: false, Error: err.Error()}
-	}
-	if err := aura.Apply(target, mode, r, g, b, r2, g2, b2, speed, uint8(req.Brightness)); err != nil {
-		return response{OK: false, Error: "apply: " + err.Error()}
-	}
-	device := req.Device
-	if device == "" {
-		device = "all"
-	}
-	slog.Info("apply", "device", device, "mode", req.Mode, "color", req.Color, "brightness", req.Brightness)
 	ls := api.LightingState{
 		Enabled:    true,
 		Mode:       req.Mode,
@@ -291,6 +278,14 @@ func (d *Daemon) handleApply(req request) response {
 		Speed:      req.Speed,
 		Brightness: req.Brightness,
 	}
+	if err := d.hw.Lighting.Apply(req.Device, ls); err != nil {
+		return response{OK: false, Error: err.Error()}
+	}
+	device := req.Device
+	if device == "" {
+		device = "all"
+	}
+	slog.Info("apply", "device", device, "mode", req.Mode, "color", req.Color, "brightness", req.Brightness)
 	if req.Device == "" {
 		// All-device apply: update canonical state and clear per-device overrides.
 		d.state.Lighting = ls
@@ -315,15 +310,11 @@ func (d *Daemon) handleOff(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.dev == nil {
+	if d.hw == nil || d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	target, err := d.dev.FilteredView(req.Device)
-	if err != nil {
+	if err := d.hw.Lighting.Off(req.Device); err != nil {
 		return response{OK: false, Error: err.Error()}
-	}
-	if err := aura.TurnOff(target); err != nil {
-		return response{OK: false, Error: "off: " + err.Error()}
 	}
 	if req.Device != "" {
 		slog.Info("off", "device", req.Device)
@@ -356,22 +347,12 @@ func (d *Daemon) handleBrightness(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.dev == nil {
+	if d.hw == nil || d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
-	target, err := d.dev.FilteredView(req.Device)
-	if err != nil {
-		return response{OK: false, Error: err.Error()}
-	}
-	if err := aura.Init(target); err != nil {
-		return response{OK: false, Error: "init: " + err.Error()}
-	}
 	on := req.Brightness > 0
-	if err := aura.SetPower(target, on); err != nil {
-		return response{OK: false, Error: "setpower: " + err.Error()}
-	}
-	if err := aura.SetBrightness(target, uint8(req.Brightness)); err != nil {
-		return response{OK: false, Error: "brightness: " + err.Error()}
+	if err := d.hw.Lighting.SetBrightness(req.Device, req.Brightness); err != nil {
+		return response{OK: false, Error: err.Error()}
 	}
 	logArgs := []any{"level", req.Brightness}
 	if req.Device != "" {

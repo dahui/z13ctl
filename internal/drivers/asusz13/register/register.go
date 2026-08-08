@@ -13,6 +13,8 @@ import (
 	"github.com/dahui/z13ctl/internal/device"
 	"github.com/dahui/z13ctl/internal/driver"
 	"github.com/dahui/z13ctl/internal/drivers/asusz13"
+	"github.com/dahui/z13ctl/internal/drivers/aurahid"
+	"github.com/dahui/z13ctl/internal/drivers/evdevkey"
 )
 
 func init() {
@@ -41,10 +43,14 @@ func init() {
 	device.RegisterTelemetry("hwmon-rapl", func(device.TelemetryConfig) (driver.Telemetry, error) {
 		return asusz13.NewTelemetry(), nil
 	})
-	// Deliberately absent: lighting ("aura-hid") and buttons ("evdev-key").
-	// Their implementations still live inside internal/daemon (the HID handle,
-	// hotplug swap, and evdev watcher are daemon state today) and register
-	// here when the daemon conversion moves them. Until then, assembling the
-	// full Z13 config fails on lighting — TestZ13AssemblyGap pins that state
-	// so its disappearance is noticed and celebrated rather than silent.
+	// Lighting and buttons live in their own driver packages — the Aura HID
+	// protocol and a watched evdev key are not Z13 sysfs concerns — but the Z13
+	// is what registers them, since a registration is a per-binary statement of
+	// which hardware this build drives.
+	device.RegisterLighting("aura-hid", func(c device.LightingConfig) (driver.Lighting, error) {
+		return aurahid.New(c.Zones), nil
+	})
+	device.RegisterButtons("evdev-key", func(c device.ButtonConfig) (driver.Buttons, error) {
+		return evdevkey.New(c.Device, c.Keycode, c.Kind), nil
+	})
 }

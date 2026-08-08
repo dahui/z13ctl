@@ -29,22 +29,19 @@ func z13Config(t *testing.T) device.Config {
 }
 
 // TestZ13AssemblesWithRegisteredDrivers proves every method name the Z13 file
-// declares — bar the two known gaps — resolves through init() registration to
-// a working factory.
+// declares resolves through init() registration to a working factory.
 func TestZ13AssemblesWithRegisteredDrivers(t *testing.T) {
-	c := z13Config(t)
-	// Lighting and buttons are the known gaps (see register.go); drop them so
-	// the seven registered classes assemble.
-	c.Lighting = nil
-	c.Button = nil
-
-	d, err := device.Assemble(c)
+	d, err := device.Assemble(z13Config(t))
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
 	if d.Fans == nil || d.Power == nil || d.Profiles == nil || d.Toggles == nil ||
-		d.Battery == nil || d.Undervolt == nil || d.Telemetry == nil {
+		d.Battery == nil || d.Undervolt == nil || d.Telemetry == nil ||
+		d.Lighting == nil || d.Buttons == nil {
 		t.Fatalf("assembled device has nil capabilities: %+v", d)
+	}
+	if zones := d.Lighting.Zones(); len(zones) != 2 || zones[0] != "keyboard" || zones[1] != "lightbar" {
+		t.Errorf("lighting zones = %v, want keyboard + lightbar", zones)
 	}
 
 	// The engine's envelope is the device file's, and the file is pinned to
@@ -68,26 +65,10 @@ func TestZ13AssemblesWithRegisteredDrivers(t *testing.T) {
 	}
 }
 
-// TestZ13AssemblyGap pins the current known gap: the full Z13 config does not
-// assemble because lighting and buttons still live inside the daemon. When
-// their drivers register, this test fails — delete it and let the full-config
-// assembly above take over.
-func TestZ13AssemblyGap(t *testing.T) {
-	_, err := device.Assemble(z13Config(t))
-	if err == nil {
-		t.Fatal("full Z13 config assembled — the lighting/buttons gap has closed; " +
-			"update these tests to assemble the full config")
-	}
-	if !strings.Contains(err.Error(), "lighting") {
-		t.Errorf("expected the lighting gap, got: %v", err)
-	}
-}
-
 // TestTogglesRefuseUnknownID pins that device data naming a toggle this driver
 // cannot drive is an assembly-time error, not a dead control.
 func TestTogglesRefuseUnknownID(t *testing.T) {
 	c := z13Config(t)
-	c.Lighting, c.Button = nil, nil
 	// Copy before mutating: c.Toggles points into the shared cached config.
 	tg := *c.Toggles
 	tg.Entries = append(append([]device.ToggleEntry{}, tg.Entries...),

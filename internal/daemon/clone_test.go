@@ -364,9 +364,9 @@ func TestNormalizeLightingState(t *testing.T) {
 }
 
 // TestNormalizedStateIsAppliable is the regression guard proper: whatever
-// normalizeLightingState returns must survive the parsing applyZone does, or
-// lighting restore fails for every zone on every daemon start, resume, and
-// keyboard hotplug.
+// normalizeLightingState returns must survive the parsing the lighting
+// driver's Apply does, or lighting restore fails for every zone on every
+// daemon start, resume, and keyboard hotplug.
 func TestNormalizedStateIsAppliable(t *testing.T) {
 	// The exact state the off-then-brightness sequence used to persist.
 	broken := api.LightingState{Enabled: true, Brightness: 2}

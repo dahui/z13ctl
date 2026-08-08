@@ -17,10 +17,10 @@ import (
 	_ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
 )
 
-// testDev is the Z13 device assembled exactly as Run's transitional assembly
-// does — lighting and buttons stripped — from the embedded device file, with
-// no DMI matching involved. Drivers are stateless, so sharing one instance
-// across tests is safe.
+// testDev is the full Z13 device assembled exactly as Run's assembly does,
+// from the embedded device file, with no DMI matching involved. Constructors
+// are pure — the lighting driver holds no HID handle until Reopen, which
+// nothing here calls — so sharing one instance across tests is safe.
 var testDev = func() *device.Device {
 	configs, err := device.Configs()
 	if err != nil {
@@ -28,7 +28,6 @@ var testDev = func() *device.Device {
 	}
 	for _, c := range configs {
 		if c.Device.ID == fallbackDeviceID {
-			c.Lighting, c.Button = nil, nil
 			d, err := device.Assemble(c)
 			if err != nil {
 				panic(err)

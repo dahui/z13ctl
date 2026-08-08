@@ -124,6 +124,12 @@ type Lighting interface {
 	// Off turns one zone off; an empty zone means all.
 	Off(zone string) error
 
+	// SetBrightness changes only the brightness of one zone (empty means all),
+	// leaving the running effect untouched — a full Apply would restart the
+	// effect's animation. Level 0 also powers the zone down, and any non-zero
+	// level powers it up, matching the Aura brightness-off semantics.
+	SetBrightness(zone string, level int) error
+
 	// Present reports whether the lighting hardware is currently attached.
 	// Sysfs-only: it must not open the device.
 	Present() bool

@@ -4,27 +4,15 @@ package cli
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/dahui/z13ctl/internal/aura"
 )
 
-// ParseColor parses a color name or 6-digit hex string (RRGGBB) into R, G, B bytes.
-// Named colors (e.g. "blue", "hotpink") are resolved via the NamedColors table.
+// ParseColor parses a color name or 6-digit hex string (RRGGBB) into R, G, B
+// bytes. Forwards to aura.ParseColor, where the color table lives.
 func ParseColor(s string) (r, g, b uint8, err error) {
-	resolved := ResolveColor(s)
-	hex := strings.TrimPrefix(resolved, "#")
-	if len(hex) != 6 {
-		// Distinguish "unknown name" from "bad hex" for a clearer message.
-		if resolved == s {
-			return 0, 0, 0, fmt.Errorf("unknown color name %q", s)
-		}
-		return 0, 0, 0, fmt.Errorf("expected 6-digit hex color or color name, got %q", s)
-	}
-	v, parseErr := strconv.ParseUint(hex, 16, 32)
-	if parseErr != nil {
-		return 0, 0, 0, fmt.Errorf("invalid hex color %q: %w", s, parseErr)
-	}
-	return uint8(v >> 16), uint8(v >> 8), uint8(v), nil
+	return aura.ParseColor(s)
 }
 
 // ParseBrightness parses a brightness level name or number into a 0–3 uint8.

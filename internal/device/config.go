@@ -153,6 +153,7 @@ type ButtonConfig struct {
 	Method  string `toml:"method"`
 	Device  string `toml:"device"`  // input device name to find by sysfs
 	Keycode int    `toml:"keycode"` // key code to watch for
+	Kind    string `toml:"kind"`    // driver.ButtonEvent.Kind delivered per press
 }
 
 // Validate reports everything wrong with a config at once, so a device data PR
@@ -290,6 +291,9 @@ func (c Config) Validate() error {
 		}
 		if c.Button.Device == "" || c.Button.Keycode <= 0 {
 			fail("button needs both device and a positive keycode")
+		}
+		if c.Button.Kind == "" {
+			fail("button.kind is required — it names the event the daemon receives")
 		}
 	}
 

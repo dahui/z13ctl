@@ -27,13 +27,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"syscall"
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/driver"
 )
 
@@ -94,12 +94,15 @@ func (d *Daemon) watchResume(ctx context.Context) {
 					slog.Debug("no sleep inhibitor held at PrepareForSleep(true); re-taking for the next cycle")
 					inhibitor = takeSleepInhibitor(conn)
 				}
-				// d.dev is guarded by d.mu: the hotplug watcher closes and
-				// replaces it on keyboard reattach, so an unlocked read here
-				// races with that swap and can write to a closed descriptor.
+				// The lighting driver's HID handle is guarded by d.mu: the
+				// hotplug watcher swaps it on keyboard reattach, so an
+				// unlocked call here races that swap and can write to a
+				// closed descriptor. A driver with no open device reports
+				// ErrUnsupported, which is the old "no device, nothing to
+				// turn off" silence.
 				d.mu.Lock()
-				if d.dev != nil {
-					if err := aura.TurnOff(d.dev); err != nil {
+				if d.hw != nil && d.hw.Lighting != nil {
+					if err := d.hw.Lighting.Off(""); err != nil && !errors.Is(err, driver.ErrUnsupported) {
 						slog.Warn("failed to turn off lighting before sleep", "err", err)
 					}
 				}
@@ -365,13 +368,14 @@ func (d *Daemon) restoreVolatileState() {
 	// profile.
 	defer d.setSuspending(false)
 
-	// Both d.dev and d.state are guarded by d.mu, and applyLightingState reads
-	// them directly, so hold the lock across it — the same discipline the socket
-	// handlers use. cloneState is required because the plain struct copy would
-	// alias the Devices map and the pointer fields still owned by d.state.
+	// The lighting driver's handle and d.state are both guarded by d.mu, and
+	// applyLightingState reads them directly, so hold the lock across it — the
+	// same discipline the socket handlers use. cloneState is required because
+	// the plain struct copy would alias the Devices map and the pointer fields
+	// still owned by d.state.
 	d.mu.Lock()
 	state := cloneState(d.state)
-	if d.dev != nil {
+	if d.hw != nil && d.hw.Lighting != nil {
 		if err := d.applyLightingState(); err != nil {
 			slog.Warn("resume: failed to restore lighting", "err", err)
 		} else {

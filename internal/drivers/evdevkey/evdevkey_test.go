@@ -1,7 +1,9 @@
-package daemon
+package evdevkey
 
-// button_test.go — Armoury Crate button watcher: device discovery and the read
-// loop, driven by a fake evdev device so no hardware is required.
+// evdevkey_test.go — button watcher: device discovery and the read loop,
+// driven by a fake evdev device so no hardware is required. These tests came
+// from internal/daemon with the driver extraction; every assertion carried
+// over, including the issue #10 regression guard.
 
 import (
 	"context"
@@ -13,7 +15,19 @@ import (
 	"time"
 
 	"github.com/holoplot/go-evdev"
+
+	"github.com/dahui/z13ctl/internal/driver"
 )
+
+// The Z13's values, as the device file declares them.
+const (
+	testDeviceName = "Asus WMI hotkeys"
+	testKeycode    = 202 // KEY_PROG3
+	testKind       = "armoury-crate"
+)
+
+// testButtons returns a watcher configured as the Z13 device file configures it.
+func testButtons() *Buttons { return New(testDeviceName, testKeycode, testKind) }
 
 // fakeInputSysfs builds a /sys/class/input stand-in and points inputClassDir at it.
 func fakeInputSysfs(t *testing.T) string {
@@ -37,51 +51,51 @@ func addInputNode(t *testing.T, root, node, name string) {
 	}
 }
 
-func TestFindButtonDeviceByName(t *testing.T) {
+func TestFindDeviceByName(t *testing.T) {
 	root := fakeInputSysfs(t)
 	addInputNode(t, root, "event0", "AT Translated Set 2 keyboard")
-	addInputNode(t, root, "event7", buttonDeviceName)
+	addInputNode(t, root, "event7", testDeviceName)
 	addInputNode(t, root, "event9", "GZ302EAC cover keyboard")
 
-	if got, want := findButtonDevice(), "/dev/input/event7"; got != want {
-		t.Errorf("findButtonDevice() = %q, want %q", got, want)
+	if got, want := testButtons().findDevice(), "/dev/input/event7"; got != want {
+		t.Errorf("findDevice() = %q, want %q", got, want)
 	}
 }
 
-func TestFindButtonDeviceSkipsNonEventEntries(t *testing.T) {
+func TestFindDeviceSkipsNonEventEntries(t *testing.T) {
 	root := fakeInputSysfs(t)
 	// "mice" and "js0" live alongside eventN in /sys/class/input.
-	addInputNode(t, root, "mice", buttonDeviceName)
-	addInputNode(t, root, "js0", buttonDeviceName)
+	addInputNode(t, root, "mice", testDeviceName)
+	addInputNode(t, root, "js0", testDeviceName)
 
-	if got := findButtonDevice(); got != "" {
-		t.Errorf("findButtonDevice() = %q, want \"\" — only event* nodes are usable", got)
+	if got := testButtons().findDevice(); got != "" {
+		t.Errorf("findDevice() = %q, want \"\" — only event* nodes are usable", got)
 	}
 }
 
-func TestFindButtonDeviceToleratesUnreadableNodes(t *testing.T) {
+func TestFindDeviceToleratesUnreadableNodes(t *testing.T) {
 	root := fakeInputSysfs(t)
 	// A node with no device/name file at all must not abort the scan.
 	if err := os.MkdirAll(root+"/event0", 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	addInputNode(t, root, "event1", buttonDeviceName)
+	addInputNode(t, root, "event1", testDeviceName)
 
-	if got, want := findButtonDevice(), "/dev/input/event1"; got != want {
-		t.Errorf("findButtonDevice() = %q, want %q", got, want)
+	if got, want := testButtons().findDevice(), "/dev/input/event1"; got != want {
+		t.Errorf("findDevice() = %q, want %q", got, want)
 	}
 }
 
-func TestFindButtonDeviceAbsent(t *testing.T) {
+func TestFindDeviceAbsent(t *testing.T) {
 	root := fakeInputSysfs(t)
 	addInputNode(t, root, "event0", "AT Translated Set 2 keyboard")
-	if got := findButtonDevice(); got != "" {
-		t.Errorf("findButtonDevice() = %q, want \"\"", got)
+	if got := testButtons().findDevice(); got != "" {
+		t.Errorf("findDevice() = %q, want \"\"", got)
 	}
 
 	inputClassDir = root + "/does-not-exist"
-	if got := findButtonDevice(); got != "" {
-		t.Errorf("findButtonDevice() with a missing sysfs root = %q, want \"\"", got)
+	if got := testButtons().findDevice(); got != "" {
+		t.Errorf("findDevice() with a missing sysfs root = %q, want \"\"", got)
 	}
 }
 
@@ -130,7 +144,7 @@ func keyEvent(code evdev.EvCode, value int32) evdev.InputEvent {
 	return evdev.InputEvent{Type: evdev.EV_KEY, Code: code, Value: value}
 }
 
-func TestRunButtonLoopForwardsOnlyButtonKeyDown(t *testing.T) {
+func TestRunLoopForwardsOnlyButtonKeyDown(t *testing.T) {
 	tests := []struct {
 		name  string
 		event evdev.InputEvent
@@ -146,24 +160,29 @@ func TestRunButtonLoopForwardsOnlyButtonKeyDown(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dev := &fakeEvdev{events: []evdev.InputEvent{tt.event}, readErr: errors.New("eof")}
-			ch := make(chan struct{}, 1)
+			ch := make(chan driver.ButtonEvent, 1)
 
-			if err := runButtonLoop(context.Background(), dev, ch); err == nil {
-				t.Fatal("runButtonLoop() = nil, want the read error that ends the loop")
+			if err := testButtons().runLoop(context.Background(), dev, ch); err == nil {
+				t.Fatal("runLoop() = nil, want the read error that ends the loop")
 			}
 			got := len(ch) == 1
 			if got != tt.want {
 				t.Errorf("notified = %v, want %v", got, tt.want)
 			}
+			if got && tt.want {
+				if ev := <-ch; ev.Kind != testKind {
+					t.Errorf("event kind = %q, want %q", ev.Kind, testKind)
+				}
+			}
 		})
 	}
 }
 
-// TestRunButtonLoopIgnoresTabletModeSwitch is the regression guard for issue #10.
+// TestRunLoopIgnoresTabletModeSwitch is the regression guard for issue #10.
 // The watcher must pass over SW_TABLET_MODE without acting on it — and, because
 // the device is never grabbed (eventDevice has no Grab method), libinput still
 // receives the transition and the detachable cover keyboard keeps working.
-func TestRunButtonLoopIgnoresTabletModeSwitch(t *testing.T) {
+func TestRunLoopIgnoresTabletModeSwitch(t *testing.T) {
 	dev := &fakeEvdev{
 		events: []evdev.InputEvent{
 			{Type: evdev.EV_SW, Code: evdev.SW_TABLET_MODE, Value: 1},
@@ -172,19 +191,19 @@ func TestRunButtonLoopIgnoresTabletModeSwitch(t *testing.T) {
 		},
 		readErr: errors.New("eof"),
 	}
-	ch := make(chan struct{}, 4)
+	ch := make(chan driver.ButtonEvent, 4)
 
-	if err := runButtonLoop(context.Background(), dev, ch); err == nil {
-		t.Fatal("runButtonLoop() = nil, want the read error that ends the loop")
+	if err := testButtons().runLoop(context.Background(), dev, ch); err == nil {
+		t.Fatal("runLoop() = nil, want the read error that ends the loop")
 	}
 	if len(ch) != 1 {
 		t.Errorf("notifications = %d, want exactly 1 (only the button press)", len(ch))
 	}
 }
 
-// TestRunButtonLoopDropsPressWhenNobodyListening covers the non-blocking send:
+// TestRunLoopDropsPressWhenNobodyListening covers the non-blocking send:
 // a full channel must not stall the watcher.
-func TestRunButtonLoopDropsPressWhenNobodyListening(t *testing.T) {
+func TestRunLoopDropsPressWhenNobodyListening(t *testing.T) {
 	dev := &fakeEvdev{
 		events: []evdev.InputEvent{
 			keyEvent(evdev.KEY_PROG3, 1),
@@ -193,45 +212,45 @@ func TestRunButtonLoopDropsPressWhenNobodyListening(t *testing.T) {
 		},
 		readErr: errors.New("eof"),
 	}
-	ch := make(chan struct{}, 1) // room for one; the rest must be discarded
+	ch := make(chan driver.ButtonEvent, 1) // room for one; the rest must be discarded
 
 	done := make(chan error, 1)
-	go func() { done <- runButtonLoop(context.Background(), dev, ch) }()
+	go func() { done <- testButtons().runLoop(context.Background(), dev, ch) }()
 
 	select {
 	case err := <-done:
 		if err == nil {
-			t.Fatal("runButtonLoop() = nil, want the read error")
+			t.Fatal("runLoop() = nil, want the read error")
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("runButtonLoop() blocked on a full channel instead of dropping the press")
+		t.Fatal("runLoop() blocked on a full channel instead of dropping the press")
 	}
 	if len(ch) != 1 {
 		t.Errorf("buffered notifications = %d, want 1", len(ch))
 	}
 }
 
-func TestRunButtonLoopReturnsNilOnContextCancel(t *testing.T) {
+func TestRunLoopReturnsNilOnContextCancel(t *testing.T) {
 	dev := &fakeEvdev{readErr: errors.New("closed"), block: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- runButtonLoop(ctx, dev, make(chan struct{}, 1)) }()
+	go func() { done <- testButtons().runLoop(ctx, dev, make(chan driver.ButtonEvent, 1)) }()
 
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("runButtonLoop() = %v, want nil on context cancellation", err)
+			t.Errorf("runLoop() = %v, want nil on context cancellation", err)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("runButtonLoop() did not return after context cancellation")
+		t.Fatal("runLoop() did not return after context cancellation")
 	}
 }
 
-func TestRunButtonLoopClosesDevice(t *testing.T) {
+func TestRunLoopClosesDevice(t *testing.T) {
 	dev := &fakeEvdev{readErr: errors.New("eof")}
-	_ = runButtonLoop(context.Background(), dev, make(chan struct{}, 1))
+	_ = testButtons().runLoop(context.Background(), dev, make(chan driver.ButtonEvent, 1))
 
 	// The closer goroutine runs on the deferred close(stop); give it a moment.
 	for range 20 {
@@ -243,10 +262,10 @@ func TestRunButtonLoopClosesDevice(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Error("runButtonLoop() returned without closing the device — the fd leaks on every retry")
+	t.Error("runLoop() returned without closing the device — the fd leaks on every retry")
 }
 
-// --- watchButton: the retry loop that runs for the daemon's lifetime ---
+// --- Watch: the retry loop that runs for the daemon's lifetime ---
 
 // fastRetries shrinks the watcher's backoff so tests do not sleep for seconds.
 func fastRetries(t *testing.T) {
@@ -269,8 +288,8 @@ func stubOpener(t *testing.T, fn func(path string) (eventDevice, error)) *int32 
 	return &calls
 }
 
-func TestWatchButtonRetriesWhenDeviceMissing(t *testing.T) {
-	fakeInputSysfs(t) // empty: findButtonDevice returns ""
+func TestWatchRetriesWhenDeviceMissing(t *testing.T) {
+	fakeInputSysfs(t) // empty: findDevice returns ""
 	fastRetries(t)
 	calls := stubOpener(t, func(string) (eventDevice, error) {
 		t.Error("openEventDevice called even though no device was discovered")
@@ -279,26 +298,26 @@ func TestWatchButtonRetriesWhenDeviceMissing(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+	go func() { defer close(done); _ = testButtons().Watch(ctx, make(chan driver.ButtonEvent, 1)) }()
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("watchButton did not return after cancellation")
+		t.Fatal("Watch did not return after cancellation")
 	}
 	if got := atomic.LoadInt32(calls); got != 0 {
 		t.Errorf("openEventDevice calls = %d, want 0", got)
 	}
 }
 
-// TestWatchButtonReopensAfterReadError covers the recovery path used on
+// TestWatchReopensAfterReadError covers the recovery path used on
 // suspend/resume: the read loop ends with an error and the watcher must reopen
 // the device rather than give up.
-func TestWatchButtonReopensAfterReadError(t *testing.T) {
+func TestWatchReopensAfterReadError(t *testing.T) {
 	root := fakeInputSysfs(t)
-	addInputNode(t, root, "event3", buttonDeviceName)
+	addInputNode(t, root, "event3", testDeviceName)
 	fastRetries(t)
 
 	var mu sync.Mutex
@@ -313,7 +332,7 @@ func TestWatchButtonReopensAfterReadError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+	go func() { defer close(done); _ = testButtons().Watch(ctx, make(chan driver.ButtonEvent, 1)) }()
 
 	// Wait for several reopen cycles.
 	deadline := time.Now().Add(3 * time.Second)
@@ -324,7 +343,7 @@ func TestWatchButtonReopensAfterReadError(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("watchButton did not return after cancellation")
+		t.Fatal("Watch did not return after cancellation")
 	}
 
 	if got := atomic.LoadInt32(calls); got < 3 {
@@ -339,11 +358,11 @@ func TestWatchButtonReopensAfterReadError(t *testing.T) {
 	}
 }
 
-// TestWatchButtonRetriesWhenOpenFails is the InputPlumber case: the node exists
+// TestWatchRetriesWhenOpenFails is the InputPlumber case: the node exists
 // but cannot be opened. The watcher must keep retrying, not exit.
-func TestWatchButtonRetriesWhenOpenFails(t *testing.T) {
+func TestWatchRetriesWhenOpenFails(t *testing.T) {
 	root := fakeInputSysfs(t)
-	addInputNode(t, root, "event3", buttonDeviceName)
+	addInputNode(t, root, "event3", testDeviceName)
 	fastRetries(t)
 	calls := stubOpener(t, func(string) (eventDevice, error) {
 		return nil, os.ErrPermission
@@ -351,7 +370,7 @@ func TestWatchButtonRetriesWhenOpenFails(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); watchButton(ctx, make(chan struct{}, 1)) }()
+	go func() { defer close(done); _ = testButtons().Watch(ctx, make(chan driver.ButtonEvent, 1)) }()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) && atomic.LoadInt32(calls) < 3 {
@@ -361,16 +380,16 @@ func TestWatchButtonRetriesWhenOpenFails(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("watchButton did not return after cancellation")
+		t.Fatal("Watch did not return after cancellation")
 	}
 	if got := atomic.LoadInt32(calls); got < 3 {
 		t.Errorf("openEventDevice calls = %d, want >= 3 (watcher gave up on open failure)", got)
 	}
 }
 
-func TestWatchButtonForwardsPressThroughWatcher(t *testing.T) {
+func TestWatchForwardsPressThroughWatcher(t *testing.T) {
 	root := fakeInputSysfs(t)
-	addInputNode(t, root, "event3", buttonDeviceName)
+	addInputNode(t, root, "event3", testDeviceName)
 	fastRetries(t)
 	stubOpener(t, func(string) (eventDevice, error) {
 		return &fakeEvdev{
@@ -380,15 +399,18 @@ func TestWatchButtonForwardsPressThroughWatcher(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan struct{}, 1)
+	ch := make(chan driver.ButtonEvent, 1)
 	done := make(chan struct{})
-	go func() { defer close(done); watchButton(ctx, ch) }()
+	go func() { defer close(done); _ = testButtons().Watch(ctx, ch) }()
 
 	select {
-	case <-ch:
+	case ev := <-ch:
+		if ev.Kind != testKind {
+			t.Errorf("event kind = %q, want %q", ev.Kind, testKind)
+		}
 	case <-time.After(3 * time.Second):
 		cancel()
-		t.Fatal("button press did not reach the channel through watchButton")
+		t.Fatal("button press did not reach the channel through Watch")
 	}
 
 	// Wait for the watcher to exit before the test returns: its cleanup restores
@@ -397,6 +419,6 @@ func TestWatchButtonForwardsPressThroughWatcher(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("watchButton did not return after cancellation")
+		t.Fatal("Watch did not return after cancellation")
 	}
 }

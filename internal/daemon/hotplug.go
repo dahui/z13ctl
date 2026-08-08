@@ -10,8 +10,6 @@ package daemon
 import (
 	"context"
 	"time"
-
-	"github.com/dahui/z13ctl/internal/hid"
 )
 
 // hotplugPollInterval is how often watchHotplug checks for the keyboard's presence.
@@ -22,16 +20,20 @@ const hotplugPollInterval = 2 * time.Second
 // re-applies saved lighting. If the reopen fails (e.g. udev has not yet applied
 // hidraw permissions), it does not latch the present state, so the next tick
 // retries.
+//
+// Present is sysfs-only by the driver contract, so polling it opens nothing.
 func (d *Daemon) watchHotplug(ctx context.Context) {
-	keyboardPresent := func() bool { return hid.HasDevice("keyboard") }
-	present := keyboardPresent() // already restored at startup if present
+	if d.hw == nil || d.hw.Lighting == nil {
+		return
+	}
+	present := d.hw.Lighting.Present() // already restored at startup if present
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(hotplugPollInterval):
 		}
-		present = hotplugTick(present, keyboardPresent, d.reopenAndRestore)
+		present = hotplugTick(present, d.hw.Lighting.Present, d.reopenAndRestore)
 	}
 }
 

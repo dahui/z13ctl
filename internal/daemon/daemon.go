@@ -16,7 +16,9 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -28,11 +30,8 @@ import (
 	sddaemon "github.com/coreos/go-systemd/v22/daemon"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
 	"github.com/dahui/z13ctl/internal/device"
 	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/hid"
 )
 
 // Daemon holds the runtime state for the long-running z13ctl process.
@@ -53,13 +52,12 @@ type Daemon struct {
 	// field means the device does not have it; a nil hw altogether (bare test
 	// Daemons) reads as a device with no capabilities at all.
 	//
-	// Lighting and buttons are not yet driven through it — their drivers still
-	// live in this package (d.dev, watchButton) — so Run assembles with those
-	// two capabilities stripped. See internal/drivers/asusz13/register.
+	// The one exception to "read-only" is the lighting driver's *internal*
+	// state: Reopen swaps its HID handle, so every hw.Lighting call — reads
+	// included — happens under d.mu, exactly as the old d.dev field did.
 	hw *device.Device
 
 	mu    sync.Mutex
-	dev   *hid.Device // nil if no HID device was found at startup
 	state api.State
 
 	// suspending is set by releaseVolatileState and cleared by
@@ -106,11 +104,9 @@ type Options struct {
 const fallbackDeviceID = "asus-rog-flow-z13-2025"
 
 // assembleDevice matches this machine against the embedded device data and
-// assembles its drivers. Lighting and buttons are stripped before assembly
-// while their drivers still live inside this package; TestZ13AssemblyGap in
-// internal/drivers/asusz13/register pins the moment that changes. Assembly
-// itself can only fail on a build defect — a device file naming a factory this
-// binary does not register — so an error here is worth refusing to start over.
+// assembles its drivers. Assembly can only fail on a build defect — a device
+// file naming a factory this binary does not register — so an error here is
+// worth refusing to start over.
 func assembleDevice() (*device.Device, error) {
 	c, err := device.MatchConfig()
 	if err != nil {
@@ -130,8 +126,6 @@ func assembleDevice() (*device.Device, error) {
 			return nil, fmt.Errorf("fallback device %q is not in the embedded device data", fallbackDeviceID)
 		}
 	}
-	c.Lighting = nil
-	c.Button = nil
 	return device.Assemble(c)
 }
 
@@ -157,22 +151,26 @@ func Run(ctx context.Context, opts Options) error {
 
 	d.state = loadState()
 
-	dev, err := hid.FindDevice("")
-	if err != nil {
-		slog.Warn("HID device not found; lighting commands will be unavailable", "err", err)
-	} else {
-		d.dev = dev
-		// reopenAndRestore may replace d.dev on keyboard hotplug, so close
-		// whatever the current device is at shutdown rather than the original.
+	if d.hw.Lighting != nil {
+		// The driver may hold an open HID handle (its own, or one swapped in by
+		// the hotplug watcher later), so close whatever it holds at shutdown.
 		defer func() {
 			d.mu.Lock()
-			if d.dev != nil {
-				d.dev.Close()
+			if c, ok := d.hw.Lighting.(io.Closer); ok {
+				_ = c.Close()
 			}
 			d.mu.Unlock()
 		}()
-		if applyErr := d.applyLightingState(); applyErr != nil {
-			slog.Warn("failed to restore lighting state", "err", applyErr)
+		d.mu.Lock()
+		reopenErr := d.hw.Lighting.Reopen()
+		if reopenErr == nil {
+			if applyErr := d.applyLightingState(); applyErr != nil {
+				slog.Warn("failed to restore lighting state", "err", applyErr)
+			}
+		}
+		d.mu.Unlock()
+		if reopenErr != nil {
+			slog.Warn("HID device not found; lighting commands will be unavailable", "err", reopenErr)
 		}
 	}
 
@@ -279,10 +277,13 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	if opts.WatchButton {
-		go watchButton(ctx, d.buttonCh)
-	} else {
-		slog.Info("Armoury Crate button watcher disabled")
+	switch {
+	case !opts.WatchButton:
+		slog.Info("hardware button watcher disabled")
+	case d.hw.Buttons == nil:
+		slog.Info("no hardware button on this device")
+	default:
+		go d.watchButtons(ctx)
 	}
 
 	go d.watchResume(ctx)
@@ -568,49 +569,43 @@ func normalizeLightingState(ls, fallback api.LightingState) api.LightingState {
 	return ls
 }
 
-// applyZone applies a LightingState to a specific HID device or zone.
-func applyZone(dev *hid.Device, ls api.LightingState) error {
-	if !ls.Enabled {
-		return aura.TurnOff(dev)
+// watchButtons runs the device's button watcher, forwarding each press to
+// buttonCh for the broadcast loop. The daemon decides what a press means
+// (which client event to emit); the driver only reports that one happened.
+func (d *Daemon) watchButtons(ctx context.Context) {
+	events := make(chan driver.ButtonEvent, 4)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-events:
+				select {
+				case d.buttonCh <- struct{}{}:
+				default: // non-blocking: discard if nobody consuming
+				}
+			}
+		}
+	}()
+	if err := d.hw.Buttons.Watch(ctx, events); err != nil {
+		slog.Warn("button watcher stopped", "err", err)
 	}
-	mode, err := aura.ModeFromString(ls.Mode)
-	if err != nil {
-		return err
-	}
-	speed, err := aura.SpeedFromString(ls.Speed)
-	if err != nil {
-		return err
-	}
-	r, g, b, err := cli.ParseColor(ls.Color)
-	if err != nil {
-		return err
-	}
-	r2, g2, b2, err := cli.ParseColor(ls.Color2)
-	if err != nil {
-		return err
-	}
-	return aura.Apply(dev, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness))
 }
 
-// reopenAndRestore re-enumerates the HID device and re-applies the saved lighting
-// state. It is called after the detachable keyboard is reattached, where the
-// keyboard appears as a new hidraw node that the old d.dev no longer references.
-// Returns true on success; false (with a logged warning) if the device cannot be
-// reopened yet — e.g. udev has not finished applying hidraw permissions — so the
-// caller can retry.
+// reopenAndRestore re-opens the lighting device and re-applies the saved
+// lighting state. It is called after the detachable keyboard is reattached,
+// where the keyboard appears as a new hidraw node the driver's stale handle no
+// longer references. Returns true on success; false (with a logged warning) if
+// the device cannot be reopened yet — e.g. udev has not finished applying
+// hidraw permissions — so the caller can retry.
 func (d *Daemon) reopenAndRestore() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	dev, err := hid.FindDevice("")
-	if err != nil {
+	if err := d.hw.Lighting.Reopen(); err != nil {
 		slog.Warn("hotplug: failed to reopen HID device", "err", err)
 		return false
 	}
-	if d.dev != nil {
-		d.dev.Close()
-	}
-	d.dev = dev
 	if err := d.applyLightingState(); err != nil {
 		slog.Warn("hotplug: failed to restore lighting", "err", err)
 		return false
@@ -619,30 +614,34 @@ func (d *Daemon) reopenAndRestore() bool {
 	return true
 }
 
-// applyLightingState restores lighting from the saved state. d.dev must be non-nil.
-// If per-device states are saved (d.state.Devices), each zone is restored independently;
+// applyLightingState restores lighting from the saved state. If per-device
+// states are saved (d.state.Devices), each zone is restored independently;
 // otherwise the all-device state (d.state.Lighting) is applied to all zones.
 //
-// The caller must hold d.mu: this reads d.dev (which the hotplug watcher closes
-// and replaces) and d.state.Devices (which socket handlers mutate). Reading the
-// map unlocked while a handler writes it is a concurrent map access, which the
-// Go runtime turns into an unrecoverable crash.
+// The caller must hold d.mu: this drives the lighting driver (whose HID handle
+// the hotplug watcher swaps via Reopen) and reads d.state.Devices (which
+// socket handlers mutate). Reading the map unlocked while a handler writes it
+// is a concurrent map access, which the Go runtime turns into an unrecoverable
+// crash.
 func (d *Daemon) applyLightingState() error {
+	if d.hw == nil || d.hw.Lighting == nil {
+		return nil
+	}
 	if len(d.state.Devices) > 0 {
 		var firstErr error
-		for _, name := range []string{"keyboard", "lightbar"} {
+		for _, name := range d.hw.Lighting.Zones() {
 			ls := d.state.Lighting
 			if dl, ok := d.state.Devices[name]; ok {
 				ls = normalizeLightingState(dl, d.state.Lighting)
 			}
-			target, ferr := d.dev.FilteredView(name)
-			if ferr != nil {
-				continue // zone not present on this system
-			}
 			// Keep going after a failure: the zones are independent, and
-			// returning here meant one bad or unwritable zone silently left the
-			// other one dark.
-			if err := applyZone(target, ls); err != nil {
+			// returning early meant one bad or unwritable zone silently left
+			// the other one dark. A zone that is simply not present (the
+			// detached keyboard) is skipped, not failed.
+			if err := d.hw.Lighting.Apply(name, ls); err != nil {
+				if errors.Is(err, driver.ErrUnsupported) {
+					continue // zone not present on this system
+				}
 				slog.Warn("failed to restore lighting", "zone", name, "err", err)
 				if firstErr == nil {
 					firstErr = err
@@ -657,7 +656,10 @@ func (d *Daemon) applyLightingState() error {
 		}
 		return firstErr
 	}
-	if err := applyZone(d.dev, normalizeLightingState(d.state.Lighting, api.LightingState{})); err != nil {
+	if err := d.hw.Lighting.Apply("", normalizeLightingState(d.state.Lighting, api.LightingState{})); err != nil {
+		if errors.Is(err, driver.ErrUnsupported) {
+			return nil // no lighting device open; nothing to restore
+		}
 		return err
 	}
 	if d.state.Lighting.Enabled {

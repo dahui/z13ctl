@@ -284,6 +284,7 @@ type fakeLighting struct{}
 func (fakeLighting) Zones() []string                       { return nil }
 func (fakeLighting) Apply(string, api.LightingState) error { return nil }
 func (fakeLighting) Off(string) error                      { return nil }
+func (fakeLighting) SetBrightness(string, int) error       { return nil }
 func (fakeLighting) Present() bool                         { return true }
 func (fakeLighting) Reopen() error                         { return nil }
 
