@@ -301,6 +301,7 @@ func (fakeBattery) Status() (driver.BatteryStatus, error) { return driver.Batter
 
 type fakeUndervolt struct{}
 
+func (fakeUndervolt) Present() bool        { return false }
 func (fakeUndervolt) ProbeAvailable() bool { return false }
 func (fakeUndervolt) Range() (lo, hi int)  { return -40, 0 }
 func (fakeUndervolt) Apply(int) error      { return nil }

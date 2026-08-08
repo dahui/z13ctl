@@ -6,9 +6,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -47,15 +45,22 @@ Values:
 				return nil
 			}
 
-			if handled, err := api.SendPanelOverdriveSet(value); handled {
-				if err != nil {
-					return err
+			if handled, sendErr := api.SendPanelOverdriveSet(value); handled {
+				if sendErr != nil {
+					return sendErr
 				}
 				fmt.Printf("Panel overdrive set to %d\n", value)
 				return nil
 			}
 
-			if err := cli.SetPanelOverdrive(value); err != nil {
+			hw, err := hardware()
+			if err != nil {
+				return err
+			}
+			if hw.Toggles == nil {
+				return fmt.Errorf("no panel overdrive control on this device")
+			}
+			if err := hw.Toggles.Set("panel_overdrive", value); err != nil {
 				return fmt.Errorf("setting panel overdrive: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Panel overdrive set to %d\n", value)
@@ -63,11 +68,18 @@ Values:
 		}
 
 		// --get
-		data, err := os.ReadFile(cli.FindPanelOverdrivePath())
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		if hw.Toggles == nil {
+			return fmt.Errorf("no panel overdrive control on this device")
+		}
+		v, err := hw.Toggles.Get("panel_overdrive")
 		if err != nil {
 			return fmt.Errorf("reading panel overdrive: %w", err)
 		}
-		fmt.Println(strings.TrimSpace(string(data)))
+		fmt.Println(v)
 		return nil
 	},
 }

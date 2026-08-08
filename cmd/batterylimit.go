@@ -5,9 +5,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -47,16 +45,22 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 				return nil
 			}
 
-			if handled, err := api.SendBatteryLimitSet(limit); handled {
-				if err != nil {
-					return err
+			if handled, sendErr := api.SendBatteryLimitSet(limit); handled {
+				if sendErr != nil {
+					return sendErr
 				}
 				fmt.Printf("Battery charge limit set to %d%%\n", limit)
 				return nil
 			}
 
-			path := cli.FindBatteryThresholdPath()
-			if err := os.WriteFile(path, []byte(strconv.Itoa(limit)+"\n"), 0o644); err != nil {
+			hw, err := hardware()
+			if err != nil {
+				return err
+			}
+			if hw.Battery == nil {
+				return fmt.Errorf("no battery charge control on this device")
+			}
+			if err := hw.Battery.SetChargeLimit(limit); err != nil {
 				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Battery charge limit set to %d%%\n", limit)
@@ -64,11 +68,18 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 		}
 
 		// --get
-		data, err := os.ReadFile(cli.FindBatteryThresholdPath())
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		if hw.Battery == nil {
+			return fmt.Errorf("no battery charge control on this device")
+		}
+		limit, err := hw.Battery.ChargeLimit()
 		if err != nil {
 			return fmt.Errorf("reading battery limit: %w", err)
 		}
-		fmt.Println(strings.TrimSpace(string(data)))
+		fmt.Println(limit)
 		return nil
 	},
 }

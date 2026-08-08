@@ -203,6 +203,13 @@ type Battery interface {
 // daemon at startup and its result cached for the process lifetime. A
 // short-lived caller must never probe.
 type Undervolter interface {
+	// Present reports whether the undervolt interface exists on this machine
+	// at all — for the Z13, whether the ryzen_smu module is loaded — without
+	// touching hardware. It answers less than ProbeAvailable: presence says
+	// the path could work, not that it does. It is the only availability
+	// question a short-lived caller (the CLI) may ask.
+	Present() bool
+
 	// ProbeAvailable reports whether the undervolt path actually works on this
 	// machine. May write to hardware; see above for who is allowed to call it.
 	ProbeAvailable() bool

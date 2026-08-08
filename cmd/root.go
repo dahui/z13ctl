@@ -11,6 +11,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dahui/z13ctl/api"
+
+	// The Z13 driver registers its factories for this whole binary here: both
+	// the daemon's device assembly and the CLI's fallback assembly
+	// (hardware.go) fail loudly for any capability whose factory the binary
+	// does not carry. Registration is a per-binary choice by design.
+	_ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
 )
 
 // profileFlagUsage is shared by the fancurve, tdp, and undervolt commands so

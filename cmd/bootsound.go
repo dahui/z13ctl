@@ -5,9 +5,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -46,15 +44,22 @@ Values:
 				return nil
 			}
 
-			if handled, err := api.SendBootSoundSet(value); handled {
-				if err != nil {
-					return err
+			if handled, sendErr := api.SendBootSoundSet(value); handled {
+				if sendErr != nil {
+					return sendErr
 				}
 				fmt.Printf("Boot sound set to %d\n", value)
 				return nil
 			}
 
-			if err := cli.SetBootSound(value); err != nil {
+			hw, err := hardware()
+			if err != nil {
+				return err
+			}
+			if hw.Toggles == nil {
+				return fmt.Errorf("no boot sound control on this device")
+			}
+			if err := hw.Toggles.Set("boot_sound", value); err != nil {
 				return fmt.Errorf("setting boot sound: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Boot sound set to %d\n", value)
@@ -62,11 +67,18 @@ Values:
 		}
 
 		// --get
-		data, err := os.ReadFile(cli.FindBootSoundPath())
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		if hw.Toggles == nil {
+			return fmt.Errorf("no boot sound control on this device")
+		}
+		v, err := hw.Toggles.Get("boot_sound")
 		if err != nil {
 			return fmt.Errorf("reading boot sound: %w", err)
 		}
-		fmt.Println(strings.TrimSpace(string(data)))
+		fmt.Println(v)
 		return nil
 	},
 }

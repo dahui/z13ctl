@@ -224,6 +224,10 @@ func NewUndervolter(lo, hi int) driver.Undervolter {
 
 type undervolter struct{ lo, hi int }
 
+// Present is the stat-only check: the ryzen_smu sysfs interface exists. It
+// says nothing about whether CO commands work on this platform — that is
+// ProbeAvailable's (destructive) question.
+func (undervolter) Present() bool         { return SMUAvailable() }
 func (undervolter) ProbeAvailable() bool  { return SMUProbeUndervolt() }
 func (u undervolter) Range() (lo, hi int) { return u.lo, u.hi }
 func (undervolter) Apply(cpuCO int) error { return SetCurveOptimizer(cpuCO) }

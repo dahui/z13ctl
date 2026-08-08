@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/z13ctl/internal/safety"
 
 	"github.com/spf13/cobra"
 )
@@ -92,7 +94,14 @@ selects on battery.`,
 }
 
 func runTdpGet() error {
-	tdp, err := cli.ReadEffectivePPT(effectiveProfileForTDP())
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Power == nil {
+		return fmt.Errorf("no power limit control on this device")
+	}
+	tdp, err := hw.Power.ReadEffective(effectiveProfileForTDP(hw))
 	if err != nil {
 		return fmt.Errorf("reading TDP: %w", err)
 	}
@@ -106,25 +115,31 @@ func runTdpGet() error {
 	return nil
 }
 
-func readCurrentProfile() string {
-	data, err := os.ReadFile(cli.FindProfilePath())
+// readCurrentProfile reads the firmware profile from hardware, or "unknown"
+// when the device has no profile control or the read fails.
+func readCurrentProfile(hw *device.Device) string {
+	if hw.Profiles == nil {
+		return "unknown"
+	}
+	p, err := hw.Profiles.Get()
 	if err != nil {
 		return "unknown"
 	}
-	return strings.TrimSpace(string(data))
+	return p
 }
 
 // effectiveProfileForTDP returns the profile name to use when interpreting PPT
 // values. It prefers the daemon's own profile because "custom" is a virtual
 // profile that is deliberately never written to platform_profile — so sysfs
-// alone cannot tell a legitimate 5W custom TDP from the kernel's stale 5W cache,
-// and cli.ReadEffectivePPT would substitute the stock table for real values.
-// Falls back to platform_profile when the daemon is not running.
-func effectiveProfileForTDP() string {
+// alone cannot tell a legitimate minimum-watts custom TDP from the kernel's
+// stale boot cache, and ReadEffective would substitute the stock table for
+// real values. Falls back to the platform profile when the daemon is not
+// running.
+func effectiveProfileForTDP(hw *device.Device) string {
 	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil && st.Profile != "" {
 		return st.Profile
 	}
-	return readCurrentProfile()
+	return readCurrentProfile(hw)
 }
 
 func runTdpSet() error {
@@ -138,18 +153,28 @@ func runTdpSet() error {
 		return err
 	}
 
-	// PL1 (sustained) requires --force above 75W. PL2/PL3 (burst) are allowed
-	// up to the hardware max without --force since short bursts are thermally safe.
-	pl1Max := cli.TDPMaxSafe
-	if tdpForceFlag {
-		pl1Max = cli.TDPMaxForced
+	hw, err := hardware()
+	if err != nil {
+		return err
 	}
-	if pl1 < cli.TDPMin || pl1 > pl1Max {
-		if pl1 > cli.TDPMaxSafe && !tdpForceFlag {
+	if hw.Power == nil {
+		return fmt.Errorf("no power limit control on this device")
+	}
+	env := hw.Power.Envelope()
+
+	// PL1 (sustained) requires --force above the safe max. PL2/PL3 (burst) are
+	// allowed up to the hardware max without --force since short bursts are
+	// thermally safe.
+	pl1Max := env.TDPMaxSafe
+	if tdpForceFlag {
+		pl1Max = env.TDPMaxForced
+	}
+	if pl1 < env.TDPMin || pl1 > pl1Max {
+		if pl1 > env.TDPMaxSafe && !tdpForceFlag {
 			return fmt.Errorf("PL1 value %dW exceeds safe sustained maximum (%dW); use --force to allow up to %dW",
-				pl1, cli.TDPMaxSafe, cli.TDPMaxForced)
+				pl1, env.TDPMaxSafe, env.TDPMaxForced)
 		}
-		return fmt.Errorf("PL1 value %dW out of range %d–%d", pl1, cli.TDPMin, pl1Max)
+		return fmt.Errorf("PL1 value %dW out of range %d–%d", pl1, env.TDPMin, pl1Max)
 	}
 	for _, v := range []struct {
 		name  string
@@ -157,8 +182,8 @@ func runTdpSet() error {
 	}{
 		{"PL2", pl2}, {"PL3", pl3},
 	} {
-		if v.value < cli.TDPMin || v.value > cli.TDPMaxForced {
-			return fmt.Errorf("%s value %dW out of range %d–%d", v.name, v.value, cli.TDPMin, cli.TDPMaxForced)
+		if v.value < env.TDPMin || v.value > env.TDPMaxForced {
+			return fmt.Errorf("%s value %dW out of range %d–%d", v.name, v.value, env.TDPMin, env.TDPMaxForced)
 		}
 	}
 
@@ -167,12 +192,12 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag, cli.LiveFanCurve())
+		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag, liveFanCurve(hw))
 		return nil
 	}
 
-	// The daemon applies the fan floor itself (cli.ApplyTDPSafely), so hand the
-	// whole operation over before touching hardware here.
+	// The daemon applies the fan floor itself (its engine's ApplyTDPSafely), so
+	// hand the whole operation over before touching hardware here.
 	if err := ensureProfileTargetSupported(tdpProfileFlag); err != nil {
 		return err
 	}
@@ -181,7 +206,7 @@ func runTdpSet() error {
 	// already written the clamped curve, so the live curve then satisfies the floor
 	// by construction and FloorAdjustsCurve is always false — except when the read
 	// fails and nil makes it spuriously true, which is exactly backwards.
-	preCurve := cli.LiveFanCurve()
+	preCurve := liveFanCurve(hw)
 
 	if handled, err := api.SendTdpSetFor(tdpProfileFlag, tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
@@ -191,7 +216,7 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		printFloorNotice(pl1, preCurve, true)
+		printFloorNotice(env, pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)
 		return nil
 	}
@@ -199,19 +224,20 @@ func runTdpSet() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
-	// Direct path: same helper, so the no-daemon path enforces the fan floor on
-	// the same terms — fans first, and no TDP at all if that write fails.
+	// Direct path: the same engine the daemon uses, so the no-daemon path
+	// enforces the fan floor on the same terms — fans first, and no TDP at all
+	// if that write fails.
 	//
-	// LiveFanCurve is what this path has instead of profile state. Without it the
-	// floor would replace a curve the user set moments earlier even when that curve
-	// is well above it. preCurve was sampled before the socket attempt, which never
-	// wrote anything on this branch, so it is still current.
+	// The live curve is what this path has instead of profile state. Without it
+	// the floor would replace a curve the user set moments earlier even when that
+	// curve is well above it. preCurve was sampled before the socket attempt,
+	// which never wrote anything on this branch, so it is still current.
 	want := preCurve
-	if err := cli.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
+	if err := hw.Power.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	printFloorNotice(pl1, want, false)
-	if pl1 > cli.TDPMaxSafe {
+	printFloorNotice(env, pl1, want, false)
+	if pl1 > env.TDPMaxSafe {
 		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
 		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
 		fmt.Println("  this power limit stays in force, and the z13ctl daemon is not running to")
@@ -228,18 +254,19 @@ func runTdpSet() error {
 // two: with no custom curve at all the whole built-in floor curve is written, and
 // saying "points below 127 PWM were raised; every other point is unchanged" there
 // described points the user never set. DryRunTdp already distinguished the case.
-func printFloorNotice(pl1 int, want []api.FanCurvePoint, daemon bool) {
-	if pl1 <= cli.TDPMaxSafe {
+func printFloorNotice(env driver.PowerEnvelope, pl1 int, want []api.FanCurvePoint, daemon bool) {
+	if pl1 <= env.TDPMaxSafe || len(env.FloorCurve) == 0 {
 		return
 	}
+	minPWM := env.FloorCurve[0].PWM
 	switch {
 	case len(want) == 0:
 		fmt.Printf("Fans set to the built-in high-TDP curve: a %d PWM (50%%) floor rising to 100%% at 80°C\n",
-			cli.HighTDPMinPWM)
+			minPWM)
 		fmt.Println("  (no custom fan curve was in force to keep)")
-	case cli.FloorAdjustsCurve(pl1, want):
+	case safety.FloorAdjustsCurve(env, pl1, want):
 		fmt.Println("Fan curve points below the built-in high-TDP curve were raised to it; every")
-		fmt.Printf("  other point is unchanged. The floor rises with temperature — %d PWM (50%%) when\n", cli.HighTDPMinPWM)
+		fmt.Printf("  other point is unchanged. The floor rises with temperature — %d PWM (50%%) when\n", minPWM)
 		fmt.Println("  cool, 255 (100%) at 80°C — so a point can be raised even well above 50%")
 	default:
 		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
@@ -277,42 +304,55 @@ func runTdpReset() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
 	// Direct path (no daemon): switch to balanced, write its stock PPT values
 	// back to hardware, and only then release the fans to firmware auto — so
 	// they are never dropped to auto while a high custom TDP is still in force.
 	// The firmware manages fan curves on a profile change but does not restore
 	// PPT, so that part has to be explicit.
 	// Reset the undervolt as well: this lands on a stock profile, and every
-	// other route to one clears CO. Guarded on SMUAvailable so machines without
-	// ryzen_smu do not get a spurious warning.
-	if cli.SMUAvailable() {
-		if err := cli.ResetCurveOptimizer(); err != nil {
+	// other route to one clears CO. Guarded on Present (a stat, never the
+	// destructive probe) so machines without ryzen_smu do not get a spurious
+	// warning.
+	if hw.Undervolt != nil && hw.Undervolt.Present() {
+		if err := hw.Undervolt.Reset(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
 		}
 	}
-	if err := cli.SetProfile("balanced"); err != nil {
+	if hw.Profiles == nil {
+		return fmt.Errorf("no profile control on this device")
+	}
+	if err := hw.Profiles.Set("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	restoreStockPPT("balanced")
-	if err := cli.ResetAllFanCurves(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	restoreStockPPT(hw, "balanced")
+	if hw.Fans != nil {
+		if err := hw.Fans.Release(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+		}
 	}
 	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
 }
 
-// restoreStockPPT writes the measured stock PPT values for a stock profile back
-// to hardware on the direct (no-daemon) path. The asus-nb-wmi PPT attributes
-// have no "reset to firmware default" operation and the firmware does not
-// re-apply per-profile limits on a platform_profile change, so without this a
-// custom TDP leaks into every stock profile. Failures warn and continue: a
-// profile switch must not hard-fail because the PPT restore did not take.
-func restoreStockPPT(profile string) {
-	stock, ok := cli.StockProfilePPT[profile]
-	if !ok {
+// restoreStockPPT writes the stock PPT values for a stock profile back to
+// hardware on the direct (no-daemon) path. The PPT attributes have no "reset
+// to firmware default" operation and the firmware does not re-apply
+// per-profile limits on a platform_profile change, so without this a custom
+// TDP leaks into every stock profile. A profile with no row in the envelope is
+// a silent no-op, and write failures warn and continue: a profile switch must
+// not hard-fail because the PPT restore did not take.
+func restoreStockPPT(hw *device.Device, profile string) {
+	if hw.Power == nil {
 		return
 	}
-	if err := cli.SetTDPState(stock); err != nil {
+	if _, ok := hw.Power.Envelope().StockProfilePPT[profile]; !ok {
+		return
+	}
+	if err := hw.Power.RestoreStock(profile); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to restore stock TDP for %s: %v\n", profile, err)
 	}
 }

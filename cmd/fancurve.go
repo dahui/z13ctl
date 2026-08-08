@@ -11,6 +11,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/safety"
 
 	"github.com/spf13/cobra"
 )
@@ -72,31 +73,40 @@ profile you are not running is checked against that profile's own power limit.`,
 }
 
 func runFanCurveGet() error {
-	// Display fan1 only — the Z13 APU has two physical fans but they share a
-	// single hwmon control channel (pwm1). The kernel exposes a phantom fan2
-	// channel (0 RPM, pwm2_enable returns EIO) intended for GPU-fan SKUs.
-	rpms, rpmErr := cli.ReadBothFanRPM()
-	modes, modeErr := cli.ReadBothFanModes()
-	curves, curveErr := cli.ReadBothFanCurves()
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Fans == nil {
+		return fmt.Errorf("no fan control on this device")
+	}
+	// Display fan 0 only — the Z13's two fans always run the same curve. The
+	// mode is the driver's fold across every readable fan: "custom" only when
+	// all of them honour the curve, which is the truth the daemon acts on too.
+	rpms, rpmErr := hw.Fans.ReadRPM()
+	mode, modeErr := hw.Fans.ReadMode()
+	curve, curveErr := hw.Fans.LiveCurve()
 
 	rpmStr := "N/A"
-	if rpmErr == nil {
+	if rpmErr == nil && len(rpms) > 0 {
 		rpmStr = fmt.Sprintf("%d RPM", rpms[0])
 	}
 	modeStr := "N/A"
 	if modeErr == nil {
-		modeStr = cli.FanModeName(modes[0])
+		modeStr = cli.FanModeName(mode)
 	}
 	tempStr := ""
-	if temp, err := cli.ReadAPUTemperature(); err == nil {
-		tempStr = fmt.Sprintf(", APU: %d°C", temp)
+	if hw.Telemetry != nil {
+		if s, sErr := hw.Telemetry.Sample(); sErr == nil {
+			tempStr = fmt.Sprintf(", APU: %d°C", s.TempC)
+		}
 	}
 	fmt.Printf("Fans: %s, mode: %s%s\n", rpmStr, modeStr, tempStr)
 	if curveErr != nil {
 		fmt.Printf("  error reading curve: %v\n", curveErr)
 		return nil
 	}
-	for _, p := range curves[0] {
+	for _, p := range curve {
 		pct := p.PWM * 100 / 255
 		fmt.Printf("  %3d°C: %3d/255 (%2d%%)\n", p.Temp, p.PWM, pct)
 	}
@@ -109,13 +119,22 @@ func runFanCurveSet() error {
 		return fmt.Errorf("invalid fan curve: %w", err)
 	}
 
-	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
-	// Only meaningful for the running machine: when --profile names another
-	// profile the daemon checks the curve against that profile's own TDP, since
-	// hardware says nothing about a profile that is not applied.
-	if fanCurveProfileFlag == "" {
-		if err := cli.CheckFanCurveFloor(effectiveProfileForTDP(), points); err != nil {
-			return err
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+
+	// Enforce the floor when sustained TDP exceeds the safe max, against the
+	// limit hardware reports for the effective profile — a PPT read failure is
+	// deliberately not a refusal. Only meaningful for the running machine: when
+	// --profile names another profile the daemon checks the curve against that
+	// profile's own TDP, since hardware says nothing about a profile that is
+	// not applied.
+	if fanCurveProfileFlag == "" && hw.Power != nil {
+		if tdp, rErr := hw.Power.ReadEffective(effectiveProfileForTDP(hw)); rErr == nil {
+			if cErr := safety.CheckCurveAgainstTDP(hw.Power.Envelope(), points, tdp.PL1SPL); cErr != nil {
+				return cErr
+			}
 		}
 	}
 
@@ -149,7 +168,10 @@ func runFanCurveSet() error {
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
 		return err
 	}
-	if err := cli.SetBothFanCurves(points); err != nil {
+	if hw.Fans == nil {
+		return fmt.Errorf("no fan control on this device")
+	}
+	if err := hw.Fans.ApplyCurve(points); err != nil {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves set for both fans (custom mode enabled)")
@@ -161,6 +183,11 @@ func runFanCurveSet() error {
 }
 
 func runFanCurveReset() error {
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+
 	// Checked before the dry-run branch, as in runFanCurveSet: this is a
 	// read-only check, and a dry run that reported success for a reset the real
 	// command would refuse would be worse than useless.
@@ -168,8 +195,8 @@ func runFanCurveReset() error {
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the protection the high-TDP curve
 	// provides. "tdp --reset" is the way out — it lowers power first.
-	if fanCurveProfileFlag == "" {
-		if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
+	if fanCurveProfileFlag == "" && hw.Power != nil {
+		if err := hw.Power.CheckFanFloorRelease(effectiveProfileForTDP(hw)); err != nil {
 			return err
 		}
 	}
@@ -200,7 +227,10 @@ func runFanCurveReset() error {
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
 		return err
 	}
-	if err := cli.ResetAllFanCurves(); err != nil {
+	if hw.Fans == nil {
+		return fmt.Errorf("no fan control on this device")
+	}
+	if err := hw.Fans.Release(); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves reset to auto mode (both fans)")

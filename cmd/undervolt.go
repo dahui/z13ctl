@@ -79,8 +79,16 @@ func runUndervoltGet() error {
 		return nil
 	}
 
-	// No daemon — check if SMU is available at all.
-	if !cli.SMUAvailable() {
+	// No daemon — report only what a stat can prove. Present is the stat-only
+	// question; the destructive probe belongs to the daemon alone.
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Undervolt == nil {
+		return fmt.Errorf("no undervolt control on this device")
+	}
+	if !hw.Undervolt.Present() {
 		return fmt.Errorf("ryzen_smu kernel module not detected\n  Install: ryzen_smu-dkms-git (AUR) or equivalent for your distro")
 	}
 	fmt.Println("Curve Optimizer: not set (daemon not running)")
@@ -113,8 +121,17 @@ func runUndervoltSet() error {
 		return fmt.Errorf("invalid CPU undervolt value %q: must be an integer", uvSetFlag)
 	}
 
-	if err := cli.ValidateCOValues(cpuOffset); err != nil {
+	hw, err := hardware()
+	if err != nil {
 		return err
+	}
+	if hw.Undervolt == nil {
+		return fmt.Errorf("no undervolt control on this device")
+	}
+	// The bounds come from device data; the message matches the daemon's, which
+	// validates the same request the same way.
+	if lo, hi := hw.Undervolt.Range(); cpuOffset < lo || cpuOffset > hi {
+		return fmt.Errorf("CPU undervolt %d out of range %d to %d", cpuOffset, lo, hi)
 	}
 
 	if dryRunFlag {
@@ -140,7 +157,7 @@ func runUndervoltSet() error {
 	if err := requireDaemonForProfile(uvProfileFlag); err != nil {
 		return err
 	}
-	if err := cli.SetCurveOptimizer(cpuOffset); err != nil {
+	if err := hw.Undervolt.Apply(cpuOffset); err != nil {
 		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
@@ -171,7 +188,14 @@ func runUndervoltReset() error {
 	if err := requireDaemonForProfile(uvProfileFlag); err != nil {
 		return err
 	}
-	if err := cli.ResetCurveOptimizer(); err != nil {
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Undervolt == nil {
+		return fmt.Errorf("no undervolt control on this device")
+	}
+	if err := hw.Undervolt.Reset(); err != nil {
 		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Println("Curve Optimizer reset to stock (0)")

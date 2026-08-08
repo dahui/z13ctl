@@ -50,7 +50,9 @@ func TestRunUndervoltSetRejectsMalformedValues(t *testing.T) {
 }
 
 // TestRunUndervoltSetRejectsOutOfRange covers the safety envelope. These parse
-// but fail ValidateCOValues, still before any SMU write.
+// but fail the device data's Range bounds, still before any SMU write — the
+// assembled device's constructors are pure, so reaching the check touches no
+// hardware.
 func TestRunUndervoltSetRejectsOutOfRange(t *testing.T) {
 	orig := uvSetFlag
 	t.Cleanup(func() { uvSetFlag = orig })
