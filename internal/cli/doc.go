@@ -1,5 +1,5 @@
 // Package cli provides CLI input parsing, color display, and dry-run
-// display helpers for z13ctl subcommands.
+// display helpers for voltaire subcommands.
 //
 // File layout:
 //

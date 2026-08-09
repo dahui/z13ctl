@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // ErrUnsupported reports that a device's driver does not implement an optional

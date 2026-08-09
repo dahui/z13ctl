@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 func TestResolveColor(t *testing.T) {

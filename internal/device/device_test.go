@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // The DMI strings of the machine this project started on, verbatim from

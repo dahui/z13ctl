@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 func TestSleepTick(t *testing.T) {

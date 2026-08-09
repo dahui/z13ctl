@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -158,7 +158,7 @@ func runUndervoltSet() error {
 		return err
 	}
 	if err := hw.Undervolt.Apply(cpuOffset); err != nil {
-		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
 	return nil
@@ -196,7 +196,7 @@ func runUndervoltReset() error {
 		return fmt.Errorf("no undervolt control on this device")
 	}
 	if err := hw.Undervolt.Reset(); err != nil {
-		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	fmt.Println("Curve Optimizer reset to stock (0)")
 	return nil

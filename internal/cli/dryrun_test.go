@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // z13Env returns the Z13 power envelope from the embedded device data — the

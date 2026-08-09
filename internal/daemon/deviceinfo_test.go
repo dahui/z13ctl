@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/voltaire/v2/internal/device"
 )
 
 // TestDeviceGetProjectsTheAssembledDevice pins the document against the same

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/voltaire/v2/internal/device"
 )
 
 func z13Config(t *testing.T) device.Config {

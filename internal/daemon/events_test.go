@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // readEvent reads one event line, or returns "" if none arrives quickly.

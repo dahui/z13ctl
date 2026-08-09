@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 // resetAutoswitchFlags restores the package-level flag vars between cases.

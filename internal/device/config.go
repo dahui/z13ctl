@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // Config is one parsed devices/*.toml. Capability blocks are pointers so that

@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // NewFanController returns the asus-nb-wmi fan driver with the given shape

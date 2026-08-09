@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // request and response mirror the unexported types in api/client.go.

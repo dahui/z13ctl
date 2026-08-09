@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/hid"
 )
 
 // hidFind and hidHas wrap the hid package's discovery entry points purely so

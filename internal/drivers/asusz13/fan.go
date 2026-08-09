@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 const (

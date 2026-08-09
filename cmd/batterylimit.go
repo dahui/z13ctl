@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -61,7 +61,7 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 				return fmt.Errorf("no battery charge control on this device")
 			}
 			if err := hw.Battery.SetChargeLimit(limit); err != nil {
-				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Battery charge limit set to %d%%\n", limit)
 			return nil

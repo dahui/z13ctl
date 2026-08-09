@@ -5,14 +5,14 @@ package daemon
 // The watcher is EDGE-TRIGGERED on the mains adapter's "online" attribute, and
 // deliberately never reads or reasons about platform_profile. That is what
 // makes it safe to run alongside power-profiles-daemon: it reacts only to a
-// value that neither z13ctl nor PPD nor the desktop can write, so the feedback
+// value that neither voltaire nor PPD nor the desktop can write, so the feedback
 // loop that would produce a write-fight does not exist. A level-triggered
 // "keep my profile applied" watcher would both fight PPD over every AC
 // transition — the very thing reconcile.go was written to avoid — and make a
 // manual profile change impossible to hold.
 //
 // The consequence, which is the intended semantics: a profile chosen by hand
-// sticks until the power source actually changes. Between transitions z13ctl
+// sticks until the power source actually changes. Between transitions voltaire
 // yields. GNOME's "Automatic Power Saver", for instance, is a low-battery
 // trigger rather than an unplug trigger, and this watcher correctly ignores it.
 //
@@ -37,7 +37,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 const (

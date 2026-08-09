@@ -1,7 +1,7 @@
-// Package api provides the public client interface for the z13ctl daemon.
+// Package api provides the public client interface for the voltaire daemon.
 // It contains the shared protocol types and socket client functions used by
 // CLI commands, GUI frontends, and any other tool that communicates with the
-// z13ctl daemon over its Unix socket.
+// voltaire daemon over its Unix socket.
 package api
 
 // State holds the last-applied settings for all controllable subsystems.
@@ -90,7 +90,7 @@ func (a *AutoswitchState) Target(onAC bool) string {
 	return a.Battery
 }
 
-// IsCustomProfile reports whether name identifies a z13ctl-managed custom
+// IsCustomProfile reports whether name identifies a voltaire-managed custom
 // profile: the default "custom" profile, or a saved named one.
 //
 // Clients that check Profile == "custom" to decide whether custom controls

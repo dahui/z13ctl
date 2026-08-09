@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/voltaire/v2/internal/hid"
 )
 
 // pipeDevice returns a write-end-backed Device and the read end of the pipe.

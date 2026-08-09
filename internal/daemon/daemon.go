@@ -1,14 +1,14 @@
-// Package daemon implements the z13ctl long-running daemon: Unix socket server,
+// Package daemon implements the voltaire long-running daemon: Unix socket server,
 // hardware device management, state persistence, and Armoury Crate button watcher.
 //
 // Designed as a systemd user service using two units:
 //   - z13ctl.socket  — systemd manages the socket fd (socket activation)
 //   - z13ctl.service — Type=notify, Restart=on-failure
 //
-// Can also be run directly for development: z13ctl daemon.
+// Can also be run directly for development: voltaire daemon.
 //
 // The daemon socket client (Send*, Subscribe, SocketPath) lives in the public
-// api package: github.com/dahui/z13ctl/api.
+// api package: github.com/dahui/voltaire/api/v2.
 package daemon
 
 // daemon.go — Daemon struct, Run function, socket listener, and subscriber management.
@@ -29,12 +29,12 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	sddaemon "github.com/coreos/go-systemd/v22/daemon"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
-// Daemon holds the runtime state for the long-running z13ctl process.
+// Daemon holds the runtime state for the long-running voltaire process.
 type Daemon struct {
 	// hwMu serializes hardware *mutation sequences* — fan mode, PPT, profile —
 	// against each other. d.mu guards state only, and every mutating handler
@@ -97,7 +97,7 @@ type Options struct {
 }
 
 // fallbackDeviceID is the device assumed when no device file matches this
-// machine. Transitional: z13ctl has only ever supported the Z13 and every
+// machine. Transitional: voltaire (né z13ctl) has only ever supported the Z13 and every
 // earlier version ran best-effort on anything else, so the Z13 config —
 // whose drivers all fail soft on absent sysfs — preserves that exactly. The
 // multi-device milestone replaces this with a conservative generic device.
@@ -308,7 +308,7 @@ func Run(ctx context.Context, opts Options) error {
 	if _, err := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); err != nil {
 		slog.Warn("sd_notify READY failed", "err", err)
 	}
-	slog.Info("z13ctl daemon ready", "socket", ln.Addr())
+	slog.Info("voltaire daemon ready", "socket", ln.Addr())
 
 	go d.broadcastLoop(ctx)
 

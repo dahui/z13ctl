@@ -24,7 +24,7 @@ builds:
   - id: z13ctl
     binary: z13ctl
     ldflags:
-      - -s -w -X github.com/dahui/z13ctl/cmd.Version={{.Version}}
+      - -s -w -X github.com/dahui/voltaire/v2/internal/version.Version={{.Version}}
     goos:
       - linux
     goarch:

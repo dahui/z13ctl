@@ -23,7 +23,7 @@ import (
 
 	"github.com/holoplot/go-evdev"
 
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // inputClassDir is the sysfs directory listing input event devices.

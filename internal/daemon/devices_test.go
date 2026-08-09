@@ -10,11 +10,11 @@ package daemon
 // state-only paths exactly as before.
 
 import (
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 
-	// Registers the Z13 driver factories, as the z13ctl binary does.
-	_ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
+	// Registers the Z13 driver factories, as the voltaire binary does.
+	_ "github.com/dahui/voltaire/v2/internal/drivers/asusz13/register"
 )
 
 // testDev is the full Z13 device assembled exactly as Run's assembly does,

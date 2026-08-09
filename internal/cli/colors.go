@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/aura"
 )
 
 // NamedColors is the name → hex lookup table (aura's, aliased).

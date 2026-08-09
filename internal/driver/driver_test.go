@@ -3,7 +3,7 @@ package driver_test
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 func TestFanModeName(t *testing.T) {

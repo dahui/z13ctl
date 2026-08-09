@@ -34,7 +34,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // watchResume connects to the system DBus and listens for sleep and resume
@@ -161,7 +161,7 @@ func sleepTick(obs sleepObs, env driver.PowerEnvelope) sleepAction {
 	// same condition restoreVolatileState restores under, so the invariant holds
 	// in both directions: the sleep hook releases only what applyCustomHW will
 	// put back. Without it the release is a one-way door — a curve set by asusctl
-	// while z13ctl sits on a firmware profile also reads pwm_enable=1, and
+	// while voltaire sits on a firmware profile also reads pwm_enable=1, and
 	// releasing it (let alone lowering its PPT) leaves nothing on the resume side
 	// to restore either. reconcileTick's !obs.Custom gate exists for this reason.
 	if !obs.Owned {

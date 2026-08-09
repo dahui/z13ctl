@@ -10,7 +10,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 func auto(enabled bool, ac, battery string) *api.AutoswitchState {

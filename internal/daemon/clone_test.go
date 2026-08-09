@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 func sampleState() api.State {

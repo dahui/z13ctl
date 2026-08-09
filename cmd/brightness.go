@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/hid"
 
 	"github.com/spf13/cobra"
 )

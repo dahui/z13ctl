@@ -4,7 +4,7 @@ package cmd
 // manage named custom profiles.
 //
 // The three firmware profiles are written to platform_profile via asus-wmi. A
-// custom profile is z13ctl's own: a named set of fan curve, TDP and undervolt
+// custom profile is voltaire's own: a named set of fan curve, TDP and undervolt
 // settings that it applies itself and never writes to platform_profile. The
 // firmware names are reserved, so selecting one always reaches the firmware
 // profile and can never be shadowed by a custom profile.
@@ -15,8 +15,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -40,8 +40,8 @@ Firmware profiles (written to platform_profile via asus-wmi):
   balanced     — Balanced mode   (default)
   performance  — Turbo mode      (maximum performance)
 
-Custom profiles are z13ctl's own: a named set of fan curve, TDP and undervolt
-settings that z13ctl applies itself and never writes to platform_profile, so
+Custom profiles are voltaire's own: a named set of fan curve, TDP and undervolt
+settings that voltaire applies itself and never writes to platform_profile, so
 profile ownership stays with your desktop. "custom" is the profile created
 automatically by the first 'fancurve --set', 'tdp --set' or 'undervolt --set'
 made while a firmware profile is active; --create makes more.
@@ -49,18 +49,18 @@ made while a firmware profile is active; --create makes more.
 Setting a fan curve, TDP or undervolt edits the profile you are running, and
 the change takes effect and persists immediately — there is no save step.
 '--profile <name>' on those commands edits a profile you are NOT running,
-which is how you build the profile that 'z13ctl autoswitch' selects on battery
+which is how you build the profile that 'voltaire autoswitch' selects on battery
 without applying it first.
 
 The firmware profile names are reserved and cannot name a custom profile.
 Custom profiles require the daemon, which is what recalls and applies them.
 
 Examples:
-  z13ctl profile --set performance
-  z13ctl profile --create battery-uv
-  z13ctl tdp --set 35 --profile battery-uv
-  z13ctl profile --set battery-uv
-  z13ctl profile --list`,
+  voltaire profile --set performance
+  voltaire profile --create battery-uv
+  voltaire tdp --set 35 --profile battery-uv
+  voltaire profile --set battery-uv
+  voltaire profile --list`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		switch {
@@ -125,7 +125,7 @@ func runProfileSet() error {
 	// are released last so they are never dropped to auto while a high custom
 	// TDP is still in force — the same order as the daemon and 'tdp --reset'.
 	if err := hw.Profiles.Set(profile); err != nil {
-		return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("setting platform profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	restoreStockPPT(hw, profile)
 	if hw.Fans != nil {
@@ -227,7 +227,7 @@ func runProfileCreate() error {
 		return err
 	}
 	fmt.Printf("Created empty profile %s\n", name)
-	fmt.Printf("  Add settings with: z13ctl tdp --set 35 --profile %s\n", name)
+	fmt.Printf("  Add settings with: voltaire tdp --set 35 --profile %s\n", name)
 	return nil
 }
 

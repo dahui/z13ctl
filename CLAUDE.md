@@ -1,17 +1,17 @@
-# z13ctl — Project Context for Claude
+# voltaire — Project Context for Claude
 
 ## What this project is
 
-`z13ctl` is a Linux CLI for controlling RGB lighting, fan curves, TDP (PPT power
+`voltaire` (formerly `z13ctl`) is a Linux CLI for controlling RGB lighting, fan curves, TDP (PPT power
 limits), and system settings on the 2025 ASUS ROG Flow Z13 via Linux hidraw,
 asus-wmi sysfs, and asus-armoury firmware-attributes interfaces.
 It uses the ASUS Aura HID protocol reverse-engineered from g-helper.
-Module path: `github.com/dahui/z13ctl`. Binary name: `z13ctl`. License: Apache 2.0.
+Module path: `github.com/dahui/voltaire/v2`. Binary name: `voltaire`. License: Apache 2.0.
 
 ## Package layout
 
 ```
-api/                         Public client API submodule (github.com/dahui/z13ctl/api)
+api/                         Public client API submodule (github.com/dahui/voltaire/api/v2)
   go.mod                     Separate module; stdlib only; importable by z13gui and external tools
   types.go                   State, LightingState, FanCurvePoint, FanCurveState, TDPState, UndervoltState,
                              CustomProfile, AutoswitchState; IsCustomProfile/InCustomProfile/ActiveCustomProfile
@@ -23,7 +23,7 @@ cmd/                         Cobra subcommands
   root.go                    root command, Version var, dryRunFlag, deviceFlag, noButtonFlag, noSleepReleaseFlag
   apply.go                   apply lighting effect
   brightness.go              set brightness only
-  daemon.go                  start the daemon (z13ctl daemon)
+  daemon.go                  start the daemon (voltaire daemon)
   list.go                    list hidraw devices
   off.go                     turn lighting off
   profile.go                 get/set profile; create/save-as/delete/list custom profiles
@@ -140,7 +140,7 @@ contrib/
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.
-  When set, the button watcher goroutine is not started and z13ctl does not open
+  When set, the button watcher goroutine is not started and voltaire does not open
   the Armoury Crate button device at all — for users who would rather the keypress
   reach only their desktop, or who need another tool to manage the device.
 - `--no-sleep-release` is likewise daemon-only: the pre-sleep fan release is
@@ -307,7 +307,7 @@ contrib/
   ends by clearing `custom_fan_curves[*].enabled`, and `fan_curve_write()` then
   returns early on `!enabled`. Nothing is reported to the process that set the
   curve. On a GNOME desktop, power-profiles-daemon writes `platform_profile` on
-  every AC/battery transition and on any PPD hold, so a curve set by z13ctl stops
+  every AC/battery transition and on any PPD hold, so a curve set by voltaire stops
   working minutes later for no visible reason; Fn+F5, asusctl and tuned do the
   same. Two halves fix it: `SetBothFanCurves` reads `pwm_enable` back
   (`VerifyFanCurveActive`) so a dropped curve is an error rather than a false
@@ -709,12 +709,12 @@ contrib/
 - **AC/battery autoswitch is edge-triggered on `online`, never level-triggered,
   and never reads `platform_profile`** (`internal/daemon/powersource.go`, issue
   #6). That is the whole safety argument: the watcher reacts only to a value
-  neither z13ctl nor PPD nor the desktop can write, so the feedback loop that
+  neither voltaire nor PPD nor the desktop can write, so the feedback loop that
   would produce a write-fight does not exist. A level-triggered "keep my profile
   applied" watcher would both fight PPD over every transition — the thing
   `reconcile.go` exists to avoid — and make a manual profile change impossible to
   hold. The intended semantics follow directly: a profile chosen by hand sticks
-  until the source actually changes, and z13ctl yields in between (GNOME's
+  until the source actually changes, and voltaire yields in between (GNOME's
   Automatic Power Saver is a *low-battery* trigger, not an unplug trigger, and is
   correctly ignored). One observation function, `cli.OnACPower()`, with two
   triggers: a UPower `OnBattery` nudge for immediacy and a 2s poll as the
@@ -816,7 +816,7 @@ contrib/
   `ActiveCustomProfile()` — exactly the condition `restoreVolatileState` restores
   under — so the invariant holds both ways: **the sleep hook releases only what
   `applyCustomHW` will put back.** A hardware-only gate would be a one-way door:
-  a curve set by asusctl while z13ctl sits on a firmware profile also reads
+  a curve set by asusctl while voltaire sits on a firmware profile also reads
   `pwm_enable=1`, so releasing it (let alone lowering its PPT) leaves nothing on
   the resume side to restore either. `reconcileTick`'s `!obs.Custom` gate exists
   for the same reason. Mode 0 and an unreadable mode are left alone, mirroring
@@ -974,11 +974,14 @@ sudo make install-perms-service    # install system oneshot service for sysfs pe
 sudo make uninstall-perms-service  # remove system permissions service
 make snapshot           # goreleaser release --snapshot --clean  (no publish)
 make release            # goreleaser release --clean             (requires pushed v* tag)
-make clean              # remove z13ctl binary, dist/, coverage artifacts
+make clean              # remove voltaire binary, dist/, coverage artifacts
 ```
 
-Version is injected at link time: `-X github.com/dahui/z13ctl/cmd.Version={{.Version}}`.
-Default value in source is `"1.0.0-beta"` (used only in local builds without ldflags).
+Version is injected at link time:
+`-X github.com/dahui/voltaire/v2/internal/version.Version={{.Version}}`.
+The single `internal/version.Version` var serves every binary (there is no
+separate cmd.Version); its source default `"2.0.0-dev"` is used only in local
+builds without ldflags.
 
 ## goreleaser
 
@@ -1035,18 +1038,21 @@ The daemon is fully implemented and passing `make build && make test && make lin
   after `sysinit.target`. This is necessary because these attributes may be created
   after observable udev events — so no udev `RUN+=` hook can catch them reliably.
 
-**To activate on this machine (must be done once after each `sudo z13ctl setup`):**
+**To activate on this machine (must be done once after each `sudo voltaire setup`):**
 ```sh
-sudo z13ctl setup                # rewrites rules file; applies sysfs perms immediately
+sudo voltaire setup                # rewrites rules file; applies sysfs perms immediately
 sudo make install-perms-service  # installs battery sysfs permissions service
 make install-service             # installs daemon socket + service units
 ```
 
 ### Phase 2 (GUI) — api/ SUBMODULE COMPLETE, z13gui IN PROGRESS
 
-The `api/` submodule (`github.com/dahui/z13ctl/api`) is complete and ready for use
-by the separate z13gui binary. Phase 2a changes:
+The `api/` submodule (now `github.com/dahui/voltaire/api/v2`; the frozen
+pre-2.0 releases live at `github.com/dahui/z13ctl/api`) is complete and ready
+for use by the GUI binary. Phase 2a changes:
 - Module path renamed from `z13ctl` to `github.com/dahui/z13ctl`
+  (and again to `github.com/dahui/voltaire/v2` for the 2.0 rename — see
+  CONTRIBUTING.md for the tag/module-path matrix)
 - `api/` submodule created with `State`, `LightingState` types and all `Send*`, `Subscribe` client functions
 - `internal/daemon/` refactored to use `api.State`/`api.LightingState`
 - `cmd/*.go` updated to call `api.Send*` directly
@@ -1054,13 +1060,19 @@ by the separate z13gui binary. Phase 2a changes:
 
 **z13gui** will be a separate repo (`github.com/dahui/z13gui`) using:
 - `github.com/diamondburned/gotk4` + `github.com/diamondburned/gotk4-layer-shell`
-- Imports `github.com/dahui/z13ctl/api` for daemon communication
+- Imports `github.com/dahui/voltaire/api/v2` for daemon communication
 - Right-edge Wayland overlay drawer (~320px wide), touch-first (48px+ tap targets)
 - Per-device tabs (Keyboard / Lightbar), mode grid, color swatches + custom picker,
   brightness/speed sliders, profile list, battery slider
 - Trigger: Armoury Crate button → daemon → `gui-toggle` subscribe event → show/hide drawer
 
-**Multi-module release workflow:**
-1. Tag `api/v1.0.0` → `git tag api/v1.0.0 && git push origin api/v1.0.0`
-2. Update `go.mod`: bump `require github.com/dahui/z13ctl/api v1.0.0`, remove `replace` directive
-3. Tag main module: `git tag v1.0.0 && git push origin v1.0.0`
+**Multi-module release workflow (v2, post-rename):**
+1. Tag `api/v2.0.0` → `git tag api/v2.0.0 && git push origin api/v2.0.0`
+2. Update `go.mod`: confirm `require github.com/dahui/voltaire/api/v2 v2.0.0`,
+   remove the `replace` directive
+3. Tag main module: `git tag v2.0.0 && git push origin v2.0.0`
+
+Tags are repo-global; the old-path tags (`v*` ≤ 1.3.1, `api/v1.*`) are frozen
+and must never be deleted — the proxy serves them to pre-rename importers via
+the GitHub redirect. Never recreate a repo named `z13ctl` (severs the
+redirect). Details in CONTRIBUTING.md.

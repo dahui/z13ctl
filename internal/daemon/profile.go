@@ -4,7 +4,7 @@ package daemon
 //
 // A profile is either one of the three firmware profiles written to
 // platform_profile, or a custom profile: a named set of fan curve, TDP and
-// Curve Optimizer settings that z13ctl applies itself and that never touches
+// Curve Optimizer settings that voltaire applies itself and that never touches
 // platform_profile. state.CustomProfiles is the source of truth for the latter;
 // api.State's FanCurve/TDP/Undervolt fields are only a projection of the active
 // one, filled in at the serialization boundaries (see withLegacyProjection).
@@ -22,8 +22,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 // applyProfileLocked applies a profile — firmware or custom — to hardware and
@@ -278,7 +278,7 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 		return editTarget{}, fmt.Errorf("%q is a firmware profile and has no custom settings to edit", name)
 	}
 	if name != api.DefaultCustomProfile && !d.state.IsCustomProfile(name) {
-		return editTarget{}, fmt.Errorf("unknown profile %q; create it with 'z13ctl profile --create %s'", name, name)
+		return editTarget{}, fmt.Errorf("unknown profile %q; create it with 'voltaire profile --create %s'", name, name)
 	}
 	// A named target is Live exactly when it is the selected profile, so the two
 	// coincide here; only the bare-edit path above can separate them.

@@ -8,7 +8,7 @@ package daemon
 // custom_fan_curves[*].enabled for each fan, and fan_curve_write() then returns
 // early on !enabled. Nothing is reported to the process that set the curve. On
 // a GNOME desktop, power-profiles-daemon writes platform_profile on every
-// AC/battery transition and on any PPD hold, so a curve set by z13ctl stops
+// AC/battery transition and on any PPD hold, so a curve set by voltaire stops
 // working minutes later for no visible reason — issue #15. Fn+F5, asusctl,
 // tuned and a module reload all do the same thing.
 //
@@ -19,7 +19,7 @@ package daemon
 // in the same tick for the log line alone.
 //
 // It never writes platform_profile. Profile ownership stays with the desktop;
-// putting z13ctl in a write-fight with power-profiles-daemon over every AC
+// putting voltaire in a write-fight with power-profiles-daemon over every AC
 // transition would be worse than the bug. It also acts only while daemon state
 // says the profile is "custom", so a deliberate switch to a stock profile is
 // left alone by construction.
@@ -36,9 +36,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // reconcilePollInterval is how often watchReconcile compares hardware against

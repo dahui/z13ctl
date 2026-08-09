@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/hid"
 
 	"github.com/spf13/cobra"
 )
@@ -26,10 +26,10 @@ var (
 var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply a lighting effect",
-	Example: `  z13ctl apply --color cyan --brightness high
-  z13ctl apply --mode rainbow --speed slow
-  z13ctl apply --mode breathe --color hotpink --color2 blue
-  z13ctl apply --list-colors`,
+	Example: `  voltaire apply --color cyan --brightness high
+  voltaire apply --mode rainbow --speed slow
+  voltaire apply --mode breathe --color hotpink --color2 blue
+  voltaire apply --list-colors`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if listColorsFlag {
 			cli.PrintColorList()
@@ -129,7 +129,7 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().StringVar(&colorFlag, "color", "FF0000",
-		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Ignored by cycle and rainbow. 000000 makes the firmware pick a color — use 'z13ctl off' for no light. Use --list-colors for all names.")
+		"Primary color: hex (RRGGBB) or name (e.g. red, cyan, hotpink). Ignored by cycle and rainbow. 000000 makes the firmware pick a color — use 'voltaire off' for no light. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&color2Flag, "color2", "000000",
 		"Secondary color for breathe mode: hex (RRGGBB) or name. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&modeFlag, "mode", "static",

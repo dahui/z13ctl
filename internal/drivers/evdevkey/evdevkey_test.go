@@ -16,7 +16,7 @@ import (
 
 	"github.com/holoplot/go-evdev"
 
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // The Z13's values, as the device file declares them.

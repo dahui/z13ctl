@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -60,7 +60,7 @@ Values:
 				return fmt.Errorf("no boot sound control on this device")
 			}
 			if err := hw.Toggles.Set("boot_sound", value); err != nil {
-				return fmt.Errorf("setting boot sound: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+				return fmt.Errorf("setting boot sound: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 			}
 			fmt.Printf("Boot sound set to %d\n", value)
 			return nil

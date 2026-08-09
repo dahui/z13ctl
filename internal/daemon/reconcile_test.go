@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // tick is reconcileTick judged against the Z13 envelope, which is what every

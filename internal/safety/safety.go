@@ -17,8 +17,8 @@ package safety
 import (
 	"fmt"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // FanCurveForTDP returns the curve that must be in force for a sustained limit
@@ -193,6 +193,6 @@ func CheckFanFloorReleaseAt(env driver.PowerEnvelope, pl1 int) error {
 	if pl1 <= env.TDPMaxSafe || len(env.FloorCurve) == 0 {
 		return nil
 	}
-	return fmt.Errorf("sustained TDP is %dW (above %dW), so fans must stay at or above %d PWM; lower it first with 'z13ctl tdp --reset'",
+	return fmt.Errorf("sustained TDP is %dW (above %dW), so fans must stay at or above %d PWM; lower it first with 'voltaire tdp --reset'",
 		pl1, env.TDPMaxSafe, env.FloorCurve[0].PWM)
 }

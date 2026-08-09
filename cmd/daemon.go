@@ -1,6 +1,6 @@
 package cmd
 
-// daemon.go — "daemon" subcommand: run the z13ctl long-running device daemon.
+// daemon.go — "daemon" subcommand: run the voltaire long-running device daemon.
 //
 // The daemon holds HID devices open, restores lighting state on startup,
 // watches the Armoury Crate button, and serves a Unix socket for CLI and GUI
@@ -16,13 +16,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dahui/z13ctl/internal/daemon"
+	"github.com/dahui/voltaire/v2/internal/daemon"
 )
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Run the z13ctl device daemon",
-	Long: `Run the z13ctl daemon as a long-running process.
+	Short: "Run the voltaire device daemon",
+	Long: `Run the voltaire daemon as a long-running process.
 
 The daemon opens and holds the ASUS HID devices, restores the last-applied
 lighting state on startup, watches the Armoury Crate button, and serves a
@@ -50,7 +50,7 @@ The contrib/systemd/user/ directory contains ready-to-use unit files.`,
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
-		slog.Info("starting z13ctl daemon")
+		slog.Info("starting voltaire daemon")
 		opts := daemon.Options{
 			WatchButton:  !noButtonFlag,
 			SleepRelease: !noSleepReleaseFlag,
@@ -58,7 +58,7 @@ The contrib/systemd/user/ directory contains ready-to-use unit files.`,
 		if err := daemon.Run(ctx, opts); err != nil {
 			return err
 		}
-		slog.Info("z13ctl daemon stopped")
+		slog.Info("voltaire daemon stopped")
 		return nil
 	},
 }

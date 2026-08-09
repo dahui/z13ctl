@@ -15,12 +15,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/drivers/asusz13"
-	"github.com/dahui/z13ctl/internal/hid"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/hid"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // auraReportID is the HID Report ID byte that begins every Aura packet (0x5d).
@@ -146,7 +146,7 @@ func DryRunProfileEdit(profile, setting string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	fmt.Printf("Would store the %s in custom profile %q in daemon state\n", setting, profile)
 	fmt.Println("Would NOT write hardware — the setting takes effect when that profile")
-	fmt.Printf("  is activated: z13ctl profile --set %s\n", profile)
+	fmt.Printf("  is activated: voltaire profile --set %s\n", profile)
 }
 
 // DryRunProfileCreate prints what creating an empty custom profile would do.

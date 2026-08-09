@@ -1,12 +1,17 @@
-# z13ctl
+# Voltaire
 
 RGB lighting, performance profiles, battery limit, fan curves, TDP control,
 CPU undervolting, and display settings for the 2025 ASUS ROG Flow Z13 on
 Linux.
 
+> **Formerly z13ctl and z13gui.** The two projects merged and were renamed for
+> 2.0 — same maintainers, same code lineage, one repository. Old links and Go
+> module paths keep resolving via GitHub's redirect. Migration notes:
+> [Migrating from z13ctl](https://dahui.github.io/voltaire/migrating-from-z13ctl/).
+
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-`z13ctl` implements the Aura HID protocol directly against the Linux `hidraw`
+`voltaire` implements the Aura HID protocol directly against the Linux `hidraw`
 interface — no kernel patches, no external daemons. System settings (profiles,
 battery limit, boot sound, panel overdrive, fan curves, TDP) use the standard
 asus-wmi and asus-armoury sysfs interfaces. CPU undervolting uses the
@@ -16,83 +21,83 @@ re-applies keyboard lighting when the detachable keyboard is reattached, and
 watches the Armoury Crate button.
 
 > [!TIP]
-> **New to Linux? Install [z13gui](https://github.com/dahui/z13gui).** Most
-> users (especially newcomers!) should use **z13gui**, a touch-friendly
-> graphical overlay that exposes every z13ctl feature (lighting, fan curves,
-> TDP, undervolt, profiles, battery limit) with no command line required. The
-> raw `z13ctl` CLI shines for scripting and advanced tuning, but if you're not a
-> Linux veteran, install z13gui alongside z13ctl for a far smoother experience.
+> **New to Linux? Install voltaire-gui.** Most users (especially newcomers!)
+> should use **voltaire-gui**, a touch-friendly graphical overlay that exposes
+> every voltaire feature (lighting, fan curves, TDP, undervolt, profiles,
+> battery limit) with no command line required. The raw `voltaire` CLI shines
+> for scripting and advanced tuning, but if you're not a Linux veteran,
+> install voltaire-gui alongside voltaire for a far smoother experience.
 
 ## Install
 
 ```sh
 # Arch Linux (AUR)
-yay -S z13ctl-bin
+yay -S voltaire-bin
 
 # Debian / Ubuntu
-sudo apt install ./z13ctl_*.deb
+sudo apt install ./voltaire_*.deb
 
 # Fedora / RHEL
-sudo dnf install ./z13ctl_*.rpm
+sudo dnf install ./voltaire_*.rpm
 
 # Manual (from release tarball)
-tar xzf z13ctl_*_linux_amd64.tar.gz
-sudo install -Dm755 z13ctl /usr/local/bin/z13ctl
-sudo z13ctl setup
+tar xzf voltaire_*_linux_amd64.tar.gz
+sudo install -Dm755 voltaire /usr/local/bin/voltaire
+sudo voltaire setup
 ```
 
-See the [Installation guide](https://dahui.github.io/z13ctl/installation/) for
+See the [Installation guide](https://dahui.github.io/voltaire/installation/) for
 systemd service setup, source builds, and uninstall instructions.
 
 ## Quick Start
 
 ```sh
 # Solid cyan at full brightness
-z13ctl apply --color cyan --brightness high
+voltaire apply --color cyan --brightness high
 
 # Breathing red
-z13ctl apply --mode breathe --color red --speed slow
+voltaire apply --mode breathe --color red --speed slow
 
 # Rainbow wave
-z13ctl apply --mode rainbow --speed normal
+voltaire apply --mode rainbow --speed normal
 
 # Turn off lighting
-z13ctl off
+voltaire off
 
 # Set performance profile
-z13ctl profile --set balanced
+voltaire profile --set balanced
 
 # Cap battery charge at 80%
-z13ctl batterylimit --set 80
+voltaire batterylimit --set 80
 
 # Custom fan curve (8-point, temp:pwm pairs — both fans)
 # The kernel drops custom curves on every power profile change; run the daemon
 # and it re-applies yours automatically.
-z13ctl fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
+voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Set TDP to 50W
-z13ctl tdp --set 50
+voltaire tdp --set 50
 
 # Undervolt CPU by -20 (Curve Optimizer, requires ryzen_smu)
-z13ctl undervolt --set -20
+voltaire undervolt --set -20
 
 # A different profile on AC and on battery.
 # --profile stores a setting without applying it, so you can build the battery
 # profile while still plugged in.
-z13ctl profile --create battery-uv
-z13ctl tdp --set 35 --profile battery-uv
-z13ctl undervolt --set -25 --profile battery-uv
-z13ctl autoswitch --ac balanced --battery battery-uv
+voltaire profile --create battery-uv
+voltaire tdp --set 35 --profile battery-uv
+voltaire undervolt --set -25 --profile battery-uv
+voltaire autoswitch --ac balanced --battery battery-uv
 ```
 
 ## Documentation
 
-Full documentation at **<https://dahui.github.io/z13ctl>**
+Full documentation at **<https://dahui.github.io/voltaire>**
 
-- [Installation](https://dahui.github.io/z13ctl/installation/)
-- [Quick Start](https://dahui.github.io/z13ctl/getting-started/)
-- [Commands](https://dahui.github.io/z13ctl/commands/)
-- [Daemon](https://dahui.github.io/z13ctl/daemon/)
-- [API](https://dahui.github.io/z13ctl/api/)
-- [Contributing](https://dahui.github.io/z13ctl/contributing/)
+- [Installation](https://dahui.github.io/voltaire/installation/)
+- [Quick Start](https://dahui.github.io/voltaire/getting-started/)
+- [Commands](https://dahui.github.io/voltaire/commands/)
+- [Daemon](https://dahui.github.io/voltaire/daemon/)
+- [API](https://dahui.github.io/voltaire/api/)
+- [Contributing](https://dahui.github.io/voltaire/contributing/)
 

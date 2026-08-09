@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 func TestDispatchUnknownCommand(t *testing.T) {

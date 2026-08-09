@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -37,9 +37,9 @@ boot_sound and panel_overdrive, which also have their own named commands
 drive from the daemon's device-get document without knowing the device.
 
 Boolean toggles take 0 (off) or 1 (on).`,
-	Example: `  z13ctl feature --list
-  z13ctl feature --get boot_sound
-  z13ctl feature --set boot_sound=0`,
+	Example: `  voltaire feature --list
+  voltaire feature --get boot_sound
+  voltaire feature --set boot_sound=0`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		switch {
@@ -105,7 +105,7 @@ func runFeatureGet(id string) error {
 		// The driver's per-method "capability absent" sentinel means the id is
 		// not one this device declares.
 		if errors.Is(err, driver.ErrUnsupported) {
-			return fmt.Errorf("unknown feature %q on this device (see 'z13ctl feature --list')", id)
+			return fmt.Errorf("unknown feature %q on this device (see 'voltaire feature --list')", id)
 		}
 		return fmt.Errorf("reading %s: %w", id, err)
 	}
@@ -138,7 +138,7 @@ func runFeatureSet(arg string) error {
 		}
 	}
 	if spec == nil {
-		return fmt.Errorf("unknown feature %q on this device (see 'z13ctl feature --list')", id)
+		return fmt.Errorf("unknown feature %q on this device (see 'voltaire feature --list')", id)
 	}
 	if spec.Kind == string(driver.ToggleBool) && value != 0 && value != 1 {
 		return fmt.Errorf("feature %s: value must be 0 or 1", id)
@@ -165,7 +165,7 @@ func runFeatureSet(arg string) error {
 		return fmt.Errorf("no firmware toggles on this device")
 	}
 	if err := hw.Toggles.Set(id, value); err != nil {
-		return fmt.Errorf("setting %s: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", id, err)
+		return fmt.Errorf("setting %s: %w\n  (run 'sudo voltaire setup' to enable non-root access)", id, err)
 	}
 	fmt.Printf("Feature %s set to %d\n", id, value)
 	return nil

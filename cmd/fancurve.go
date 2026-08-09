@@ -9,10 +9,10 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
 )
@@ -50,12 +50,12 @@ switching), Fn+F5, asusctl. Run the daemon and it re-applies your curve within
 a couple of seconds; without it, re-run --set after any profile change.
 
 Use --profile <name> to store a curve in a profile you are NOT running: nothing
-is written to the fans, which is how you build the profile 'z13ctl autoswitch'
+is written to the fans, which is how you build the profile 'voltaire autoswitch'
 selects on battery.
 
 Safety: while sustained TDP (PL1) is above 75W, every curve point must be at
 least 127 PWM (50%) and --reset is refused, since firmware auto mode has no
-minimum. Lower the limit first with 'z13ctl tdp --reset'. A curve stored in a
+minimum. Lower the limit first with 'voltaire tdp --reset'. A curve stored in a
 profile you are not running is checked against that profile's own power limit.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -163,7 +163,7 @@ func runFanCurveSet() error {
 		}
 		fmt.Println("Fan curves set for both fans (custom mode enabled)")
 		fmt.Println("  Note: the kernel driver drops custom fan curves whenever the system power")
-		fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5). The z13ctl")
+		fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5). The voltaire")
 		fmt.Println("  daemon watches for that and re-applies this curve within a couple of seconds.")
 		return nil
 	}
@@ -175,13 +175,13 @@ func runFanCurveSet() error {
 		return fmt.Errorf("no fan control on this device")
 	}
 	if err := hw.Fans.ApplyCurve(points); err != nil {
-		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves set for both fans (custom mode enabled)")
 	fmt.Println("  Warning: the kernel driver drops custom fan curves whenever the system power")
 	fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5), and the")
-	fmt.Println("  z13ctl daemon is not running to restore it. Re-run this command after any")
-	fmt.Println("  profile change, or start the daemon (see 'z13ctl daemon').")
+	fmt.Println("  voltaire daemon is not running to restore it. Re-run this command after any")
+	fmt.Println("  profile change, or start the daemon (see 'voltaire daemon').")
 	return nil
 }
 
@@ -234,7 +234,7 @@ func runFanCurveReset() error {
 		return fmt.Errorf("no fan control on this device")
 	}
 	if err := hw.Fans.Release(); err != nil {
-		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves reset to auto mode (both fans)")
 	return nil

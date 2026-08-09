@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/hid"
 )
 
 func TestUnopenedDriverReportsSkippableNoDevice(t *testing.T) {

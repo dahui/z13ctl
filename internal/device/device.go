@@ -19,8 +19,8 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 //go:embed devices/*.toml

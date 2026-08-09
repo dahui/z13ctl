@@ -1,7 +1,7 @@
 // Package register wires the asusz13 driver into the device registry. It is
 // imported for its side effect alone:
 //
-//	import _ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
+//	import _ "github.com/dahui/voltaire/v2/internal/drivers/asusz13/register"
 //
 // The wiring lives here rather than in the driver package so asusz13 does not
 // import internal/device — internal/device's own tests import asusz13 for the
@@ -10,11 +10,11 @@
 package register
 
 import (
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/drivers/asusz13"
-	"github.com/dahui/z13ctl/internal/drivers/aurahid"
-	"github.com/dahui/z13ctl/internal/drivers/evdevkey"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/aurahid"
+	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
 )
 
 func init() {

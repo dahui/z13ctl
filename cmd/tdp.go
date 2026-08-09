@@ -8,11 +8,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/safety"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
 )
@@ -75,7 +75,7 @@ firmware profile restores that profile's stock PPT values to hardware while
 keeping every custom profile saved, so they stay re-selectable.
 
 Use --profile <name> to store limits in a profile you are NOT running: nothing
-is written to hardware, which is how you build the profile 'z13ctl autoswitch'
+is written to hardware, which is how you build the profile 'voltaire autoswitch'
 selects on battery.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -234,14 +234,14 @@ func runTdpSet() error {
 	// which never wrote anything on this branch, so it is still current.
 	want := preCurve
 	if err := hw.Power.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
-		return fmt.Errorf("setting TDP: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("setting TDP: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	printFloorNotice(env, pl1, want, false)
 	if pl1 > env.TDPMaxSafe {
 		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
 		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
-		fmt.Println("  this power limit stays in force, and the z13ctl daemon is not running to")
-		fmt.Println("  restore them. Start the daemon (see 'z13ctl daemon') before sustaining >75W.")
+		fmt.Println("  this power limit stays in force, and the voltaire daemon is not running to")
+		fmt.Println("  restore them. Start the daemon (see 'voltaire daemon') before sustaining >75W.")
 	}
 	fmt.Printf("TDP set to %dW\n", watts)
 	return nil
@@ -330,7 +330,7 @@ func runTdpReset() error {
 		return fmt.Errorf("no profile control on this device")
 	}
 	if err := hw.Profiles.Set("balanced"); err != nil {
-		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
+		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	restoreStockPPT(hw, "balanced")
 	if hw.Fans != nil {

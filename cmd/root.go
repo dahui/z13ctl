@@ -1,8 +1,8 @@
-// Package cmd implements the z13ctl CLI subcommands via Cobra.
+// Package cmd implements the voltaire CLI subcommands via Cobra.
 // Each file in this package defines exactly one subcommand.
 // CLI support utilities (color parsing, dry-run display) live in internal/cli.
 //
-// root.go — Cobra root command for z13ctl.
+// root.go — Cobra root command for voltaire.
 package cmd
 
 import (
@@ -10,13 +10,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
+
+	"github.com/dahui/voltaire/v2/internal/version"
 
 	// The Z13 driver registers its factories for this whole binary here: both
 	// the daemon's device assembly and the CLI's fallback assembly
 	// (hardware.go) fail loudly for any capability whose factory the binary
 	// does not carry. Registration is a per-binary choice by design.
-	_ "github.com/dahui/z13ctl/internal/drivers/asusz13/register"
+	_ "github.com/dahui/voltaire/v2/internal/drivers/asusz13/register"
 )
 
 // profileFlagUsage is shared by the fancurve, tdp, and undervolt commands so
@@ -70,13 +72,8 @@ func profileEditMessage(profile, applied string) string {
 	if profile == "" {
 		return applied + "\n"
 	}
-	return fmt.Sprintf("Stored in profile %s (not applied — activate it with 'z13ctl profile --set %s')\n", profile, profile)
+	return fmt.Sprintf("Stored in profile %s (not applied — activate it with 'voltaire profile --set %s')\n", profile, profile)
 }
-
-// Version is the current release. Override at build time:
-//
-//	go build -ldflags "-X z13ctl/cmd.Version=1.2.3" .
-var Version = "1.0.0-beta"
 
 var (
 	deviceFlag         string
@@ -86,10 +83,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:     "z13ctl",
-	Version: Version,
+	Use:     "voltaire",
+	Version: version.Version,
 	Short:   "System control for the ASUS ROG Flow Z13",
-	Long: `z13ctl — system control for the 2025 ASUS ROG Flow Z13
+	Long: `voltaire — system control for the 2025 ASUS ROG Flow Z13
 
 Controls keyboard and lightbar RGB via Linux hidraw, performance profile and
 battery charge limit via asus-wmi sysfs, and boot sound and panel overdrive

@@ -17,9 +17,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // cliFallbackDeviceID is the device assumed when no device file matches this

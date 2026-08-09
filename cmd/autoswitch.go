@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/cli"
 
 	"github.com/spf13/cobra"
 )
@@ -35,22 +35,22 @@ unless --off is given.
 An empty target leaves that side alone, which hands it back to your desktop's
 power management:
 
-  z13ctl autoswitch --ac "" --battery battery-uv
+  voltaire autoswitch --ac "" --battery battery-uv
 
 Build the profile you want on battery before selecting it here — '--profile' on
 'tdp', 'fancurve' and 'undervolt' edits a profile without applying it:
 
-  z13ctl profile --create battery-uv
-  z13ctl tdp --set 35 --profile battery-uv
-  z13ctl undervolt --set -25 --profile battery-uv
-  z13ctl autoswitch --ac balanced --battery battery-uv
+  voltaire profile --create battery-uv
+  voltaire tdp --set 35 --profile battery-uv
+  voltaire undervolt --set -25 --profile battery-uv
+  voltaire autoswitch --ac balanced --battery battery-uv
 
 Turning autoswitch on applies the profile for the source you are already on, so
 enabling it takes effect immediately rather than at the next transition.
 
 After that, autoswitch acts only when the power source actually changes. A
 profile you pick by hand therefore stays until the next plug or unplug, and
-z13ctl does not contest the profile with power-profiles-daemon in between. One consequence
+voltaire does not contest the profile with power-profiles-daemon in between. One consequence
 worth knowing: GNOME's "Automatic Power Saver" triggers on low battery rather
 than on unplugging, so it can still move a firmware profile afterwards.
 
@@ -100,7 +100,7 @@ func runAutoswitchSet(cmd *cobra.Command) error {
 				battery = cur.Battery
 			}
 			if enabled && ac == "" && battery == "" {
-				return fmt.Errorf("nothing to enable: set a target first, e.g. 'z13ctl autoswitch --ac balanced --battery custom'")
+				return fmt.Errorf("nothing to enable: set a target first, e.g. 'voltaire autoswitch --ac balanced --battery custom'")
 			}
 		}
 	}

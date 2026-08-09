@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/aura"
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // ParseColor parses a color name or 6-digit hex string (RRGGBB) into R, G, B

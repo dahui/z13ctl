@@ -1,6 +1,6 @@
 package api
 
-// client.go — socket client for communicating with the z13ctl daemon.
+// client.go — socket client for communicating with the voltaire daemon.
 //
 // Each Send* function connects to the daemon's Unix socket, sends one JSON
 // command, and reads one JSON response. If the daemon is not running

@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.

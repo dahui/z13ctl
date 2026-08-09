@@ -3,7 +3,7 @@ package daemon
 // state.go — State persistence via $XDG_STATE_HOME.
 //
 // State and LightingState types are defined in the public api package
-// (github.com/dahui/z13ctl/api) and used here for persistence.
+// (github.com/dahui/voltaire/api/v2) and used here for persistence.
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // noHomeWarnOnce keeps the unresolvable-home warning to a single line per

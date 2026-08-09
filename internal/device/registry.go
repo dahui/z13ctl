@@ -8,7 +8,7 @@ package device
 import (
 	"fmt"
 
-	"github.com/dahui/z13ctl/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // Factory function types, one per hardware class. Each receives its capability

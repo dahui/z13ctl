@@ -3,7 +3,7 @@ package aura_test
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/voltaire/v2/internal/aura"
 )
 
 func TestModeFromString(t *testing.T) {
