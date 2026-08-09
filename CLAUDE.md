@@ -170,6 +170,13 @@ contrib/
                              99-voltaire-gamepad.rules (gamepad read access)
   nfpm/                      package scripts: postinstall/preremove/postremove for voltaire,
                              gui-* for voltaire-gui (each migrates the pre-rename unit)
+  aur/                       split pkgbase voltaire-bin → voltaire-bin + voltaire-gui-bin
+                             (one AUR repo, so CLI and GUI can never skew versions) +
+                             both .install files; release.yml patches the placeholders
+                             and pushes on tag. provides/conflicts cover all four old
+                             names; replaces=() is inert on AUR but declared anyway.
+                             The retirement runbook for the old AUR packages is
+                             ~/.claude/plans/voltaire-aur-playbook.md (Jeff executes).
   voltaire-gui.desktop       desktop entry
 examples/themes/             shipped theme TOMLs (catppuccin, gruvbox, nord, rog-*, …)
 website/                     the docs site (Astro Starlight; see Documentation)
@@ -202,6 +209,17 @@ website/                     the docs site (Astro Starlight; see Documentation)
   `enable --now` is a no-op on upgrade: the unit is `Type=oneshot` with
   `RemainAfterExit=yes`, so it is already active and new `ExecStart` lines never
   run. Without the restart, an upgrade does not apply added grants until reboot.
+- **The AUR package is setup-driven, not file-shipping — keep it one or the
+  other.** `voltaire-bin.install` runs `voltaire setup` at install/upgrade, so
+  the rules and perms unit are always the generated ones (no drift possible,
+  and setup's pre-rename cleanup runs for free); the nfpm packages ship static
+  files instead and rely on the drift guard. Do not "fix" the AUR package to
+  also install `99-voltaire.rules` — two rules files (its `/usr/lib` copy plus
+  setup's `/etc` copy) both active is the kind of half-state issue #12 was.
+  The perms unit is the deliberate exception: the PKGBUILD ships it under
+  `/usr/lib` while setup writes `/etc`; identical content, `/etc` wins, and
+  removing the package leaves the setup-written copy governing — same shape as
+  the pre-rename package.
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.

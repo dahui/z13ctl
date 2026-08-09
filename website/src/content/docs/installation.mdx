@@ -88,10 +88,12 @@ package with your preferred AUR helper — it provides both `voltaire-bin` and
 yay -S voltaire-bin voltaire-gui-bin
 ```
 
-The packages install the binaries, udev rules, systemd units, desktop entry,
-and the sysfs permissions service automatically, restarting the latter so an
-upgrade applies any new permission grants without a reboot. After installing,
-add your user to the `users` group if not already a member:
+The packages install the binaries, systemd units, and desktop entry, and run
+`voltaire setup` — which writes the udev rules, installs the sysfs
+permissions service, applies every permission grant immediately (so an
+upgrade needs no reboot), and cleans up anything a pre-2.0 `z13ctl setup`
+left behind. After installing, add your user to the `users` group if not
+already a member:
 
 ```sh
 sudo usermod -aG users $USER

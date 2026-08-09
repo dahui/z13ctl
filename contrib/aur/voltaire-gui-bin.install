@@ -1,0 +1,19 @@
+post_install() {
+    udevadm control --reload-rules
+    udevadm trigger
+    # CAP_BPF + CAP_PERFMON let the gamescope overlay block controller input
+    # at the kernel level instead of freezing Steam. Optional — the SIGSTOP
+    # fallback works without them.
+    setcap cap_bpf,cap_perfmon+ep /usr/bin/voltaire-gui 2>/dev/null || true
+    # The pre-rename z13gui unit stays enabled until explicitly disabled,
+    # racing the renamed one for the overlay.
+    systemctl --global disable z13gui.service 2>/dev/null || true
+    systemctl --global enable voltaire.socket voltaire.service
+    systemctl --global enable voltaire-gui.service
+}
+
+post_upgrade() {
+    udevadm control --reload-rules
+    udevadm trigger
+    setcap cap_bpf,cap_perfmon+ep /usr/bin/voltaire-gui 2>/dev/null || true
+}

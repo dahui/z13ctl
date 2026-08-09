@@ -51,17 +51,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version, sha256, and pkgrel
+      - name: Get version, sha256s, and pkgrel
         id: meta
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${TAG#v}"
-          URL="https://github.com/dahui/z13ctl/releases/download/${TAG}/z13ctl_${VERSION}_linux_amd64.tar.gz"
-          SHA256=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
+          BASE="https://github.com/dahui/voltaire/releases/download/${TAG}"
+          SHA256_CLI=$(curl -fsSL "${BASE}/voltaire_${VERSION}_linux_amd64.tar.gz"     | sha256sum | cut -d' ' -f1)
+          SHA256_GUI=$(curl -fsSL "${BASE}/voltaire-gui_${VERSION}_linux_amd64.tar.gz" | sha256sum | cut -d' ' -f1)
 
           # Compute pkgrel: increment if same version already on AUR, else 1
           PKGREL=1
-          AUR_VER=$(curl -gfsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=z13ctl-bin" \
+          AUR_VER=$(curl -gfsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=voltaire-bin" \
             | jq -r '.results[0].Version // empty')
           if [ -n "$AUR_VER" ]; then
             AUR_PKGVER="${AUR_VER%-*}"
@@ -71,15 +72,17 @@ jobs:
             fi
           fi
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "sha256=$SHA256"   >> "$GITHUB_OUTPUT"
-          echo "pkgrel=$PKGREL"   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
+          echo "sha256_cli=$SHA256_CLI" >> "$GITHUB_OUTPUT"
+          echo "sha256_gui=$SHA256_GUI" >> "$GITHUB_OUTPUT"
+          echo "pkgrel=$PKGREL"         >> "$GITHUB_OUTPUT"
 
       - name: Patch PKGBUILD
         run: |
-          sed -i "s/PKGVER_PLACEHOLDER/${{ steps.meta.outputs.version }}/" contrib/aur/PKGBUILD
-          sed -i "s/PKGREL_PLACEHOLDER/${{ steps.meta.outputs.pkgrel }}/"  contrib/aur/PKGBUILD
-          sed -i "s/SHA256_PLACEHOLDER/${{ steps.meta.outputs.sha256 }}/"  contrib/aur/PKGBUILD
+          sed -i "s/PKGVER_PLACEHOLDER/${{ steps.meta.outputs.version }}/"     contrib/aur/PKGBUILD
+          sed -i "s/PKGREL_PLACEHOLDER/${{ steps.meta.outputs.pkgrel }}/"      contrib/aur/PKGBUILD
+          sed -i "s/SHA256_CLI_PLACEHOLDER/${{ steps.meta.outputs.sha256_cli }}/" contrib/aur/PKGBUILD
+          sed -i "s/SHA256_GUI_PLACEHOLDER/${{ steps.meta.outputs.sha256_gui }}/" contrib/aur/PKGBUILD
 
       - name: Generate .SRCINFO
         run: |
@@ -106,16 +109,16 @@ jobs:
       - name: Push to AUR
         run: |
           for i in $(seq 1 100); do
-            git clone ssh://aur@aur.archlinux.org/z13ctl-bin.git /tmp/aur-repo && break
+            git clone ssh://aur@aur.archlinux.org/voltaire-bin.git /tmp/aur-repo && break
             DELAY=$(( (10 + (i - 1) * 5) < 30 ? (10 + (i - 1) * 5) : 30 ))
             echo "Clone attempt $i failed, retrying in ${DELAY}s..."
             rm -rf /tmp/aur-repo
             sleep "$DELAY"
           done
-          cp contrib/aur/PKGBUILD contrib/aur/.SRCINFO /tmp/aur-repo/
-          [ -f contrib/aur/z13ctl-bin.install ] && cp contrib/aur/z13ctl-bin.install /tmp/aur-repo/
+          cp contrib/aur/PKGBUILD contrib/aur/.SRCINFO \
+             contrib/aur/voltaire-bin.install contrib/aur/voltaire-gui-bin.install /tmp/aur-repo/
           cd /tmp/aur-repo
-          git config user.name "z13ctl Release Bot"
+          git config user.name "voltaire Release Bot"
           git config user.email "noreply@github.com"
           git add -A
           git diff --cached --quiet && echo "No changes to push" && exit 0

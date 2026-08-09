@@ -1,0 +1,28 @@
+post_install() {
+    # setup writes the udev rules and the perms unit, applies sysfs permissions
+    # immediately, and cleans up what a pre-2.0 "z13ctl setup" installed (the
+    # old rules file — only after verifying z13ctl generated it — and the old
+    # RemainAfterExit perms unit, which stays active holding stale grants
+    # through anything short of an explicit disable).
+    voltaire setup
+    # The old user units are not setup's to manage; replace them here. Their
+    # sockets stay served: voltaire.socket carries the pre-rename listen path
+    # too, so clients pointed at the z13ctl socket keep working.
+    systemctl --global disable z13ctl.socket z13ctl.service 2>/dev/null || true
+    systemctl --global enable voltaire.socket voltaire.service || true
+    echo ""
+    echo ">>> voltaire installed. To start the daemon now (without logging out):"
+    echo ">>>   systemctl --user start voltaire.socket"
+    echo ">>> Or log out and back in — socket activation starts automatically."
+    echo ">>> Upgrading from z13ctl? Settings carry over on first run:"
+    echo ">>>   https://dahui.github.io/voltaire/migrating-from-z13ctl/"
+}
+
+post_upgrade() {
+    # Re-run so an upgrade applies added permission grants without a reboot.
+    voltaire setup
+    echo ""
+    echo ">>> voltaire upgraded. Reload the user daemon and restart the service:"
+    echo ">>>   systemctl --user daemon-reload"
+    echo ">>>   systemctl --user restart voltaire.service"
+}
