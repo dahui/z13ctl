@@ -54,15 +54,19 @@ type request struct {
 	AC      string `json:"ac,omitempty"`
 	Battery string `json:"battery,omitempty"`
 	Enabled bool   `json:"enabled,omitempty"`
+	// ID names the firmware toggle a feature/feature-get command addresses,
+	// e.g. "boot_sound". The valid set is DeviceInfo.Toggles.
+	ID string `json:"id,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
 type response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Value string `json:"value,omitempty"`
-	State *State `json:"state,omitempty"`
-	Event string `json:"event,omitempty"`
+	OK     bool        `json:"ok"`
+	Error  string      `json:"error,omitempty"`
+	Value  string      `json:"value,omitempty"`
+	State  *State      `json:"state,omitempty"`
+	Device *DeviceInfo `json:"device,omitempty"`
+	Event  string      `json:"event,omitempty"`
 }
 
 // dialTimeout bounds establishing the connection; commandTimeout bounds the
@@ -541,6 +545,54 @@ func SendGetState() (bool, *State, error) {
 		return true, nil, fmt.Errorf("%s", resp.Error)
 	}
 	return true, resp.State, nil
+}
+
+// SendDeviceGet queries the daemon for the assembled device's identity,
+// capabilities, and limits. The document is static for the daemon's lifetime,
+// so clients typically fetch it once at startup and render their controls from
+// it — a nil section means the capability does not exist on this device.
+// handled=false means the daemon is not running; there is no fallback, since
+// the capability data lives with the daemon's assembled device.
+func SendDeviceGet() (handled bool, info *DeviceInfo, err error) {
+	handled, resp, err := sendCommand(request{Cmd: "device-get"})
+	if !handled || err != nil {
+		return handled, nil, err
+	}
+	if !resp.OK {
+		return true, nil, fmt.Errorf("%s", resp.Error)
+	}
+	return true, resp.Device, nil
+}
+
+// SendFeatureGet queries the daemon for a firmware toggle's current value by
+// its wire ID (DeviceInfo.Toggles). handled=false means the daemon is not
+// running and the caller should fall back to direct sysfs access.
+func SendFeatureGet(id string) (handled bool, value int, err error) {
+	handled, resp, err := sendCommand(request{Cmd: "feature-get", ID: id})
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	if !resp.OK {
+		return true, 0, fmt.Errorf("%s", resp.Error)
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if err != nil {
+		return true, 0, fmt.Errorf("parsing feature value %q: %w", resp.Value, err)
+	}
+	return true, v, nil
+}
+
+// SendFeatureSet sets a firmware toggle by its wire ID (DeviceInfo.Toggles).
+// For "bool" toggles the value must be 0 or 1.
+func SendFeatureSet(id string, value int) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "feature", ID: id, Set: strconv.Itoa(value)})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, fmt.Errorf("%s", resp.Error)
+	}
+	return true, nil
 }
 
 // Subscribe opens a long-lived subscription to the daemon and returns a channel

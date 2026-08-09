@@ -118,7 +118,7 @@ func TestZ13FloorCurveIsWellFormed(t *testing.T) {
 			}
 		}
 	}
-	if _, err := cli.ParseFanCurve(formatCurve(curve)); err != nil {
+	if _, err := cli.ParseFanCurve(c.Fans.Shape(), formatCurve(curve)); err != nil {
 		t.Errorf("floor_curve is rejected by cli.ParseFanCurve: %v", err)
 	}
 }

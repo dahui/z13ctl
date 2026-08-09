@@ -13,6 +13,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/driver"
 )
 
 // ParseColor parses a color name or 6-digit hex string (RRGGBB) into R, G, B
@@ -38,22 +39,26 @@ func ParseBrightness(s string) (uint8, error) {
 	return 0, fmt.Errorf("brightness must be off/low/medium/high (or 0–3), got %q", s)
 }
 
-// fanCurvePoints is the number of points a fan curve holds. Every supported
-// device today has 8; deriving it from the device's FanShape is part of the
-// capability-protocol milestone, where the GUI's editor learns it too.
-const fanCurvePoints = 8
-
-// ParseFanCurve parses a comma-separated curve string of temp:speed pairs.
-// Temperatures are Celsius and must be strictly increasing; speeds must be
-// non-decreasing (0–255). PWM values may use a % suffix for percentage
-// (0–100%), which is converted to PWM (e.g. 80% = 204). Both formats
-// can be mixed in the same curve string.
-func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
-	parts := strings.Split(s, ",")
-	if len(parts) != fanCurvePoints {
-		return nil, fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(parts))
+// ParseFanCurve parses a comma-separated curve string of temp:speed pairs
+// against the device's fan-curve shape: the shape's Points is the required
+// point count and its PWMMax the speed ceiling. Temperatures are Celsius and
+// must be strictly increasing; speeds must be non-decreasing. PWM values may
+// use a % suffix for percentage (0–100%), converted against PWMMax (80% = 204
+// at the usual 255). Both formats can be mixed in the same curve string.
+//
+// Temperature bounds stay a fixed 0–120: the shape's TempMin/TempMax are the
+// editor's display axis, not validation bounds — the Z13's axis starts at
+// 35 °C while curves with 30 °C points have always been legal and are sitting
+// in users' saved state.
+func ParseFanCurve(shape driver.FanShape, s string) ([]api.FanCurvePoint, error) {
+	if shape.Points <= 0 || shape.PWMMax <= 0 {
+		return nil, fmt.Errorf("device declares no fan curve shape")
 	}
-	points := make([]api.FanCurvePoint, fanCurvePoints)
+	parts := strings.Split(s, ",")
+	if len(parts) != shape.Points {
+		return nil, fmt.Errorf("fan curve must have exactly %d points, got %d", shape.Points, len(parts))
+	}
+	points := make([]api.FanCurvePoint, shape.Points)
 	for i, part := range parts {
 		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
 		if len(kv) != 2 {
@@ -79,9 +84,9 @@ func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
 			if pwm < 0 || pwm > 100 {
 				return nil, fmt.Errorf("percentage %d in point %d out of range 0–100", pwm, i+1)
 			}
-			pwm = pwm * 255 / 100
-		} else if pwm < 0 || pwm > 255 {
-			return nil, fmt.Errorf("pwm %d in point %d out of range 0–255", pwm, i+1)
+			pwm = pwm * shape.PWMMax / 100
+		} else if pwm < 0 || pwm > shape.PWMMax {
+			return nil, fmt.Errorf("pwm %d in point %d out of range 0–%d", pwm, i+1, shape.PWMMax)
 		}
 		if i > 0 && temp <= points[i-1].Temp {
 			return nil, fmt.Errorf("temps must be monotonically increasing: point %d (%d) <= point %d (%d)", i+1, temp, i, points[i-1].Temp)

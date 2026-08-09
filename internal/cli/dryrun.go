@@ -220,6 +220,18 @@ func DryRunPanelOverdrive(value int) {
 	fmt.Printf("Would write %d to %s\n", value, asusz13.FindPanelOverdrivePath())
 }
 
+// DryRunFeature prints the sysfs write a generic firmware-toggle set would
+// perform. An id the driver has no path mapping for still prints something
+// truthful rather than an empty path.
+func DryRunFeature(id string, value int) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	path := asusz13.FindTogglePath(id)
+	if path == "" {
+		path = fmt.Sprintf("<no %s attribute on this driver>", id)
+	}
+	fmt.Printf("Would write %d to %s\n", value, path)
+}
+
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
 // The same curve is written to both fans.
 func DryRunFanCurve(points []api.FanCurvePoint) {

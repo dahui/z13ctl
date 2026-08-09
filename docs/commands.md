@@ -326,6 +326,32 @@ z13ctl paneloverdrive --set 1
 
 ---
 
+## feature
+
+Get or set the device's firmware toggles (BIOS switches) by their id — the
+generic form of `bootsound` and `paneloverdrive`. The set of toggles comes from
+the device data this build carries; `--list` shows what this machine offers,
+and the daemon serves the same list to GUIs in its `device-get` document, so a
+toggle added in device data is reachable without new commands anywhere.
+
+```
+z13ctl feature [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--list` | List the device's firmware toggles (id, kind, label) |
+| `--get <id>` | Print a toggle's current value |
+| `--set <id>=<value>` | Set a toggle; boolean toggles take `0` or `1` |
+
+```sh
+z13ctl feature --list
+z13ctl feature --get boot_sound
+z13ctl feature --set panel_overdrive=0
+```
+
+---
+
 ## fancurve
 
 Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.

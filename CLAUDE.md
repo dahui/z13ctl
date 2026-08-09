@@ -15,6 +15,7 @@ api/                         Public client API submodule (github.com/dahui/z13ct
   go.mod                     Separate module; stdlib only; importable by z13gui and external tools
   types.go                   State, LightingState, FanCurvePoint, FanCurveState, TDPState, UndervoltState,
                              CustomProfile, AutoswitchState; IsCustomProfile/InCustomProfile/ActiveCustomProfile
+  device.go                  DeviceInfo + section types — the device-get capability/limits document
   client.go                  SocketPath, Send*, Subscribe (all client functions)
   example_test.go            testable examples for all Send* and Subscribe functions
 main.go                      entry point
@@ -30,6 +31,7 @@ cmd/                         Cobra subcommands
   batterylimit.go            get/set battery charge limit (power_supply sysfs)
   bootsound.go               get/set POST boot sound (asus-armoury firmware-attributes)
   paneloverdrive.go          get/set panel refresh overdrive (asus-armoury firmware-attributes)
+  feature.go                 generic firmware-toggle access by id (--list/--get/--set id=value)
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs)
   tdp.go                     get/set/reset TDP power limits (asus-nb-wmi PPT sysfs)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
@@ -83,6 +85,7 @@ internal/
     reconcile_test.go        reconcileTick decision table (no hardware) + reconcileOnce race guard +
                              the suspend gate and its ceiling
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
+    deviceinfo.go            device-get capability document (pure deviceInfoFor) + feature/feature-get handlers
     server_test.go           request validation + dispatch routing (no hardware access)
     state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup,
                              legacy migration, reserved-name sanitisation
@@ -196,6 +199,9 @@ contrib/
   | battery get | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
   | boot sound set | `{"cmd":"bootsound","set":"1"}` | `ok` |
   | boot sound get | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+  | device document | `{"cmd":"device-get"}` | `ok`, `device` (capabilities/limits; static, cacheable) |
+  | feature set | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
+  | feature get | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
   | panel overdrive set | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
   | panel overdrive get | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
   | fan curve get | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |

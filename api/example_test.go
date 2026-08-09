@@ -505,3 +505,52 @@ func ExampleSendAutoswitchGet() {
 	}
 	fmt.Println(st.Enabled, st.AC, st.Battery, st.OnAC)
 }
+
+func ExampleSendDeviceGet() {
+	// Fetch the device's capabilities and limits once at startup, and render
+	// controls from it: a nil section means the capability does not exist.
+	handled, info, err := api.SendDeviceGet()
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("device:", info.Model)
+	if info.Power != nil {
+		fmt.Println("TDP slider range:", info.Power.TDPMin, "to", info.Power.TDPMaxForced)
+	}
+	for _, t := range info.Toggles {
+		fmt.Println("toggle:", t.ID, "-", t.Label)
+	}
+}
+
+func ExampleSendFeatureGet() {
+	// Read a firmware toggle by the wire ID DeviceInfo.Toggles lists.
+	handled, value, err := api.SendFeatureGet("boot_sound")
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("boot sound:", value)
+}
+
+func ExampleSendFeatureSet() {
+	// Turn a firmware toggle off. Bool toggles take 0 or 1.
+	handled, err := api.SendFeatureSet("boot_sound", 0)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("feature set")
+}

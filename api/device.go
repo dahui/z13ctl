@@ -1,0 +1,81 @@
+package api
+
+// device.go — the capability/limits document served by the daemon's
+// device-get command.
+//
+// DeviceInfo is how a client learns what the machine it is talking to can do
+// and which bounds to validate and render against, instead of hardcoding one
+// device's numbers. Capability discovery is by absence, never by error: a
+// section that is nil (omitted on the wire) means the device does not have
+// that capability, and the client hides the corresponding controls. The
+// values come from the device data the daemon was assembled from, so they are
+// static for the daemon's lifetime — fetch once and cache.
+
+// DeviceInfo describes the assembled device: its identity, the capabilities
+// it has, and the limits that go with them. Returned by SendDeviceGet.
+type DeviceInfo struct {
+	ID    string `json:"id"`    // device data identifier, e.g. "asus-rog-flow-z13-2025"
+	Model string `json:"model"` // short hardware name for display, e.g. "GZ302"
+
+	Fans      *FanInfo       `json:"fans,omitempty"`
+	Power     *PowerInfo     `json:"power,omitempty"`
+	Profiles  *ProfileInfo   `json:"profiles,omitempty"`
+	Lighting  *LightingInfo  `json:"lighting,omitempty"`
+	Toggles   []ToggleInfo   `json:"toggles,omitempty"`
+	Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
+
+	// Presence-only capabilities: no client-facing limits, just whether the
+	// controls and readings exist at all.
+	Battery   bool `json:"battery,omitempty"`
+	Telemetry bool `json:"telemetry,omitempty"`
+	Buttons   bool `json:"buttons,omitempty"`
+}
+
+// FanInfo is the device's fan-curve shape: how many points a curve holds and
+// the axes an editor should draw. TempMin/TempMax are the editor's temperature
+// axis, not validation bounds — the hardware tolerates points outside them.
+type FanInfo struct {
+	Points  int `json:"points"`
+	TempMin int `json:"temp_min"` // degrees Celsius
+	TempMax int `json:"temp_max"`
+	PWMMax  int `json:"pwm_max"`
+}
+
+// PowerInfo is the device's power-limit envelope. Sustained limits above
+// TDPMaxSafe require the caller's explicit force flag and put the fans on
+// FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means
+// the device imposes no floor.
+type PowerInfo struct {
+	TDPMin       int             `json:"tdp_min"`
+	TDPMaxSafe   int             `json:"tdp_max_safe"`
+	TDPMaxForced int             `json:"tdp_max_forced"`
+	FloorCurve   []FanCurvePoint `json:"floor_curve,omitempty"`
+}
+
+// ProfileInfo lists the firmware performance profiles. These are also the
+// reserved names: a custom profile can never take one of them.
+type ProfileInfo struct {
+	Names []string `json:"names"`
+}
+
+// LightingInfo lists the addressable lighting zone names.
+type LightingInfo struct {
+	Zones []string `json:"zones"`
+}
+
+// ToggleInfo describes one firmware toggle the device offers. ID is the wire
+// identifier for the feature/feature-get commands; Label is a human-readable
+// fallback for clients with no nicer name of their own. Kind says how the
+// value is shaped — "bool" toggles take 0 or 1.
+type ToggleInfo struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Kind  string `json:"kind"`
+}
+
+// UndervoltInfo is the legal Curve Optimizer offset range (Min ≤ value ≤ Max;
+// on the Z13, -40 to 0).
+type UndervoltInfo struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}

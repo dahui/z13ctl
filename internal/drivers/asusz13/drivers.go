@@ -139,6 +139,17 @@ var togglePaths = map[string]struct {
 	"panel_overdrive": {FindPanelOverdrivePath, SetPanelOverdrive},
 }
 
+// FindTogglePath returns the sysfs path a toggle id writes to, or "" for an id
+// this driver has no mapping for. For dry-run display: a dry run's job is to
+// spell out the exact write, and the path is this driver's own knowledge.
+func FindTogglePath(id string) string {
+	p, ok := togglePaths[id]
+	if !ok {
+		return ""
+	}
+	return p.find()
+}
+
 type toggles struct{ specs []driver.ToggleSpec }
 
 func (t toggles) List() []driver.ToggleSpec {

@@ -115,14 +115,16 @@ func runFanCurveGet() error {
 }
 
 func runFanCurveSet() error {
-	points, err := cli.ParseFanCurve(fanCurveSetFlag)
-	if err != nil {
-		return fmt.Errorf("invalid fan curve: %w", err)
-	}
-
 	hw, err := hardware()
 	if err != nil {
 		return err
+	}
+	if hw.Fans == nil {
+		return fmt.Errorf("no fan control on this device")
+	}
+	points, err := cli.ParseFanCurve(hw.Fans.Shape(), fanCurveSetFlag)
+	if err != nil {
+		return fmt.Errorf("invalid fan curve: %w", err)
 	}
 
 	// Enforce the floor when sustained TDP exceeds the safe max, against the

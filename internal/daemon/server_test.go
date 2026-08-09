@@ -98,7 +98,10 @@ func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Daemon{}
+			// testDev, not an empty daemon: the parse is judged against the
+			// device's fan shape, so the capability guard now precedes it.
+			// Every case still returns from the parse, before any hardware.
+			d := &Daemon{hw: testDev}
 			resp := d.handleFanCurve(request{Cmd: "fancurve", Set: tt.set})
 			if resp.OK {
 				t.Fatalf("handleFanCurve(%q).OK = true, want a rejection", tt.set)
@@ -107,6 +110,14 @@ func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 				t.Errorf("error = %q, want it to contain %q", resp.Error, tt.wantErr)
 			}
 		})
+	}
+
+	// And a device with no fan control rejects on the capability, before the
+	// parse has a shape to judge against.
+	d := &Daemon{}
+	if resp := d.handleFanCurve(request{Cmd: "fancurve", Set: "40:100,50:150"}); resp.OK ||
+		!strings.Contains(resp.Error, "no fan control") {
+		t.Errorf("fanless device = %+v, want the no-fan-control rejection", resp)
 	}
 }
 

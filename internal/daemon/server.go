@@ -47,15 +47,19 @@ type request struct {
 	AC      string `json:"ac,omitempty"`
 	Battery string `json:"battery,omitempty"`
 	Enabled bool   `json:"enabled,omitempty"`
+	// ID names the firmware toggle a feature/feature-get command addresses,
+	// e.g. "boot_sound". The valid set is the device-get document's toggles.
+	ID string `json:"id,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
 type response struct {
-	OK    bool       `json:"ok"`
-	Error string     `json:"error,omitempty"`
-	Value string     `json:"value,omitempty"`
-	State *api.State `json:"state,omitempty"`
-	Event string     `json:"event,omitempty"`
+	OK     bool            `json:"ok"`
+	Error  string          `json:"error,omitempty"`
+	Value  string          `json:"value,omitempty"`
+	State  *api.State      `json:"state,omitempty"`
+	Device *api.DeviceInfo `json:"device,omitempty"`
+	Event  string          `json:"event,omitempty"`
 }
 
 // requestReadTimeout bounds how long a connection may stay open without
@@ -134,6 +138,12 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleBatteryLimit(req)
 	case "batterylimit-get":
 		return d.handleBatteryLimitGet()
+	case "device-get":
+		return d.handleDeviceGet()
+	case "feature":
+		return d.handleFeature(req)
+	case "feature-get":
+		return d.handleFeatureGet(req)
 	case "bootsound":
 		return d.handleBootSound(req)
 	case "bootsound-get":
@@ -539,12 +549,14 @@ func (d *Daemon) readFanCurveHW() *api.FanCurveState {
 }
 
 func (d *Daemon) handleFanCurve(req request) response {
-	points, err := cli.ParseFanCurve(req.Set)
-	if err != nil {
-		return response{OK: false, Error: "fancurve: " + err.Error()}
-	}
+	// Capability before parse: the parse is judged against this device's fan
+	// shape, so there is no shape to parse against without fan control.
 	if d.hw == nil || d.hw.Fans == nil {
 		return response{OK: false, Error: "fancurve: no fan control on this device"}
+	}
+	points, err := cli.ParseFanCurve(d.hw.Fans.Shape(), req.Set)
+	if err != nil {
+		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()

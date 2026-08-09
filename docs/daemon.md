@@ -22,7 +22,7 @@ ordinary one-shot CLI invocations cannot:
   (see [API](api.md)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`, `fancurve`, `tdp`, `undervolt`, `status`) automatically route through the
+`bootsound`, `paneloverdrive`, `feature`, `fancurve`, `tdp`, `undervolt`, `status`) automatically route through the
 daemon socket when it is running. If the daemon is not running they fall back to direct hardware or
 sysfs access transparently — there is no user-visible difference other than
 persistence.
@@ -121,6 +121,40 @@ where the payload is structured).
 Connections are single-shot — the daemon replies once and closes — except
 `subscribe`, which stays open and streams events.
 
+### Device capabilities
+
+| Command | Request | Response |
+|---|---|---|
+| Device document | `{"cmd":"device-get"}` | `ok`, `device` |
+
+`device-get` returns the capability/limits document for the device the daemon
+was assembled with — what the machine can do, and the bounds to validate and
+render controls against, instead of hardcoding one device's numbers:
+
+```json
+{"ok":true,"device":{
+  "id":"asus-rog-flow-z13-2025","model":"GZ302",
+  "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255},
+  "power":{"tdp_min":5,"tdp_max_safe":75,"tdp_max_forced":93,
+           "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."]},
+  "profiles":{"names":["quiet","balanced","performance"]},
+  "lighting":{"zones":["keyboard","lightbar"]},
+  "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
+             {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
+  "undervolt":{"min":-40,"max":0},
+  "battery":true,"telemetry":true,"buttons":true}}
+```
+
+Capability discovery is **by absence**: a section that is missing means the
+device does not have that capability — never an error — and a client hides the
+corresponding controls. The document is built from device data, so it is static
+for the daemon's lifetime: fetch it once at startup and cache it.
+
+Bounds worth knowing: `fans.temp_min`/`temp_max` are the curve editor's display
+axis, not validation limits; `power.floor_curve` is the fan floor enforced
+while the sustained TDP exceeds `tdp_max_safe` (draw it under the user's curve);
+`toggles[].id` is the wire identifier the `feature` commands below take.
+
 ### Lighting
 
 | Command | Request | Response |
@@ -144,9 +178,17 @@ all zones. `brightness` is 0–3.
 | Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
 | Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
 | Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
+| Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
+| Get firmware toggle | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
 
 `profile` accepts `quiet`, `balanced`, `performance`, or the name of a custom
 profile (including `custom`).
+
+`feature`/`feature-get` are the generic form of the firmware-toggle commands:
+`id` is any toggle the `device-get` document lists, so a client driven by that
+document needs no per-toggle code. `bootsound` and `paneloverdrive` remain as
+the named equivalents for the Z13's two toggles. `"bool"` toggles take 0 or 1;
+an unknown `id` is an error naming it.
 
 !!! warning "Unknown profile names are now rejected"
     Earlier daemons forwarded any string to `platform_profile`. A name that is
