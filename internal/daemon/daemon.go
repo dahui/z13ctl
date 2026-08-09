@@ -2,8 +2,8 @@
 // hardware device management, state persistence, and Armoury Crate button watcher.
 //
 // Designed as a systemd user service using two units:
-//   - z13ctl.socket  — systemd manages the socket fd (socket activation)
-//   - z13ctl.service — Type=notify, Restart=on-failure
+//   - voltaire.socket  — systemd manages the socket fd (socket activation)
+//   - voltaire.service — Type=notify, Restart=on-failure
 //
 // Can also be run directly for development: voltaire daemon.
 //
@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,57 +300,106 @@ func Run(ctx context.Context, opts Options) error {
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)
 
-	ln, err := d.getListener()
+	lns, err := d.getListeners()
 	if err != nil {
 		return fmt.Errorf("socket: %w", err)
 	}
-	defer func() { _ = ln.Close() }()
-
-	if _, err := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); err != nil {
-		slog.Warn("sd_notify READY failed", "err", err)
+	closeAll := func() {
+		for _, ln := range lns {
+			_ = ln.Close()
+		}
 	}
-	slog.Info("voltaire daemon ready", "socket", ln.Addr())
+	defer closeAll()
+
+	if _, notifyErr := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); notifyErr != nil {
+		slog.Warn("sd_notify READY failed", "err", notifyErr)
+	}
+	addrs := make([]string, len(lns))
+	for i, ln := range lns {
+		addrs[i] = ln.Addr().String()
+	}
+	slog.Info("voltaire daemon ready", "sockets", strings.Join(addrs, ", "))
 
 	go d.broadcastLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
 		_, _ = sddaemon.SdNotify(false, sddaemon.SdNotifyStopping)
-		_ = ln.Close()
+		closeAll()
 	}()
 
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+	// One accept loop per listener; every connection is answered identically,
+	// so a client cannot tell the canonical socket from the legacy one. The
+	// first accept error wins and takes the daemon down (the deferred closeAll
+	// unblocks the sibling loops), except during shutdown, where the closes
+	// above surface here as expected errors.
+	errc := make(chan error, len(lns))
+	for _, ln := range lns {
+		go func(ln net.Listener) {
+			for {
+				conn, acceptErr := ln.Accept()
+				if acceptErr != nil {
+					errc <- acceptErr
+					return
+				}
+				go d.handleConn(conn)
 			}
-			return fmt.Errorf("accept: %w", err)
-		}
-		go d.handleConn(conn)
+		}(ln)
 	}
+	err = <-errc
+	if ctx.Err() != nil {
+		return nil
+	}
+	return fmt.Errorf("accept: %w", err)
 }
 
-// getListener returns a net.Listener from systemd socket activation if available,
-// otherwise creates a new Unix socket at socketPath().
-func (d *Daemon) getListener() (net.Listener, error) {
-	listeners, err := activation.Listeners()
-	if err == nil && len(listeners) > 0 && listeners[0] != nil {
-		slog.Info("using systemd socket activation")
-		return listeners[0], nil
+// getListeners returns every socket the daemon serves: all fds handed over by
+// systemd socket activation (voltaire.socket carries one ListenStream per
+// path), or self-created sockets at each api.SocketPaths() entry otherwise.
+//
+// The legacy z13ctl path is served through the whole 2.x line — the Decky
+// plugin and pre-2.0 clients hardcode it. On the self-created path its
+// failure is a warning, not an error: the daemon must come up on the
+// canonical socket even if something is squatting on the old one.
+func (d *Daemon) getListeners() ([]net.Listener, error) {
+	if activated, err := activation.Listeners(); err == nil {
+		var lns []net.Listener
+		for _, ln := range activated {
+			if ln != nil {
+				lns = append(lns, ln)
+			}
+		}
+		if len(lns) > 0 {
+			slog.Info("using systemd socket activation", "sockets", len(lns))
+			return lns, nil
+		}
 	}
 
-	sock := api.SocketPath()
-	if mkdirErr := os.MkdirAll(filepath.Dir(sock), 0o750); mkdirErr != nil {
-		return nil, mkdirErr
+	var lns []net.Listener
+	for i, sock := range api.SocketPaths() {
+		if mkdirErr := os.MkdirAll(filepath.Dir(sock), 0o750); mkdirErr != nil {
+			if i == 0 {
+				return nil, mkdirErr
+			}
+			slog.Warn("cannot create legacy socket directory", "path", sock, "err", mkdirErr)
+			continue
+		}
+		_ = os.Remove(sock)
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			if i == 0 {
+				for _, l := range lns {
+					_ = l.Close()
+				}
+				return nil, err
+			}
+			slog.Warn("cannot listen on legacy socket", "path", sock, "err", err)
+			continue
+		}
+		slog.Info("listening on Unix socket", "path", sock)
+		lns = append(lns, ln)
 	}
-	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("listening on Unix socket", "path", sock)
-	return ln, nil
+	return lns, nil
 }
 
 // broadcastLoop forwards Armoury Crate button presses to all subscribers

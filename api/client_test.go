@@ -23,7 +23,7 @@ func stubDaemon(t *testing.T, handle func(net.Conn)) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
-	if err := os.MkdirAll(dir+"/z13ctl", 0o750); err != nil {
+	if err := os.MkdirAll(dir+"/voltaire", 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	ln, err := net.Listen("unix", SocketPath())
@@ -319,5 +319,45 @@ func TestOrdinaryDaemonErrorIsNotUnknownCommand(t *testing.T) {
 	}
 	if errors.Is(err, ErrUnknownCommand) {
 		t.Errorf("errors.Is(err, ErrUnknownCommand) = true for %v, want false", err)
+	}
+}
+
+// TestClientReachesDaemonOnLegacySocket pins the other half of the rename
+// compatibility story: a pre-2.0 daemon listens only on the z13ctl path, and
+// the upgrade window routinely has one still running after the binary is
+// replaced. The client must find it there rather than concluding no daemon
+// is running and falling back to direct hardware access behind its back.
+func TestClientReachesDaemonOnLegacySocket(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	legacy := dir + "/z13ctl/z13ctl.sock"
+	if err := os.MkdirAll(dir+"/z13ctl", 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	ln, err := net.Listen("unix", legacy)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				_ = bufio.NewScanner(c).Scan()
+				_, _ = c.Write([]byte(`{"ok":true,"value":"balanced"}` + "\n"))
+				_ = c.Close()
+			}(c)
+		}
+	}()
+
+	handled, profile, err := SendProfileGet()
+	if !handled || err != nil {
+		t.Fatalf("SendProfileGet() = %v, %v, want handled with no error via the legacy path", handled, err)
+	}
+	if profile != "balanced" {
+		t.Errorf("profile = %q, want \"balanced\"", profile)
 	}
 }

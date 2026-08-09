@@ -1,6 +1,6 @@
 version: 2
 
-project_name: z13ctl
+project_name: voltaire
 
 # The api submodule is tagged api/vX.Y.Z in this same repository, and those tags
 # land on commits well after the last main-module release. Without this filter
@@ -21,8 +21,8 @@ before:
     - go mod tidy
 
 builds:
-  - id: z13ctl
-    binary: z13ctl
+  - id: voltaire
+    binary: voltaire
     ldflags:
       - -s -w -X github.com/dahui/voltaire/v2/internal/version.Version={{.Version}}
     goos:
@@ -31,7 +31,7 @@ builds:
       - amd64
 
 archives:
-  - id: z13ctl
+  - id: voltaire
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -50,21 +50,29 @@ checksum:
   name_template: "checksums.txt"
 
 nfpms:
-  - id: z13ctl-pkg
-    package_name: z13ctl
+  - id: voltaire-pkg
+    package_name: voltaire
     section: utils
     formats:
       - archlinux
       - deb
       - rpm
-    homepage: https://github.com/dahui/z13ctl
+    homepage: https://github.com/dahui/voltaire
     maintainer: "Jeff Hagadorn <noreply@github.com>"
     description: CLI and daemon for ASUS ROG Flow Z13 hardware control
     license: Apache-2.0
     dependencies:
       - systemd
       - dbus
+    # provides/replaces/conflicts on the old name migrate .deb/.rpm installs;
+    # AUR ignores replaces, which is what the AUR playbook (merge requests +
+    # sticky comments) exists for.
     provides:
+      - voltaire
+      - z13ctl
+    replaces:
+      - z13ctl
+    conflicts:
       - z13ctl
     scripts:
       postinstall: contrib/nfpm/postinstall.sh
@@ -72,15 +80,15 @@ nfpms:
       postremove: contrib/nfpm/postremove.sh
     contents:
       - src: LICENSE
-        dst: /usr/share/licenses/z13ctl/LICENSE
-      - src: contrib/systemd/user/z13ctl.socket
-        dst: /usr/lib/systemd/user/z13ctl.socket
-      - src: contrib/systemd/user/z13ctl.service
-        dst: /usr/lib/systemd/user/z13ctl.service
-      - src: contrib/systemd/system/z13ctl-perms.service
-        dst: /usr/lib/systemd/system/z13ctl-perms.service
-      - src: contrib/udev/99-z13ctl.rules
-        dst: /usr/lib/udev/rules.d/99-z13ctl.rules
+        dst: /usr/share/licenses/voltaire/LICENSE
+      - src: contrib/systemd/user/voltaire.socket
+        dst: /usr/lib/systemd/user/voltaire.socket
+      - src: contrib/systemd/user/voltaire.service
+        dst: /usr/lib/systemd/user/voltaire.service
+      - src: contrib/systemd/system/voltaire-perms.service
+        dst: /usr/lib/systemd/system/voltaire-perms.service
+      - src: contrib/udev/99-voltaire.rules
+        dst: /usr/lib/udev/rules.d/99-voltaire.rules
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
     overrides:

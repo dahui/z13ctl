@@ -1,10 +1,10 @@
 # Daemon
 
-The z13ctl daemon is a long-running background process that provides three things
+The voltaire daemon is a long-running background process that provides three things
 ordinary one-shot CLI invocations cannot:
 
 - **State persistence** — saves your last-applied lighting, profile, battery,
-  fan curve, TDP, and undervolt settings to `~/.local/state/z13ctl/state.json`
+  fan curve, TDP, and undervolt settings to `~/.local/state/voltaire/state.json`
   and restores them automatically at every boot.
 - **Sleep/resume recovery** — watches for system resume events via D-Bus and
   reapplies lighting and volatile settings (fan curves, TDP, undervolt) that
@@ -31,11 +31,11 @@ persistence.
 
 ## Systemd setup (recommended)
 
-z13ctl ships two systemd user units that use socket activation:
+voltaire ships two systemd user units that use socket activation:
 
-- **`z13ctl.socket`** — systemd creates and manages the Unix socket. The daemon
+- **`voltaire.socket`** — systemd creates and manages the Unix socket. The daemon
   is started on first use and does not run if nothing has connected.
-- **`z13ctl.service`** — `Type=notify`, `Restart=on-failure`. The daemon sends
+- **`voltaire.service`** — `Type=notify`, `Restart=on-failure`. The daemon sends
   `sd_notify READY` when it is listening.
 
 The units target `graphical-session.target`, so they work in both desktop
@@ -44,12 +44,12 @@ environments (KDE, GNOME) and Steam Gaming Mode (gamescope session).
 Install and enable:
 
 ```sh
-install -Dm644 contrib/systemd/user/z13ctl.socket \
-    ~/.config/systemd/user/z13ctl.socket
-install -Dm644 contrib/systemd/user/z13ctl.service \
-    ~/.config/systemd/user/z13ctl.service
+install -Dm644 contrib/systemd/user/voltaire.socket \
+    ~/.config/systemd/user/voltaire.socket
+install -Dm644 contrib/systemd/user/voltaire.service \
+    ~/.config/systemd/user/voltaire.service
 systemctl --user daemon-reload
-systemctl --user enable --now z13ctl.socket z13ctl.service
+systemctl --user enable --now voltaire.socket voltaire.service
 ```
 
 Or, if you built from source:
@@ -64,22 +64,22 @@ make install-service
 
 ```sh
 # Check status
-systemctl --user status z13ctl.socket
-systemctl --user status z13ctl.service
+systemctl --user status voltaire.socket
+systemctl --user status voltaire.service
 
 # View live logs
-journalctl --user -u z13ctl -f
+journalctl --user -u voltaire -f
 
 # Restart the daemon (e.g., after a config change)
-systemctl --user restart z13ctl.service
+systemctl --user restart voltaire.service
 ```
 
 ### Remove the user service
 
 ```sh
-systemctl --user disable --now z13ctl.socket z13ctl.service
-rm -f ~/.config/systemd/user/z13ctl.socket \
-      ~/.config/systemd/user/z13ctl.service
+systemctl --user disable --now voltaire.socket voltaire.service
+rm -f ~/.config/systemd/user/voltaire.socket \
+      ~/.config/systemd/user/voltaire.service
 systemctl --user daemon-reload
 ```
 
@@ -90,7 +90,7 @@ systemctl --user daemon-reload
 Start the daemon directly for testing or on systems without systemd:
 
 ```sh
-z13ctl daemon
+voltaire daemon
 ```
 
 To disable the Armoury Crate button watcher — because another tool needs
@@ -98,16 +98,21 @@ exclusive access to the device, or because you would rather the keypress reach
 only your desktop:
 
 ```sh
-z13ctl --no-button daemon
+voltaire --no-button daemon
 ```
 
 The daemon listens on a Unix socket at:
 
 ```
-$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock
+$XDG_RUNTIME_DIR/voltaire/voltaire.sock
 ```
 
-(falls back to `/tmp/z13ctl/z13ctl.sock` if `XDG_RUNTIME_DIR` is not set).
+(falls back to `/tmp/voltaire/voltaire.sock` if `XDG_RUNTIME_DIR` is not set).
+
+It also serves the pre-rename path, `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`, for
+the whole 2.x line — both sockets answer identically, so clients written
+against z13ctl (the Decky plugin among them) keep working unchanged. New
+clients should use the voltaire path; the compat path is removed at 3.0.
 
 ---
 
@@ -271,7 +276,7 @@ state that would be unsafe when activated.
     the request, drops the field, **applies the setting to the running machine**,
     and answers `ok`. A client that offers profile targeting must probe first —
     `profile-list` answers `unknown command` on an older daemon, which is exactly
-    what `z13ctl` itself does before sending any `--profile` edit.
+    what `voltaire` itself does before sending any `--profile` edit.
 
 !!! warning "Fan commands are restricted above 75 W sustained TDP"
     While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
@@ -354,7 +359,7 @@ import asyncio, json, os
 
 async def send(req):
     r, w = await asyncio.open_unix_connection(
-        f"/run/user/{os.getuid()}/z13ctl/z13ctl.sock")
+        f"/run/user/{os.getuid()}/voltaire/voltaire.sock")
     w.write((json.dumps(req) + "\n").encode())
     await w.drain()
     resp = json.loads(await r.readline())
@@ -374,7 +379,7 @@ protocol directly.
 The daemon persists state to:
 
 ```
-~/.local/state/z13ctl/state.json
+~/.local/state/voltaire/state.json
 ```
 
 The file is written atomically after every successful command. It stores:
@@ -473,7 +478,7 @@ On `PrepareForSleep(true)` the daemon therefore:
 
 Steps 2 and 3 only happen when the daemon owns the current thermal settings —
 that is, when a custom profile is active. A curve set by another tool (asusctl,
-or a direct sysfs write) while z13ctl is on a firmware profile is left alone,
+or a direct sysfs write) while voltaire is on a firmware profile is left alone,
 because nothing on the resume side would put it back.
 
 The daemon holds a logind **delay inhibitor** so these writes land before
@@ -481,7 +486,7 @@ userspace is frozen. Without one, `PrepareForSleep(true)` is only advisory —
 logind emits it and proceeds to suspend. You can confirm it is held:
 
 ```sh
-systemd-inhibit --list | grep z13ctl
+systemd-inhibit --list | grep voltaire
 ```
 
 If logind refuses the inhibitor the daemon carries on without it; the writes are
@@ -491,12 +496,12 @@ then racing the freeze, which is how it behaved before v1.3.1.
     The release writes to `ppt_*` and `pwm_enable` in the window before the
     suspend, so it is a reasonable first suspect — but on the one machine where
     this was investigated it was **not** the cause: suspend aborted identically
-    with the daemon stopped entirely. Rule z13ctl in or out with a control run
+    with the daemon stopped entirely. Rule voltaire in or out with a control run
     before going further:
 
     ```sh
-    systemctl --user stop z13ctl.service z13ctl.socket
-    systemctl suspend        # still wakes immediately? not z13ctl
+    systemctl --user stop voltaire.service voltaire.socket
+    systemctl suspend        # still wakes immediately? not voltaire
     ```
 
     A suspend that aborts before the kernel logs `Freezing user space processes`
@@ -533,7 +538,7 @@ This all happens transparently with no user intervention. You can verify it work
 by checking the daemon logs after a resume:
 
 ```sh
-journalctl --user -u z13ctl --since "5 minutes ago"
+journalctl --user -u voltaire --since "5 minutes ago"
 ```
 
 Expect, in order: `system entering sleep`, `sleep: released fans to firmware
@@ -558,11 +563,11 @@ the saved lighting state — honoring per-device overrides, so a keyboard-specif
 color/mode is restored exactly as you last set it.
 
 This requires no user intervention; the keyboard relights within a few seconds of
-reattachment. If your `z13ctl setup` udev rules are in place, the reattached node
+reattachment. If your `voltaire setup` udev rules are in place, the reattached node
 is granted access automatically. You can verify it in the daemon logs:
 
 ```sh
-journalctl --user -u z13ctl -f
+journalctl --user -u voltaire -f
 # On reattach: keyboard reattached; lighting restored
 ```
 
@@ -597,7 +602,7 @@ without this, a power profile change would release the fans while the power limi
 stayed in place.
 
 ```sh
-journalctl --user -u z13ctl -f
+journalctl --user -u voltaire -f
 # After a profile change: reconciling custom thermal settings
 #   reason="saved custom fan curve was disabled" platform_profile=balanced pwm_enable=2
 ```
@@ -605,7 +610,7 @@ journalctl --user -u z13ctl -f
 The daemon never writes `platform_profile` itself — your desktop stays in charge
 of the power profile. Reconciliation only runs while the `custom` profile is
 active, so selecting `quiet`, `balanced`, or `performance` with
-`z13ctl profile --set` releases the fans to firmware control and keeps them there.
+`voltaire profile --set` releases the fans to firmware control and keeps them there.
 
 It also stands down between `PrepareForSleep(true)` and the matching resume, so it
 does not undo the [pre-sleep fan release](#on-sleep-the-fans-are-handed-back-to-the-firmware)
@@ -613,9 +618,9 @@ in the window before userspace freezes. If a resume signal never arrives it star
 defending the curve again after about two minutes of awake time.
 
 !!! note "Daemon required"
-    Without the daemon, a custom fan curve set with `z13ctl fancurve --set` lasts
+    Without the daemon, a custom fan curve set with `voltaire fancurve --set` lasts
     only until the next power profile change. The CLI warns about this when it
-    applies a curve directly. Since z13ctl 1.2.2 the command also fails with an
+    applies a curve directly. Since voltaire 1.2.2 the command also fails with an
     error, rather than reporting success, if the kernel refuses to honour the
     curve it just wrote.
 
@@ -623,13 +628,13 @@ defending the curve again after about two minutes of awake time.
 
 ## AC/battery autoswitch
 
-When [`z13ctl autoswitch`](commands.md#autoswitch) is configured, the daemon
+When [`voltaire autoswitch`](commands.md#autoswitch) is configured, the daemon
 applies the profile that matches the power source on every plug and unplug.
 
 The watcher is **edge-triggered** on the mains adapter's `online` attribute
 under `/sys/class/power_supply`, and never reads or writes `platform_profile`.
 That is what makes it safe to run alongside `power-profiles-daemon`: it reacts
-only to a value that neither z13ctl nor PPD nor the desktop can write, so the
+only to a value that neither voltaire nor PPD nor the desktop can write, so the
 feedback loop that would produce a write-fight does not exist. The visible
 consequence, and the intended semantics, is that a profile you choose by hand
 stays in force until the power source actually changes.
@@ -661,7 +666,7 @@ it and apply twice for one event.
 
 !!! note "GNOME's Automatic Power Saver"
     That setting triggers on low battery rather than on unplugging, so it can
-    still move a firmware profile after autoswitch has acted. z13ctl yields
+    still move a firmware profile after autoswitch has acted. voltaire yields
     between transitions by design. Give a side an empty target to hand it to your
     desktop entirely.
 
@@ -676,7 +681,7 @@ a `gui-toggle` event to all connected subscribers.
 The device is read **non-exclusively**. It also carries `SW_TABLET_MODE`, and an
 exclusive `EVIOCGRAB` would take those tablet-mode transitions away from
 libinput — leaving the desktop convinced the machine is still a tablet and
-suppressing the detachable cover keyboard when it is attached after login. z13ctl
+suppressing the detachable cover keyboard when it is attached after login. voltaire
 grabbed the device up to v1.2.0 and did exactly that; it no longer does.
 
 One consequence of reading shared: the Armoury Crate keypress also reaches your
@@ -685,7 +690,7 @@ that binding will fire alongside the `gui-toggle` event — unbind it there, or 
 the daemon with `--no-button`.
 
 !!! note "Silent failure if another process grabs the device"
-    Because z13ctl no longer grabs, a different process holding an exclusive grab
+    Because voltaire no longer grabs, a different process holding an exclusive grab
     will silently receive all events instead, and the watcher will sit idle with
     nothing to report. If button presses do nothing, check what else has the
     device open (`sudo fuser -v /dev/input/eventN`).
@@ -703,14 +708,14 @@ See the [API](api.md) page for details.
 On gaming distributions such as Bazzite and ChimeraOS, [InputPlumber](https://github.com/ShadowBlip/InputPlumber)
 ships a built-in device profile for the ROG Flow Z13 (`50-rog_flow_z13.yaml`)
 that grabs `"Asus WMI hotkeys"` as a managed source device. This creates an
-exclusive evdev conflict: z13ctl cannot open the device and will log:
+exclusive evdev conflict: voltaire cannot open the device and will log:
 
 ```
 button watcher stopped; retrying err="open /dev/input/eventN: permission denied"
 ```
 
 **Workaround:** Create an override config that marks `"Asus WMI hotkeys"` as
-`ignore: true`. This tells InputPlumber to leave that device unmanaged so z13ctl
+`ignore: true`. This tells InputPlumber to leave that device unmanaged so voltaire
 can open it, while preserving all other InputPlumber functionality (controller
 emulation, touchpad, etc.).
 
@@ -743,7 +748,7 @@ matches:
 
 source_devices:
   - group: keyboard
-    ignore: true        # leave unmanaged so z13ctl can read this device
+    ignore: true        # leave unmanaged so voltaire can read this device
     evdev:
       name: Asus WMI hotkeys
       handler: event*
@@ -780,13 +785,13 @@ changed (InputPlumber restricts device node access while managing a device, and 
 not fully restore permissions on shutdown):
 
 ```sh
-sudo z13ctl setup --perms-only
+sudo voltaire setup --perms-only
 ```
 
-Then confirm z13ctl can read the button device:
+Then confirm voltaire can read the button device:
 
 ```sh
-journalctl --user -u z13ctl.service -f
+journalctl --user -u voltaire.service -f
 # Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN
 ```
 
@@ -794,5 +799,5 @@ Alternatively, disable the button watcher entirely and let InputPlumber handle
 the button exclusively:
 
 ```sh
-z13ctl --no-button daemon
+voltaire --no-button daemon
 ```

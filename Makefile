@@ -46,32 +46,36 @@ release:
 install:
 	install -Dm755 voltaire /usr/local/bin/voltaire
 
-## install-service: install and enable the z13ctl systemd user service
+## install-service: install and enable the voltaire systemd user service (disables pre-rename z13ctl units)
 install-service:
-	install -Dm644 contrib/systemd/user/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.socket
-	install -Dm644 contrib/systemd/user/z13ctl.service $(SYSTEMD_USER_DIR)/z13ctl.service
-	systemctl --user daemon-reload
-	systemctl --user enable --now z13ctl.socket z13ctl.service
-	@echo "Service installed. Run 'systemctl --user status z13ctl.service' to verify."
-
-## uninstall-service: stop and remove the z13ctl systemd user service
-uninstall-service:
-	-systemctl --user disable --now z13ctl.socket z13ctl.service
+	-systemctl --user disable --now z13ctl.socket z13ctl.service 2>/dev/null
 	rm -f $(SYSTEMD_USER_DIR)/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.service
+	install -Dm644 contrib/systemd/user/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.socket
+	install -Dm644 contrib/systemd/user/voltaire.service $(SYSTEMD_USER_DIR)/voltaire.service
+	systemctl --user daemon-reload
+	systemctl --user enable --now voltaire.socket voltaire.service
+	@echo "Service installed. Run 'systemctl --user status voltaire.service' to verify."
+
+## uninstall-service: stop and remove the voltaire systemd user service
+uninstall-service:
+	-systemctl --user disable --now voltaire.socket voltaire.service
+	rm -f $(SYSTEMD_USER_DIR)/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.service
 	systemctl --user daemon-reload
 	@echo "Service removed."
 
-## install-perms-service: install system service to chmod battery + firmware-attributes sysfs on boot (requires sudo)
+## install-perms-service: install system service to chmod battery + firmware-attributes sysfs on boot (requires sudo; disables pre-rename z13ctl unit)
 install-perms-service:
-	install -Dm644 contrib/systemd/system/z13ctl-perms.service $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
+	-systemctl disable --now z13ctl-perms.service 2>/dev/null
+	rm -f $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
+	install -Dm644 contrib/systemd/system/voltaire-perms.service $(SYSTEMD_SYSTEM_DIR)/voltaire-perms.service
 	systemctl daemon-reload
-	systemctl enable --now z13ctl-perms.service
-	@echo "Permissions service installed. Run 'systemctl status z13ctl-perms' to verify."
+	systemctl enable --now voltaire-perms.service
+	@echo "Permissions service installed. Run 'systemctl status voltaire-perms' to verify."
 
 ## uninstall-perms-service: remove the sysfs permissions service (requires sudo)
 uninstall-perms-service:
-	-systemctl disable --now z13ctl-perms.service
-	rm -f $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
+	-systemctl disable --now voltaire-perms.service
+	rm -f $(SYSTEMD_SYSTEM_DIR)/voltaire-perms.service
 	systemctl daemon-reload
 	@echo "Permissions service removed."
 

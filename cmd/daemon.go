@@ -26,7 +26,8 @@ var daemonCmd = &cobra.Command{
 
 The daemon opens and holds the ASUS HID devices, restores the last-applied
 lighting state on startup, watches the Armoury Crate button, and serves a
-Unix socket at $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock.
+Unix socket at $XDG_RUNTIME_DIR/voltaire/voltaire.sock (plus the pre-rename
+$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock, kept through 2.x for older clients).
 
 CLI commands (apply, off, brightness, profile, batterylimit, bootsound,
 paneloverdrive) will automatically use the socket if the daemon is running,
@@ -42,7 +43,7 @@ curve it keeps driving them for as long as the machine is asleep.
 
 The daemon is intended to be managed by systemd:
 
-  systemctl --user enable --now z13ctl.socket
+  systemctl --user enable --now voltaire.socket
 
 The contrib/systemd/user/ directory contains ready-to-use unit files.`,
 	Args: cobra.NoArgs,

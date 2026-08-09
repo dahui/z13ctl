@@ -1,0 +1,15 @@
+[Unit]
+Description=voltaire control socket
+
+[Socket]
+# The daemon serves the canonical voltaire path and the pre-rename z13ctl
+# path through the whole 2.x line: the Decky plugin and pre-2.0 clients
+# hardcode the old one. systemd hands both fds over via socket activation
+# and the daemon accept-loops on every fd it is given.
+ListenStream=%t/voltaire/voltaire.sock
+ListenStream=%t/z13ctl/z13ctl.sock
+SocketMode=0660
+DirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

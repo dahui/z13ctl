@@ -9,9 +9,10 @@ the driver layer, and before tagging a release from one.
 
 Run it against the binary under test (`./voltaire`), not an installed one.
 Sections 6 onward need a daemon: either install the build, or stop the units
-and run `./voltaire daemon` yourself — the socket path and unit names keep
-their pre-rename `z13ctl` spelling until the migration shims land, and both
-spellings are answered for the whole 2.x line after that.
+and run `./voltaire daemon` yourself. The units are `voltaire.socket` /
+`voltaire.service`; the daemon answers on both the voltaire socket path and
+the pre-rename z13ctl one for the whole 2.x line, and one §6 box checks
+exactly that.
 
 Extra attention goes to the paths that have **never run against hardware in
 their extracted form**:
@@ -30,7 +31,7 @@ journal lines) rather than a workaround.
 Run everything as your ordinary user. Helpers used throughout:
 
 ```sh
-SOCK="$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock"
+SOCK="$XDG_RUNTIME_DIR/voltaire/voltaire.sock"   # the z13ctl compat path answers identically
 CURVE=$(dirname "$(grep -l asus_custom_fan_curve /sys/class/hwmon/hwmon*/name)")
 PPT=/sys/devices/platform/asus-nb-wmi
 PROFILE=/sys/firmware/acpi/platform_profile
@@ -44,7 +45,7 @@ Python does:
 ask() {  # ask '{"cmd":"get-state"}'  — one request, one reply
   python3 -c 'import socket,sys,os
 s=socket.socket(socket.AF_UNIX); s.settimeout(5)
-s.connect(os.environ["XDG_RUNTIME_DIR"]+"/z13ctl/z13ctl.sock")
+s.connect(os.environ["XDG_RUNTIME_DIR"]+"/voltaire/voltaire.sock")
 s.sendall(sys.argv[1].encode()+b"\n"); print(s.makefile().readline().strip())' "$1"
 }
 ```
@@ -63,7 +64,7 @@ output.
 - [ ] `./voltaire --version` prints the expected version.
 - [ ] `sudo ./voltaire setup` succeeds (rules written, perms applied).
 - [ ] Daemon units installed but **stopped** for the first sections:
-      `systemctl --user stop z13ctl.service z13ctl.socket`
+      `systemctl --user stop voltaire.service voltaire.socket`
 
 ## 1. Detection and assembly
 
@@ -131,7 +132,7 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 ## 6. Daemon start and state restore
 
 - [ ] `./voltaire apply --mode static --color blue`, then
-      `systemctl --user start z13ctl.socket z13ctl.service` — service reaches
+      `systemctl --user start voltaire.socket voltaire.service` — service reaches
       `active (running)`; journal shows the startup line and no errors.
 - [ ] Lighting reflects the daemon's **saved** state after the start — not
       darkness, and not a half-applied zone (state restore ran; the daemon
@@ -139,11 +140,16 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
       a no-daemon `apply` writes hardware without persisting, so startup
       restores what the state file holds. To see blue survive, apply it with
       the daemon already running.
-- [ ] Socket activation: `systemctl --user stop z13ctl.service` (leave the
+- [ ] Socket activation: `systemctl --user stop voltaire.service` (leave the
       socket), run `./voltaire profile --get` — the daemon auto-starts and
       answers.
 - [ ] `printf '{"cmd":"get-state"}\n' | timeout 5 nc -U "$SOCK"` — one JSON
       line, `"ok":true`, with `undervolt_available` and `on_ac` present.
+- [ ] The same request against the **compat socket**
+      (`$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`) answers identically — this is
+      what keeps the Decky plugin and pre-2.0 clients working, and it must
+      hold under systemd (both `ListenStream=` fds) and under a hand-run
+      `./voltaire daemon` (self-created sockets) alike.
 - [ ] `ask '{"cmd":"device-get"}'` returns the capability document, and its
       numbers are the device file's, not defaults: fan shape, `tdp_min` /
       `tdp_max_safe` / `tdp_max_forced`, the floor curve, profile names,
@@ -212,10 +218,10 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
       keyboard cover and reattach it — the desktop leaves tablet mode and the
       cover keyboard types. If it stays in tablet mode, something grabbed the
       hotkeys device exclusively.
-- [ ] `systemctl --user stop z13ctl.service z13ctl.socket`, run
+- [ ] `systemctl --user stop voltaire.service voltaire.socket`, run
       `./voltaire daemon --no-button` in a terminal — button presses produce no
       events and the journal shows the watcher was never started. Ctrl-C, then
-      `systemctl --user start z13ctl.socket z13ctl.service`.
+      `systemctl --user start voltaire.socket voltaire.service`.
 
 ## 11. Keyboard hotplug (aura-hid Reopen)
 
@@ -252,7 +258,7 @@ fan curve, a custom TDP (safe range, e.g. 40 W), and `./voltaire undervolt --set
       `./voltaire profile --set balanced`.
 - [ ] `./voltaire batterylimit --set <your usual>`, boot sound / panel overdrive
       back to preference, lighting back to preference.
-- [ ] `systemctl --user status z13ctl.service` — still healthy, journal free
+- [ ] `systemctl --user status voltaire.service` — still healthy, journal free
       of errors from the whole run.
 
 ## Known behaviour: the enable one-shot fires again after a daemon restart

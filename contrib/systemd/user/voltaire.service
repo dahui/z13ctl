@@ -1,11 +1,11 @@
 [Unit]
-Description=z13ctl device daemon
-Requires=z13ctl.socket
-After=z13ctl.socket
+Description=voltaire device daemon
+Requires=voltaire.socket
+After=voltaire.socket
 
 [Service]
 Type=notify
-ExecStart=z13ctl daemon
+ExecStart=voltaire daemon
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal

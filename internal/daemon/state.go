@@ -36,10 +36,20 @@ func defaultState() api.State {
 //
 // With neither XDG_STATE_HOME nor a resolvable home directory, os.UserHomeDir
 // returns an error and an empty string — which would silently yield the
-// absolute path "/.local/state/z13ctl/state.json", unwritable for any non-root
-// user. Fall back to a temp dir so state is at least writable for the life of
-// the boot rather than every save failing.
+// absolute path "/.local/state/voltaire/state.json", unwritable for any
+// non-root user. Fall back to a temp dir so state is at least writable for the
+// life of the boot rather than every save failing.
 func statePath() string {
+	return statePathFor("voltaire")
+}
+
+// oldStatePath is where every pre-2.0 release kept the state file. loadState
+// migrates it to statePath on first run; nothing ever writes here again.
+func oldStatePath() string {
+	return statePathFor("z13ctl")
+}
+
+func statePathFor(app string) string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -49,11 +59,50 @@ func statePath() string {
 			noHomeWarnOnce.Do(func() {
 				slog.Warn("cannot determine home directory; state will not persist across reboots", "err", err)
 			})
-			return filepath.Join(os.TempDir(), "z13ctl", "state.json")
+			return filepath.Join(os.TempDir(), app, "state.json")
 		}
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "z13ctl", "state.json")
+	return filepath.Join(base, app, "state.json")
+}
+
+// migrateOldStateFile copies the pre-2.0 z13ctl state file to path when path
+// does not exist yet.
+//
+// Copy, never move: silent state loss is the known total-loss failure mode of
+// a migration like this, and the old file staying in place is what makes a
+// downgrade to a 1.x z13ctl safe for the whole 2.x line — it finds its state
+// exactly where it left it. The copy is deliberately byte-for-byte with no
+// parsing: a corrupt old file must arrive intact so loadState's own
+// corrupt-file preservation applies to it, rather than being judged (and
+// possibly discarded) here.
+func migrateOldStateFile(path string) {
+	if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+		return // new-path file exists (or is unstatable); never overwrite it
+	}
+	old := oldStatePath()
+	data, err := os.ReadFile(old)
+	if err != nil {
+		return // nothing to migrate
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		slog.Warn("cannot create state directory for migration", "path", path, "err", err)
+		return
+	}
+	// Temp-file + rename, same atomicity as saveState: a power cut mid-copy
+	// must not leave a half-written file that the next load preserves as
+	// corrupt and replaces with defaults.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		slog.Warn("cannot copy old state file", "from", old, "err", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		slog.Warn("cannot move migrated state into place", "to", path, "err", err)
+		return
+	}
+	slog.Info("migrated state from z13ctl", "from", old, "to", path)
 }
 
 // loadState reads persisted state. Returns defaultState() if the file is
@@ -66,6 +115,7 @@ func statePath() string {
 // with nothing left to inspect or recover from.
 func loadState() api.State {
 	path := statePath()
+	migrateOldStateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {

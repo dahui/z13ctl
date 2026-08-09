@@ -94,7 +94,7 @@ func TestLoadState_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestLoadState_DevicesNilOnAllDeviceState(t *testing.T) {
 // TestStatePath_WithoutHome covers the fallback for an environment with neither
 // XDG_STATE_HOME nor a resolvable home directory. os.UserHomeDir returns an
 // error and an empty string there, which silently yielded the absolute path
-// "/.local/state/z13ctl/state.json" — unwritable for any non-root user, so
+// "/.local/state/voltaire/state.json" — unwritable for any non-root user, so
 // every save failed.
 func TestStatePath_WithoutHome(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "")
@@ -154,7 +154,7 @@ func TestLoadState_PreservesCorruptFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestSaveState_CleansUpTempOnRenameFailure(t *testing.T) {
 
 	// A directory at the destination makes os.Rename fail while the temp write
 	// itself still succeeds.
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(path, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestLoadStateRepairsPartialDeviceEntries(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestLoadStateRepairsPartialDeviceEntries(t *testing.T) {
 func TestLoadStateMigratesLegacyCustomSettings(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestLoadStateMigratesLegacyCustomSettings(t *testing.T) {
 func TestLoadStateDropsReservedProfileNames(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestSaveStateWritesTheLegacyProjection(t *testing.T) {
 		t.Fatalf("saveState: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "z13ctl", "state.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "voltaire", "state.json"))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestSaveStateWritesTheLegacyProjection(t *testing.T) {
 func TestLoadStateClearsAProfileThatNoLongerExists(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
-	path := filepath.Join(dir, "z13ctl", "state.json")
+	path := filepath.Join(dir, "voltaire", "state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestLoadStateKeepsResolvableProfiles(t *testing.T) {
 	for _, name := range []string{"balanced", "performance", "custom", "gaming"} {
 		dir := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", dir)
-		path := filepath.Join(dir, "z13ctl", "state.json")
+		path := filepath.Join(dir, "voltaire", "state.json")
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -451,5 +451,104 @@ func TestLoadStateKeepsResolvableProfiles(t *testing.T) {
 		if got := loadState(); got.Profile != name {
 			t.Errorf("Profile = %q, want %q — a resolvable name was cleared", got.Profile, name)
 		}
+	}
+}
+
+// TestLoadStateMigratesFromZ13ctl covers the 2.0 rename: a machine upgrading
+// from z13ctl has its state under the old directory only. loadState must copy
+// it — copy, never move, so a 1.x downgrade still finds its file — and then
+// load the copy.
+func TestLoadStateMigratesFromZ13ctl(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	oldPath := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	old := defaultState()
+	old.Profile = "performance"
+	data, err := json.Marshal(old)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := os.WriteFile(oldPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	s := loadState()
+	if s.Profile != "performance" {
+		t.Errorf("Profile = %q, want the old file's %q", s.Profile, "performance")
+	}
+	newPath := filepath.Join(dir, "voltaire", "state.json")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("migrated file missing at %s: %v", newPath, err)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Errorf("old file was disturbed (copy, never move): %v", err)
+	}
+}
+
+// TestLoadStatePrefersNewFileOverOld: once a voltaire state file exists, the
+// old one is history — a stale z13ctl file must never overwrite settings saved
+// since the migration.
+func TestLoadStatePrefersNewFileOverOld(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	write := func(app, profile string) {
+		p := filepath.Join(dir, app, "state.json")
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		s := defaultState()
+		s.Profile = profile
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+	write("z13ctl", "quiet")
+	write("voltaire", "performance")
+
+	if s := loadState(); s.Profile != "performance" {
+		t.Errorf("Profile = %q, want the new file's %q", s.Profile, "performance")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "z13ctl", "state.json"))
+	if err != nil || !strings.Contains(string(data), "quiet") {
+		t.Errorf("old file changed or unreadable (err=%v); migration must not touch it", err)
+	}
+}
+
+// TestMigratedCorruptFileIsPreservedNotJudged: the migration copies bytes, so
+// a corrupt old file arrives intact and loadState's own corrupt-file
+// preservation applies at the new path — while the old original stays exactly
+// as it was for diagnosis.
+func TestMigratedCorruptFileIsPreservedNotJudged(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	oldPath := filepath.Join(dir, "z13ctl", "state.json")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	garbage := []byte(`{"lighting": {"mode": "sta`)
+	if err := os.WriteFile(oldPath, garbage, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	s := loadState()
+	if s.Lighting.Mode != defaultState().Lighting.Mode {
+		t.Errorf("Lighting.Mode = %q, want defaults for a corrupt file", s.Lighting.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "voltaire", "state.json.corrupt")); err != nil {
+		t.Errorf("corrupt migrated copy not preserved: %v", err)
+	}
+	data, err := os.ReadFile(oldPath)
+	if err != nil || string(data) != string(garbage) {
+		t.Errorf("old file changed (err=%v); it must stay untouched for diagnosis", err)
 	}
 }

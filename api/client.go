@@ -40,13 +40,49 @@ import (
 // numbers.
 var ErrUnknownCommand = errors.New("daemon does not support this command")
 
-// SocketPath returns the runtime path for the daemon's Unix socket.
+// SocketPath returns the canonical runtime path for the daemon's Unix socket.
 func SocketPath() string {
+	return runtimeDir() + "/voltaire/voltaire.sock"
+}
+
+// SocketPaths returns every socket path the daemon serves, canonical first.
+//
+// The second entry is the pre-rename z13ctl path. The daemon listens on both
+// through the whole 2.x line so clients that hardcode the old path — the
+// Decky plugin speaks it directly, and pre-2.0 Go clients compiled it in —
+// keep working across the rename; it is removed at 3.0. Clients dial in order
+// and use the first that answers, which also covers the upgrade window where
+// a pre-2.0 daemon is still running on the old path only.
+func SocketPaths() []string {
+	return []string{
+		SocketPath(),
+		runtimeDir() + "/z13ctl/z13ctl.sock",
+	}
+}
+
+func runtimeDir() string {
 	runtime := os.Getenv("XDG_RUNTIME_DIR")
 	if runtime == "" {
 		runtime = "/tmp"
 	}
-	return runtime + "/z13ctl/z13ctl.sock"
+	return runtime
+}
+
+// dialDaemon tries each socket path in order and returns the first connection
+// that succeeds. The returned error is the canonical path's, which is the one
+// worth reporting when no daemon answers anywhere.
+func dialDaemon() (net.Conn, error) {
+	var firstErr error
+	for _, sock := range SocketPaths() {
+		conn, err := net.DialTimeout("unix", sock, dialTimeout)
+		if err == nil {
+			return conn, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
 }
 
 // unknownCommandError carries the daemon's own wording while matching
@@ -119,7 +155,7 @@ var (
 // sendCommand connects to the daemon and sends req, returning the response.
 // Returns (false, nil, nil) if the daemon is not running.
 func sendCommand(req request) (bool, *response, error) {
-	conn, err := net.DialTimeout("unix", SocketPath(), dialTimeout)
+	conn, err := dialDaemon()
 	if err != nil {
 		return false, nil, nil // daemon not running
 	}
@@ -654,7 +690,7 @@ func SendFeatureSet(id string, value int) (bool, error) {
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
 func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error) {
-	conn, err := net.DialTimeout("unix", SocketPath(), dialTimeout)
+	conn, err := dialDaemon()
 	if err != nil {
 		return nil, nil, nil // daemon not running
 	}

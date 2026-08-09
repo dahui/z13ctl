@@ -105,10 +105,12 @@ internal/
                              DescriptorHasAuraReport
 contrib/
   systemd/user/
-    z13ctl.socket            systemd user socket unit (socket activation, %t/z13ctl/z13ctl.sock)
-    z13ctl.service           systemd user service unit (Type=notify, Restart=on-failure)
+    voltaire.socket          systemd user socket unit (socket activation; TWO ListenStream
+                             lines — %t/voltaire/voltaire.sock + the pre-rename
+                             %t/z13ctl/z13ctl.sock, served through all of 2.x)
+    voltaire.service         systemd user service unit (Type=notify, Restart=on-failure)
   systemd/system/
-    z13ctl-perms.service     system oneshot unit: chgrp/chmod on battery, firmware-attributes,
+    voltaire-perms.service   system oneshot unit: chgrp/chmod on battery, firmware-attributes,
                              PPT, and ryzen_smu sysfs at boot (keep in sync with buildServiceContent)
 ```
 
@@ -124,16 +126,16 @@ contrib/
 - `setup.go` uses a two-part permission strategy: udev rules for boot persistence
   (real ADD events) + direct `chgrp`/`chmod` in Go for immediate effect (systemd 259+
   does not execute `RUN{program}` on synthetic `udevadm trigger` events).
-- **Packaged permission artifacts must match the generated ones.** `z13ctl setup`
+- **Packaged permission artifacts must match the generated ones.** `voltaire setup`
   generates udev rules + the perms unit at runtime, but package installs
-  (.rpm/.deb/Arch) ship the static copies in `contrib/udev/99-z13ctl.rules` and
-  `contrib/systemd/system/z13ctl-perms.service`. These drifted and cost .rpm users
+  (.rpm/.deb/Arch) ship the static copies in `contrib/udev/99-voltaire.rules` and
+  `contrib/systemd/system/voltaire-perms.service`. These drifted and cost .rpm users
   all PPT and fan-curve access on every reboot (issue #12). `cmd/setup_test.go`
   now asserts every grant appears in both. Escaping differs by file: `%%p` in
   `setup.go` is Sprintf escaping (single `%p` in the packaged file), while `$$f`
   is systemd's *and* udev's literal-dollar escape and stays doubled in **both** —
   a bare `$f` expands to empty and the loop silently chmods nothing.
-- **`contrib/nfpm/postinstall.sh` must `systemctl restart z13ctl-perms.service`.**
+- **`contrib/nfpm/postinstall.sh` must `systemctl restart voltaire-perms.service`.**
   `enable --now` is a no-op on upgrade: the unit is `Type=oneshot` with
   `RemainAfterExit=yes`, so it is already active and new `ExecStart` lines never
   run. Without the restart, an upgrade does not apply added grants until reboot.
@@ -150,12 +152,23 @@ contrib/
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
-- **Daemon systemd integration**: `z13ctl.socket` uses socket activation (`LISTEN_FDS`).
-  `z13ctl.service` uses `Type=notify` (sd_notify READY=1 after HID open + state restore),
+- **Daemon systemd integration**: `voltaire.socket` uses socket activation (`LISTEN_FDS`).
+  It carries **two** `ListenStream=` lines — the canonical voltaire path plus the
+  pre-rename z13ctl path — and the daemon accept-loops over every fd
+  `activation.Listeners()` hands it; the non-systemd path creates both sockets
+  itself (legacy-path failure is a warning, canonical failure is fatal). The
+  client (`api.SocketPaths`) dials canonical-then-legacy, which also covers the
+  upgrade window where a pre-2.0 daemon still runs on the old path only.
+  `voltaire.service` uses `Type=notify` (sd_notify READY=1 after HID open + state restore),
   `WantedBy=graphical-session.target` (works in both desktop and Steam Gaming Mode).
   Logging goes to journald via stdout/stderr.
-- **State persistence**: `$XDG_STATE_HOME/z13ctl/state.json` (atomic write via temp +
-  rename). Daemon restores lighting, fan curves, and TDP on start. Fan curves and
+- **State persistence**: `$XDG_STATE_HOME/voltaire/state.json` (atomic write via temp +
+  rename). On first run, a pre-2.0 `$XDG_STATE_HOME/z13ctl/state.json` is
+  **copied, never moved** to the new path (`migrateOldStateFile`): the old file
+  staying put is what keeps a 1.x downgrade safe through all of 2.x, and the
+  copy is byte-for-byte so a corrupt old file still hits `loadState`'s own
+  corrupt-file preservation instead of being judged during migration.
+  Daemon restores lighting, fan curves, and TDP on start. Fan curves and
   custom TDP are only restored when `profile == "custom"`; a saved *stock* profile
   gets its `StockProfilePPT` row written instead, since the kernel's PPT
   attributes come up holding a stale 5W cache after boot.
@@ -1029,8 +1042,8 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 The daemon is fully implemented and passing `make build && make test && make lint`.
 
 **Key daemon details:**
-- Socket path: `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`
-- State file: `$XDG_STATE_HOME/z13ctl/state.json`
+- Socket paths: `$XDG_RUNTIME_DIR/voltaire/voltaire.sock` (canonical) + `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` (compat, through 2.x)
+- State file: `$XDG_STATE_HOME/voltaire/state.json` (migrated by copy from the z13ctl path on first run)
 - Protocol: one newline-terminated JSON request → one JSON response; long-lived
   connections for `{"cmd":"subscribe","events":["gui-toggle"]}` (GUI use)
 - Button watcher uses `github.com/holoplot/go-evdev`; systemd integration uses
@@ -1038,7 +1051,7 @@ The daemon is fully implemented and passing `make build && make test && make lin
 - `ATTR{name}=="asus-wmi"` was removed from the platform-profile udev rule because
   platform-profile class devices do not have a `name` sysfs attribute file. The rule
   now matches `SUBSYSTEM=="platform-profile"` alone.
-- `z13ctl-perms.service` (system-level oneshot) runs `chmod g+w` on
+- `voltaire-perms.service` (system-level oneshot) runs `chmod g+w` on
   `BAT*/charge_control_end_threshold` and firmware-attributes `current_value` files
   after `sysinit.target`. This is necessary because these attributes may be created
   after observable udev events — so no udev `RUN+=` hook can catch them reliably.

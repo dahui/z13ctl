@@ -1,5 +1,5 @@
 [Unit]
-Description=z13ctl sysfs permissions (battery + firmware-attributes + PPT + ryzen_smu)
+Description=voltaire sysfs permissions (battery + firmware-attributes + PPT + ryzen_smu)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
 # firmware-attributes current_value files may be created after the parent ADD event.

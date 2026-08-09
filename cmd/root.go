@@ -48,7 +48,7 @@ func ensureProfileTargetSupported(profile string) error {
 	if err != nil {
 		return fmt.Errorf("the running daemon does not support --profile, and would apply this setting to the\n"+
 			"  machine instead of storing it in %s; restart it after upgrading\n"+
-			"  (systemctl --user restart z13ctl)\n"+
+			"  (systemctl --user restart voltaire)\n"+
 			"  daemon said: %w", profile, err)
 	}
 	return nil

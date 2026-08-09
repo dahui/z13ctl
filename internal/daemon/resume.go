@@ -330,7 +330,7 @@ func takeSleepInhibitor(conn *dbus.Conn) int {
 	var fd dbus.UnixFD
 	err := conn.Object("org.freedesktop.login1", "/org/freedesktop/login1").Call(
 		"org.freedesktop.login1.Manager.Inhibit", 0,
-		"sleep", "z13ctl", "releasing custom fan curve before sleep", "delay",
+		"sleep", "voltaire", "releasing custom fan curve before sleep", "delay",
 	).Store(&fd)
 	if err != nil {
 		slog.Debug("could not take a sleep delay inhibitor", "err", err)
