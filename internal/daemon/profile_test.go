@@ -2,9 +2,9 @@ package daemon
 
 // profile_test.go — profile-map invariants that no other test covers.
 //
-// Everything here stays on state-only paths. internal/cli's sysfs path vars are
-// unexported, so a daemon test that reached applyProfileLocked would rewrite the
-// developer's real power limits, fan mode, and Curve Optimizer offset.
+// Everything here stays on state-only paths. The Z13 driver's sysfs path vars
+// are unexported, so a daemon test that reached applyProfileLocked would rewrite
+// the developer's real power limits, fan mode, and Curve Optimizer offset.
 
 import (
 	"strings"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 // blockedFor reports whether fn was still running after d, used to check that a
@@ -113,7 +112,7 @@ func TestApplyCustomHWClearsWhatTheProfileDoesNotSet(t *testing.T) {
 			// The floor ApplyTDPSafely just wrote must stand: releasing the fans
 			// here would drop it while the limit that requires it is in force.
 			name:         "a high-TDP profile with no curve keeps the high-TDP floor",
-			p:            api.CustomProfile{Name: "hot", TDP: &api.TDPState{PL1SPL: cli.TDPMaxSafe + 1}},
+			p:            api.CustomProfile{Name: "hot", TDP: &api.TDPState{PL1SPL: testEnv.TDPMaxSafe + 1}},
 			wantResetCO:  true,
 			wantClearTDP: false,
 		},
@@ -128,7 +127,7 @@ func TestApplyCustomHWClearsWhatTheProfileDoesNotSet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := tt.p
 			hasCurve := p.FanCurve != nil && p.FanCurve.Mode == 1 && len(p.FanCurve.Points) == 8
-			highTDP := p.TDP != nil && p.TDP.PL1SPL > cli.TDPMaxSafe
+			highTDP := p.TDP != nil && p.TDP.PL1SPL > testEnv.TDPMaxSafe
 
 			if hasCurve != tt.wantWriteCurve {
 				t.Errorf("writes the profile's curve = %v, want %v", hasCurve, tt.wantWriteCurve)

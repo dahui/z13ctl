@@ -11,7 +11,9 @@
 // smuWriteFile seams exist for the same reason. Never let a test reach a real
 // sysfs write.
 //
-// During the driver extraction internal/cli forwards its old exported surface
-// here so cmd/ and internal/daemon compile unchanged; those forwarders are
-// scaffolding and go away as consumers convert to the device registry.
+// This package carries no limits and no policy. The Z13's numbers — TDP
+// bounds, the stock PPT table, the high-TDP floor curve, undervolt bounds —
+// live in internal/device/devices/asus-rog-flow-z13-2025.toml, and the rules
+// about them live in internal/safety; the registry parameterizes the driver
+// constructors here with that data at assembly.
 package asusz13

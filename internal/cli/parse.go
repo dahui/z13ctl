@@ -1,11 +1,17 @@
 package cli
 
-// parse.go — input parsing helpers for color and brightness flags.
+// parse.go — input parsing and validation helpers shared by cmd/ and the
+// daemon: colors, brightness, fan curves, TDP flag resolution, and custom
+// profile names. Everything here is pure — no sysfs, no device access — which
+// is what lets both the CLI and the daemon validate a request identically
+// before either touches hardware.
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 )
 
@@ -30,4 +36,126 @@ func ParseBrightness(s string) (uint8, error) {
 		return 3, nil
 	}
 	return 0, fmt.Errorf("brightness must be off/low/medium/high (or 0–3), got %q", s)
+}
+
+// fanCurvePoints is the number of points a fan curve holds. Every supported
+// device today has 8; deriving it from the device's FanShape is part of the
+// capability-protocol milestone, where the GUI's editor learns it too.
+const fanCurvePoints = 8
+
+// ParseFanCurve parses a comma-separated curve string of temp:speed pairs.
+// Temperatures are Celsius and must be strictly increasing; speeds must be
+// non-decreasing (0–255). PWM values may use a % suffix for percentage
+// (0–100%), which is converted to PWM (e.g. 80% = 204). Both formats
+// can be mixed in the same curve string.
+func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != fanCurvePoints {
+		return nil, fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(parts))
+	}
+	points := make([]api.FanCurvePoint, fanCurvePoints)
+	for i, part := range parts {
+		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid curve point %q: expected temp:pwm or temp:pct%%", part)
+		}
+		temp, err := strconv.Atoi(strings.TrimSpace(kv[0]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid temp in point %d: %w", i+1, err)
+		}
+		pwmStr := strings.TrimSpace(kv[1])
+		isPercent := strings.HasSuffix(pwmStr, "%")
+		if isPercent {
+			pwmStr = strings.TrimSuffix(pwmStr, "%")
+		}
+		pwm, err := strconv.Atoi(pwmStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pwm in point %d: %w", i+1, err)
+		}
+		if temp < 0 || temp > 120 {
+			return nil, fmt.Errorf("temp %d in point %d out of range 0–120", temp, i+1)
+		}
+		if isPercent {
+			if pwm < 0 || pwm > 100 {
+				return nil, fmt.Errorf("percentage %d in point %d out of range 0–100", pwm, i+1)
+			}
+			pwm = pwm * 255 / 100
+		} else if pwm < 0 || pwm > 255 {
+			return nil, fmt.Errorf("pwm %d in point %d out of range 0–255", pwm, i+1)
+		}
+		if i > 0 && temp <= points[i-1].Temp {
+			return nil, fmt.Errorf("temps must be monotonically increasing: point %d (%d) <= point %d (%d)", i+1, temp, i, points[i-1].Temp)
+		}
+		if i > 0 && pwm < points[i-1].PWM {
+			return nil, fmt.Errorf("pwm values must be non-decreasing: point %d (%d) < point %d (%d)", i+1, pwm, i, points[i-1].PWM)
+		}
+		points[i] = api.FanCurvePoint{Temp: temp, PWM: pwm}
+	}
+	return points, nil
+}
+
+// TDPStateFor resolves a unified watts value plus optional per-limit overrides
+// into the five PPT values. pl1/pl2/pl3 override watts when non-zero; APU sPPT
+// and Platform sPPT always follow PL2.
+//
+// Exposed separately from any write path so callers can hand the resolved
+// state to the safety engine's ApplyTDPSafely, which needs to know PL1 before
+// deciding whether the fan floor applies.
+func TDPStateFor(watts, pl1, pl2, pl3 int) api.TDPState {
+	if pl1 == 0 {
+		pl1 = watts
+	}
+	if pl2 == 0 {
+		pl2 = watts
+	}
+	if pl3 == 0 {
+		pl3 = watts
+	}
+	return api.TDPState{
+		PL1SPL:       pl1,
+		PL2SPPT:      pl2,
+		FPPT:         pl3,
+		APUSPPT:      pl2,
+		PlatformSPPT: pl2,
+	}
+}
+
+// maxProfileNameLen bounds a custom profile name. It is a state file key and a
+// command-line argument, not a display string; anything longer is a mistake.
+const maxProfileNameLen = 32
+
+// ValidateProfileName checks a user-supplied custom profile name.
+//
+// The firmware profile names are reserved so that selecting one always reaches
+// the firmware profile and can never be shadowed by a custom profile. That
+// reservation is load-bearing beyond avoiding confusion: the safety engine's
+// ReadEffective treats any name absent from the envelope's stock table as
+// custom and disables its stale-cache fallback, which is right for a custom
+// profile and wrong for a stock one — so a custom profile called "balanced"
+// would misreport the machine's power limits. "custom" is reserved separately:
+// it is the profile created implicitly by the first custom setting.
+func ValidateProfileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("profile name must not be empty")
+	}
+	if name != strings.ToLower(name) {
+		return fmt.Errorf("profile name %q must be lowercase", name)
+	}
+	if api.IsStockProfileName(name) {
+		return fmt.Errorf("%q is a firmware profile name and cannot be used for a custom profile", name)
+	}
+	if name == api.DefaultCustomProfile {
+		return fmt.Errorf("%q is reserved for the profile created by the first custom setting", name)
+	}
+	if len(name) > maxProfileNameLen {
+		return fmt.Errorf("profile name %q is longer than %d characters", name, maxProfileNameLen)
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return fmt.Errorf("profile name %q may only contain a-z, 0-9, '-' and '_'", name)
+		}
+	}
+	return nil
 }

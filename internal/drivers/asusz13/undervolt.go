@@ -13,12 +13,6 @@ package asusz13
 
 import "fmt"
 
-// Curve Optimizer safety limits matching G-Helper defaults.
-const (
-	UVMinCPU = -40 // maximum CPU undervolt (most aggressive)
-	UVMaxCPU = 0   // no undervolt (stock)
-)
-
 // Strix Halo (FAMID=14) SMU command ID for Curve Optimizer.
 const (
 	smuCmdMP1COALL uint32 = 0x4C // MP1 mailbox: set all-core CO
@@ -34,24 +28,17 @@ func encodeCOValue(offset int) uint32 {
 	return uint32(0x100000) - uint32(-offset)
 }
 
-// ValidateCOValues checks that the CPU CO offset is within safe range.
-func ValidateCOValues(cpu int) error {
-	if cpu < UVMinCPU || cpu > UVMaxCPU {
-		return fmt.Errorf("CPU undervolt %d out of range %d to %d", cpu, UVMinCPU, UVMaxCPU)
-	}
-	return nil
-}
-
 // SetCurveOptimizer applies a Curve Optimizer offset to all CPU cores.
 // The value must be <= 0. A value of 0 means "stock" (no change).
+//
+// The offset bounds live in device data and are enforced by the undervolter
+// driver's Apply before this runs; encodeCOValue independently maps any
+// positive value to stock, so an overvolt cannot be encoded here at all.
 //
 // Uses MP1 mailbox command 0x4C (matching ryzenadj set_coall for Strix Halo).
 func SetCurveOptimizer(cpuOffset int) error {
 	if !SMUProbeUndervolt() {
 		return fmt.Errorf("curve optimizer not available — ryzen_smu module missing or does not support this platform")
-	}
-	if err := ValidateCOValues(cpuOffset); err != nil {
-		return err
 	}
 
 	encoded := encodeCOValue(cpuOffset)

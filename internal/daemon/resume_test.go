@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 func TestSleepTick(t *testing.T) {
@@ -37,7 +36,7 @@ func TestSleepTick(t *testing.T) {
 		},
 		{
 			name: "exactly at the safe limit needs no floor",
-			obs:  sleepObs{Owned: true, CurveMode: 1, PL1: cli.TDPMaxSafe, Firmware: "performance"},
+			obs:  sleepObs{Owned: true, CurveMode: 1, PL1: testEnv.TDPMaxSafe, Firmware: "performance"},
 
 			releaseFans: true,
 		},
@@ -144,13 +143,13 @@ func TestSleepReleasesOnlyWhatResumeRestores(t *testing.T) {
 
 			// applyCustomHW's decision, verbatim.
 			hasCurve := tt.p.FanCurve != nil && tt.p.FanCurve.Mode == 1 && len(tt.p.FanCurve.Points) == 8
-			highTDP := tt.p.TDP != nil && tt.p.TDP.PL1SPL > cli.TDPMaxSafe
+			highTDP := tt.p.TDP != nil && tt.p.TDP.PL1SPL > testEnv.TDPMaxSafe
 
 			// Either the profile writes a curve of its own, or ApplyTDPSafely writes
 			// the floor. One of the two must return the fans to custom mode, or the
 			// release we just made is permanent.
 			if !hasCurve && !highTDP {
-				if tt.pl1 > cli.TDPMaxSafe {
+				if tt.pl1 > testEnv.TDPMaxSafe {
 					t.Fatal("hardware is above the safe limit but the profile restores no curve and no floor")
 				}
 				// A safe limit with no curve belongs on firmware auto: the release is

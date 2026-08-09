@@ -1,9 +1,14 @@
 package cli
 
-// dryrun.go — packet display for --dry-run mode.
+// dryrun.go — display for --dry-run mode: the exact HID reports, sysfs writes
+// and SMU commands a command would perform, without touching any hardware.
 //
-// Each function prints the exact sequence of 64-byte HID reports that would
-// be sent to the device, without opening any hardware.
+// Device limits (the power envelope) come in as parameters — mirroring how the
+// real paths get them from the assembled device — while the sysfs *paths* are
+// asked of the asusz13 driver directly: a dry run's job is to spell out what
+// this machine's driver would write, and the paths are that driver's own
+// knowledge. Per-device dry-run display becomes driver data in the
+// capability-protocol milestone.
 
 import (
 	"fmt"
@@ -12,8 +17,10 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
+	"github.com/dahui/z13ctl/internal/driver"
 	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 	"github.com/dahui/z13ctl/internal/hid"
+	"github.com/dahui/z13ctl/internal/safety"
 )
 
 // auraReportID is the HID Report ID byte that begins every Aura packet (0x5d).
@@ -72,18 +79,20 @@ func DryRunOff() {
 // DryRunBatteryLimit prints the sysfs write that would be performed for a battery limit change.
 func DryRunBatteryLimit(limit int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", limit, FindBatteryThresholdPath())
+	fmt.Printf("Would write %d to %s\n", limit, asusz13.FindBatteryThresholdPath())
 }
 
-// DryRunProfile prints the sysfs writes that would be performed for a profile change,
-// including mapped names for secondary devices (e.g. amd-pmf uses "low-power" not "quiet").
-func DryRunProfile(profile string) {
+// DryRunProfile prints the sysfs writes that would be performed for a profile
+// change, including mapped names for secondary devices (e.g. amd-pmf uses
+// "low-power" not "quiet"). env supplies the stock PPT rows the switch would
+// restore.
+func DryRunProfile(env driver.PowerEnvelope, profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 
 	// A custom profile is never written to platform_profile — this printed the
 	// name as a platform_profile write for every release up to now, describing
 	// something the daemon has never done.
-	if !IsStockProfile(profile) {
+	if !api.IsStockProfileName(profile) {
 		fmt.Printf("Would recall custom profile %q from daemon state and apply its\n", profile)
 		fmt.Println("  saved fan curve, TDP, and Curve Optimizer offset")
 		fmt.Println("Would NOT write platform_profile (custom profiles leave it to the desktop)")
@@ -91,7 +100,7 @@ func DryRunProfile(profile string) {
 	}
 
 	fmt.Println("Would reset the CPU Curve Optimizer to stock")
-	primary := FindProfilePath()
+	primary := asusz13.FindProfilePath()
 	// Name-mapped, as SetProfile does for every device including the primary —
 	// printing the raw name here showed "quiet" where "low-power" gets written.
 	fmt.Printf("Would write %q to %s\n", asusz13.ProfileNameForDevice(filepath.Dir(primary), profile), primary)
@@ -123,7 +132,7 @@ func DryRunProfile(profile string) {
 	// Switching to a stock profile also restores that profile's PPT values,
 	// since the firmware does not re-apply them on a platform_profile write.
 	// Fans are released last, after the limit has been lowered.
-	if stock, ok := StockProfilePPT[profile]; ok {
+	if stock, ok := env.StockProfilePPT[profile]; ok {
 		fmt.Printf("Would write stock PPT for %s: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
 			profile, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
 		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
@@ -186,7 +195,7 @@ func dryRunTarget(name string) string {
 }
 
 func dryRunACPath() string {
-	if p := FindACOnlinePath(); p != "" {
+	if p := asusz13.FindACOnlinePath(); p != "" {
 		return p
 	}
 	return "(no mains power supply found)"
@@ -195,20 +204,20 @@ func dryRunACPath() string {
 // DryRunBootSound prints the sysfs write that would be performed for a boot sound change.
 func DryRunBootSound(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, FindBootSoundPath())
+	fmt.Printf("Would write %d to %s\n", value, asusz13.FindBootSoundPath())
 }
 
 // DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, FindPanelOverdrivePath())
+	fmt.Printf("Would write %d to %s\n", value, asusz13.FindPanelOverdrivePath())
 }
 
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
 // The same curve is written to both fans.
 func DryRunFanCurve(points []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := FindFanCurveHwmonPath()
+	curveDir := asusz13.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
@@ -225,7 +234,7 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 // DryRunFanCurveReset prints the sysfs writes for a fan curve reset (both fans).
 func DryRunFanCurveReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := FindFanCurveHwmonPath()
+	curveDir := asusz13.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
@@ -239,16 +248,16 @@ func DryRunFanCurveReset() {
 // The limits come from TDPStateFor and the fan state from the same
 // FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so the *rule*
 // cannot drift from the real path. The input can: live is the curve the caller
-// intends to run — the CLI passes LiveFanCurve() — while the daemon applies the
-// active profile's *stored* curve. The two agree whenever that profile is the one
-// in force, which is the normal case, and a preview is allowed to be approximate
-// where a real write is not.
+// intends to run — the CLI passes the assembled device's live curve — while the
+// daemon applies the active profile's *stored* curve. The two agree whenever that
+// profile is the one in force, which is the normal case, and a preview is allowed
+// to be approximate where a real write is not.
 //
-// live is a parameter rather than a LiveFanCurve() call in here, mirroring
+// live is a parameter rather than a LiveCurve() call in here, mirroring
 // ApplyTDPSafely's own want parameter, because reading hwmon made this function —
 // and so dryrun_test.go, which is an external test package and cannot reach
 // newFakeSysfs — depend on the developer's fan mode. That was not theoretical:
-// only the len(live) == 0 branch below prints HighTDPMinPWM, and
+// only the len(live) == 0 branch below prints the floor curve's bottom PWM, and
 // TestDryRunTdp_HighSustained asserts on it, so the test passed only while the
 // machine happened to be on firmware auto and failed outright with a curve live.
 //
@@ -259,34 +268,38 @@ func DryRunFanCurveReset() {
 // whole floor curve would always be written above the safe max, which stopped
 // being true once the floor became a per-point minimum rather than a replacement
 // curve.
-func DryRunTdp(watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
+func DryRunTdp(env driver.PowerEnvelope, watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	s := TDPStateFor(watts, pl1, pl2, pl3)
 	if force {
 		fmt.Printf("--force given: sustained limit allowed above %dW (hardware max %dW)\n",
-			TDPMaxSafe, TDPMaxForced)
+			env.TDPMaxSafe, env.TDPMaxForced)
 	}
-	if s.PL1SPL > TDPMaxSafe {
-		curveDir := FindFanCurveHwmonPath()
+	if s.PL1SPL > env.TDPMaxSafe {
+		curveDir := asusz13.FindFanCurveHwmonPath()
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
+		floorMin := 0
+		if len(env.FloorCurve) > 0 {
+			floorMin = env.FloorCurve[0].PWM
+		}
 		switch {
 		case len(live) == 0:
-			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM / 50%%) to both fans in %s\n",
-				HighTDPMinPWM, curveDir)
-		case FloorAdjustsCurve(s.PL1SPL, live):
-			fmt.Println("Would raise the current fan curve's points below the built-in high-TDP curve")
+			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM) to both fans in %s\n",
+				floorMin, curveDir)
+		case safety.FloorAdjustsCurve(env, s.PL1SPL, live):
+			fmt.Println("Would raise the current fan curve's points below the device's high-TDP curve")
 			fmt.Printf("  to it, leaving every other point as-is, and write it to both fans in %s\n", curveDir)
 		default:
 			fmt.Printf("Would write the current fan curve back to both fans in %s unchanged:\n", curveDir)
-			fmt.Println("  it already clears the built-in high-TDP curve at every temperature")
+			fmt.Println("  it already clears the device's high-TDP curve at every temperature")
 		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",
-			s.PL1SPL, TDPMaxSafe)
+			s.PL1SPL, env.TDPMaxSafe)
 	}
-	base := FindPPTBasePath()
+	base := asusz13.FindPPTBasePath()
 	for _, w := range []struct {
 		attr  string
 		watts int
@@ -308,11 +321,11 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
 // does not — that false assumption is the whole of issue #12, and z13ctl writes
 // the stock values itself. The order matters too: power is lowered before the
 // fans are released, never the other way round.
-func DryRunTdpReset() {
+func DryRunTdpReset(env driver.PowerEnvelope) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	fmt.Println("Would reset the CPU Curve Optimizer to stock (balanced is a stock profile)")
 	fmt.Println("Would switch profile to balanced")
-	stock := StockProfilePPT["balanced"]
+	stock := env.StockProfilePPT["balanced"]
 	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
 		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
 	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before)")

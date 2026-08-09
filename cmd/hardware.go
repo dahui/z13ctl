@@ -19,6 +19,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/z13ctl/internal/driver"
 )
 
 // cliFallbackDeviceID is the device assumed when no device file matches this
@@ -63,6 +64,16 @@ func hardware() (*device.Device, error) {
 		hwDev, hwErr = device.Assemble(c)
 	})
 	return hwDev, hwErr
+}
+
+// envOf returns hw's power envelope, or a zero envelope when the device has no
+// power limit control. For dry-run display, which wants the numbers a real run
+// would use but must not fail where the real path merely prints zeros.
+func envOf(hw *device.Device) driver.PowerEnvelope {
+	if hw == nil || hw.Power == nil {
+		return driver.PowerEnvelope{}
+	}
+	return hw.Power.Envelope()
 }
 
 // liveFanCurve returns the fan curve currently in force, or nil when there is

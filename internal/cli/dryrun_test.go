@@ -10,7 +10,33 @@ import (
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/device"
+	"github.com/dahui/z13ctl/internal/driver"
 )
+
+// z13Env returns the Z13 power envelope from the embedded device data — the
+// same envelope cmd/ hands these functions from the assembled device.
+func z13Env(t *testing.T) driver.PowerEnvelope {
+	t.Helper()
+	configs, err := device.Configs()
+	if err != nil {
+		t.Fatalf("device.Configs: %v", err)
+	}
+	for _, c := range configs {
+		if c.Device.ID == "asus-rog-flow-z13-2025" {
+			return c.Power.Envelope()
+		}
+	}
+	t.Fatal("Z13 device file not found")
+	return driver.PowerEnvelope{}
+}
+
+// floorMin is the envelope's floor-curve bottom, the value the no-curve dry
+// run prints.
+func floorMin(t *testing.T) int {
+	t.Helper()
+	return z13Env(t).FloorCurve[0].PWM
+}
 
 // captureStdout redirects os.Stdout to a pipe, calls f, restores stdout,
 // and returns all bytes written during f's execution.
@@ -48,7 +74,7 @@ func TestDryRunBatteryLimit(t *testing.T) {
 }
 
 func TestDryRunProfile(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunProfile("performance") })
+	out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), "performance") })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -68,7 +94,7 @@ func TestDryRunProfile(t *testing.T) {
 // to the desktop.
 func TestDryRunProfileCustomDoesNotClaimAPlatformProfileWrite(t *testing.T) {
 	for _, name := range []string{"custom", "battery-uv"} {
-		out := captureStdout(t, func() { cli.DryRunProfile(name) })
+		out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), name) })
 		if strings.Contains(out, "Would write") {
 			t.Errorf("DryRunProfile(%q) claims a sysfs write:\n%s", name, out)
 		}
@@ -227,7 +253,7 @@ func TestDryRunFanCurveReset(t *testing.T) {
 }
 
 func TestDryRunTdp(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 0, 0, 0, false, nil) })
+	out := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 50, 0, 0, 0, false, nil) })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -252,11 +278,11 @@ func TestDryRunTdp(t *testing.T) {
 // has never done — it writes the 50% floor curve with pwm_enable=1. A dry run
 // that describes an operation the tool does not perform is worse than none.
 func TestDryRunTdp_HighSustained(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
+	out := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, true, nil) })
 
-	// Reference the constant rather than the number: the floor has moved once
+	// Reference the envelope rather than the number: the floor has moved once
 	// already (80% -> 50%) and these assertions should not need revisiting.
-	floor := strconv.Itoa(cli.HighTDPMinPWM)
+	floor := strconv.Itoa(floorMin(t))
 	for _, want := range []string{floor, "pwm", "not applied at all"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("DryRunTdp(80W) output missing %q; got:\n%s", want, out)
@@ -270,10 +296,10 @@ func TestDryRunTdp_HighSustained(t *testing.T) {
 // TestDryRunTdp_FanFloorIgnoresForce: the floor depends on the sustained limit,
 // not on --force. The old code only mentioned fans when --force was passed.
 func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
-	forced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
-	unforced := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, false, nil) })
+	forced := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, true, nil) })
+	unforced := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, false, nil) })
 
-	floor := strconv.Itoa(cli.HighTDPMinPWM)
+	floor := strconv.Itoa(floorMin(t))
 	if !strings.Contains(unforced, floor) {
 		t.Errorf("DryRunTdp(80W, no force) omitted the fan floor; got:\n%s", unforced)
 	}
@@ -286,15 +312,15 @@ func TestDryRunTdp_FanFloorIgnoresForce(t *testing.T) {
 // does not trigger the floor — only the sustained limit does. The old condition
 // fired on pl2/pl3 as well.
 func TestDryRunTdp_BurstAboveSafeMaxKeepsFansAlone(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 50, 90, 90, true, nil) })
+	out := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 50, 50, 90, 90, true, nil) })
 
-	if strings.Contains(out, strconv.Itoa(cli.HighTDPMinPWM)) || strings.Contains(out, "fan") {
+	if strings.Contains(out, strconv.Itoa(floorMin(t))) || strings.Contains(out, "fan") {
 		t.Errorf("burst limits above the safe max must not imply a fan change; got:\n%s", out)
 	}
 }
 
 func TestDryRunTdp_PLOverrides(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdp(50, 45, 55, 60, false, nil) })
+	out := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 50, 45, 55, 60, false, nil) })
 
 	if !strings.Contains(out, "45") {
 		t.Error("DryRunTdp PL overrides: missing pl1=45")
@@ -308,7 +334,7 @@ func TestDryRunTdp_PLOverrides(t *testing.T) {
 }
 
 func TestDryRunTdpReset(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdpReset() })
+	out := captureStdout(t, func() { cli.DryRunTdpReset(z13Env(t)) })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -365,7 +391,7 @@ func TestDryRunApply_ZeroColor_RandomFlag(t *testing.T) {
 // unreachable from this test package while DryRunTdp read the fan mode itself.
 //
 // Passing the curve in is what makes them testable, and their absence was not
-// harmless: only the no-curve branch prints HighTDPMinPWM, so
+// harmless: only the no-curve branch prints the floor's bottom PWM, so
 // TestDryRunTdp_HighSustained passed only while the developer's machine happened
 // to be on firmware auto. With a custom curve live it asserted on a string the
 // output never contains.
@@ -383,7 +409,7 @@ func TestDryRunTdp_HighSustainedWithLiveCurve(t *testing.T) {
 	// A curve flat at the floor's bottom still dips under the ramp above 40 °C,
 	// so the floor raises it — the case the scalar-minimum rule used to wave
 	// through.
-	raised := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, flat(cli.HighTDPMinPWM)) })
+	raised := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, true, flat(floorMin(t))) })
 	if !strings.Contains(raised, "raise") {
 		t.Errorf("a curve flat at the floor's bottom must be described as raised; got:\n%s", raised)
 	}
@@ -393,7 +419,7 @@ func TestDryRunTdp_HighSustainedWithLiveCurve(t *testing.T) {
 
 	// A curve at 100% everywhere is above the ramp at every temperature and must
 	// be reported as kept exactly as drawn.
-	kept := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, flat(255)) })
+	kept := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, true, flat(255)) })
 	if !strings.Contains(kept, "unchanged") {
 		t.Errorf("a curve above the ramp everywhere must be described as unchanged; got:\n%s", kept)
 	}
@@ -403,8 +429,8 @@ func TestDryRunTdp_HighSustainedWithLiveCurve(t *testing.T) {
 
 	// And the no-curve case still names the floor, which is what the older test
 	// was really pinning.
-	none := captureStdout(t, func() { cli.DryRunTdp(80, 0, 0, 0, true, nil) })
-	if !strings.Contains(none, strconv.Itoa(cli.HighTDPMinPWM)) {
+	none := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), 80, 0, 0, 0, true, nil) })
+	if !strings.Contains(none, strconv.Itoa(floorMin(t))) {
 		t.Errorf("with no curve to keep the floor value must be named; got:\n%s", none)
 	}
 }

@@ -192,7 +192,7 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(watts, pl1, pl2, pl3, tdpForceFlag, liveFanCurve(hw))
+		cli.DryRunTdp(env, watts, pl1, pl2, pl3, tdpForceFlag, liveFanCurve(hw))
 		return nil
 	}
 
@@ -282,7 +282,11 @@ func runTdpReset() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "cleared power limits")
 			return nil
 		}
-		cli.DryRunTdpReset()
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		cli.DryRunTdpReset(envOf(hw))
 		return nil
 	}
 

@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -55,7 +55,7 @@ func runStatus() error {
 			rpmStr = fmt.Sprintf("%d RPM", rpms[0])
 		}
 		if mode, mErr := hw.Fans.ReadMode(); mErr == nil {
-			modeStr = ", mode: " + cli.FanModeName(mode)
+			modeStr = ", mode: " + driver.FanModeName(mode)
 		}
 	}
 	fmt.Printf("Fans:    %s%s\n", rpmStr, modeStr)

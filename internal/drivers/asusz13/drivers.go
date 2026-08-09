@@ -3,8 +3,8 @@ package asusz13
 // drivers.go — the driver.* implementations over this package's sysfs layer.
 // Constructors are pure (no I/O); hardware is touched only when a method runs.
 // The registry wiring lives in the register subpackage so this package does
-// not import internal/device — which keeps internal/device's own tests free to
-// import this package for the data drift guard.
+// not import internal/device — which keeps this package's own tests free to
+// pull the authoritative Z13 envelope from the embedded device data.
 
 import (
 	"fmt"
@@ -67,8 +67,8 @@ func (fanController) Release() error { return ResetAllFanCurves() }
 // LiveCurve returns the curve programmed into the curve registers whether or
 // not it is active — the interface's contract, since the registers survive a
 // release on the Z13. "The curve in force" is a composition the caller makes
-// from this plus ReadMode; LiveFanCurve (the mode-gated read the no-daemon
-// CLI uses) is that composition, not this method.
+// from this plus ReadMode (the no-daemon CLI's liveFanCurve helper is exactly
+// that composition).
 func (fanController) LiveCurve() ([]api.FanCurvePoint, error) {
 	curves, err := ReadBothFanCurves()
 	if err != nil {
@@ -78,8 +78,7 @@ func (fanController) LiveCurve() ([]api.FanCurvePoint, error) {
 }
 
 // NewPowerLimiter returns the asus-nb-wmi PPT driver, whose envelope comes
-// from device data rather than this package's constants — the drift guard in
-// internal/device pins the two equal until the constants are deleted.
+// from device data — the single source of the Z13's power numbers.
 func NewPowerLimiter(env driver.PowerEnvelope) driver.PowerLimiter {
 	return powerLimiter{env: env}
 }
@@ -230,5 +229,15 @@ type undervolter struct{ lo, hi int }
 func (undervolter) Present() bool         { return SMUAvailable() }
 func (undervolter) ProbeAvailable() bool  { return SMUProbeUndervolt() }
 func (u undervolter) Range() (lo, hi int) { return u.lo, u.hi }
-func (undervolter) Apply(cpuCO int) error { return SetCurveOptimizer(cpuCO) }
-func (undervolter) Reset() error          { return ResetCurveOptimizer() }
+
+// Apply validates against the device data's bounds before anything else: even
+// the availability probe inside SetCurveOptimizer is a hardware write, and a
+// rejected value must not reach it.
+func (u undervolter) Apply(cpuCO int) error {
+	if cpuCO < u.lo || cpuCO > u.hi {
+		return fmt.Errorf("CPU undervolt %d out of range %d to %d", cpuCO, u.lo, u.hi)
+	}
+	return SetCurveOptimizer(cpuCO)
+}
+
+func (undervolter) Reset() error { return ResetCurveOptimizer() }

@@ -159,19 +159,6 @@ func TestSetCurveOptimizerSendsEncodedOffset(t *testing.T) {
 	}
 }
 
-func TestSetCurveOptimizerRejectsOutOfRange(t *testing.T) {
-	f := newFakeSysfs(t)
-	f.writeFile(t, f.smu+"/rsmu_cmd", "")
-	fake := &fakeSMU{response: SMUReturnOK}
-	fake.install(t)
-
-	for _, v := range []int{UVMinCPU - 1, UVMaxCPU + 1, -100, 5} {
-		if err := SetCurveOptimizer(v); err == nil {
-			t.Errorf("SetCurveOptimizer(%d) = nil, want a range error", v)
-		}
-	}
-}
-
 func TestSetCurveOptimizerUnavailableWithoutModule(t *testing.T) {
 	newFakeSysfs(t)
 	resetSMUProbe(t)

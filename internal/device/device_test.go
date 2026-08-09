@@ -2,14 +2,15 @@ package device
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/cli"
 	"github.com/dahui/z13ctl/internal/driver"
-	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 )
 
 // The DMI strings of the machine this project started on, verbatim from
@@ -36,40 +37,101 @@ func TestEmbeddedConfigsParseAndValidate(t *testing.T) {
 	}
 }
 
-// TestZ13FileMatchesDriverConstants is the bridge guard for the driver
-// extraction: while internal/drivers/asusz13 still carries the Z13's numbers as constants,
-// the device file must agree with them exactly. When the constants are deleted
-// and the file becomes authoritative, this test goes with them.
-func TestZ13FileMatchesDriverConstants(t *testing.T) {
+// The Z13 device file is the authoritative source of the Z13's numbers — the
+// driver constants it once mirrored are deleted — so the data tests below are
+// what stands between a typo in the TOML and hardware. They took over from the
+// sanity tests that guarded the constants.
+
+// TestZ13StockPPTSanity guards the stock table: every firmware profile must
+// have a row and every value must sit inside the file's own envelope, since
+// these are written to hardware verbatim on every stock-profile switch.
+func TestZ13StockPPTSanity(t *testing.T) {
 	c := z13Config(t)
-
 	env := c.Power.Envelope()
-	if env.TDPMin != asusz13.TDPMin || env.TDPMaxSafe != asusz13.TDPMaxSafe || env.TDPMaxForced != asusz13.TDPMaxForced {
-		t.Errorf("power limits %d/%d/%d, driver says %d/%d/%d",
-			env.TDPMin, env.TDPMaxSafe, env.TDPMaxForced, asusz13.TDPMin, asusz13.TDPMaxSafe, asusz13.TDPMaxForced)
-	}
-	if c.Power.TDPDefault != asusz13.TDPDefault {
-		t.Errorf("tdp_default %d, driver says %d", c.Power.TDPDefault, asusz13.TDPDefault)
-	}
-
-	floor := asusz13.HighTDPFanCurve()
-	if len(env.FloorCurve) != len(floor) {
-		t.Fatalf("floor_curve has %d points, asusz13.HighTDPFanCurve has %d", len(env.FloorCurve), len(floor))
-	}
-	for i := range floor {
-		if env.FloorCurve[i] != floor[i] {
-			t.Errorf("floor_curve[%d] = %+v, driver says %+v", i, env.FloorCurve[i], floor[i])
+	for _, profile := range c.Profiles.Names {
+		stock, ok := env.StockProfilePPT[profile]
+		if !ok {
+			t.Errorf("stock_ppt is missing %q", profile)
+			continue
+		}
+		for _, f := range []struct {
+			name  string
+			watts int
+		}{
+			{"PL1SPL", stock.PL1SPL},
+			{"PL2SPPT", stock.PL2SPPT},
+			{"FPPT", stock.FPPT},
+			{"APUSPPT", stock.APUSPPT},
+			{"PlatformSPPT", stock.PlatformSPPT},
+		} {
+			if f.watts < env.TDPMin || f.watts > env.TDPMaxForced {
+				t.Errorf("%s.%s = %dW, out of range %d–%d", profile, f.name, f.watts, env.TDPMin, env.TDPMaxForced)
+			}
+		}
+		if stock.PL2SPPT < stock.PL1SPL {
+			t.Errorf("%s: PL2 %dW is below PL1 %dW; burst must not be under sustained",
+				profile, stock.PL2SPPT, stock.PL1SPL)
 		}
 	}
+}
 
-	if len(env.StockProfilePPT) != len(asusz13.StockProfilePPT) {
-		t.Fatalf("stock_ppt has %d rows, driver has %d", len(env.StockProfilePPT), len(asusz13.StockProfilePPT))
-	}
-	for name, want := range asusz13.StockProfilePPT {
-		if got := env.StockProfilePPT[name]; got != want {
-			t.Errorf("stock_ppt.%s = %+v, driver says %+v", name, got, want)
+// TestZ13StockTableNamesAreReserved pins the invariant the safety engine's
+// ReadEffective relies on: any name absent from the stock table is treated as
+// custom, with the stale-cache fallback disabled. Every key in the file's
+// table must therefore be a name the reservation layers refuse for custom
+// profiles — a new firmware profile added to the TOML without extending
+// api.IsStockProfileName would misreport power limits the moment a custom
+// profile took its name.
+func TestZ13StockTableNamesAreReserved(t *testing.T) {
+	env := z13Config(t).Power.Envelope()
+	for name := range env.StockProfilePPT {
+		if !api.IsStockProfileName(name) {
+			t.Errorf("stock_ppt key %q is not reserved by api.IsStockProfileName", name)
+		}
+		if err := cli.ValidateProfileName(name); err == nil {
+			t.Errorf("ValidateProfileName(%q) = nil, want an error — a custom profile may not shadow a stock table row", name)
 		}
 	}
+}
+
+// TestZ13FloorCurveIsWellFormed guards the floor curve the same way the old
+// HighTDPFanCurve test guarded the constant: full length, respecting its own
+// bottom, monotonic on both axes, and parseable by the same validator user
+// curves go through — a floor the parser rejects could be written but never
+// round-trip through state.
+func TestZ13FloorCurveIsWellFormed(t *testing.T) {
+	c := z13Config(t)
+	curve := c.Power.Envelope().FloorCurve
+	if len(curve) != c.Fans.Points {
+		t.Fatalf("floor_curve has %d points, want the fans block's %d", len(curve), c.Fans.Points)
+	}
+	for i, p := range curve {
+		if p.PWM < curve[0].PWM {
+			t.Errorf("point %d PWM = %d, below the %d floor this curve exists to enforce", i+1, p.PWM, curve[0].PWM)
+		}
+		if i > 0 {
+			if p.Temp <= curve[i-1].Temp {
+				t.Errorf("point %d temp %d is not above point %d temp %d", i+1, p.Temp, i, curve[i-1].Temp)
+			}
+			if p.PWM < curve[i-1].PWM {
+				t.Errorf("point %d PWM %d is below point %d PWM %d", i+1, p.PWM, i, curve[i-1].PWM)
+			}
+		}
+	}
+	if _, err := cli.ParseFanCurve(formatCurve(curve)); err != nil {
+		t.Errorf("floor_curve is rejected by cli.ParseFanCurve: %v", err)
+	}
+}
+
+func formatCurve(points []api.FanCurvePoint) string {
+	out := ""
+	for i, p := range points {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf("%d:%d", p.Temp, p.PWM)
+	}
+	return out
 }
 
 func TestZ13MatchesItsOwnDMI(t *testing.T) {
@@ -111,8 +173,9 @@ func TestDetectAssemblesTheZ13(t *testing.T) {
 		t.Errorf("assembled device has nil capabilities: %+v", d)
 	}
 	// …and the engine must be wired to the real envelope, not a zero value.
-	if env := d.Power.Envelope(); env.TDPMaxSafe != asusz13.TDPMaxSafe {
-		t.Errorf("engine envelope TDPMaxSafe = %d, want %d", env.TDPMaxSafe, asusz13.TDPMaxSafe)
+	fileEnv := z13Config(t).Power.Envelope()
+	if env := d.Power.Envelope(); env.TDPMaxSafe != fileEnv.TDPMaxSafe || env.TDPMaxSafe == 0 {
+		t.Errorf("engine envelope TDPMaxSafe = %d, want the device file's %d (non-zero)", env.TDPMaxSafe, fileEnv.TDPMaxSafe)
 	}
 }
 

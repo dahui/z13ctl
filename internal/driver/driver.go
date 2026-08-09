@@ -20,6 +20,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dahui/z13ctl/api"
 )
@@ -74,6 +75,22 @@ type FanController interface {
 	LiveCurve() ([]api.FanCurvePoint, error)
 }
 
+// FanModeName returns a human-readable name for a FanController.ReadMode
+// value. It lives with the interface because the 0/1/2 semantics are the
+// interface's own contract, not any one device's.
+func FanModeName(mode int) string {
+	switch mode {
+	case 0:
+		return "full-speed"
+	case 1:
+		return "custom"
+	case 2:
+		return "auto"
+	default:
+		return fmt.Sprintf("unknown(%d)", mode)
+	}
+}
+
 // PowerEnvelope is a device's power-limit envelope: the bounds the daemon
 // validates against, the per-profile firmware defaults it restores, and the
 // fan floor the safety engine enforces above TDPMaxSafe. It is data, not
@@ -90,8 +107,8 @@ type PowerEnvelope struct {
 
 	// FloorCurve is the per-point fan floor enforced while the sustained limit
 	// exceeds TDPMaxSafe, measured at each user point's temperature. Empty
-	// means the device imposes no floor. On the Z13 this is HighTDPFanCurve:
-	// a 50% bottom ramping to full speed at 80°C.
+	// means the device imposes no floor. On the Z13 this is the high-TDP
+	// curve: a 50% bottom ramping to full speed at 80°C.
 	FloorCurve []api.FanCurvePoint
 }
 

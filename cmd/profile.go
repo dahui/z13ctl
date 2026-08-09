@@ -85,7 +85,11 @@ func runProfileSet() error {
 	profile := strings.ToLower(profileSetFlag)
 
 	if dryRunFlag {
-		cli.DryRunProfile(profile)
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		cli.DryRunProfile(envOf(hw), profile)
 		return nil
 	}
 

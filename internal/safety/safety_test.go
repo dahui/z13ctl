@@ -1,10 +1,10 @@
 package safety
 
-// The Z13 behaviour of every function here is pinned by internal/cli's tests,
-// which exercise these rules through that package's forwarders with the real
-// envelope. These tests cover what those cannot: envelopes that are not the
-// Z13's, and devices that declare no floor at all — the generalization this
-// package exists for.
+// The Z13 behaviour of every function here is pinned by
+// internal/drivers/asusz13's tests, which exercise these rules with the real
+// envelope from the embedded device file. These tests cover what those cannot:
+// envelopes that are not the Z13's, and devices that declare no floor at all —
+// the generalization this package exists for.
 
 import (
 	"strings"

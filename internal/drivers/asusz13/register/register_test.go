@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/dahui/z13ctl/internal/device"
-	"github.com/dahui/z13ctl/internal/drivers/asusz13"
 )
 
 func z13Config(t *testing.T) device.Config {
@@ -31,7 +30,8 @@ func z13Config(t *testing.T) device.Config {
 // TestZ13AssemblesWithRegisteredDrivers proves every method name the Z13 file
 // declares resolves through init() registration to a working factory.
 func TestZ13AssemblesWithRegisteredDrivers(t *testing.T) {
-	d, err := device.Assemble(z13Config(t))
+	c := z13Config(t)
+	d, err := device.Assemble(c)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -44,18 +44,20 @@ func TestZ13AssemblesWithRegisteredDrivers(t *testing.T) {
 		t.Errorf("lighting zones = %v, want keyboard + lightbar", zones)
 	}
 
-	// The engine's envelope is the device file's, and the file is pinned to
-	// the driver constants by internal/device's drift guard — so this closes
-	// the loop: TOML → registry → engine, one envelope throughout.
+	// The engine's envelope is the device file's — the file is the authoritative
+	// source of the Z13's numbers — so this closes the loop: TOML → registry →
+	// engine, one envelope throughout.
+	fileEnv := c.Power.Envelope()
 	env := d.Power.Envelope()
-	if env.TDPMaxSafe != asusz13.TDPMaxSafe || len(env.FloorCurve) != len(asusz13.HighTDPFanCurve()) {
+	if env.TDPMaxSafe != fileEnv.TDPMaxSafe || env.TDPMaxSafe == 0 ||
+		len(env.FloorCurve) != len(fileEnv.FloorCurve) || len(env.FloorCurve) == 0 {
 		t.Errorf("engine envelope = %+v, want the Z13 file's values", env)
 	}
 	if shape := d.Fans.Shape(); shape.Points != 8 || shape.TempMin != 35 || shape.TempMax != 105 {
 		t.Errorf("fan shape = %+v, want the Z13 file's 8 points over 35–105°C", shape)
 	}
-	if lo, hi := d.Undervolt.Range(); lo != asusz13.UVMinCPU || hi != asusz13.UVMaxCPU {
-		t.Errorf("undervolt range = %d..%d, want %d..%d", lo, hi, asusz13.UVMinCPU, asusz13.UVMaxCPU)
+	if lo, hi := d.Undervolt.Range(); lo != c.Undervolt.Min || hi != c.Undervolt.Max || lo == hi {
+		t.Errorf("undervolt range = %d..%d, want the file's %d..%d", lo, hi, c.Undervolt.Min, c.Undervolt.Max)
 	}
 	if got := d.Toggles.List(); len(got) != 2 || got[0].ID != "boot_sound" || got[1].ID != "panel_overdrive" {
 		t.Errorf("toggles = %+v, want boot_sound + panel_overdrive", got)

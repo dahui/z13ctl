@@ -1,6 +1,9 @@
 package asusz13
 
-import "testing"
+import (
+	"encoding/binary"
+	"testing"
+)
 
 func TestEncodeCOValue_Zero(t *testing.T) {
 	got := encodeCOValue(0)
@@ -26,24 +29,52 @@ func TestEncodeCOValue_Negative(t *testing.T) {
 	}
 }
 
-func TestValidateCOValues_Valid(t *testing.T) {
-	tests := []int{0, -1, -20, -40}
-	for _, cpu := range tests {
-		if err := ValidateCOValues(cpu); err != nil {
-			t.Errorf("ValidateCOValues(%d) = %v, want nil", cpu, err)
+// TestUndervolterApplyRejectsOutOfRange pins that the driver's Apply validates
+// against the bounds it was constructed with — before anything else, since even
+// the availability probe inside SetCurveOptimizer is a hardware write. The fake
+// SMU is installed anyway so a future reordering fails against the fake rather
+// than writing the developer's actual voltage curve.
+func TestUndervolterApplyRejectsOutOfRange(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	fake := &fakeSMU{response: SMUReturnOK}
+	fake.install(t)
+
+	u := NewUndervolter(-40, 0)
+	for _, cpu := range []int{-41, 1, 5, -100} {
+		if err := u.Apply(cpu); err == nil {
+			t.Errorf("Apply(%d) = nil, want an out-of-range error", cpu)
 		}
 	}
 }
 
-func TestValidateCOValues_CPUTooLow(t *testing.T) {
-	if err := ValidateCOValues(-41); err == nil {
-		t.Error("expected error for CPU offset -41")
+// TestUndervolterApplyWithinBounds covers the values the deleted package-level
+// validation accepted: everything from the constructed minimum to 0 reaches the
+// SMU, with the last offset encoded on the mailbox.
+func TestUndervolterApplyWithinBounds(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	fake := &fakeSMU{response: SMUReturnOK}
+	fake.install(t)
+
+	u := NewUndervolter(-40, 0)
+	for _, cpu := range []int{0, -1, -20, -40} {
+		if err := u.Apply(cpu); err != nil {
+			t.Errorf("Apply(%d) = %v, want nil", cpu, err)
+		}
+	}
+	got := binary.LittleEndian.Uint32(fake.args[:4])
+	if want := encodeCOValue(-40); got != want {
+		t.Errorf("last encoded offset = 0x%X, want 0x%X", got, want)
 	}
 }
 
-func TestValidateCOValues_CPUPositive(t *testing.T) {
-	if err := ValidateCOValues(1); err == nil {
-		t.Error("expected error for positive CPU offset")
+// TestUndervolterRange pins that Range reports the constructed bounds — the
+// numbers the CLI and GUI print come from here.
+func TestUndervolterRange(t *testing.T) {
+	lo, hi := NewUndervolter(-40, 0).Range()
+	if lo != -40 || hi != 0 {
+		t.Errorf("Range() = %d..%d, want -40..0", lo, hi)
 	}
 }
 

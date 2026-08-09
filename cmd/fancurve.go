@@ -11,6 +11,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/driver"
 	"github.com/dahui/z13ctl/internal/safety"
 
 	"github.com/spf13/cobra"
@@ -93,7 +94,7 @@ func runFanCurveGet() error {
 	}
 	modeStr := "N/A"
 	if modeErr == nil {
-		modeStr = cli.FanModeName(mode)
+		modeStr = driver.FanModeName(mode)
 	}
 	tempStr := ""
 	if hw.Telemetry != nil {

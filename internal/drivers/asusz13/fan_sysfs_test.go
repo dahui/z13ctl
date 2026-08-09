@@ -352,41 +352,6 @@ func TestFanReadersErrorWhenDeviceMissing(t *testing.T) {
 	}
 }
 
-func TestHighTDPFanCurveRespectsMinimumPWM(t *testing.T) {
-	curve := HighTDPFanCurve()
-	if len(curve) != fanCurvePoints {
-		t.Fatalf("HighTDPFanCurve() has %d points, want %d", len(curve), fanCurvePoints)
-	}
-	for i, p := range curve {
-		if p.PWM < HighTDPMinPWM {
-			t.Errorf("point %d PWM = %d, below the %d floor this curve exists to enforce", i+1, p.PWM, HighTDPMinPWM)
-		}
-		if i > 0 {
-			if p.Temp <= curve[i-1].Temp {
-				t.Errorf("point %d temp %d is not above point %d temp %d", i+1, p.Temp, i, curve[i-1].Temp)
-			}
-			if p.PWM < curve[i-1].PWM {
-				t.Errorf("point %d PWM %d is below point %d PWM %d", i+1, p.PWM, i, curve[i-1].PWM)
-			}
-		}
-	}
-	// The curve must survive its own validator.
-	if _, err := ParseFanCurve(formatCurve(curve)); err != nil {
-		t.Errorf("HighTDPFanCurve() is rejected by ParseFanCurve: %v", err)
-	}
-}
-
-func formatCurve(points []api.FanCurvePoint) string {
-	out := ""
-	for i, p := range points {
-		if i > 0 {
-			out += ","
-		}
-		out += itoa(p.Temp) + ":" + itoa(p.PWM)
-	}
-	return out
-}
-
 func TestFindProfilePathPrefersDeviceSupportingQuiet(t *testing.T) {
 	f := newFakeSysfs(t)
 	// A non-ASUS device (no "quiet") plus the ASUS one; ASUS must win.

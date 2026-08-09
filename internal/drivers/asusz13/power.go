@@ -1,14 +1,11 @@
 package asusz13
 
-// power.go — mains/battery power source discovery, and the profile-name rules
-// shared by cmd/ and internal/daemon/.
+// power.go — mains/battery power source discovery.
 
 import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/dahui/z13ctl/api"
 )
 
 // FindACOnlinePath returns the sysfs "online" path of the mains adapter, or ""
@@ -80,48 +77,4 @@ func OnACPower() (bool, error) {
 		return false, fmt.Errorf("reading mains power state: %w", lastErr)
 	}
 	return false, nil
-}
-
-// IsStockProfile reports whether name is one of the firmware performance
-// profiles that can be written to platform_profile.
-func IsStockProfile(name string) bool { return api.IsStockProfileName(name) }
-
-// maxProfileNameLen bounds a custom profile name. It is a state file key and a
-// command-line argument, not a display string; anything longer is a mistake.
-const maxProfileNameLen = 32
-
-// ValidateProfileName checks a user-supplied custom profile name.
-//
-// The firmware profile names are reserved so that selecting one always reaches
-// the firmware profile and can never be shadowed by a custom profile. That
-// reservation is load-bearing beyond avoiding confusion: ReadEffectivePPT
-// treats any name absent from StockProfilePPT as custom and disables its
-// stale-5W fallback, which is right for a custom profile and wrong for a stock
-// one — so a custom profile called "balanced" would misreport the machine's
-// power limits. "custom" is reserved separately: it is the profile created
-// implicitly by the first custom setting.
-func ValidateProfileName(name string) error {
-	if name == "" {
-		return fmt.Errorf("profile name must not be empty")
-	}
-	if name != strings.ToLower(name) {
-		return fmt.Errorf("profile name %q must be lowercase", name)
-	}
-	if IsStockProfile(name) {
-		return fmt.Errorf("%q is a firmware profile name and cannot be used for a custom profile", name)
-	}
-	if name == api.DefaultCustomProfile {
-		return fmt.Errorf("%q is reserved for the profile created by the first custom setting", name)
-	}
-	if len(name) > maxProfileNameLen {
-		return fmt.Errorf("profile name %q is longer than %d characters", name, maxProfileNameLen)
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
-		default:
-			return fmt.Errorf("profile name %q may only contain a-z, 0-9, '-' and '_'", name)
-		}
-	}
-	return nil
 }

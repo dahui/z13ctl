@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/z13ctl/internal/driver"
 )
 
 const (
@@ -22,17 +23,6 @@ const (
 
 	fanCurvePoints = 8
 	fanCount       = 2 // fan 1 (pwm1) and fan 2 (pwm2)
-
-	// HighTDPMinPWM is the minimum PWM value (50% of 255) enforced when
-	// sustained TDP exceeds TDPMaxSafe. Users can set fans higher but not lower.
-	//
-	// This was 204 (80%) up to v1.2.1, which users found unreasonably loud to
-	// live with — loud enough that the realistic alternative was not running the
-	// high TDP at all. The protection that matters is the *ramp*, not the floor:
-	// a machine sustaining more than TDPMaxSafe watts sits well above 60°C, where
-	// HighTDPFanCurve is far above this minimum anyway. The floor only sets how
-	// the fans behave while the APU is still cool.
-	HighTDPMinPWM = 127
 )
 
 // fanWriteInt is the pwm_enable write used by setFanMode. It is a var purely so
@@ -148,7 +138,7 @@ func VerifyFanCurveActive() error {
 		return fmt.Errorf(
 			"custom fan curve was written but the kernel is not honouring it (pwm%d_enable = %d, %s): "+
 				"a platform_profile change disables custom fan curves in the kernel driver; re-apply the curve",
-			fanNames[i].index, m, FanModeName(m))
+			fanNames[i].index, m, driver.FanModeName(m))
 	}
 	return nil
 }
@@ -194,25 +184,6 @@ func ReadBothFanCurves() ([fanCount][]api.FanCurvePoint, error) {
 		curves[fi] = points
 	}
 	return curves, nil
-}
-
-// LiveFanCurve returns the curve currently in force, or nil when the fans are not
-// on a custom curve (firmware auto, forced full speed, or unreadable).
-//
-// It is what the no-daemon CLI path has instead of profile state. Without it,
-// "tdp --set 90" would hand nil to ApplyTDPSafely and so discard a curve the user
-// set moments earlier — the same defect the daemon path had, arrived at from the
-// other direction.
-func LiveFanCurve() []api.FanCurvePoint {
-	modes, err := ReadFanCurveModes()
-	if err != nil || modes[0] != 1 {
-		return nil
-	}
-	curves, err := ReadBothFanCurves()
-	if err != nil {
-		return nil
-	}
-	return curves[0]
 }
 
 // SetBothFanCurves writes the same 8-point fan curve to both fans, enables
@@ -326,7 +297,7 @@ func verifyFanModeReleased() error {
 		}
 		return fmt.Errorf(
 			"fans were released to firmware auto but the kernel is not honouring it (pwm%d_enable = %d, %s)",
-			fanNames[i].index, m, FanModeName(m))
+			fanNames[i].index, m, driver.FanModeName(m))
 	}
 	return nil
 }
@@ -336,104 +307,18 @@ func verifyFanModeReleased() error {
 // is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
 // is sufficient to force both physical fans to full speed.
 //
-// Nothing calls this. High-TDP cooling uses HighTDPFanCurve (a 50% PWM floor
-// with pwm_enable=1) via ApplyTDPSafely; full speed was an earlier approach that
-// the docs, the --dry-run output, and CLAUDE.md all went on describing long
-// after the code stopped doing it. Kept because it is a real, tested hardware
-// capability — but it is not the high-TDP path, and callers should not assume so.
+// Nothing calls this. High-TDP cooling uses the envelope's floor curve (a 50%
+// PWM floor with pwm_enable=1) via the safety engine's ApplyTDPSafely; full
+// speed was an earlier approach that the docs, the --dry-run output, and
+// CLAUDE.md all went on describing long after the code stopped doing it. Kept
+// because it is a real, tested hardware capability — but it is not the
+// high-TDP path, and callers should not assume so.
 func SetAllFansFullSpeed() error {
 	readDir := FindFanReadingsHwmonPath()
 	if readDir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
 	}
 	return writeIntFile(readDir+"/pwm1_enable", 0)
-}
-
-// HighTDPFanCurve returns an 8-point fan curve with a minimum PWM of 50%,
-// suitable for sustained TDP above 75W. Users can replace this with a custom
-// curve as long as all PWM values stay at or above HighTDPMinPWM.
-//
-// The floor holds only while the APU is cool; from 60°C the curve climbs hard
-// and reaches 100% at 80°C, which is the range a machine actually sustaining
-// more than TDPMaxSafe watts lives in. Keeping the top of the ramp is what
-// makes the lower floor safe.
-func HighTDPFanCurve() []api.FanCurvePoint {
-	return []api.FanCurvePoint{
-		{Temp: 30, PWM: HighTDPMinPWM},
-		{Temp: 40, PWM: HighTDPMinPWM},
-		{Temp: 50, PWM: 140},
-		{Temp: 60, PWM: 165},
-		{Temp: 65, PWM: 190},
-		{Temp: 70, PWM: 215},
-		{Temp: 75, PWM: 235},
-		{Temp: 80, PWM: 255},
-	}
-}
-
-// ParseFanCurve parses a fan curve string "temp:pwm,temp:pwm,..." into a
-// slice of FanCurvePoint. Requires exactly 8 points. Temps must be
-// monotonically increasing (0–120°C). PWM values must be monotonically
-// non-decreasing (0–255). PWM values may use a % suffix for percentage
-// (0–100%), which is converted to PWM (e.g. 80% = 204). Both formats
-// can be mixed in the same curve string.
-func ParseFanCurve(s string) ([]api.FanCurvePoint, error) {
-	parts := strings.Split(s, ",")
-	if len(parts) != fanCurvePoints {
-		return nil, fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(parts))
-	}
-	points := make([]api.FanCurvePoint, fanCurvePoints)
-	for i, part := range parts {
-		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid curve point %q: expected temp:pwm or temp:pct%%", part)
-		}
-		temp, err := strconv.Atoi(strings.TrimSpace(kv[0]))
-		if err != nil {
-			return nil, fmt.Errorf("invalid temp in point %d: %w", i+1, err)
-		}
-		pwmStr := strings.TrimSpace(kv[1])
-		isPercent := strings.HasSuffix(pwmStr, "%")
-		if isPercent {
-			pwmStr = strings.TrimSuffix(pwmStr, "%")
-		}
-		pwm, err := strconv.Atoi(pwmStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid pwm in point %d: %w", i+1, err)
-		}
-		if temp < 0 || temp > 120 {
-			return nil, fmt.Errorf("temp %d in point %d out of range 0–120", temp, i+1)
-		}
-		if isPercent {
-			if pwm < 0 || pwm > 100 {
-				return nil, fmt.Errorf("percentage %d in point %d out of range 0–100", pwm, i+1)
-			}
-			pwm = pwm * 255 / 100
-		} else if pwm < 0 || pwm > 255 {
-			return nil, fmt.Errorf("pwm %d in point %d out of range 0–255", pwm, i+1)
-		}
-		if i > 0 && temp <= points[i-1].Temp {
-			return nil, fmt.Errorf("temps must be monotonically increasing: point %d (%d) <= point %d (%d)", i+1, temp, i, points[i-1].Temp)
-		}
-		if i > 0 && pwm < points[i-1].PWM {
-			return nil, fmt.Errorf("pwm values must be non-decreasing: point %d (%d) < point %d (%d)", i+1, pwm, i, points[i-1].PWM)
-		}
-		points[i] = api.FanCurvePoint{Temp: temp, PWM: pwm}
-	}
-	return points, nil
-}
-
-// FanModeName returns a human-readable name for a pwm_enable value.
-func FanModeName(mode int) string {
-	switch mode {
-	case 0:
-		return "full-speed"
-	case 1:
-		return "custom"
-	case 2:
-		return "auto"
-	default:
-		return fmt.Sprintf("unknown(%d)", mode)
-	}
 }
 
 // readIntFile reads a sysfs file and parses its content as an integer.

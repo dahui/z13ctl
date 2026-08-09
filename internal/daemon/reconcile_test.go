@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13ctl/internal/cli"
 )
 
 // tick is reconcileTick judged against the Z13 envelope, which is what every
@@ -29,10 +28,10 @@ func curveFor(floorLimit int, want []api.FanCurvePoint) []api.FanCurvePoint {
 }
 
 // rampedFrom is curve(pwm) after the high-TDP ramp has raised the points it
-// exceeds. The PWM values are cli.HighTDPFanCurve's, written out rather than
-// computed, so the test states the expected outcome instead of restating the rule.
+// exceeds. The PWM values are the Z13 envelope's floor curve's, written out rather
+// than computed, so the test states the expected outcome instead of restating the rule.
 func rampedFrom(pwm int) []api.FanCurvePoint {
-	// cli.FloorPWMAt evaluated at curve()'s temperatures (30,35,…,65), written out
+	// safety.FloorPWMAt evaluated at curve()'s temperatures (30,35,…,65), written out
 	// rather than computed so the test states the outcome instead of the rule.
 	ramp := []int{127, 127, 127, 133, 140, 152, 165, 190}
 	out := curve(pwm)
@@ -128,18 +127,18 @@ func TestReconcileTick(t *testing.T) {
 		{
 			// Nothing to clamp, so the whole built-in floor curve is written.
 			name:      "no saved curve but the high-TDP floor is required",
-			obs:       reconcileObs{Custom: true, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, CurveMode: 2, PL1: testEnv.TDPMaxSafe + 1},
 			wantCurve: true,
-			expect:    cli.HighTDPFanCurve(),
+			expect:    testEnv.FloorCurve,
 		},
 		{
 			// Caught on hardware: the saved curve is only vetted against the limit in
 			// force when it is saved, and raising the TDP afterwards leaves sub-ramp
 			// points in state. Each point comes up to the ramp — and only the ones
 			// below it do; the temperatures stay as the user drew them, which is why
-			// this expects the raised saved curve rather than HighTDPFanCurve.
+			// this expects the raised saved curve rather than the whole floor curve.
 			name:      "saved curve below the ramp while the limit is high",
-			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, WantCurve: saved, CurveMode: 2, PL1: testEnv.TDPMaxSafe + 1},
 			wantCurve: true,
 			expect:    rampedFrom(120),
 		},
@@ -148,13 +147,13 @@ func TestReconcileTick(t *testing.T) {
 			// the ramp from the third point on, so the ramp raises it. Accepting this
 			// curve verbatim is what let a 93W limit run 50% fans at 90°C.
 			name:      "saved curve flat at the minimum is raised to the ramp",
-			obs:       reconcileObs{Custom: true, WantCurve: curve(cli.HighTDPMinPWM), CurveMode: 2, PL1: cli.TDPMaxSafe + 1},
+			obs:       reconcileObs{Custom: true, WantCurve: curve(testEnv.FloorCurve[0].PWM), CurveMode: 2, PL1: testEnv.TDPMaxSafe + 1},
 			wantCurve: true,
-			expect:    rampedFrom(cli.HighTDPMinPWM),
+			expect:    rampedFrom(testEnv.FloorCurve[0].PWM),
 		},
 		{
 			name: "no saved curve and the limit is safe",
-			obs:  reconcileObs{Custom: true, CurveMode: 2, PL1: cli.TDPMaxSafe},
+			obs:  reconcileObs{Custom: true, CurveMode: 2, PL1: testEnv.TDPMaxSafe},
 		},
 		{
 			name: "no saved curve and PPT unreadable",
@@ -177,7 +176,7 @@ func TestReconcileTick(t *testing.T) {
 			// The floor is a minimum, not an override. This case did not exist and
 			// is the watcher-side half of the reported bug: a saved curve well above
 			// the floor must be restored as drawn even under a high limit, which is
-			// also what cli.ApplyTDPSafely now does on the apply path.
+			// also what the engine's ApplyTDPSafely now does on the apply path.
 			name:      "high limit restores a saved curve, raising only the ramp's top",
 			obs:       reconcileObs{Custom: true, WantCurve: curve(204), CurveMode: 2, PL1: 90},
 			wantCurve: true,
@@ -216,7 +215,7 @@ func TestReconcileTick(t *testing.T) {
 			}
 			if act.Curve != nil {
 				// The whole curve, not just point 0. Comparing the first point alone
-				// could not tell HighTDPFanCurve from a saved curve that happens to
+				// could not tell the floor curve from a saved curve that happens to
 				// start at the floor, which is exactly the distinction the reported
 				// bug turned on — and it could not see a clamp at all.
 				want := tt.obs.WantCurve
@@ -466,7 +465,7 @@ func TestReconcileCurveForLeavesCurvelessProfilesAlone(t *testing.T) {
 			name:       "no curve and a high limit writes the built-in floor",
 			floorLimit: 90,
 			want:       nil,
-			expect:     cli.HighTDPFanCurve(),
+			expect:     testEnv.FloorCurve,
 		},
 		{
 			name:       "a curve at a safe limit is written as drawn",
@@ -505,7 +504,7 @@ func TestReconcileCurveForLeavesCurvelessProfilesAlone(t *testing.T) {
 }
 
 // TestReconcileCurveForDoesNotMutateSavedCurve guards the same copying rule
-// cli.FanCurveForTDP has: want aliases the profile's points in daemon state, so
+// safety.FanCurveForTDP has: want aliases the profile's points in daemon state, so
 // raising in place would rewrite the curve the user saved and leave nothing to
 // restore when the limit comes back down.
 func TestReconcileCurveForDoesNotMutateSavedCurve(t *testing.T) {
