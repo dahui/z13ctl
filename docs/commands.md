@@ -236,9 +236,14 @@ z13ctl autoswitch --ac balanced --battery battery-uv
 z13ctl autoswitch --get
 ```
 
-Autoswitch acts **only when the power source actually changes**. A profile you
-pick by hand therefore stays in force until the next plug or unplug, and z13ctl
-does not contest the profile with `power-profiles-daemon` in between. The
+Turning autoswitch on is a **one-shot**: it applies the profile for the source
+you are already on, so enabling it takes effect immediately instead of waiting
+for a transition. Turning it off, or changing the targets while it is already
+on, applies nothing.
+
+After that, autoswitch acts **only when the power source actually changes**. A
+profile you pick by hand therefore stays in force until the next plug or unplug,
+and z13ctl does not contest the profile with `power-profiles-daemon` in between. The
 transition is applied about two seconds after the event: that settle window lets
 the desktop's own transition write land first, and stops a loose USB-C connector
 from driving a profile change per bounce.

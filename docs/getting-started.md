@@ -219,9 +219,13 @@ z13ctl autoswitch --ac balanced --battery battery-uv
 z13ctl autoswitch --get
 ```
 
-Unplug the charger and the battery profile takes effect a couple of seconds
-later; plug it back in and you are on `balanced` again. A profile you pick by
-hand in between stays until the next plug or unplug.
+That command also turns autoswitch on, which applies the profile for the source
+you are already on right away — plugged in, you land on `balanced` immediately.
+
+From then on it acts only on a real transition: unplug the charger and the
+battery profile takes effect a couple of seconds later; plug it back in and you
+are on `balanced` again. A profile you pick by hand in between stays until the
+next plug or unplug.
 
 To hand one side back to your desktop's power management, leave its target
 empty:

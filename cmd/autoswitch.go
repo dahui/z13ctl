@@ -45,9 +45,12 @@ Build the profile you want on battery before selecting it here — '--profile' o
   z13ctl undervolt --set -25 --profile battery-uv
   z13ctl autoswitch --ac balanced --battery battery-uv
 
-Autoswitch acts only when the power source actually changes. A profile you pick
-by hand therefore stays until the next plug or unplug, and z13ctl does not
-contest the profile with power-profiles-daemon in between. One consequence
+Turning autoswitch on applies the profile for the source you are already on, so
+enabling it takes effect immediately rather than at the next transition.
+
+After that, autoswitch acts only when the power source actually changes. A
+profile you pick by hand therefore stays until the next plug or unplug, and
+z13ctl does not contest the profile with power-profiles-daemon in between. One consequence
 worth knowing: GNOME's "Automatic Power Saver" triggers on low battery rather
 than on unplugging, so it can still move a firmware profile afterwards.
 

@@ -171,9 +171,15 @@ func DryRunProfileDelete(name string) {
 	fmt.Println("  (refused if it is the active profile or referenced by autoswitch)")
 }
 
-// DryRunAutoswitch prints the AC/battery configuration that would be stored.
-// It stores configuration only — the daemon applies a profile on the next
-// power-source transition, not now.
+// DryRunAutoswitch prints the AC/battery configuration that would be stored,
+// and the enable-time one-shot that follows it.
+//
+// It used to promise "Would NOT change the profile now", which is false:
+// powerTick's justEnabled branch applies the target for the source the machine
+// is already on when autoswitch goes from off to on. A hardware smoke run
+// caught it — enabling autoswitch moved a live custom profile to balanced while
+// the dry run said nothing would happen. Turning it *off*, or re-configuring an
+// autoswitch that is already on, genuinely changes no profile.
 func DryRunAutoswitch(enabled bool, ac, battery string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	if !enabled {
@@ -183,8 +189,9 @@ func DryRunAutoswitch(enabled bool, ac, battery string) {
 	fmt.Printf("Would store autoswitch in daemon state: AC=%s battery=%s\n",
 		dryRunTarget(ac), dryRunTarget(battery))
 	fmt.Printf("Would read the power source from %s\n", dryRunACPath())
-	fmt.Println("Would NOT change the profile now — the daemon applies one on the next")
-	fmt.Println("  plug or unplug")
+	fmt.Println("Would apply that source's profile now if this turns autoswitch on: enabling")
+	fmt.Println("  it is a one-shot for the source you are already on. After that the daemon")
+	fmt.Println("  only acts on an actual plug or unplug.")
 }
 
 func dryRunTarget(name string) string {
