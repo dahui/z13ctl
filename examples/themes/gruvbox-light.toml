@@ -1,0 +1,25 @@
+# Gruvbox Light — z13gui theme (light)
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#d65d0e"
+
+# Drawer background
+background = "#fbf1c7"
+
+# Surface color — button and row backgrounds
+surface = "#ebdbb2"
+
+# Alternate surface — hover state background
+surface_alt = "#d5c4a1"
+
+# Primary text color
+text = "#3c3836"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#7c6f64"
+
+# Border color — window outline and separators
+border = "#bdae93"

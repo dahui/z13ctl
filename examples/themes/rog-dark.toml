@@ -1,0 +1,25 @@
+# ROG Dark — z13gui theme
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#cc0000"
+
+# Drawer background
+background = "#1a1a1a"
+
+# Surface color — button and row backgrounds
+surface = "#2a2a2a"
+
+# Alternate surface — hover state background
+surface_alt = "#333333"
+
+# Primary text color
+text = "#e0e0e0"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#888888"
+
+# Border color — window outline and separators
+border = "#444444"

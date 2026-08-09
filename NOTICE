@@ -1,0 +1,48 @@
+z13gui
+Copyright 2026 Jeff Hagadorn
+
+This product includes software developed by Jeff Hagadorn.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+See the LICENSE file for the full terms.
+
+The project names are not covered by the Apache License — see TRADEMARK.md.
+
+--------------------------------------------------------------------------------
+Bundled third-party components
+--------------------------------------------------------------------------------
+
+Inter (typeface)
+  internal/gui/fonts/Inter-Regular.ttf
+  internal/gui/fonts/Inter-Bold.ttf
+
+  Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  Licensed under the SIL Open Font License, Version 1.1.
+  Full license text: internal/gui/fonts/LICENSE-Inter.txt
+
+  These files are embedded into the z13gui binary with //go:embed, so every
+  built binary and every release artifact contains the font. The OFL requires
+  its notice to travel with the font, which is why LICENSE-Inter.txt is shipped
+  in the release archive and installed by the distribution packages rather than
+  only living in the source tree.
+
+--------------------------------------------------------------------------------
+Components linked but not distributed
+--------------------------------------------------------------------------------
+
+z13gui links dynamically against GTK 4 (LGPL-2.1-or-later) and
+gtk4-layer-shell (MIT), and statically against its Go module dependencies.
+Neither the shared libraries nor the Go dependencies' source are redistributed
+here; their licenses are recorded in go.mod / go.sum and in the respective
+upstream projects. Run `go list -m all` for the current dependency set.
+
+The eBPF program in internal/gui/gamepad/hidblocker/blocker.bpf.c declares
+"GPL" in its license section. That declaration is required by the kernel to
+call GPL-only BPF helpers (BPF_CORE_READ expands to bpf_probe_read_kernel) and
+is what the kernel's module licensing check reads — it is not a statement about
+this repository's copyright license. See that file's header for the specifics.

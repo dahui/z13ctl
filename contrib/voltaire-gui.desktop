@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=z13gui
+Comment=GTK4 overlay drawer for z13ctl
+Exec=z13gui
+Categories=Utility;System;
+Keywords=rog;asus;z13;lighting;

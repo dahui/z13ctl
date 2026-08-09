@@ -1,0 +1,25 @@
+# Nord — z13gui theme
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#88c0d0"
+
+# Drawer background
+background = "#2e3440"
+
+# Surface color — button and row backgrounds
+surface = "#3b4252"
+
+# Alternate surface — hover state background
+surface_alt = "#434c5e"
+
+# Primary text color
+text = "#eceff4"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#d8dee9"
+
+# Border color — window outline and separators
+border = "#4c566a"

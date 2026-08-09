@@ -1,0 +1,265 @@
+/* Copyright 2026 Jeff Hagadorn
+   SPDX-License-Identifier: Apache-2.0 */
+
+/* z13gui default theme — ROG dark red.
+   To create a custom theme, copy this file to:
+       $XDG_CONFIG_HOME/z13gui/theme.css   (usually ~/.config/z13gui/theme.css)
+   and modify the @define-color values or any rule below.
+
+   Available named colors:
+     @z13-accent      — active/highlight color (buttons, sliders, selections)
+     @z13-bg          — drawer background
+     @z13-surface     — raised surface color (buttons, rows)
+     @z13-surface-alt — alternate/hover surface
+     @z13-text        — primary text
+     @z13-text-dim    — secondary/label text
+     @z13-border      — window border and separator color
+     @z13-error       — error bar text and border, high-TDP warning text
+
+   Every one of those is defined below, so this file works as a standalone
+   theme.css. That matters: theme.css is loaded verbatim, unlike theme.toml,
+   whose values are substituted into a copy of this file at startup.
+
+   All element-level rules are scoped to .drawer (or window.z13-drawer-window).
+
+   This file is loaded at STYLE_PROVIDER_PRIORITY_USER so its rules take
+   precedence over the GTK default theme. */
+
+@define-color z13-accent      #cc0000;
+@define-color z13-bg          #1a1a1a;
+@define-color z13-surface     #2a2a2a;
+@define-color z13-surface-alt #333333;
+@define-color z13-text        #e0e0e0;
+@define-color z13-text-dim    #888888;
+@define-color z13-border      #444444;
+@define-color z13-error       #ff4444;
+
+/* Window — transparent background so border-radius from .drawer is visible. */
+window.z13-drawer-window {
+    background: transparent;
+}
+
+/* Main drawer box */
+.drawer {
+    background: @z13-bg;
+    color: @z13-text;
+    border-radius: 12px;
+    border: 1px solid @z13-border;
+    /* No box-shadow: shadow pixels outside clip region cause smearing in Wayland Vulkan */
+}
+
+/* Drawer title */
+.drawer-title {
+    color: @z13-text-dim;
+}
+
+/* Header telemetry readout */
+.header-telemetry {
+    color: @z13-text-dim;
+}
+
+/* Section group headings */
+.section-group {
+    color: @z13-text;
+}
+
+/* Section labels */
+.section-label {
+    color: @z13-text-dim;
+}
+
+/* Slider value readouts */
+.scale-value {
+    color: @z13-text;
+}
+
+/* Slider name labels */
+.scale-name {
+    color: @z13-text-dim;
+}
+
+/* Separators */
+.drawer separator {
+    background: @z13-border;
+    min-height: 1px;
+}
+
+/* Button groups (profiles, modes, speeds) */
+.drawer .btn-group button {
+    background: @z13-surface;
+    color: @z13-text;
+    border: 1px solid @z13-border;
+}
+
+.drawer .btn-group button:hover {
+    background: @z13-surface-alt;
+}
+
+.drawer .btn-group button.active {
+    background: @z13-accent;
+    color: #ffffff;
+}
+
+/* Tab buttons (still CheckButton) */
+.drawer checkbutton {
+    background: @z13-surface;
+    color: @z13-text;
+}
+
+.drawer checkbutton:hover {
+    background: @z13-surface-alt;
+}
+
+.drawer checkbutton:checked {
+    background: @z13-accent;
+    color: #ffffff;
+}
+
+/* TDP warning label */
+.tdp-warning {
+    color: @z13-error;
+}
+
+/* Error bar */
+.error-bar {
+    background: @z13-surface;
+    border: 1px solid @z13-error;
+}
+
+.error-bar .error-text {
+    color: @z13-error;
+}
+
+/* Fan curve drawing area */
+.fan-curve-area {
+    background: @z13-surface;
+    border: 1px solid @z13-border;
+}
+
+
+/* Sliders */
+.drawer scale trough {
+    background: @z13-surface;
+}
+
+.drawer scale trough highlight {
+    background: @z13-accent;
+}
+
+
+/* Current-color swatch */
+.drawer .color-swatch {
+    border: 1px solid @z13-border;
+}
+
+/* Preset color buttons */
+.drawer .color-preset {
+    border: 1px solid @z13-border;
+}
+
+.drawer .color-preset:hover {
+    border: 1px solid @z13-text;
+}
+
+/* Icon buttons that sit outside the button groups: the bottom bar's theme
+   picker and the back button in the custom, theme and colour views. These are
+   the only buttons not covered by .btn-group, and they were previously styled
+   as `menubutton > button` — a widget the drawer stopped using when popovers
+   were replaced by stack views, so the rule silently stopped matching and the
+   theme picker button fell back to the stock GTK button colours. */
+.bottom-bar button,
+.view-back-btn {
+    background: @z13-surface;
+    color: @z13-text;
+    border: 1px solid @z13-border;
+}
+
+.bottom-bar button:hover,
+.view-back-btn:hover {
+    background: @z13-surface-alt;
+}
+
+/* Error bar dismiss — transparent rather than surface-coloured, since the bar
+   itself is @z13-surface and a filled button on it would disappear. */
+.error-bar .error-dismiss {
+    background: transparent;
+    color: @z13-error;
+    border: none;
+}
+
+.error-bar .error-dismiss:hover {
+    background: @z13-surface-alt;
+}
+
+/* Active accent dot — theme-aware border (visible on both dark and light) */
+.accent-dot-active {
+    border-color: @z13-text;
+}
+
+/* DropDown (profile selector) */
+.drawer dropdown > button {
+    background: @z13-surface;
+    color: @z13-text;
+    border: 1px solid @z13-border;
+}
+
+.drawer dropdown > button:hover {
+    background: @z13-surface-alt;
+}
+
+/* Slider value label */
+.drawer scale value {
+    color: @z13-text;
+}
+
+/* Toggle switches (panel overdrive, boot sound) */
+.bottom-bar switch {
+    background: @z13-surface;
+}
+
+.bottom-bar switch:checked {
+    background: @z13-accent;
+}
+
+/* Custom view action buttons (save, reset) */
+.drawer .custom-actions button {
+    background: @z13-surface;
+    color: @z13-text;
+    border: 1px solid @z13-border;
+}
+
+.drawer .custom-actions button:hover {
+    background: @z13-surface-alt;
+}
+
+/* Save button — accent styling */
+.drawer .save-btn {
+    background: @z13-accent;
+    color: #ffffff;
+}
+
+.drawer .save-btn:hover {
+    background: shade(@z13-accent, 1.2);
+}
+
+/* Advanced checkbox in custom view */
+.drawer .advanced-check {
+    background: @z13-surface;
+    color: @z13-text;
+    border: 1px solid @z13-border;
+}
+
+.drawer .advanced-check:checked {
+    background: @z13-accent;
+    color: #ffffff;
+}
+
+/* Gamepad focus indicator */
+.gamepad-focus {
+    outline-color: @z13-accent;
+}
+
+/* Gamepad editing indicator (slider adjust mode) */
+.gamepad-editing {
+    outline-color: @z13-accent;
+}

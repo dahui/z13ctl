@@ -1,0 +1,25 @@
+# ROG Neon — z13gui theme
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#00d4ff"
+
+# Drawer background
+background = "#0d0d14"
+
+# Surface color — button and row backgrounds
+surface = "#1a1a2e"
+
+# Alternate surface — hover state background
+surface_alt = "#16213e"
+
+# Primary text color
+text = "#e0e0f0"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#8888aa"
+
+# Border color — window outline and separators
+border = "#2a2a4a"

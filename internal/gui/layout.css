@@ -1,0 +1,225 @@
+/* Copyright 2026 Jeff Hagadorn
+   SPDX-License-Identifier: Apache-2.0 */
+
+/* layout.css — structural rules only. No colors. Not user-overridable.
+   This file is embedded in the binary and always loaded at PRIORITY_APPLICATION.
+   All element-level rules are scoped to .drawer to avoid affecting child windows
+   (GtkColorDialog, etc.) that share the same GTK process. */
+
+/* Drawer outer container */
+.drawer {
+    padding: 0;
+}
+
+/* Touch targets — button group controls minimum 48px tall */
+.drawer .btn-group button {
+    min-height: 48px;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+/* Tab buttons (still CheckButton) */
+.drawer checkbutton {
+    min-height: 48px;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+/* Mode grid buttons are slightly taller */
+.drawer .mode-grid.btn-group button {
+    min-height: 52px;
+}
+
+/* TDP warning text */
+.tdp-warning {
+    font-size: 10px;
+    font-weight: bold;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+/* Error bar — sits between the view stack and the bottom bar, hidden until an
+   operation fails. Wraps rather than truncating: daemon messages name the sysfs
+   path or the exact constraint that was violated, which is the useful part. */
+.error-bar {
+    padding: 6px 8px;
+    margin: 0 8px 4px 8px;
+    border-radius: 6px;
+}
+
+.error-bar .error-text {
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.error-bar .error-dismiss {
+    min-height: 20px;
+    min-width: 20px;
+    padding: 0;
+}
+
+/* Fan curve drawing area */
+.fan-curve-area {
+    min-height: 240px;
+    border-radius: 6px;
+}
+
+/* Custom view action buttons */
+.custom-actions button {
+    min-height: 36px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+/* Advanced checkbox — touch target */
+.advanced-check {
+    min-height: 36px;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+/* Tab buttons stretch to fill available width */
+.tab-btn {
+    -gtk-icon-size: 0;  /* hide the checkbox indicator */
+    min-height: 48px;
+}
+
+
+/* Sliders — fat touch targets */
+.drawer scale slider {
+    min-width: 24px;
+    min-height: 24px;
+}
+
+/* Scale value label — push above the slider handle so it isn't obscured */
+.drawer scale value {
+    margin-bottom: 6px;
+}
+
+/* Drawer title — "z13ctl" fixed above scroll area */
+.drawer-title {
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 3px;
+}
+
+/* Header telemetry readout — compact, right-aligned */
+.header-telemetry {
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+
+/* Section group headings — larger, used for "TDP AND POWER" / "RGB" */
+.section-group {
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    margin-top: 2px;
+    margin-bottom: 0px;
+}
+
+/* Section labels — small caps */
+.section-label {
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-top: 6px;
+    margin-bottom: 2px;
+}
+
+/* Slider value readouts — subordinate to section labels */
+.scale-value {
+    font-size: 10px;
+    font-weight: normal;
+    letter-spacing: 0;
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+
+/* Slider name labels — identifies what a slider controls */
+.scale-name {
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0;
+    margin-top: 4px;
+    margin-bottom: 0px;
+}
+
+/* Current-color swatch — the non-interactive colored square. */
+.color-swatch {
+    border-radius: 4px;
+    min-width: 28px;
+    min-height: 28px;
+}
+
+/* Preset color buttons — compact square touch targets. */
+.color-preset {
+    padding: 0;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 4px;
+}
+
+/* Bottom bar — palette and future gear button */
+.bottom-bar button {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 4px;
+    border-radius: 6px;
+}
+
+/* Back button in the custom, theme and colour views. Sized here as well as in
+   the gamescope scaled CSS so the two backends agree at scale 1. */
+.view-back-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 4px;
+    border-radius: 6px;
+}
+
+/* Accent label in the theme picker */
+.accent-label {
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+/* Active accent swatch — thicker border on the selected accent color */
+.accent-dot-active {
+    border-width: 2px;
+    border-style: solid;
+}
+
+/* Footer toggle labels — small, compact */
+.bottom-bar .toggle-label {
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+
+/* Footer switches — keep compact */
+.bottom-bar switch {
+    min-height: 20px;
+    min-width: 36px;
+}
+
+/* Gamepad focus indicator — outline on the currently focused widget */
+.gamepad-focus {
+    outline-width: 2px;
+    outline-style: solid;
+    outline-offset: 2px;
+}
+
+/* Gamepad editing indicator — dashed outline when adjusting a slider */
+.gamepad-editing {
+    outline-width: 2px;
+    outline-style: dashed;
+    outline-offset: 2px;
+}
+
+/* Gamescope overlay — fullscreen transparent wrapper with scrim backdrop */
+.gs-wrapper {
+    background: transparent;
+}
+.gs-backdrop {
+    background: rgba(0, 0, 0, 0.3);
+}

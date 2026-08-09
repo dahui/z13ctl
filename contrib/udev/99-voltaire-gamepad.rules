@@ -1,0 +1,11 @@
+# Grant the active session user access to gamepad/joystick input devices.
+#
+# Most systemd distributions already include this rule via 70-uaccess.rules,
+# which tags ID_INPUT_JOYSTICK devices with "uaccess" so logind sets ACLs
+# for the active seat user. This file is a safety net for edge cases
+# (wireless dongles, unusual devices not in the default hwdb).
+#
+# Install: sudo cp 99-z13gui-gamepad.rules /etc/udev/rules.d/
+# Reload:  sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"

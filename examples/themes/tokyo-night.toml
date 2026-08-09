@@ -1,0 +1,25 @@
+# Tokyo Night — z13gui theme
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#7aa2f7"
+
+# Drawer background
+background = "#1a1b26"
+
+# Surface color — button and row backgrounds
+surface = "#24283b"
+
+# Alternate surface — hover state background
+surface_alt = "#2f3549"
+
+# Primary text color
+text = "#c0caf5"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#565f89"
+
+# Border color — window outline and separators
+border = "#292e42"

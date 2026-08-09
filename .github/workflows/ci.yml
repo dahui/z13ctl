@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Unit tests need no GTK4 headers, so they run on plain ubuntu and report fast.
+  # PURE_PKGS is derived by the Makefile, so a newly added package is picked up
+  # here without touching this file.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # goreleaser runs `go mod tidy` as a before-hook, so an untidy tree means
+      # every release build silently rewrites go.sum after goreleaser's git-dirty
+      # check has already passed — the released binary's inputs then differ from
+      # the tagged tree. Nothing else here would notice: stale go.sum entries are
+      # ignored by the build. v1.1.6 hashes survived yesterday's api bump this way.
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      - name: Unit tests
+        run: make test
+      - name: Unit tests (race detector)
+        run: make race
+      - name: Coverage summary
+        run: make cover
+
+  # Compiling needs the GTK4 and layer-shell headers, so this uses the same Arch
+  # container as the release job. Kept separate from `test` so a logic failure is
+  # not hidden behind a toolchain problem.
+  build:
+    name: Build and lint
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git base-devel go gtk4 gtk4-layer-shell gobject-introspection
+      - uses: actions/checkout@v7
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # cache: false because this job manages the Go caches explicitly below.
+      # Leaving setup-go's implicit cache on would have two mechanisms writing the
+      # same directories, and its key has no fallback — any go.sum change is a
+      # total miss, which is exactly the case that hurts most here.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Ask the toolchain where its caches live rather than hardcoding paths.
+      # Inside a container HOME is /github/home, not the runner's ~, so a guessed
+      # path silently caches nothing — the failure mode is a green run that is
+      # still slow, which is easy to miss.
+      - name: Locate Go caches
+        id: gocache
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+
+      # This is the whole cost of the job. A cold CGO build of the gotk4 bindings
+      # took 707s on the last run, against ~40s for every other step combined.
+      # Those bindings are tens of thousands of generated cgo wrappers that change
+      # only when the dependency does, so they cache almost perfectly.
+      #
+      # The key pins the exact dependency set; the fallbacks widen from there, so a
+      # dependency bump still restores the previous cache and recompiles only what
+      # actually changed instead of starting from nothing.
+      #
+      # Caches are branch-scoped, with only the default branch's visible everywhere,
+      # so the first run after this merges still pays full price — the saving shows
+      # from the run after that.
+      # Restore and save are split rather than using the combined action, so the
+      # cache is written even when a later step fails. That is not hypothetical:
+      # the previous run spent 707s building successfully and then failed on lint,
+      # and a combined cache would have discarded the expensive part and paid for
+      # it again next time.
+      - name: Restore the CGO build cache
+        id: cgocache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ steps.gocache.outputs.build }}
+            ${{ steps.gocache.outputs.mod }}
+          key: cgo-${{ runner.os }}-go${{ hashFiles('go.mod') }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            cgo-${{ runner.os }}-go${{ hashFiles('go.mod') }}-
+            cgo-${{ runner.os }}-
+
+      - name: Build
+        run: make build
+      # Same target `make lint` depends on, so a formatting slip fails locally
+      # before it can fail here. Previously this step carried its own copy of the
+      # command and nothing in the Makefile checked formatting at all.
+      - name: gofmt
+        run: make fmt-check
+      # Pinned, not `latest`. `latest` is what broke this: action v6 only knows the
+      # golangci-lint v1 line, whose final release (1.64.8) was built with Go 1.24
+      # and so refuses a go.mod targeting 1.25 — a failure no change to this repo
+      # could have caused or fixed. A pin also makes CI run the identical linter to
+      # `make lint`, so "passes locally" means something. Bump deliberately, in step
+      # with the Go version in go.mod.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+      # Last, and always: lint reuses the warm build cache above and adds its own
+      # analysis output to it, so saving after lint captures more than saving after
+      # build would. `always()` is what makes a failing lint still leave a usable
+      # cache behind; the cache-hit guard avoids the warning from rewriting a key
+      # that already exists.
+      - name: Save the CGO build cache
+        if: always() && steps.cgocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ steps.gocache.outputs.build }}
+            ${{ steps.gocache.outputs.mod }}
+          key: ${{ steps.cgocache.outputs.cache-primary-key }}

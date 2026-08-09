@@ -1,0 +1,25 @@
+# One Light — z13gui theme (light)
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#4078f2"
+
+# Drawer background
+background = "#fafafa"
+
+# Surface color — button and row backgrounds
+surface = "#f0f0f0"
+
+# Alternate surface — hover state background
+surface_alt = "#e5e5e6"
+
+# Primary text color
+text = "#383a42"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#696c77"
+
+# Border color — window outline and separators
+border = "#d0d0d0"

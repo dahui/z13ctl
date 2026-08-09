@@ -1,0 +1,25 @@
+# GitHub Light — z13gui theme (light)
+# Copy this file to ~/.config/z13gui/theme.toml to use it.
+# All values are CSS hex color strings: #rrggbb
+# Changes take effect the next time z13gui starts.
+
+# Accent color — active buttons, slider fill, checked states
+accent = "#0969da"
+
+# Drawer background
+background = "#ffffff"
+
+# Surface color — button and row backgrounds
+surface = "#f6f8fa"
+
+# Alternate surface — hover state background
+surface_alt = "#f3f4f6"
+
+# Primary text color
+text = "#1f2328"
+
+# Dim text color — section labels, secondary descriptions
+text_dim = "#59636e"
+
+# Border color — window outline and separators
+border = "#d1d9e0"
