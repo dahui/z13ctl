@@ -5,10 +5,10 @@ description: Install the voltaire CLI/daemon and the voltaire-gui overlay on any
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-One release provides two pieces: **`voltaire`** — the CLI and daemon, which owns
+One package installs everything: **`voltaire`** — the CLI and daemon, which owns
 all hardware access — and **`voltaire-gui`** — the touch-friendly GTK4 overlay
-that drives it. Install `voltaire` first; add `voltaire-gui` unless you are
-strictly a command-line user.
+that drives it. They ship and version together, so there is nothing extra to
+find and no way for the two to fall out of step.
 
 :::tip[Upgrading from z13ctl or z13gui?]
 Install the voltaire packages over them — settings, state, and config carry
@@ -81,19 +81,17 @@ sudo make install
 <TabItem label="Arch Linux (AUR)">
 
 Install the [voltaire-bin](https://aur.archlinux.org/packages/voltaire-bin)
-package with your preferred AUR helper — it provides both `voltaire-bin` and
-`voltaire-gui-bin`:
+package with your preferred AUR helper — it carries both binaries:
 
 ```sh
-yay -S voltaire-bin voltaire-gui-bin
+yay -S voltaire-bin
 ```
 
-The packages install the binaries, systemd units, and desktop entry, and run
-`voltaire setup` — which writes the udev rules, installs the sysfs
-permissions service, applies every permission grant immediately (so an
-upgrade needs no reboot), and cleans up anything a pre-2.0 `z13ctl setup`
-left behind. After installing, add your user to the `users` group if not
-already a member:
+The package installs both binaries, the systemd units, and the desktop entry,
+and runs `voltaire setup` — which writes the udev rules, installs the sysfs
+permissions service, applies every permission grant immediately (so an upgrade
+needs no reboot), and cleans up anything a pre-2.0 `z13ctl setup` left behind.
+After installing, add your user to the `users` group if not already a member:
 
 ```sh
 sudo usermod -aG users $USER
@@ -106,24 +104,24 @@ Alternatively, download the `.pkg.tar.zst` packages directly from the
 pacman:
 
 ```sh
-sudo pacman -U voltaire-*.pkg.tar.zst voltaire-gui-*.pkg.tar.zst
+sudo pacman -U voltaire-*.pkg.tar.zst
 ```
 
-If you had `z13ctl-bin` or `z13gui-bin` installed, the new packages replace
-them — see [Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+If you had `z13ctl-bin` or `z13gui-bin` installed, this package replaces both —
+see [Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
 
 </TabItem>
 
 <TabItem label="Debian / Ubuntu">
 
-Download the `.deb` packages from the
+Download the `.deb` package from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then install:
 
 ```sh
-sudo apt install ./voltaire_*.deb ./voltaire-gui_*.deb
+sudo apt install ./voltaire_*.deb
 ```
 
-The packages install the binaries, udev rules, systemd units, desktop entry,
+The package installs both binaries, udev rules, systemd units, desktop entry,
 and the sysfs permissions service automatically, restarting the latter so an
 upgrade applies any new permission grants without a reboot. After installing,
 add your user to the `users` group if not already a member:
@@ -132,24 +130,21 @@ add your user to the `users` group if not already a member:
 sudo usermod -aG users $USER
 ```
 
-Then log out and back in, and enable the GUI service:
-
-```sh
-systemctl --user enable --now voltaire-gui
-```
+Then log out and back in — the daemon and the overlay both start
+automatically.
 
 </TabItem>
 
 <TabItem label="Fedora / RHEL">
 
-Download the `.rpm` packages from the
+Download the `.rpm` package from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then install:
 
 ```sh
-sudo dnf install ./voltaire_*.rpm ./voltaire-gui_*.rpm
+sudo dnf install ./voltaire_*.rpm
 ```
 
-The packages install the binaries, udev rules, systemd units, desktop entry,
+The package installs both binaries, udev rules, systemd units, desktop entry,
 and the sysfs permissions service automatically, restarting the latter so an
 upgrade applies any new permission grants without a reboot. After installing,
 add your user to the `users` group if not already a member:
@@ -158,26 +153,26 @@ add your user to the `users` group if not already a member:
 sudo usermod -aG users $USER
 ```
 
-Then log out and back in, and enable the GUI service:
-
-```sh
-systemctl --user enable --now voltaire-gui
-```
+Then log out and back in — the daemon and the overlay both start
+automatically.
 
 </TabItem>
 
 <TabItem label="Release binary">
 
-Download the latest `linux_amd64` archives from the
+Download the latest `linux_amd64` archive from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then extract and
-install:
+install. The archive carries both binaries; a headless install can simply skip
+`voltaire-gui`, which pulls in nothing extra until it is run:
 
 ```sh
 tar xzf voltaire_*_linux_amd64.tar.gz
-sudo install -Dm755 voltaire /usr/local/bin/voltaire
-
-tar xzf voltaire-gui_*_linux_amd64.tar.gz
+sudo install -Dm755 voltaire     /usr/local/bin/voltaire
 sudo install -Dm755 voltaire-gui /usr/local/bin/voltaire-gui
+
+# Compatibility symlinks so existing scripts calling z13ctl/z13gui keep working
+sudo ln -sfn voltaire     /usr/local/bin/z13ctl
+sudo ln -sfn voltaire-gui /usr/local/bin/z13gui
 ```
 
 **One-time permissions setup** (requires root):

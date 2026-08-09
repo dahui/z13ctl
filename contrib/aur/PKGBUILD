@@ -1,57 +1,47 @@
 # Maintainer: Jeff Hagadorn <noreply@github.com>
 #
-# Split pkgbase: one AUR repo (voltaire-bin) builds both packages, so the CLI
-# and GUI can never skew versions. The old single-purpose packages
-# (z13ctl-bin, z13gui-bin) are superseded via provides/conflicts; replaces=()
-# is inert on the AUR itself but real for anyone rebuilding these into a
-# pacman repo, so it is declared anyway.
-pkgbase=voltaire-bin
-pkgname=('voltaire-bin' 'voltaire-gui-bin')
+# One package, both binaries. z13ctl and z13gui merged for 2.0 precisely
+# because the users who most need the GUI never discovered it as a separate
+# install, so shipping it separately would preserve that problem; one package
+# also makes CLI/GUI version skew impossible. provides/conflicts supersede all
+# four pre-2.0 names. replaces=() is inert on the AUR itself but real for
+# anyone rebuilding this into a pacman repo, so it is declared anyway.
+pkgname=voltaire-bin
 pkgver=PKGVER_PLACEHOLDER
 pkgrel=PKGREL_PLACEHOLDER
-pkgdesc='RGB lighting, fan curve, TDP, and system control for the ASUS ROG Flow Z13 (formerly z13ctl/z13gui)'
+pkgdesc='RGB lighting, fan curve, TDP and system control for the ASUS ROG Flow Z13 (formerly z13ctl/z13gui)'
 arch=('x86_64')
 url='https://github.com/dahui/voltaire'
 license=('Apache-2.0')
-source=("https://github.com/dahui/voltaire/releases/download/v${pkgver}/voltaire_${pkgver}_linux_amd64.tar.gz"
-        "https://github.com/dahui/voltaire/releases/download/v${pkgver}/voltaire-gui_${pkgver}_linux_amd64.tar.gz")
-# The two tarballs overlap only in files that are byte-identical within one
-# release (LICENSE, the gui user unit, the gamepad rules), so extracting both
-# into $srcdir is safe.
-sha256sums=('SHA256_CLI_PLACEHOLDER'
-            'SHA256_GUI_PLACEHOLDER')
+depends=('glibc' 'gtk4' 'gtk4-layer-shell')
+optdepends=('ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer')
+provides=('voltaire' 'voltaire-gui' 'z13ctl' 'z13gui')
+conflicts=('voltaire' 'voltaire-gui' 'z13ctl' 'z13gui' 'z13ctl-bin' 'z13gui-bin')
+replaces=('z13ctl-bin' 'z13gui-bin')
+install=voltaire-bin.install
+source=("https://github.com/dahui/voltaire/releases/download/v${pkgver}/voltaire_${pkgver}_linux_amd64.tar.gz")
+sha256sums=('SHA256_PLACEHOLDER')
 
-package_voltaire-bin() {
-    pkgdesc='CLI and daemon for ASUS ROG Flow Z13 hardware control'
-    depends=('glibc')
-    optdepends=('voltaire-gui-bin: touch-friendly GTK4 overlay for every feature'
-                'ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer')
-    provides=('voltaire' 'z13ctl')
-    conflicts=('voltaire' 'z13ctl' 'z13ctl-bin')
-    replaces=('z13ctl-bin')
-    install=voltaire-bin.install
-
+package() {
     install -Dm755 "voltaire"                                        "${pkgdir}/usr/bin/voltaire"
-    install -Dm644 "LICENSE"                                         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-    install -Dm644 "contrib/systemd/user/voltaire.socket"            "${pkgdir}/usr/lib/systemd/user/voltaire.socket"
-    install -Dm644 "contrib/systemd/user/voltaire.service"           "${pkgdir}/usr/lib/systemd/user/voltaire.service"
-    install -Dm644 "contrib/systemd/system/voltaire-perms.service"   "${pkgdir}/usr/lib/systemd/system/voltaire-perms.service"
-}
-
-package_voltaire-gui-bin() {
-    pkgdesc='GTK4 overlay GUI for voltaire hardware control'
-    depends=('glibc' 'gtk4' 'gtk4-layer-shell' 'voltaire')
-    provides=('voltaire-gui' 'z13gui')
-    conflicts=('voltaire-gui' 'z13gui' 'z13gui-bin')
-    replaces=('z13gui-bin')
-    install=voltaire-gui-bin.install
-
     install -Dm755 "voltaire-gui"                                    "${pkgdir}/usr/bin/voltaire-gui"
+
+    # Compatibility symlinks for the pre-2.0 command names: scripts,
+    # keybindings and cron jobs calling z13ctl or z13gui keep working. Each
+    # binary prints a deprecation line on stderr when invoked this way and
+    # leaves stdout byte-identical. Removed at 3.0.
+    ln -s voltaire                                                   "${pkgdir}/usr/bin/z13ctl"
+    ln -s voltaire-gui                                               "${pkgdir}/usr/bin/z13gui"
+
     install -Dm644 "LICENSE"                                         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
     install -Dm644 "NOTICE"                                          "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE"
-    # Inter is compiled into the binary, so the OFL notice ships with it.
+    # Inter is compiled into voltaire-gui, so the OFL notice ships with it.
     install -Dm644 "internal/gui/fonts/LICENSE-Inter.txt"            "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-Inter.txt"
+
+    install -Dm644 "contrib/systemd/user/voltaire.socket"            "${pkgdir}/usr/lib/systemd/user/voltaire.socket"
+    install -Dm644 "contrib/systemd/user/voltaire.service"           "${pkgdir}/usr/lib/systemd/user/voltaire.service"
     install -Dm644 "contrib/systemd/user/voltaire-gui.service"       "${pkgdir}/usr/lib/systemd/user/voltaire-gui.service"
+    install -Dm644 "contrib/systemd/system/voltaire-perms.service"   "${pkgdir}/usr/lib/systemd/system/voltaire-perms.service"
     install -Dm644 "contrib/voltaire-gui.desktop"                    "${pkgdir}/usr/share/applications/voltaire-gui.desktop"
     install -Dm644 "contrib/udev/99-voltaire-gamepad.rules"          "${pkgdir}/usr/lib/udev/rules.d/99-voltaire-gamepad.rules"
 }

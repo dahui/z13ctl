@@ -170,11 +170,10 @@ contrib/
                              99-voltaire-gamepad.rules (gamepad read access)
   nfpm/                      package scripts: postinstall/preremove/postremove for voltaire,
                              gui-* for voltaire-gui (each migrates the pre-rename unit)
-  aur/                       split pkgbase voltaire-bin → voltaire-bin + voltaire-gui-bin
-                             (one AUR repo, so CLI and GUI can never skew versions) +
-                             both .install files; release.yml patches the placeholders
-                             and pushes on tag. provides/conflicts cover all four old
-                             names; replaces=() is inert on AUR but declared anyway.
+  aur/                       single voltaire-bin PKGBUILD (both binaries) + its
+                             .install; release.yml patches the placeholders and pushes
+                             on tag. provides/conflicts cover all four old names;
+                             replaces=() is inert on AUR but declared anyway.
                              The retirement runbook for the old AUR packages is
                              ~/.claude/plans/voltaire-aur-playbook.md (Jeff executes).
   voltaire-gui.desktop       desktop entry
@@ -1143,12 +1142,37 @@ builds without ldflags.
 
 Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.yml`.
 - Builds for `linux/amd64` only (hidraw is Linux-specific; Z13 is x86_64).
-- **Two builds, two archives, two packages.** `voltaire` (`CGO_ENABLED=0`) and
-  `voltaire-gui` (`main: ./voltaire-gui`, `CGO_ENABLED=1`). The gui package
-  `depends` on voltaire and on gtk4 + gtk4-layer-shell (deb names differ:
-  `libgtk-4-1`, `libgtk4-layer-shell0`), ships `LICENSE-Inter.txt` for the
-  embedded typeface (the OFL requires the notice to travel with the font), and
-  declares `provides`/`replaces`/`conflicts` z13gui, as voltaire does for z13ctl.
+- **Two builds, but ONE archive and ONE package.** `voltaire`
+  (`CGO_ENABLED=0`) and `voltaire-gui` (`main: ./voltaire-gui`,
+  `CGO_ENABLED=1`) are two binaries of one application, shipped together.
+  Splitting them into two packages was the plan's original wording and is
+  **wrong for the stated goal**: the whole reason the projects merged is that
+  the users who most need the GUI never discovered it as a separate install, so
+  a separate package preserves exactly that problem. One package also makes
+  CLI/GUI version skew structurally impossible. The cost is gtk4 +
+  gtk4-layer-shell as hard dependencies of every install (deb names differ:
+  `libgtk-4-1`, `libgtk4-layer-shell0`) — the right trade on a laptop that has
+  them already, and a headless install can take the tarball and ignore the GUI
+  binary, which pulls in nothing until it is run. The package `provides`,
+  `replaces` and `conflicts` **all four** pre-2.0 names, and ships
+  `LICENSE-Inter.txt` for the embedded typeface (the OFL requires the notice to
+  travel with the font).
+- **`nfpms` entries need an `ids:` filter when there is more than one build.**
+  Without it nfpm takes *every* build, which is how the CLI package came to
+  ship `/usr/bin/voltaire-gui` while a separate gui package owned the same
+  path — a hard file conflict on all three formats, so installing the
+  documented pair failed outright. Moot now that there is one package (it wants
+  both builds), but any future second package must carry `ids:`.
+- **The pre-2.0 command names ship as symlinks: `/usr/bin/z13ctl` →
+  `voltaire`, `/usr/bin/z13gui` → `voltaire-gui`.** The CLI was otherwise the
+  one interface with no compatibility path — the socket, state file, config
+  directory, env vars and unit names all have their own — so a rename would
+  have silently broken every user script on upgrade. `cmd.warnIfLegacyName`
+  prints a deprecation line when `filepath.Base(os.Args[0])` is the old name,
+  **on stderr only and without touching the exit code**: a script parsing
+  `z13ctl profile --get` must keep working byte-for-byte, which is the entire
+  point. Matching is on the base name, not a substring, so `z13ctl-wrapper` and
+  a directory called `z13ctl` do not trigger it. Removed at 3.0.
 - `before.hooks`: `go mod tidy` only.
 - Archives include `LICENSE`, `contrib/systemd/**/*` (user + system unit files) and
   `contrib/udev/*` (the rules file).

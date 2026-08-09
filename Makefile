@@ -75,9 +75,17 @@ snapshot:
 release:
 	goreleaser release --clean
 
-## install: install voltaire binary to /usr/local/bin (requires sudo, build first)
+## install: install voltaire (and voltaire-gui if built) to /usr/local/bin (requires sudo, build first)
 install:
 	install -Dm755 voltaire /usr/local/bin/voltaire
+	[ -f voltaire-gui/voltaire-gui ] && install -Dm755 voltaire-gui/voltaire-gui /usr/local/bin/voltaire-gui || true
+# Compatibility symlinks for the pre-2.0 command names, matching what the
+# distribution packages ship. Replace a stale 1.x *binary* at these paths as
+# well: /usr/local/bin precedes /usr/bin, so a leftover from a pre-rename
+# "make install" would shadow the packaged symlink and keep answering scripts
+# with 1.x behaviour forever.
+	ln -sfn voltaire /usr/local/bin/z13ctl
+	[ -f /usr/local/bin/voltaire-gui ] && ln -sfn voltaire-gui /usr/local/bin/z13gui || true
 
 ## install-service: install and enable the voltaire systemd user service (disables pre-rename z13ctl units)
 install-service:

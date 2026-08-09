@@ -44,40 +44,43 @@ builds:
       - amd64
 
 archives:
+  # One archive with both binaries, matching the single package: "voltaire" is
+  # one application that happens to ship two executables, and a tarball user
+  # should get the same thing a package user gets. A headless install simply
+  # ignores voltaire-gui — the tarball imposes no GTK dependency.
   - id: voltaire
-    ids: [voltaire]
+    ids: [voltaire, voltaire-gui]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
+      - NOTICE
+      # Inter is embedded in voltaire-gui with //go:embed, so the OFL notice has
+      # to travel with every artifact, not just sit in the source tree.
+      - internal/gui/fonts/LICENSE-Inter.txt
       - contrib/systemd/**/*
       # contrib/udev/* and not **/*: the doublestar form requires an intervening
       # directory, so it silently matched nothing for a flat directory and the
-      # tarball shipped without the udev rules. contrib/systemd worked only
+      # tarball shipped without the udev rules. contrib/systemd works only
       # because it has user/ and system/ beneath it. A tarball install with no
       # rules file loses every sysfs grant on the next reboot — the same failure
       # as issue #12, reached a different way. goreleaser logs "no files matched"
       # rather than failing, so watch for that line in the release output.
       - contrib/udev/*
-
-  - id: voltaire-gui
-    ids: [voltaire-gui]
-    formats: [tar.gz]
-    name_template: "voltaire-gui_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files:
-      - LICENSE
-      - NOTICE
-      # Inter is embedded into the binary with //go:embed, so the OFL notice
-      # has to travel with every artifact, not just sit in the source tree.
-      - internal/gui/fonts/LICENSE-Inter.txt
-      - contrib/systemd/user/voltaire-gui.service
       - contrib/voltaire-gui.desktop
-      - contrib/udev/99-voltaire-gamepad.rules
 
 checksum:
   name_template: "checksums.txt"
 
 nfpms:
+  # ONE package, both binaries. The whole reason z13ctl and z13gui merged is
+  # that the users who most need the GUI never discovered it as a separate
+  # install; shipping it as a separate package would preserve exactly that
+  # problem. One package also makes CLI/GUI version skew structurally
+  # impossible. The cost is gtk4 + gtk4-layer-shell as hard dependencies of
+  # every install, which is the right trade on a laptop/tablet that has them
+  # already — a headless install can take the tarball and ignore the GUI
+  # binary, which depends on nothing extra until it is run.
   - id: voltaire-pkg
     package_name: voltaire
     section: utils
@@ -87,21 +90,27 @@ nfpms:
       - rpm
     homepage: https://github.com/dahui/voltaire
     maintainer: "Jeff Hagadorn <noreply@github.com>"
-    description: CLI and daemon for ASUS ROG Flow Z13 hardware control
+    description: RGB lighting, fan curve, TDP and system control for the ASUS ROG Flow Z13
     license: Apache-2.0
     dependencies:
       - systemd
       - dbus
-    # provides/replaces/conflicts on the old name migrate .deb/.rpm installs;
-    # AUR ignores replaces, which is what the AUR playbook (merge requests +
-    # sticky comments) exists for.
+      - gtk4
+      - gtk4-layer-shell
+    # Supersedes all four pre-2.0 names: this one package replaces both former
+    # projects. AUR ignores replaces, which is what the AUR playbook (merge
+    # requests + sticky comments) exists for.
     provides:
       - voltaire
+      - voltaire-gui
       - z13ctl
+      - z13gui
     replaces:
       - z13ctl
+      - z13gui
     conflicts:
       - z13ctl
+      - z13gui
     scripts:
       postinstall: contrib/nfpm/postinstall.sh
       preremove: contrib/nfpm/preremove.sh
@@ -109,71 +118,47 @@ nfpms:
     contents:
       - src: LICENSE
         dst: /usr/share/licenses/voltaire/LICENSE
+      - src: NOTICE
+        dst: /usr/share/licenses/voltaire/NOTICE
+      # The embedded typeface ships inside voltaire-gui, so its licence belongs
+      # alongside the package's own.
+      - src: internal/gui/fonts/LICENSE-Inter.txt
+        dst: /usr/share/licenses/voltaire/LICENSE-Inter.txt
       - src: contrib/systemd/user/voltaire.socket
         dst: /usr/lib/systemd/user/voltaire.socket
       - src: contrib/systemd/user/voltaire.service
         dst: /usr/lib/systemd/user/voltaire.service
+      - src: contrib/systemd/user/voltaire-gui.service
+        dst: /usr/lib/systemd/user/voltaire-gui.service
       - src: contrib/systemd/system/voltaire-perms.service
         dst: /usr/lib/systemd/system/voltaire-perms.service
       - src: contrib/udev/99-voltaire.rules
         dst: /usr/lib/udev/rules.d/99-voltaire.rules
-    archlinux:
-      packager: "Jeff Hagadorn <noreply@github.com>"
-    overrides:
-      archlinux:
-        suggests:
-          - "ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer"
-    rpm:
-      group: Applications/System
-
-  - id: voltaire-gui-pkg
-    package_name: voltaire-gui
-    ids: [voltaire-gui]
-    section: utils
-    formats:
-      - archlinux
-      - deb
-      - rpm
-    homepage: https://github.com/dahui/voltaire
-    maintainer: "Jeff Hagadorn <noreply@github.com>"
-    description: GTK4 overlay GUI for voltaire hardware control
-    license: Apache-2.0
-    dependencies:
-      - voltaire
-      - gtk4
-      - gtk4-layer-shell
-    provides:
-      - voltaire-gui
-      - z13gui
-    replaces:
-      - z13gui
-    conflicts:
-      - z13gui
-    scripts:
-      postinstall: contrib/nfpm/gui-postinstall.sh
-      preremove: contrib/nfpm/gui-preremove.sh
-      postremove: contrib/nfpm/gui-postremove.sh
-    contents:
-      - src: LICENSE
-        dst: /usr/share/licenses/voltaire-gui/LICENSE
-      - src: NOTICE
-        dst: /usr/share/licenses/voltaire-gui/NOTICE
-      # The embedded typeface ships inside the binary, so its licence belongs
-      # alongside the package's own.
-      - src: internal/gui/fonts/LICENSE-Inter.txt
-        dst: /usr/share/licenses/voltaire-gui/LICENSE-Inter.txt
-      - src: contrib/systemd/user/voltaire-gui.service
-        dst: /usr/lib/systemd/user/voltaire-gui.service
-      - src: contrib/voltaire-gui.desktop
-        dst: /usr/share/applications/voltaire-gui.desktop
       - src: contrib/udev/99-voltaire-gamepad.rules
         dst: /usr/lib/udev/rules.d/99-voltaire-gamepad.rules
+      - src: contrib/voltaire-gui.desktop
+        dst: /usr/share/applications/voltaire-gui.desktop
+      # Compatibility symlinks for the pre-2.0 command names, so scripts,
+      # keybindings and cron jobs calling z13ctl or z13gui keep working across
+      # the rename. Each binary notices it was invoked this way and prints a
+      # deprecation line on stderr only — stdout stays byte-identical, which is
+      # what a script parsing `z13ctl profile --get` depends on. Removed at 3.0.
+      - src: /usr/bin/voltaire
+        dst: /usr/bin/z13ctl
+        type: symlink
+      - src: /usr/bin/voltaire-gui
+        dst: /usr/bin/z13gui
+        type: symlink
     overrides:
       deb:
         dependencies:
-          - voltaire
+          - systemd
+          - dbus
           - libgtk-4-1
           - libgtk4-layer-shell0
+      archlinux:
+        suggests:
+          - "ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer"
     archlinux:
       packager: "Jeff Hagadorn <noreply@github.com>"
     rpm:

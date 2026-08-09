@@ -95,11 +95,6 @@ via asus-armoury firmware-attributes.`,
 	SilenceErrors: true,
 }
 
-// Execute runs the root command.
-func Execute() error {
-	return rootCmd.Execute()
-}
-
 func init() {
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target device: keyboard, lightbar, or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")

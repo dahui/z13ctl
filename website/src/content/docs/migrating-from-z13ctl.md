@@ -17,9 +17,9 @@ exactly what happens, so you can verify it rather than trust it.
 | | Was | Is now |
 |---|---|---|
 | CLI / daemon | `z13ctl` | `voltaire` |
-| GUI | `z13gui` | `voltaire-gui` |
+| GUI | `z13gui` | `voltaire-gui` (ships in the same package) |
 | Repository | `github.com/dahui/z13ctl` + `github.com/dahui/z13gui` | [`github.com/dahui/voltaire`](https://github.com/dahui/voltaire) |
-| AUR packages | `z13ctl-bin`, `z13gui-bin` | `voltaire-bin`, `voltaire-gui-bin` |
+| AUR packages | `z13ctl-bin`, `z13gui-bin` | `voltaire-bin` (one package, both binaries) |
 | Daemon socket | `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` | `…/voltaire/voltaire.sock` (old path still served) |
 | Daemon state | `~/.local/state/z13ctl/state.json` | `…/voltaire/state.json` (copied on first run) |
 | GUI config | `~/.config/z13gui/` | `~/.config/voltaire/` (copied on first run) |
@@ -30,23 +30,24 @@ exactly what happens, so you can verify it rather than trust it.
 
 ### Arch Linux (AUR)
 
-Install the new packages; they declare `conflicts`/`replaces` on the old
-ones, so pacman removes `z13ctl-bin`/`z13gui-bin` in the same transaction:
+One package now carries both the CLI and the GUI. It declares
+`conflicts`/`replaces` on the old names, so pacman removes `z13ctl-bin` and
+`z13gui-bin` in the same transaction:
 
 ```sh
-yay -S voltaire-bin voltaire-gui-bin
+yay -S voltaire-bin
 ```
 
 ### Debian / Ubuntu and Fedora / RHEL
 
-Install the new `.deb`/`.rpm` packages from the
-[Releases](https://github.com/dahui/voltaire/releases) page. They declare
-`Replaces`/`Obsoletes` on the old package names, and their install scripts
-disable the old systemd units:
+Install the new `.deb`/`.rpm` package from the
+[Releases](https://github.com/dahui/voltaire/releases) page. It declares
+`Replaces`/`Obsoletes` on both old package names, and its install script
+disables the old systemd units:
 
 ```sh
-sudo apt install ./voltaire_*.deb ./voltaire-gui_*.deb     # Debian/Ubuntu
-sudo dnf install ./voltaire_*.rpm ./voltaire-gui_*.rpm     # Fedora
+sudo apt install ./voltaire_*.deb     # Debian/Ubuntu
+sudo dnf install ./voltaire_*.rpm     # Fedora
 ```
 
 ### Tarball / manual installs
@@ -73,6 +74,37 @@ rm -f ~/.config/systemd/user/z13ctl.socket \
 and install the voltaire units as described in
 [Installation](/voltaire/installation/).
 
+### If you enabled the old units for your user
+
+Nothing to do — but here is what happens, because you may see it in the
+journal once.
+
+A package upgrade can only clean up the *system-wide* enable in
+`/etc/systemd/user/`. If you ever ran `systemctl --user enable z13ctl.service`
+— which earlier documentation and `make install-service` both did — that
+created a symlink under `~/.config/systemd/user/` pointing at a unit file the
+upgrade removes, and a postinstall running as root has no business walking
+every user's home to find the rest.
+
+The daemon cleans these up itself on its first start after the upgrade: it is
+the only part of voltaire that runs *as each user*, so it is the only one
+positioned to. It removes a link only when the name is one of the pre-2.0
+units, the entry is a symlink, and its target no longer resolves — so a 1.x
+install you are deliberately keeping alongside is never touched.
+
+Because the link is only removed once the daemon has started, systemd may
+still log `Unit z13ctl.service not found` on that first login. It does not
+recur. To clear it before then, or to check your own state:
+
+```sh
+ls -l ~/.config/systemd/user/*.wants/ | grep z13
+systemctl --user disable z13ctl.socket z13ctl.service z13gui.service
+```
+
+`disable` prints `Failed to disable unit: Unit z13ctl.service does not exist`
+when the unit file is already gone. That message is expected and harmless — it
+removes the stale symlinks regardless, which is the point.
+
 ## What carries over automatically
 
 **Daemon state — every saved setting.** On first run, the daemon copies
@@ -98,6 +130,13 @@ any other client pointed at `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` continues
 working without changes. The Go api client dials voltaire-then-z13ctl, so it
 also reaches an old daemon that has not restarted since the upgrade.
 
+**Your scripts.** `/usr/bin/z13ctl` and `/usr/bin/z13gui` are installed as
+symlinks to the new binaries, so scripts, keybindings, and cron jobs written
+against the old names keep working unchanged. Invoked that way, each binary
+prints a one-line deprecation notice **on stderr only** — stdout and the exit
+code are byte-identical, which is what a script parsing
+`z13ctl profile --get` depends on. The symlinks go away at 3.0.
+
 **Environment variables.** `Z13GUI_SCALE` and `Z13GUI_NO_GAMEPAD` are still
 honoured when the new `VOLTAIRE_GUI_*` names are unset.
 
@@ -110,7 +149,8 @@ tokens keeps working — every token is defined under both its `@z13-*` and
 None of this is urgent — everything below is served through the whole 2.x
 line and removed at 3.0:
 
-- Scripts calling `z13ctl …` → call `voltaire …`
+- Scripts calling `z13ctl …` → call `voltaire …` (the symlink keeps them
+  working until 3.0; the stderr notice is the reminder)
 - Clients dialing the z13ctl socket path → dial
   `$XDG_RUNTIME_DIR/voltaire/voltaire.sock`
 - `Z13GUI_*` environment variables → `VOLTAIRE_GUI_*`
@@ -163,4 +203,5 @@ here, so its commits are all part of this repository's history.
 | `Z13GUI_*` environment variables | all of 2.x | 3.0 |
 | `@z13-*` CSS tokens | all of 2.x | 3.0 |
 | Old-unit/rules cleanup in `setup` and packages | all of 2.x | 3.0 |
+| `z13ctl` / `z13gui` command-name symlinks | all of 2.x | 3.0 |
 | `github.com/dahui/z13ctl/api` module path | frozen at 1.x, resolves forever | — |

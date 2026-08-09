@@ -1,9 +1,9 @@
-# z13gui theme colors
-# Copy this file to ~/.config/z13gui/theme.toml and edit the values below.
-# Run "z13gui --print-theme" to print this file to stdout for easy copying.
+# voltaire-gui theme colors
+# Copy this file to ~/.config/voltaire/theme.toml and edit the values below.
+# Run "voltaire-gui --print-theme" to print this file to stdout for easy copying.
 #
 # All values are CSS hex color strings: #rrggbb
-# Changes take effect the next time z13gui starts.
+# Changes take effect the next time voltaire-gui starts.
 
 # Accent color — active mode buttons, slider fill, checked states
 accent = "#cc0000"

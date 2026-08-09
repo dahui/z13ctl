@@ -151,6 +151,10 @@ func Run(ctx context.Context, opts Options) error {
 	slog.Info("device assembled", "id", hw.ID, "model", hw.Model)
 
 	d.state = loadState()
+	// Same class of 2.0 migration as loadState's own: the daemon is the only
+	// part of voltaire that runs as each user, so it is the only one that can
+	// tidy a per-user enable of the pre-2.0 units.
+	cleanStaleUnitLinks()
 
 	lightingOpened := false
 	if d.hw.Lighting != nil {
