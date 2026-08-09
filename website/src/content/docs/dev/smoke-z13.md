@@ -1,4 +1,7 @@
-# Z13 hardware smoke test
+---
+title: Z13 Hardware Smoke Test
+description: The manual on-hardware verification checklist run before each release.
+---
 
 The hardware parity gate for the 2.0 refactor — the driver registry, the
 safety engine, the capability protocol, and the voltaire rename. The hermetic

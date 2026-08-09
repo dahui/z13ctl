@@ -16,6 +16,7 @@
 > | `main.go` at the repo root | `voltaire-gui/main.go` |
 > | socket `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` | `…/voltaire/voltaire.sock` (legacy path still served through 2.x) |
 > | config `~/.config/z13gui` | `~/.config/voltaire` (copied on first run) |
+> | `Z13GUI_SCALE`, `Z13GUI_NO_GAMEPAD` | `VOLTAIRE_GUI_*` via `startup.GUIEnv` (old names honoured through 2.x) |
 > | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
 > | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
 > | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |

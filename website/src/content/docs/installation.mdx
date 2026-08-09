@@ -1,0 +1,454 @@
+---
+title: Installation
+description: Install the voltaire CLI/daemon and the voltaire-gui overlay on any Linux distribution.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+One release provides two pieces: **`voltaire`** — the CLI and daemon, which owns
+all hardware access — and **`voltaire-gui`** — the touch-friendly GTK4 overlay
+that drives it. Install `voltaire` first; add `voltaire-gui` unless you are
+strictly a command-line user.
+
+:::tip[Upgrading from z13ctl or z13gui?]
+Install the voltaire packages over them — settings, state, and config carry
+over automatically, and the old package names are superseded in place. See
+[Migrating from z13ctl](/voltaire/migrating-from-z13ctl/) for the details.
+:::
+
+## Prerequisites
+
+- Linux kernel with `hidraw` support (standard on all mainstream distributions)
+- 2025 ASUS ROG Flow Z13 (USB IDs `0b05:18c6` and `0b05:1a30`)
+- For `voltaire-gui`: a Wayland compositor or gamescope (Steam Gaming Mode).
+  Compositors with layer-shell support (KDE Plasma, Hyprland, Sway) get the
+  drawer as a true edge-anchored panel; GNOME gets the overlay backend — see
+  [GNOME support](/voltaire/gui/#gnome-support)
+
+:::caution[InputPlumber conflict (Bazzite, ChimeraOS, Nobara)]
+On gaming distributions that ship
+[InputPlumber](https://github.com/ShadowBlip/InputPlumber), the daemon's button
+watcher will fail to open the Armoury Crate button device. InputPlumber ships a
+built-in profile for the ROG Flow Z13 that grabs the device exclusively. See
+[InputPlumber compatibility](/voltaire/reference/daemon/#inputplumber-compatibility)
+for the override instructions.
+:::
+
+### Runtime dependencies (GUI only)
+
+`voltaire-gui` links dynamically against GTK 4 and gtk4-layer-shell. The
+distribution packages pull these automatically; for a tarball install, add them
+via your system package manager first:
+
+| Dependency | Arch | Debian / Ubuntu | Fedora |
+|---|---|---|---|
+| GTK 4 | `gtk4` | `libgtk-4-1` | `gtk4` |
+| gtk4-layer-shell | `gtk4-layer-shell` | `libgtk4-layer-shell0` | `gtk4-layer-shell` |
+
+### Optional: ryzen_smu kernel module (for undervolting)
+
+CPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
+module. Without it, all other features work normally — undervolt commands
+return a helpful error explaining how to install the module.
+
+:::caution[Strix Halo requires the amkillam fork]
+The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in the
+2025 Z13). You must use the
+[amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork. Voltaire
+detects the wrong fork at startup and reports undervolt as unavailable.
+:::
+
+| Distribution | Package | Source |
+|---|---|---|
+| Arch / CachyOS | `ryzen_smu-dkms-git` | AUR ([amkillam fork](https://github.com/amkillam/ryzen_smu)) |
+| Other distros | build from source | [github.com/amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) |
+
+```sh
+# Arch / CachyOS
+yay -S ryzen_smu-dkms-git
+
+# Other distros (build from amkillam fork)
+git clone https://github.com/amkillam/ryzen_smu.git
+cd ryzen_smu
+make
+sudo make install
+```
+
+## Install
+
+<Tabs>
+
+<TabItem label="Arch Linux (AUR)">
+
+Install the [voltaire-bin](https://aur.archlinux.org/packages/voltaire-bin)
+package with your preferred AUR helper — it provides both `voltaire-bin` and
+`voltaire-gui-bin`:
+
+```sh
+yay -S voltaire-bin voltaire-gui-bin
+```
+
+The packages install the binaries, udev rules, systemd units, desktop entry,
+and the sysfs permissions service automatically, restarting the latter so an
+upgrade applies any new permission grants without a reboot. After installing,
+add your user to the `users` group if not already a member:
+
+```sh
+sudo usermod -aG users $USER
+```
+
+Then log out and back in for the group membership to take effect.
+
+Alternatively, download the `.pkg.tar.zst` packages directly from the
+[Releases](https://github.com/dahui/voltaire/releases) page and install with
+pacman:
+
+```sh
+sudo pacman -U voltaire-*.pkg.tar.zst voltaire-gui-*.pkg.tar.zst
+```
+
+If you had `z13ctl-bin` or `z13gui-bin` installed, the new packages replace
+them — see [Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+
+</TabItem>
+
+<TabItem label="Debian / Ubuntu">
+
+Download the `.deb` packages from the
+[Releases](https://github.com/dahui/voltaire/releases) page, then install:
+
+```sh
+sudo apt install ./voltaire_*.deb ./voltaire-gui_*.deb
+```
+
+The packages install the binaries, udev rules, systemd units, desktop entry,
+and the sysfs permissions service automatically, restarting the latter so an
+upgrade applies any new permission grants without a reboot. After installing,
+add your user to the `users` group if not already a member:
+
+```sh
+sudo usermod -aG users $USER
+```
+
+Then log out and back in, and enable the GUI service:
+
+```sh
+systemctl --user enable --now voltaire-gui
+```
+
+</TabItem>
+
+<TabItem label="Fedora / RHEL">
+
+Download the `.rpm` packages from the
+[Releases](https://github.com/dahui/voltaire/releases) page, then install:
+
+```sh
+sudo dnf install ./voltaire_*.rpm ./voltaire-gui_*.rpm
+```
+
+The packages install the binaries, udev rules, systemd units, desktop entry,
+and the sysfs permissions service automatically, restarting the latter so an
+upgrade applies any new permission grants without a reboot. After installing,
+add your user to the `users` group if not already a member:
+
+```sh
+sudo usermod -aG users $USER
+```
+
+Then log out and back in, and enable the GUI service:
+
+```sh
+systemctl --user enable --now voltaire-gui
+```
+
+</TabItem>
+
+<TabItem label="Release binary">
+
+Download the latest `linux_amd64` archives from the
+[Releases](https://github.com/dahui/voltaire/releases) page, then extract and
+install:
+
+```sh
+tar xzf voltaire_*_linux_amd64.tar.gz
+sudo install -Dm755 voltaire /usr/local/bin/voltaire
+
+tar xzf voltaire-gui_*_linux_amd64.tar.gz
+sudo install -Dm755 voltaire-gui /usr/local/bin/voltaire-gui
+```
+
+**One-time permissions setup** (requires root):
+
+```sh
+sudo voltaire setup
+```
+
+Then log out and back in (or run `newgrp users`) for the group membership to
+take effect in your current session.
+
+**Install the systemd user services** (the daemon uses socket activation):
+
+```sh
+install -Dm644 contrib/systemd/user/voltaire.socket \
+    ~/.config/systemd/user/voltaire.socket
+install -Dm644 contrib/systemd/user/voltaire.service \
+    ~/.config/systemd/user/voltaire.service
+install -Dm644 contrib/systemd/user/voltaire-gui.service \
+    ~/.config/systemd/user/voltaire-gui.service
+systemctl --user daemon-reload
+systemctl --user enable --now voltaire.socket voltaire.service voltaire-gui.service
+```
+
+Optionally install the desktop entry, and grant the GUI its gamepad-blocking
+capabilities (see [below](#gamepad-input-blocking-capabilities)):
+
+```sh
+install -Dm644 contrib/voltaire-gui.desktop \
+    ~/.local/share/applications/voltaire-gui.desktop
+sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui
+```
+
+</TabItem>
+
+<TabItem label="From source">
+
+Requires Go 1.25 or later; the GUI additionally needs CGO and the GTK4
+development headers:
+
+```sh
+# Arch Linux
+sudo pacman -S gtk4 gtk4-layer-shell
+
+# Debian / Ubuntu
+sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev
+
+# Fedora
+sudo dnf install gtk4-devel gtk4-layer-shell-devel
+```
+
+Then clone and build:
+
+```sh
+git clone https://github.com/dahui/voltaire
+cd voltaire
+make build          # the CLI/daemon (no CGO)
+make build-gui      # the GUI (CGO; the first build compiles GTK bindings, ~10 min)
+sudo make install
+make install-service
+```
+
+`make install` installs the binaries to `/usr/local/bin` and runs
+`sudo voltaire setup` automatically; `make install-service` installs and
+enables the systemd user units.
+
+</TabItem>
+
+</Tabs>
+
+## Verify the installation
+
+```sh
+voltaire list
+voltaire-gui --version
+```
+
+`voltaire list` should print the discovered hidraw devices and confirm Aura
+support; if it prints nothing, see [Troubleshooting](#troubleshooting) below.
+Then press the **Armoury Crate button** — the drawer should slide in from the
+right edge of the screen.
+
+## Next steps
+
+You're installed and ready to go. Head to the
+[Quick Start](/voltaire/quick-start/) to set your first lighting effect, fan
+curve, and performance profile, or straight to the
+[GUI overview](/voltaire/gui/) if you'll be driving everything from the drawer.
+
+## What `setup` does
+
+`sudo voltaire setup` performs four steps:
+
+1. Writes `/etc/udev/rules.d/99-voltaire.rules` — grants the `users` group
+   `MODE=0660` / `GROUP=users` on the ASUS HID and input device nodes; uses
+   `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute,
+   hwmon fan curve attributes (`asus_custom_fan_curve` + `asus` pwm_enable),
+   and asus-nb-wmi PPT power limit attributes when the drivers load.
+2. Reloads udev and applies permissions immediately to all currently present
+   files — including `ryzen_smu` sysfs files for undervolting (if the module
+   is loaded).
+3. Writes `/etc/systemd/system/voltaire-perms.service` and enables it — a
+   `Type=oneshot` service that runs `chgrp` + `chmod g+w` at boot on
+   `BAT*/charge_control_end_threshold`, the asus-armoury firmware attributes
+   (`boot_sound`, `panel_overdrive`), the asus-nb-wmi `ppt_*` power limits, and
+   the `ryzen_smu_drv` files.
+4. Starts the service immediately so battery limit, TDP, and undervolt are
+   accessible right away.
+
+On a machine that previously ran `z13ctl setup`, it also removes the old
+`99-z13ctl.rules` file (after verifying z13ctl generated it) and disables the
+old `z13ctl-perms.service` unit.
+
+:::note[Why a separate oneshot service?]
+The `charge_control_end_threshold` and `ppt_*` attributes are added by the
+`asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
+observable udev child-device events have already fired. The firmware-attribute
+`current_value` files may likewise be created after their parent's `ADD` event,
+and the `ryzen_smu` files are kobjects under `/sys/kernel/`, not udev-managed
+devices. No udev hook can reliably target any of them. The
+`voltaire-perms.service` unit is a self-contained workaround that runs at
+`sysinit.target`. It has no dependency on the voltaire binary and can be
+inspected at any time:
+
+```sh
+systemctl cat voltaire-perms.service
+```
+:::
+
+Use `--dry-run` to preview all changes without root or any side effects:
+
+```sh
+voltaire --dry-run setup
+```
+
+## Gamepad input blocking (capabilities)
+
+In Steam Gaming Mode (gamescope), `voltaire-gui` suppresses controller input
+while the drawer is open so button presses navigate the overlay instead of the
+game. Two blocking methods are supported, and the best one is selected
+automatically:
+
+| Method | Requires | Behaviour | Side effects |
+|--------|----------|-----------|--------------|
+| **BPF blocker** (preferred) | `CAP_BPF` + `CAP_PERFMON` on the binary | Blocks PS / Nintendo controller reads at the kernel level via a BPF LSM hook | None — Steam and the game keep running normally |
+| **SIGSTOP fallback** | No extra capabilities | Pauses the Steam process with SIGSTOP / SIGCONT | Game also pauses; PipeWire frame delivery stops |
+
+The AUR, `.deb`, and `.rpm` packages grant the required capabilities
+automatically during installation. If you installed from source or from the
+release binary, grant them manually:
+
+```sh
+sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui
+```
+
+<details>
+<summary>What are these capabilities and are they safe?</summary>
+
+**Short version:** these two capabilities let voltaire-gui load a tiny kernel
+filter that tells the system "when Steam tries to read a PS or Nintendo
+controller, return a temporary 'try again later' error instead." That's all it
+does. It cannot access your files, network, or any other part of the system.
+The filter is automatically removed when voltaire-gui exits.
+
+**Technical details:**
+
+**CAP_BPF** allows loading BPF programs into the kernel. voltaire-gui uses this
+to attach a single LSM (`lsm/file_permission`) hook that intercepts `read()`
+calls on hidraw character devices (`/dev/hidraw*`). The hook checks whether the
+calling PID is in a small allow-list map and the target device is a hidraw
+device (major 244). If both conditions match, it returns `-EAGAIN`; otherwise
+it returns `0` (allow).
+
+**CAP_PERFMON** is required by the kernel to attach BPF LSM programs.
+voltaire-gui does not use performance monitoring — this capability is a
+kernel-imposed prerequisite for LSM attachment.
+
+**What the BPF program can do:**
+
+- Return `-EAGAIN` for `read()` calls on hidraw devices by specific PIDs
+- Nothing else — the program is verified by the kernel's BPF verifier before
+  loading and cannot be modified at runtime
+
+**What the BPF program cannot do:**
+
+- Access files, network, or memory outside its own BPF maps
+- Survive a process exit — all BPF resources are released when voltaire-gui
+  stops, crashes, or is killed
+- Affect any process not explicitly added to its PID map
+- Block any operation other than `read()` on hidraw devices
+
+**Compared to running as root:** file capabilities grant only the two listed
+privileges to the voltaire-gui binary. The process runs as your normal user
+with no other elevated access. This is strictly safer than running with `sudo`
+or as root.
+
+</details>
+
+## Uninstall
+
+Remove the user services first:
+
+```sh
+systemctl --user disable --now voltaire.socket voltaire.service voltaire-gui.service
+rm -f ~/.config/systemd/user/voltaire.socket \
+      ~/.config/systemd/user/voltaire.service \
+      ~/.config/systemd/user/voltaire-gui.service
+systemctl --user daemon-reload
+```
+
+Then remove the binaries and system files:
+
+```sh
+sudo rm /usr/local/bin/voltaire /usr/local/bin/voltaire-gui
+sudo rm /etc/udev/rules.d/99-voltaire.rules
+sudo udevadm control --reload-rules
+sudo systemctl disable --now voltaire-perms.service
+sudo rm /etc/systemd/system/voltaire-perms.service
+sudo systemctl daemon-reload
+```
+
+## Troubleshooting
+
+**`voltaire list` prints nothing**
+
+The device was not found. Check that the kernel loaded the `hid` and `hidraw`
+modules:
+
+```sh
+lsmod | grep hid
+ls /dev/hidraw*
+```
+
+If `/dev/hidraw*` devices exist but none match the ASUS USB IDs, the device is
+present but not recognized. This tool targets the 2025 ROG Flow Z13
+specifically (USB IDs `0b05:18c6` and `0b05:1a30`).
+
+**Permission denied**
+
+Run `sudo voltaire setup` and log out/in to apply the group membership. Verify
+with:
+
+```sh
+ls -la /dev/hidraw*
+groups
+```
+
+**Daemon logs "button watcher stopped; retrying … permission denied"**
+
+Something else is managing the Armoury Crate button device and voltaire cannot
+open it. On gaming distributions,
+[InputPlumber](https://github.com/ShadowBlip/InputPlumber) is a common cause.
+See
+[InputPlumber compatibility](/voltaire/reference/daemon/#inputplumber-compatibility)
+for the fix.
+
+**Armoury Crate button does nothing, and the log shows no error**
+
+Voltaire reads the button device non-exclusively, so a process holding an
+exclusive `EVIOCGRAB` on it receives every event instead — with nothing for
+voltaire to report. Check what else has the device open:
+
+```sh
+sudo fuser -v /dev/input/eventN
+```
+
+**Daemon not starting**
+
+```sh
+systemctl --user status voltaire.socket voltaire.service
+journalctl --user -u voltaire -n 50
+```
+
+**The drawer doesn't appear**
+
+See the GUI's own [troubleshooting section](/voltaire/gui/#troubleshooting).

@@ -35,7 +35,7 @@ const (
 
 // For returns the UI scale for an output of the given pixel width.
 //
-// envOverride is the raw Z13GUI_SCALE value ("" when unset). When it parses as a
+// envOverride is the raw VOLTAIRE_GUI_SCALE value ("" when unset). When it parses as a
 // positive number it replaces the computed scale — but is still clamped to
 // [Min, Max]. That is deliberate: the override exists to correct a bad
 // auto-detection, not to allow an unusable UI, and a typo like "30" instead of

@@ -26,6 +26,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/gui/layershell"
 	"github.com/dahui/voltaire/v2/internal/gui/overlay"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/dahui/voltaire/v2/internal/togglegate"
 	"github.com/diamondburned/gotk4-layer-shell/pkg/gtk4layershell"
@@ -278,8 +279,9 @@ func New(app *gtk.Application) *Window {
 
 	go w.subscribeLoop()
 
-	// Gamepad input (disabled with Z13GUI_NO_GAMEPAD=1).
-	if os.Getenv("Z13GUI_NO_GAMEPAD") == "" {
+	// Gamepad input (disabled with VOLTAIRE_GUI_NO_GAMEPAD=1; the pre-rename
+	// Z13GUI_NO_GAMEPAD is honoured through 2.x).
+	if startup.GUIEnv("NO_GAMEPAD") == "" {
 		w.gamepadReader = gamepad.New(
 			w.handleGamepadAction,
 			w.visible.Load,

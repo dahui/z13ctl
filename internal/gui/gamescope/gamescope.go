@@ -55,9 +55,9 @@ import "C" //nolint:gocritic // cgo requires standalone import
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"unsafe" //nolint:gocritic // used with cgo, requires separate import block
 
+	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/uiscale"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -122,17 +122,18 @@ func (b *Backend) Configure(_ func() bool, onDismiss func()) {
 		// Store output dimensions for WrapContent (which runs after realize).
 		// Compute a UI scale so the drawer occupies the same physical
 		// screen fraction as KDE at 150% (~18.75% of screen width).
-		// Z13GUI_SCALE env var overrides auto-detection.
+		// VOLTAIRE_GUI_SCALE (or the pre-rename Z13GUI_SCALE) overrides
+		// auto-detection.
 		if monitor := display.MonitorAtSurface(surface); monitor != nil {
 			geo := monitor.Geometry()
 			b.outputWidth = geo.Width()
 			b.outputHeight = geo.Height()
-			envScale := os.Getenv("Z13GUI_SCALE")
+			envScale := startup.GUIEnv("SCALE")
 			b.scale = uiscale.For(geo.Width(), envScale)
 			if envScale != "" && !uiscale.OverrideIsUsable(envScale) {
-				slog.Warn("gamescope: Z13GUI_SCALE is not a positive number, auto-detecting", "value", envScale)
+				slog.Warn("gamescope: VOLTAIRE_GUI_SCALE is not a positive number, auto-detecting", "value", envScale)
 			} else if uiscale.OverrideWasClamped(envScale) {
-				slog.Warn("gamescope: Z13GUI_SCALE clamped to the usable range",
+				slog.Warn("gamescope: VOLTAIRE_GUI_SCALE clamped to the usable range",
 					"requested", envScale, "applied", b.scale, "min", uiscale.Min, "max", uiscale.Max)
 			}
 			b.appWin.SetDefaultSize(geo.Width(), geo.Height())

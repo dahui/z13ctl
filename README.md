@@ -95,9 +95,11 @@ voltaire autoswitch --ac balanced --battery battery-uv
 Full documentation at **<https://dahui.github.io/voltaire>**
 
 - [Installation](https://dahui.github.io/voltaire/installation/)
-- [Quick Start](https://dahui.github.io/voltaire/getting-started/)
-- [Commands](https://dahui.github.io/voltaire/commands/)
-- [Daemon](https://dahui.github.io/voltaire/daemon/)
-- [API](https://dahui.github.io/voltaire/api/)
+- [Quick Start](https://dahui.github.io/voltaire/quick-start/)
+- [Migrating from z13ctl](https://dahui.github.io/voltaire/migrating-from-z13ctl/)
+- [The GUI](https://dahui.github.io/voltaire/gui/)
+- [Commands](https://dahui.github.io/voltaire/reference/commands/)
+- [Daemon](https://dahui.github.io/voltaire/reference/daemon/)
+- [API](https://dahui.github.io/voltaire/reference/api/)
 - [Contributing](https://dahui.github.io/voltaire/contributing/)
 

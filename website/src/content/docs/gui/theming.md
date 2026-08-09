@@ -1,23 +1,24 @@
-# Theming
-
-z13gui supports custom color themes through a simple TOML configuration file.
-You can also select from 15 built-in themes using the in-app theme picker.
-
 ---
+title: Theming
+description: Built-in themes, custom theme.toml files, accent variants, and full CSS overrides for voltaire-gui.
+---
+
+voltaire-gui supports custom color themes through a simple TOML configuration
+file. You can also select from 15 built-in themes using the in-app theme
+picker.
 
 ## Theme priority
 
-z13gui resolves its theme using the following priority chain. The first match wins:
+voltaire-gui resolves its theme using the following priority chain. The first
+match wins:
 
-1. `~/.config/z13gui/theme.toml` — custom color definitions (7 hex values)
-2. `~/.config/z13gui/theme.css` — full CSS override (power users)
-3. `~/.config/z13gui/config.toml` `theme = "id"` — built-in theme selection
+1. `~/.config/voltaire/theme.toml` — custom color definitions (hex values)
+2. `~/.config/voltaire/theme.css` — full CSS override (power users)
+3. `~/.config/voltaire/config.toml` `theme = "id"` — built-in theme selection
 4. Compiled-in default (ROG Dark)
 
-If you create a `theme.toml`, it always takes priority over the built-in theme
-picker selection. Delete or rename it to return to built-in themes.
-
----
+If you create a `theme.toml`, it always takes priority over the built-in
+theme picker selection. Delete or rename it to return to built-in themes.
 
 ## Built-in themes
 
@@ -42,10 +43,8 @@ picker selection. Delete or rename it to return to built-in themes.
 List all built-in themes from the command line:
 
 ```sh
-z13gui --list-themes
+voltaire-gui --list-themes
 ```
-
----
 
 ## Choosing a built-in theme
 
@@ -53,20 +52,18 @@ Click the palette button at the bottom-left of the drawer. For themes with
 accent variants (all four Catppuccin themes), a row of colored dots appears
 below the theme name in the picker.
 
-Your selection is saved automatically to `~/.config/z13gui/config.toml`.
-
----
+Your selection is saved automatically to `~/.config/voltaire/config.toml`.
 
 ## Creating a custom theme
 
-A custom theme is a TOML file with 7 color keys. Each value is a CSS hex
-color string (`#rrggbb`).
+A custom theme is a TOML file with 8 color keys. Each value is a CSS hex color
+string (`#rrggbb`).
 
 **Quick start:**
 
 ```sh
-mkdir -p ~/.config/z13gui
-z13gui --print-theme > ~/.config/z13gui/theme.toml
+mkdir -p ~/.config/voltaire
+voltaire-gui --print-theme > ~/.config/voltaire/theme.toml
 ```
 
 This writes the default ROG Dark colors. Open the file and change the values.
@@ -103,10 +100,10 @@ Comments, inline comments, unknown keys, and missing keys are all handled
 gracefully. Invalid hex values are skipped; missing keys fall back to ROG Dark
 defaults.
 
-The `examples/themes/` directory in the repository contains a `.toml` file for
-every built-in theme — useful starting points for custom themes.
+The `examples/themes/` directory in the repository contains a `.toml` file
+for every built-in theme — useful starting points for custom themes.
 
-Changes to `theme.toml` take effect the next time z13gui starts.
+Changes to `theme.toml` take effect the next time voltaire-gui starts.
 
 ### Accent variants
 
@@ -133,8 +130,6 @@ Each line is `id = "#hex"`. The ID is used as the tooltip and saved to
 `config.toml`. The top-level `accent` key sets the default when no variant is
 selected.
 
----
-
 ## Color reference
 
 | Key | CSS variable | Controls |
@@ -148,7 +143,10 @@ selected.
 | `border` | `@z13-border` | Drawer border, separators, button outlines |
 | `error` | `@z13-error` | Error bar text and border, high-TDP warning text |
 
----
+Every variable is also defined under a `@voltaire-*` alias (`@voltaire-accent`
+and so on). A stylesheet may reference either name through the 2.x line; the
+`@z13-*` names are the ones the bundled rules currently use, and they are
+removed at 3.0.
 
 ## Catppuccin accent colors
 
@@ -171,12 +169,11 @@ All four Catppuccin themes support the 14 official accent colors:
 | `blue` | `#89b4fa` | `#8aadf4` | `#8caaee` | `#1e66f5` |
 | `lavender` | `#b4befe` | `#b7bdf8` | `#babbf1` | `#7287fd` |
 
----
-
 ## Full CSS override
 
 For complete control, provide a full GTK4 CSS stylesheet at
-`~/.config/z13gui/theme.css`. This replaces the built-in theme CSS entirely.
+`~/.config/voltaire/theme.css`. This replaces the built-in theme CSS
+entirely.
 
 The stylesheet should define all 8 `@define-color` variables:
 
@@ -194,14 +191,17 @@ The stylesheet should define all 8 `@define-color` variables:
 You can then add any GTK4 CSS rules. `theme.toml` takes priority over
 `theme.css` — delete `theme.toml` to use a CSS override.
 
----
+A `theme.css` is loaded **verbatim**: any color it references without
+defining is simply undefined, and GTK silently drops every rule that uses it.
+voltaire-gui checks for this at startup and logs the missing token names —
+if part of the drawer loses its styling, read the log.
 
 ## Example
 
 A complete custom dark-blue theme built from scratch:
 
 ```toml
-# ~/.config/z13gui/theme.toml
+# ~/.config/voltaire/theme.toml
 accent      = "#5294e2"
 background  = "#1b2838"
 surface     = "#253449"
@@ -219,4 +219,5 @@ border      = "#3b5068"
 - `text_dim` — muted blue-gray for section labels
 - `border` — sits between surface and text brightness for subtle outlines
 
-To use this theme: save it to `~/.config/z13gui/theme.toml` and restart z13gui.
+To use this theme: save it to `~/.config/voltaire/theme.toml` and restart
+voltaire-gui.

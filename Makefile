@@ -17,7 +17,7 @@ HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
 # widgets there, decisions in the pure packages.
 HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | grep -v -e '/internal/gui' -e '/voltaire-gui')
 
-.PHONY: build build-gui test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs clean help
+.PHONY: build build-gui test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
 
 ## build: compile voltaire with version from git tags
 build:
@@ -112,10 +112,20 @@ uninstall-perms-service:
 	systemctl daemon-reload
 	@echo "Permissions service removed."
 
-## docs: generate API reference and serve mkdocs locally
+API_GO_PAGE := website/src/content/docs/reference/api-go.md
+
+## docs-api: regenerate the Go API reference page from api/ doc comments (commit the result)
+docs-api:
+	printf -- '---\ntitle: Go API Reference\ndescription: Generated reference for every exported type and function in the voltaire api module.\n---\n\n' > $(API_GO_PAGE)
+	go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest ./api/... | sed '/^# api$$/d' >> $(API_GO_PAGE)
+
+## docs: serve the website locally (run docs-api first if api/ changed)
 docs:
-	go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest ./api/... > docs/api-reference.md
-	mkdocs serve
+	cd website && pnpm install && pnpm dev
+
+## docs-build: build the website as CI does
+docs-build:
+	cd website && pnpm install && pnpm build
 
 ## clean: remove all generated build and test artifacts
 clean:

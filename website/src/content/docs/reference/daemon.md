@@ -1,0 +1,825 @@
+---
+title: Daemon & Socket Protocol
+description: The voltaire daemon — persistence, sleep/resume recovery, fan curve reconciliation, autoswitch, and the JSON socket protocol.
+---
+
+The voltaire daemon is a long-running background process that provides things
+ordinary one-shot CLI invocations cannot:
+
+- **State persistence** — saves your last-applied lighting, profile, battery,
+  fan curve, TDP, and undervolt settings to `~/.local/state/voltaire/state.json`
+  and restores them automatically at every boot.
+- **Sleep/resume recovery** — watches for system resume events via D-Bus and
+  reapplies lighting and volatile settings (fan curves, TDP, undervolt) that
+  are lost during sleep.
+- **Keyboard reattach recovery** — detects the detachable keyboard being removed
+  and reattached, reopens the HID device, and re-applies the saved keyboard
+  lighting (the firmware does not restore it on its own).
+- **Custom fan curve reconciliation** — re-applies your custom fan curve (and the
+  high-TDP fan floor) after the kernel driver drops it, which it does on every
+  system power profile change.
+- **HID device ownership** — holds the hidraw devices open continuously so that
+  commands arrive instantly rather than waiting to reopen the device each time.
+- **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
+  Crate button) and broadcasts a `gui-toggle` event to any connected subscribers
+  (see [API](/voltaire/reference/api/)).
+
+All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
+`bootsound`, `paneloverdrive`, `feature`, `fancurve`, `tdp`, `undervolt`,
+`status`) automatically route through the daemon socket when it is running. If
+the daemon is not running they fall back to direct hardware or sysfs access
+transparently — there is no user-visible difference other than persistence.
+
+## Systemd setup (recommended)
+
+Voltaire ships two systemd user units that use socket activation:
+
+- **`voltaire.socket`** — systemd creates and manages the Unix socket. The daemon
+  is started on first use and does not run if nothing has connected.
+- **`voltaire.service`** — `Type=notify`, `Restart=on-failure`. The daemon sends
+  `sd_notify READY` when it is listening.
+
+The units target `graphical-session.target`, so they work in both desktop
+environments (KDE, GNOME) and Steam Gaming Mode (gamescope session).
+
+Install and enable:
+
+```sh
+install -Dm644 contrib/systemd/user/voltaire.socket \
+    ~/.config/systemd/user/voltaire.socket
+install -Dm644 contrib/systemd/user/voltaire.service \
+    ~/.config/systemd/user/voltaire.service
+systemctl --user daemon-reload
+systemctl --user enable --now voltaire.socket voltaire.service
+```
+
+Or, if you built from source:
+
+```sh
+make install-service
+```
+
+## Managing the service
+
+```sh
+# Check status
+systemctl --user status voltaire.socket
+systemctl --user status voltaire.service
+
+# View live logs
+journalctl --user -u voltaire -f
+
+# Restart the daemon (e.g., after a config change)
+systemctl --user restart voltaire.service
+```
+
+### Remove the user service
+
+```sh
+systemctl --user disable --now voltaire.socket voltaire.service
+rm -f ~/.config/systemd/user/voltaire.socket \
+      ~/.config/systemd/user/voltaire.service
+systemctl --user daemon-reload
+```
+
+## Running without systemd
+
+Start the daemon directly for testing or on systems without systemd:
+
+```sh
+voltaire daemon
+```
+
+To disable the Armoury Crate button watcher — because another tool needs
+exclusive access to the device, or because you would rather the keypress reach
+only your desktop:
+
+```sh
+voltaire --no-button daemon
+```
+
+The daemon listens on a Unix socket at:
+
+```
+$XDG_RUNTIME_DIR/voltaire/voltaire.sock
+```
+
+(falls back to `/tmp/voltaire/voltaire.sock` if `XDG_RUNTIME_DIR` is not set).
+
+It also serves the pre-rename path, `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`, for
+the whole 2.x line — both sockets answer identically, so clients written
+against z13ctl (the Decky plugin among them) keep working unchanged. New
+clients should use the voltaire path; the compat path is removed at 3.0.
+
+## Socket protocol
+
+The wire format is newline-delimited JSON: one request object per line, one
+response object per line. Every response carries `ok` (bool) and, on failure,
+`error` (string). Commands that return data use `value` (a string,
+JSON-encoded where the payload is structured).
+
+Connections are single-shot — the daemon replies once and closes — except
+`subscribe`, which stays open and streams events.
+
+### Device capabilities
+
+| Command | Request | Response |
+|---|---|---|
+| Device document | `{"cmd":"device-get"}` | `ok`, `device` |
+
+`device-get` returns the capability/limits document for the device the daemon
+was assembled with — what the machine can do, and the bounds to validate and
+render controls against, instead of hardcoding one device's numbers:
+
+```json
+{"ok":true,"device":{
+  "id":"asus-rog-flow-z13-2025","model":"GZ302",
+  "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255},
+  "power":{"tdp_min":5,"tdp_max_safe":75,"tdp_max_forced":93,
+           "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."]},
+  "profiles":{"names":["quiet","balanced","performance"]},
+  "lighting":{"zones":["keyboard","lightbar"]},
+  "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
+             {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
+  "undervolt":{"min":-40,"max":0},
+  "battery":true,"telemetry":true,"buttons":true}}
+```
+
+Capability discovery is **by absence**: a section that is missing means the
+device does not have that capability — never an error — and a client hides the
+corresponding controls. The document is built from device data, so it is
+static for the daemon's lifetime: fetch it once at startup and cache it.
+
+Bounds worth knowing: `fans.temp_min`/`temp_max` are the curve editor's
+display axis, not validation limits; `power.floor_curve` is the fan floor
+enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
+user's curve); `toggles[].id` is the wire identifier the `feature` commands
+below take.
+
+### Lighting
+
+| Command | Request | Response |
+|---|---|---|
+| Apply an effect | `{"cmd":"apply","mode":"cycle","color":"FF0000","color2":"000000","speed":"normal","brightness":3,"device":"lightbar"}` | `ok` |
+| Turn off | `{"cmd":"off","device":""}` | `ok` |
+| Brightness only | `{"cmd":"brightness","brightness":2,"device":""}` | `ok` |
+
+`device` accepts `"keyboard"`, `"lightbar"`, a `/dev/hidrawN` path, or `""`
+for all zones. `brightness` is 0–3.
+
+### System settings
+
+| Command | Request | Response |
+|---|---|---|
+| Set profile | `{"cmd":"profile","set":"performance"}` | `ok` |
+| Get profile | `{"cmd":"profile-get"}` | `ok`, `value` |
+| Set battery limit | `{"cmd":"batterylimit","set":"80"}` | `ok` |
+| Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
+| Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
+| Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+| Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
+| Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
+| Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
+| Get firmware toggle | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
+
+`profile` accepts `quiet`, `balanced`, `performance`, or the name of a custom
+profile (including `custom`).
+
+`feature`/`feature-get` are the generic form of the firmware-toggle commands:
+`id` is any toggle the `device-get` document lists, so a client driven by that
+document needs no per-toggle code. `bootsound` and `paneloverdrive` remain as
+the named equivalents for the Z13's two toggles. `"bool"` toggles take 0 or 1;
+an unknown `id` is an error naming it.
+
+A daemon older than these commands answers `{"ok":false,"error":"unknown
+command: feature"}`. Treat that as "this daemon cannot help", not as a failed
+write, and go straight to sysfs — firmware toggles are BIOS settings the
+daemon neither persists nor broadcasts, so a direct write is equivalent. This
+is the normal state of things between a package upgrade and the daemon
+restart. Go clients get the distinction from `errors.Is(err,
+api.ErrUnknownCommand)`, which preserves the daemon's wording; other clients
+should match the `unknown command` prefix. Probe for the error — never gate on
+a version number.
+
+:::caution[Unknown profile names are now rejected]
+Earlier daemons forwarded any string to `platform_profile`. A name that is
+neither a firmware profile nor a saved custom profile is now an error, so a
+typo cannot reach the fan-curve reset on its way to failing. A client that
+sent e.g. `low-power` will need updating.
+:::
+
+### Custom profiles
+
+| Command | Request | Response |
+|---|---|---|
+| Create profile | `{"cmd":"profile-create","set":"gaming"}` | `ok` |
+| Copy active profile | `{"cmd":"profile-save","set":"gaming"}` | `ok` |
+| Delete profile | `{"cmd":"profile-delete","set":"gaming"}` | `ok` |
+| List profiles | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
+
+`profile-list` returns a JSON array of `{name, fan_curve, tdp, undervolt,
+active}`. Names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, `_`, and
+may not be a firmware profile name or `custom`; `profile-create` and
+`profile-save` validate the name as sent rather than case-folding it.
+
+`profile-delete` refuses to remove the active profile or one referenced by
+`autoswitch`.
+
+Selecting a custom profile puts hardware into the state that profile
+describes, which means a subsystem it leaves unset is **cleared**, not left
+alone: no fan curve releases the fans to firmware auto, no undervolt resets
+the Curve Optimizer, and no TDP hands the power limits back to the firmware
+profile underneath. Without that, switching between two custom profiles would
+leave the previous one's limits and offset in force, and selecting A then B
+then A would not give the same machine as selecting A.
+
+### AC/battery autoswitch
+
+| Command | Request | Response |
+|---|---|---|
+| Configure | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
+| Get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON: `enabled`, `ac`, `battery`, `on_ac`, `source_known`) |
+
+An empty `ac` or `battery` leaves the profile alone on that source. Both
+targets are validated against the firmware profiles and the saved custom
+profiles.
+
+### Fans, TDP, and undervolt
+
+| Command | Request | Response |
+|---|---|---|
+| Set fan curve | `{"cmd":"fancurve","set":"48:2,55:20,..."}` | `ok` |
+| Get fan curve | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |
+| Reset fan curve | `{"cmd":"fancurve-reset"}` | `ok` |
+| Set TDP | `{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}` | `ok` |
+| Get TDP | `{"cmd":"tdp-get"}` | `ok`, `value` (JSON) |
+| Reset TDP | `{"cmd":"tdp-reset"}` | `ok` |
+| Set undervolt | `{"cmd":"undervolt","set":"-20"}` | `ok` |
+| Get undervolt | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
+| Reset undervolt | `{"cmd":"undervolt-reset"}` | `ok` |
+
+The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
+value to all three. `force` is required for a sustained limit (PL1) above
+75 W.
+
+All six commands accept an optional `profile` field naming the custom profile
+to edit. Absent or empty means the active profile — which is what every client
+written before this field existed sends, so their behaviour is unchanged.
+Naming a profile that is *not* active stores the setting and writes nothing to
+hardware; the fan-curve floor is then checked against that profile's own TDP
+rather than against the running machine, so a profile can never be stored in a
+state that would be unsafe when activated.
+
+:::danger[The `profile` field is silently ignored by older daemons]
+It is an additive field, so a daemon from before custom profiles unmarshals
+the request, drops the field, **applies the setting to the running machine**,
+and answers `ok`. A client that offers profile targeting must probe first —
+`profile-list` answers `unknown command` on an older daemon, which is exactly
+what `voltaire` itself does before sending any `--profile` edit.
+:::
+
+:::caution[Fan commands are restricted above 75 W sustained TDP]
+While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
+`fancurve` is rejected if any point falls below that floor, and
+`fancurve-reset` is rejected outright — firmware auto mode has no minimum.
+`tdp-reset` is the way out: it lowers the limit before releasing the fans.
+
+`tdp` applies the same rule in the other direction. Raising PL1 above 75 W
+writes the fan curve **first**, and if that write fails the power limit is not
+applied at all. The floor is a **per-point minimum against the built-in
+high-TDP curve**: each point is raised to that curve's value where it falls
+below it, and left exactly as stored where it does not, so a client sending a
+curve above it gets that curve rather than a substitute. Note this is the
+whole curve and not just its 127 PWM bottom — a curve flat at 50% is still
+raised at higher temperatures. The built-in curve is written whole only when
+the profile has no curve of its own. The same holds for the daemon's own
+restore paths — startup, resume, and selecting a custom profile.
+:::
+
+### State and events
+
+| Command | Request | Response |
+|---|---|---|
+| Full state | `{"cmd":"get-state"}` | `ok`, `state` |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle","power-source","state-changed"]}` | `ok`, then streamed events |
+
+`get-state` merges persisted state with live sysfs reads — see
+[State file](#state-file).
+
+Each streamed event is a full response object with an `event` field:
+
+```json
+{"ok":true,"event":"gui-toggle"}
+```
+
+**Events**
+
+| Event | Emitted when |
+|---|---|
+| `gui-toggle` | the Armoury Crate button is pressed |
+| `power-source` | the machine moves between mains and battery power |
+| `state-changed` | the active profile, its settings, the saved profiles, or the autoswitch configuration change |
+
+`power-source` fires on the transition itself, whether or not autoswitch is
+configured, so a client can drive a plug/battery indicator from it alone.
+
+`state-changed` fires whatever the cause — this client, another client, the
+CLI, autoswitch, or a resume. A client displaying profile, TDP, fan curve, or
+undervolt values should re-read them with `get-state` when it arrives.
+Lighting is deliberately excluded: a brightness slider drag would emit a burst
+of events describing values the client just set itself.
+
+Events carry **no payload**. The name says what happened and `get-state`
+answers with current truth — a payload would describe the moment the event was
+queued, which can already be stale by the time the client handles it.
+
+The `events` list is honoured: a client that subscribes to `gui-toggle` alone
+is never woken by the other two. Subscribing with an empty list receives
+everything.
+
+:::caution[Switch on the event name]
+While `gui-toggle` was the only event, `for range ch { toggle() }` was a
+reasonable client loop. It is not any more — it would toggle the window on
+every power-source change. Dispatch on the name.
+:::
+
+Discriminate on the presence of `event` — a command reply never carries it.
+(Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate
+on `ok` dropped them.)
+
+:::note[Timeouts]
+The daemon closes a connection that does not send its request line within 30
+seconds, so a client cannot pin a goroutine by connecting and going silent.
+This deadline is cleared once a `subscribe` is acknowledged, since
+subscriptions are idle by design between button presses. In the other
+direction, `api` clients bound a whole command exchange at 10 seconds so a
+wedged daemon cannot hang the caller indefinitely.
+:::
+
+### Minimal client
+
+```python
+import asyncio, json, os
+
+async def send(req):
+    r, w = await asyncio.open_unix_connection(
+        f"/run/user/{os.getuid()}/voltaire/voltaire.sock")
+    w.write((json.dumps(req) + "\n").encode())
+    await w.drain()
+    resp = json.loads(await r.readline())
+    w.close()
+    return resp
+
+asyncio.run(send({"cmd": "profile", "set": "quiet"}))
+```
+
+Go callers should use the [`api` module](/voltaire/reference/api/) rather than
+speaking the protocol directly.
+
+## State file
+
+The daemon persists state to:
+
+```
+~/.local/state/voltaire/state.json
+```
+
+On first run after upgrading from z13ctl, the old
+`~/.local/state/z13ctl/state.json` is **copied** here — never moved, so a
+downgrade to 1.x still finds its state where it expects it.
+
+The file is written atomically after every successful command. It stores:
+
+- `lighting` — mode, color, color2, speed, brightness, enabled flag
+- `devices` — per-device overrides (keyboard/lightbar can have independent state)
+- `profile` — the active profile: a firmware profile, or a custom profile name
+- `battery_limit` — last-set charge limit
+- `custom_profiles` — saved custom profiles keyed by name, each holding its own
+  `fan_curve`, `tdp`, and `undervolt`. This is the source of truth for custom
+  settings.
+- `autoswitch` — `enabled`, and the `ac` and `battery` profile targets
+- `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit
+  of clients and daemons from before named profiles existed. They carry the
+  active custom profile's settings, or `custom`'s when a firmware profile is
+  active — the same values selecting `custom` would recall, which is what
+  keeps a "saved undervolt, not active" display working and what stops a
+  downgrade taken while on `balanced` from writing those settings away. They
+  are output only; `custom_profiles` is what is read back.
+
+A state file written before named profiles existed has no `custom_profiles`,
+so its top-level `fan_curve`/`tdp`/`undervolt` are migrated into a profile
+called `custom` on first load — the same settings, now addressable by name.
+Nothing needs to be done by hand.
+
+On `get-state` requests the daemon also populates `temperature` (APU die
+temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
+is plugged in), and `undervolt_available` (whether the `ryzen_smu` kernel
+module is present) from live sysfs reads. These are not persisted — they are
+real-time sensor values.
+
+On startup the daemon reads this file, resolves what the current power source
+calls for if autoswitch is configured, and restores all saved settings before
+accepting any connections. If the active profile is a custom one, its fan
+curve, TDP, and undervolt are re-applied to the hardware. If it is a firmware
+profile, that profile's measured PPT values are written instead — the kernel's
+`ppt_*` attributes come up holding a stale 5 W default after boot, and nothing
+else restores them.
+
+:::caution[Downgrading loses named profiles]
+A daemon from before named profiles reads only the top-level fields and drops
+`custom_profiles` on its next save. The active profile's settings survive via
+the projection above; any other saved profile does not. Copy `state.json`
+aside before downgrading.
+:::
+
+:::note[A corrupt state file is kept, not discarded]
+If `state.json` exists but cannot be parsed, the daemon renames it to
+`state.json.corrupt`, logs a warning, and starts from defaults. Without that
+rename the next command would overwrite the damaged file, taking every saved
+setting with it and leaving nothing to inspect. Repair the `.corrupt` copy and
+move it back to recover.
+:::
+
+:::note[Raw hidrawN paths are not persisted]
+Commands sent with `--device /dev/hidraw2` (a raw path) are applied but not
+saved — raw device numbers are transient and may change across reboots. Use
+`keyboard` or `lightbar` by name for persistent per-zone settings.
+:::
+
+## Sleep/resume recovery
+
+The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
+signals from systemd-logind and acts on both edges.
+
+### On sleep — the fans are handed back to the firmware
+
+On some machines a custom fan curve has to be *released* before the machine
+suspends, or the fans never stop.
+
+The Z13 supports only `s2idle` — there is no `deep` in `/sys/power/mem_sleep`
+— so the embedded controller keeps running its fan control loop for as long as
+the machine is asleep. In firmware auto mode (`pwm_enable=2`) the EC stops the
+fans. Where a custom curve (`pwm_enable=1`) survives into suspend, the EC goes
+on driving the fans from the curve's PWM values with no idea the machine is
+asleep. Any curve whose low-temperature points are above zero then keeps the
+fans turning all night, and a machine on a high sustained TDP is worse: every
+point of the high-TDP floor curve
+([`tdp`](/voltaire/reference/commands/#tdp) applies it above 75 W) is at or
+above 50%.
+
+"On some machines" is doing real work in that sentence. On kernels and
+firmware combinations where the custom curve is dropped across the suspend
+anyway, the fans already spin down and the release changes nothing. Which
+behaviour you get has been observed to differ between distributions, so the
+release is written to be harmless where it is unnecessary rather than
+conditional on detecting which case you are in. `--no-sleep-release` turns it
+off if you would rather keep the curve.
+
+On `PrepareForSleep(true)` the daemon therefore:
+
+1. Turns off the lightbar (the keyboard powers down in hardware; the lightbar
+   does not).
+2. Lowers the power limits to the underlying firmware profile's stock values —
+   but only when the sustained limit is above the safe maximum, since
+   releasing the fans would otherwise drop a thermal floor that limit
+   requires. **If that write fails, the fans are not released.** A loud
+   suspend is the right trade against an unfloored high limit.
+3. Releases both fans to firmware auto.
+
+Steps 2 and 3 only happen when the daemon owns the current thermal settings —
+that is, when a custom profile is active. A curve set by another tool
+(asusctl, or a direct sysfs write) while voltaire is on a firmware profile is
+left alone, because nothing on the resume side would put it back.
+
+The daemon holds a logind **delay inhibitor** so these writes land before
+userspace is frozen. Without one, `PrepareForSleep(true)` is only advisory —
+logind emits it and proceeds to suspend. You can confirm it is held:
+
+```sh
+systemd-inhibit --list | grep voltaire
+```
+
+If logind refuses the inhibitor the daemon carries on without it; the writes
+are then racing the freeze, which is how it behaved before v1.3.1.
+
+:::note[If your machine will not stay asleep]
+The release writes to `ppt_*` and `pwm_enable` in the window before the
+suspend, so it is a reasonable first suspect — but on the one machine where
+this was investigated it was **not** the cause: suspend aborted identically
+with the daemon stopped entirely. Rule voltaire in or out with a control run
+before going further:
+
+```sh
+systemctl --user stop voltaire.service voltaire.socket
+systemctl suspend        # still wakes immediately? not voltaire
+```
+
+A suspend that aborts before the kernel logs `Freezing user space processes`
+means a wakeup event was already pending. `cat /sys/power/pm_wakeup_irq` names
+the interrupt, and `sudo cat /sys/kernel/debug/wakeup_sources` lists every
+source with a nonzero `wakeup_count` column — the devices that may have
+aborted a suspend. On the Z13 the touchscreen and the detachable cover are
+both wakeup-enabled and are the usual answers.
+:::
+
+### On resume — volatile settings are reapplied
+
+These are lost across a sleep cycle and must be rewritten:
+
+- **Lighting** — RGB lighting is turned off by the hardware on sleep
+- **Fan curves** — released by the daemon on sleep, as above (and dropped by
+  every power profile change — see
+  [reconciliation](#custom-fan-curve-reconciliation))
+- **TDP (PPT)** — lowered by the daemon on sleep when a high limit was in force
+- **Undervolt (Curve Optimizer)** — CO offsets reset to stock on every sleep
+  cycle
+
+On `PrepareForSleep(false)` the daemon restores lighting (regardless of
+profile) and all custom-profile volatile settings from its saved state. Fan
+curves, TDP, and undervolt are only restored when a custom profile is active;
+under a stock profile the firmware manages fan curves, and the profile's stock
+PPT values were already written to hardware when that profile was selected.
+The curve goes on before the TDP, so the high-TDP floor is written last and
+wins.
+
+The [reconciliation watcher](#custom-fan-curve-reconciliation) stands down
+between the two signals — otherwise it would re-enable the curve within two
+seconds of the release, in the window before userspace freezes. It resumes
+defending the curve on the resume signal, or after about two minutes of awake
+time if that signal never arrives.
+
+This all happens transparently with no user intervention. You can verify it
+worked by checking the daemon logs after a resume:
+
+```sh
+journalctl --user -u voltaire --since "5 minutes ago"
+```
+
+Expect, in order: `system entering sleep`, `sleep: released fans to firmware
+auto`, `system resumed from sleep, restoring volatile state`, and
+`resume: restoring custom profile`.
+
+## Keyboard reattach recovery
+
+The Z13's keyboard folio is detachable, and it is a separate USB HID device
+(`0b05:1a30`) from the lightbar (`0b05:18c6`), which lives in the tablet body.
+When you detach the keyboard it loses power and its RGB goes dark; when you
+reattach it, the firmware brings it back **unlit** — the previously applied
+effect is not restored.
+
+The daemon opens the hidraw devices once at startup, so a reattached keyboard
+appears as a brand-new device node that the original handle no longer
+references. To recover, the daemon polls sysfs every couple of seconds for the
+keyboard reappearing. On detecting it, the daemon reopens the HID devices and
+re-applies the saved lighting state — honoring per-device overrides, so a
+keyboard-specific color/mode is restored exactly as you last set it.
+
+This requires no user intervention; the keyboard relights within a few seconds
+of reattachment. If your `voltaire setup` udev rules are in place, the
+reattached node is granted access automatically. You can verify it in the
+daemon logs:
+
+```sh
+journalctl --user -u voltaire -f
+# On reattach: keyboard reattached; lighting restored
+```
+
+:::note[Daemon required]
+This recovery only happens while the daemon is running. Without it, re-run
+your `apply` command (or press the Armoury Crate button and use voltaire-gui)
+after reattaching the keyboard.
+:::
+
+## Custom fan curve reconciliation
+
+The kernel's `asus-wmi` driver **disables custom fan curves on every
+`platform_profile` write**. The write handler ends by clearing the driver's
+internal "custom curve enabled" flag for each fan, and the curve is then never
+pushed to the EC again until something re-enables it. Nothing is reported to
+the process that set the curve — your fans simply return to the firmware's own
+curve.
+
+This is easy to trigger without meaning to:
+
+- GNOME power modes and `power-profiles-daemon` write `platform_profile` on
+  every AC/battery transition and whenever an application requests a profile
+  hold
+- Fn+F5 (the ASUS fan-mode hotkey)
+- `asusctl`, `tuned`, or any other tool that manages the platform profile
+
+The daemon polls the fan curve device's `pwm_enable` — the driver's own
+"is the custom curve live" flag, so it catches every cause — every two
+seconds. When the curve has been dropped while your saved settings say it
+should still be in force, it writes the curve back — as saved, with only
+sub-floor points raised if a sustained TDP above 75 W requires it. The same
+applies to the floor itself: without this, a power profile change would
+release the fans while the power limit stayed in place.
+
+```sh
+journalctl --user -u voltaire -f
+# After a profile change: reconciling custom thermal settings
+#   reason="saved custom fan curve was disabled" platform_profile=balanced pwm_enable=2
+```
+
+The daemon never writes `platform_profile` itself — your desktop stays in
+charge of the power profile. Reconciliation only runs while a custom profile
+is active, so selecting `quiet`, `balanced`, or `performance` with
+`voltaire profile --set` releases the fans to firmware control and keeps them
+there.
+
+It also stands down between `PrepareForSleep(true)` and the matching resume,
+so it does not undo the
+[pre-sleep fan release](#on-sleep--the-fans-are-handed-back-to-the-firmware)
+in the window before userspace freezes. If a resume signal never arrives it
+starts defending the curve again after about two minutes of awake time.
+
+:::note[Daemon required]
+Without the daemon, a custom fan curve set with `voltaire fancurve --set`
+lasts only until the next power profile change. The CLI warns about this when
+it applies a curve directly. Since 1.2.2 the command also fails with an error,
+rather than reporting success, if the kernel refuses to honour the curve it
+just wrote.
+:::
+
+## AC/battery autoswitch
+
+When [`voltaire autoswitch`](/voltaire/reference/commands/#autoswitch) is
+configured, the daemon applies the profile that matches the power source on
+every plug and unplug.
+
+The watcher is **edge-triggered** on the mains adapter's `online` attribute
+under `/sys/class/power_supply`, and never reads or writes `platform_profile`.
+That is what makes it safe to run alongside `power-profiles-daemon`: it reacts
+only to a value that neither voltaire nor PPD nor the desktop can write, so
+the feedback loop that would produce a write-fight does not exist. The visible
+consequence, and the intended semantics, is that a profile you choose by hand
+stays in force until the power source actually changes.
+
+Detection uses two triggers and one observation. UPower's `OnBattery` property
+wakes the watcher immediately where UPower is running; a 2-second poll is the
+backstop that keeps this working in Steam Gaming Mode, on a bare session, or
+wherever UPower is absent. Either way the answer comes from sysfs, so there is
+one behaviour to reason about.
+
+A transition is confirmed on the following observation before anything is
+applied, so a change lands about two seconds after the event. That settle
+window lets the desktop's own transition write land first — a custom fan curve
+would otherwise be dropped in the gap before the
+[reconciler](#custom-fan-curve-reconciliation) notices — and stops a loose
+USB-C connector from driving a full power-limit, fan, and SMU write per
+bounce.
+
+Devices are selected by their `type` file, not by having an `online` file. On
+the Z13 the detachable keyboard registers as `hid-*-battery-N` and the USB-C
+ports as `ucsi-source-psy-*`, and all of them expose `online`; only `type`
+`Mains` is the charger. If no `Mains` supply exists at all — a VM, a desktop,
+a driver not yet bound — the source is treated as *unknown* and the watcher
+does nothing, rather than concluding the machine is on battery.
+
+There is deliberately no autoswitch hook in the resume path. Go timers do not
+advance across suspend, so the watcher's armed timer fires promptly after
+resume and handles an unplug-during-sleep on its own; duplicating the logic
+would race it and apply twice for one event.
+
+:::note[GNOME's Automatic Power Saver]
+That setting triggers on low battery rather than on unplugging, so it can
+still move a firmware profile after autoswitch has acted. Voltaire yields
+between transitions by design. Give a side an empty target to hand it to your
+desktop entirely.
+:::
+
+## Armoury Crate button
+
+The daemon watches the ASUS WMI hotkeys input device for `KEY_PROG3` (key code
+202) — the physical Armoury Crate button on the Z13. When pressed, it
+broadcasts a `gui-toggle` event to all connected subscribers.
+
+The device is read **non-exclusively**. It also carries `SW_TABLET_MODE`, and
+an exclusive `EVIOCGRAB` would take those tablet-mode transitions away from
+libinput — leaving the desktop convinced the machine is still a tablet and
+suppressing the detachable cover keyboard when it is attached after login.
+z13ctl grabbed the device up to v1.2.0 and did exactly that; voltaire no
+longer does.
+
+One consequence of reading shared: the Armoury Crate keypress also reaches
+your desktop. No mainstream desktop binds `KEY_PROG3` by default, but if yours
+does, that binding will fire alongside the `gui-toggle` event — unbind it
+there, or run the daemon with `--no-button`.
+
+:::note[Silent failure if another process grabs the device]
+Because voltaire does not grab, a different process holding an exclusive grab
+will silently receive all events instead, and the watcher will sit idle with
+nothing to report. If button presses do nothing, check what else has the
+device open (`sudo fuser -v /dev/input/eventN`).
+:::
+
+External tools can subscribe to this event via the API:
+
+```go
+ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
+```
+
+See the [API](/voltaire/reference/api/) page for details.
+
+### InputPlumber compatibility
+
+On gaming distributions such as Bazzite and ChimeraOS,
+[InputPlumber](https://github.com/ShadowBlip/InputPlumber) ships a built-in
+device profile for the ROG Flow Z13 (`50-rog_flow_z13.yaml`) that grabs
+`"Asus WMI hotkeys"` as a managed source device. This creates an exclusive
+evdev conflict: voltaire cannot open the device and will log:
+
+```
+button watcher stopped; retrying err="open /dev/input/eventN: permission denied"
+```
+
+**Workaround:** Create an override config that marks `"Asus WMI hotkeys"` as
+`ignore: true`. This tells InputPlumber to leave that device unmanaged so
+voltaire can open it, while preserving all other InputPlumber functionality
+(controller emulation, touchpad, etc.).
+
+First, check whether the built-in config exists on your system:
+
+```sh
+cat /usr/share/inputplumber/devices/50-rog_flow_z13.yaml
+```
+
+If found, create the override directory if needed, then save the override
+file:
+
+```sh
+sudo mkdir -p /etc/inputplumber/devices.d
+```
+
+Create `/etc/inputplumber/devices.d/50-rog_flow_z13.yaml` with `ignore: true`
+added to the keyboard source device:
+
+```yaml
+# /etc/inputplumber/devices.d/50-rog_flow_z13.yaml
+version: 1
+kind: CompositeDevice
+name: ASUS ROG Flow Z13 (2025)
+single_source: false
+
+matches:
+  - dmi_data:
+      board_name: GZ302EA
+      sys_vendor: ASUSTeK COMPUTER INC.
+
+source_devices:
+  - group: keyboard
+    ignore: true        # leave unmanaged so voltaire can read this device
+    evdev:
+      name: Asus WMI hotkeys
+      handler: event*
+
+options:
+  auto_manage: true
+
+target_devices:
+  - xbox-elite
+  - touchpad
+  - keyboard
+
+capability_map_id: flw1
+```
+
+:::note
+Always place overrides under `/etc/inputplumber/devices.d/` — never edit files
+under `/usr/share/inputplumber/devices/` directly, as those are owned by the
+package and will be overwritten on upgrades.
+
+If your model's `board_name` differs from `GZ302EA`, verify it with:
+
+```sh
+cat /sys/class/dmi/id/board_name
+```
+:::
+
+After saving the file, restart InputPlumber:
+
+```sh
+sudo systemctl restart inputplumber.service
+```
+
+Then restore device permissions that the previous InputPlumber instance may
+have changed (InputPlumber restricts device node access while managing a
+device, and may not fully restore permissions on shutdown):
+
+```sh
+sudo voltaire setup --perms-only
+```
+
+Then confirm voltaire can read the button device:
+
+```sh
+journalctl --user -u voltaire.service -f
+# Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN
+```
+
+Alternatively, disable the button watcher entirely and let InputPlumber handle
+the button exclusively:
+
+```sh
+voltaire --no-button daemon
+```

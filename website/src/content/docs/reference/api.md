@@ -1,27 +1,34 @@
-# API Module
+---
+title: Go API Module
+description: The stdlib-only Go client library for the voltaire daemon — connection model, custom profiles, and examples.
+---
 
-The `api/` module is a standalone Go library for communicating with the z13ctl
-daemon from external tools — GUI frontends, Decky plugins, shell integrations,
-or anything else that wants to control z13ctl programmatically.
+The `api/` module is a standalone Go library for communicating with the
+voltaire daemon from external tools — GUI frontends, Decky plugins, shell
+integrations, or anything else that wants to control voltaire
+programmatically. It is the same library `voltaire-gui` itself uses.
 
 ## Import
 
 ```go
-import "github.com/dahui/z13ctl/api"
+import "github.com/dahui/voltaire/api/v2"
 ```
 
-The module is deliberately stdlib-only (no third-party dependencies) so that
-integrations can pull it in without inheriting the CLI's dependency tree.
+The package name is `api`. The module is deliberately stdlib-only (no
+third-party dependencies) so that integrations can pull it in without
+inheriting the CLI's dependency tree.
 
-It is a separate Go module at `./api` with its own `go.mod`. If you are working
-on both the main binary and the API library simultaneously, create a
+The pre-rename module, `github.com/dahui/z13ctl/api`, is frozen at its last
+1.x release and keeps resolving for existing importers — see
+[Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+
+It is a separate Go module at `./api` with its own `go.mod`. If you are
+working on both the main binary and the API library simultaneously, create a
 [go.work](https://go.dev/ref/mod#workspaces) file:
 
 ```sh
 go work init . ./api
 ```
-
----
 
 ## Connection model
 
@@ -29,10 +36,14 @@ All `Send*` functions open a fresh Unix socket connection to the daemon, send
 one JSON request, read one JSON response, and close the connection. This is
 intentionally simple and stateless.
 
-If the daemon is not running (connection refused), every `Send*` function returns
-`(false, nil)` — the first return value (`handled bool`) signals whether the
-daemon was reached. Callers can use this to decide whether to fall back to direct
-hardware access.
+The client dials the voltaire socket first and falls back to the pre-rename
+z13ctl path, so it also reaches a 1.x daemon that has not been restarted since
+the upgrade.
+
+If the daemon is not running (connection refused), every `Send*` function
+returns `(false, nil)` — the first return value (`handled bool`) signals
+whether the daemon was reached. Callers can use this to decide whether to fall
+back to direct hardware access.
 
 ```go
 handled, err := api.SendApply("", "FF0000", "000000", "static", "normal", 3)
@@ -41,10 +52,10 @@ if !handled {
 }
 ```
 
-`Subscribe` follows the same pattern but holds the connection open to receive a
-stream of events. Always call the returned cancel func when you stop consuming
-the channel — it releases the reader goroutine, which otherwise parks once the
-channel buffer fills. Calling it more than once is safe.
+`Subscribe` follows the same pattern but holds the connection open to receive
+a stream of events. Always call the returned cancel func when you stop
+consuming the channel — it releases the reader goroutine, which otherwise
+parks once the channel buffer fills. Calling it more than once is safe.
 
 ```go
 ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
@@ -57,22 +68,22 @@ for range ch {
 }
 ```
 
-!!! note "Timeouts"
-    Connecting is bounded at 1 second and the whole request/response exchange at
-    10 seconds, so a wedged daemon returns an error rather than hanging your
-    process. `Subscribe` bounds only its handshake — the stream itself is
-    open-ended, since subscriptions are idle by design between events.
-
----
+:::note[Timeouts]
+Connecting is bounded at 1 second and the whole request/response exchange at
+10 seconds, so a wedged daemon returns an error rather than hanging your
+process. `Subscribe` bounds only its handshake — the stream itself is
+open-ended, since subscriptions are idle by design between events.
+:::
 
 ## Custom profiles
 
-Since api v1.2.0, custom settings live in named profiles. `State.CustomProfiles`
-is the source of truth; `State.FanCurve`, `State.TDP`, and `State.Undervolt`
-remain as a projection so existing clients keep working unchanged. They carry the
-active custom profile's settings, or `custom`'s when a firmware profile is
-active — the same values selecting `custom` would recall. `Undervolt.Active` is
-what says whether an offset is applied to hardware right now.
+Since api v1.2.0, custom settings live in named profiles.
+`State.CustomProfiles` is the source of truth; `State.FanCurve`, `State.TDP`,
+and `State.Undervolt` remain as a projection so existing clients keep working
+unchanged. They carry the active custom profile's settings, or `custom`'s
+when a firmware profile is active — the same values selecting `custom` would
+recall. `Undervolt.Active` is what says whether an offset is applied to
+hardware right now.
 
 Two things to move to:
 
@@ -90,30 +101,30 @@ if p, ok := state.ActiveCustomProfile(); ok {
 
 **Profile-targeted setters.** `SendFanCurveSet`, `SendTdpSet`, and
 `SendUndervoltSet` are unchanged and edit the active profile. The `…For`
-variants take a profile name and store the setting without applying it, which is
-how a client builds the profile `SendAutoswitchSet` selects on battery:
+variants take a profile name and store the setting without applying it, which
+is how a client builds the profile `SendAutoswitchSet` selects on battery:
 
 ```go
 api.SendTdpSetFor("battery-uv", "35", "", "", "", false)
 api.SendAutoswitchSet(true, "balanced", "battery-uv")
 ```
 
-!!! danger "Probe before offering profile targeting"
-    The wire field behind the `…For` variants is additive, so a daemon from
-    before custom profiles drops it, **applies the setting to the running
-    machine**, and answers `ok`. Call `SendProfileList` first: an older daemon
-    answers `unknown command`, and that is the only reliable signal.
-
----
+:::danger[Probe before offering profile targeting]
+The wire field behind the `…For` variants is additive, so a daemon from before
+custom profiles drops it, **applies the setting to the running machine**, and
+answers `ok`. Call `SendProfileList` first: an older daemon answers
+`unknown command`, and that is the only reliable signal.
+:::
 
 ## Socket path
 
 ```go
-path := api.SocketPath()
-// $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock  (or /tmp/z13ctl/z13ctl.sock)
+paths := api.SocketPaths()
+// [$XDG_RUNTIME_DIR/voltaire/voltaire.sock, $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock]
 ```
 
----
+`SocketPath()` returns the canonical voltaire path alone; `SocketPaths()`
+returns it plus the legacy path the client dials as a fallback.
 
 ## Examples
 
@@ -188,9 +199,7 @@ for event := range ch {
 }
 ```
 
----
-
 ## Full API reference
 
-See the [API Reference](api-reference.md) page for full documentation
-of all exported types and functions.
+See the [Go API Reference](/voltaire/reference/api-go/) page for full
+documentation of all exported types and functions.

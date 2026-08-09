@@ -17,10 +17,6 @@ on:
         description: 'Publish to AUR'
         type: boolean
         default: true
-      docs:
-        description: 'Deploy documentation'
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -133,35 +129,5 @@ jobs:
           echo "All push attempts failed"
           exit 1
 
-  docs:
-    needs: release
-    runs-on: ubuntu-latest
-    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.docs))
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-
-      - uses: actions/cache@v4
-        with:
-          key: mkdocs-material-${{ hashFiles('requirements.txt') }}
-          path: .cache
-          restore-keys: mkdocs-material-
-
-      - name: Install MkDocs Material
-        run: pip install -r requirements.txt
-
-      - name: Install gomarkdoc
-        run: go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
-
-      - name: Generate API reference
-        run: gomarkdoc ./api/... > docs/api-reference.md
-
-      - name: Deploy to GitHub Pages
-        run: mkdocs gh-deploy --force
+# Docs deploy moved to docs.yml: the site lives in website/ (Astro Starlight)
+# and deploys via GitHub Pages actions on pushes to main, not on release.
