@@ -21,12 +21,18 @@ const hotplugPollInterval = 2 * time.Second
 // hidraw permissions), it does not latch the present state, so the next tick
 // retries.
 //
+// opened reports whether the startup Reopen succeeded. The initial latch is
+// presence AND that success: a keyboard present in sysfs whose node failed to
+// open at startup (the daemon racing udev on a freshly attached cover) must
+// look like a pending reattach, or the failure is latched until the next
+// physical detach.
+//
 // Present is sysfs-only by the driver contract, so polling it opens nothing.
-func (d *Daemon) watchHotplug(ctx context.Context) {
+func (d *Daemon) watchHotplug(ctx context.Context, opened bool) {
 	if d.hw == nil || d.hw.Lighting == nil {
 		return
 	}
-	present := d.hw.Lighting.Present() // already restored at startup if present
+	present := opened && d.hw.Lighting.Present() // already restored at startup if present
 	for {
 		select {
 		case <-ctx.Done():

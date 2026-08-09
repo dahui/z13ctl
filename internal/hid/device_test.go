@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dahui/z13ctl/internal/hid"
@@ -177,6 +178,34 @@ func TestFilteredView_NoMatch(t *testing.T) {
 
 	_, err = dev.FilteredView("lightbar")
 	if err == nil {
-		t.Error("FilteredView(\"lightbar\") should return error when no match")
+		t.Fatal("FilteredView(\"lightbar\") should return error when no match")
+	}
+	// The message must name the nodes actually open, not a hardcoded list:
+	// during a keyboard reattach the device really can hold only one zone, and
+	// the old text reported the missing zone as available in the same breath
+	// as "not found".
+	if !strings.Contains(err.Error(), "available: test") {
+		t.Errorf("FilteredView error %q does not name the open node set", err)
+	}
+	if strings.Contains(err.Error(), "keyboard") {
+		t.Errorf("FilteredView error %q names a node that is not open", err)
+	}
+}
+
+func TestFilteredView_NoMatchOnAnonymousNodes(t *testing.T) {
+	t.Parallel()
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := hid.NewTestDeviceAnon(w) // node with no name
+	defer dev.Close()
+
+	_, err = dev.FilteredView("keyboard")
+	if err == nil {
+		t.Fatal("FilteredView(\"keyboard\") should return error when no match")
+	}
+	if !strings.Contains(err.Error(), "available: none") {
+		t.Errorf("FilteredView error %q should say no named nodes are open", err)
 	}
 }

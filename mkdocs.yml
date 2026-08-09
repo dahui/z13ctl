@@ -53,3 +53,5 @@ nav:
     - API Reference: api-reference.md
   - Protocol: protocol.md
   - Contributing: contributing.md
+  - Development:
+    - Z13 Hardware Smoke Test: dev/smoke-z13.md

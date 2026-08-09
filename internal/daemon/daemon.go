@@ -151,6 +151,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	d.state = loadState()
 
+	lightingOpened := false
 	if d.hw.Lighting != nil {
 		// The driver may hold an open HID handle (its own, or one swapped in by
 		// the hotplug watcher later), so close whatever it holds at shutdown.
@@ -164,13 +165,14 @@ func Run(ctx context.Context, opts Options) error {
 		d.mu.Lock()
 		reopenErr := d.hw.Lighting.Reopen()
 		if reopenErr == nil {
+			lightingOpened = true
 			if applyErr := d.applyLightingState(); applyErr != nil {
 				slog.Warn("failed to restore lighting state", "err", applyErr)
 			}
 		}
 		d.mu.Unlock()
 		if reopenErr != nil {
-			slog.Warn("HID device not found; lighting commands will be unavailable", "err", reopenErr)
+			slog.Warn("lighting device not opened; the hotplug watcher will retry", "err", reopenErr)
 		}
 	}
 
@@ -288,7 +290,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	go d.watchResume(ctx)
 
-	go d.watchHotplug(ctx)
+	go d.watchHotplug(ctx, lightingOpened)
 
 	// State-driven, so it is a no-op on a machine that never uses a custom
 	// profile; register it unconditionally.

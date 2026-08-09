@@ -7,11 +7,19 @@ package aurahid
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/aura"
 	"github.com/dahui/z13ctl/internal/driver"
 	"github.com/dahui/z13ctl/internal/hid"
+)
+
+// hidFind and hidHas wrap the hid package's discovery entry points purely so
+// tests can drive Reopen without real hidraw nodes.
+var (
+	hidFind = hid.FindDevice
+	hidHas  = hid.HasDevice
 )
 
 // Lighting drives Aura RGB zones over hidraw. The zero value is unopened;
@@ -66,10 +74,33 @@ func (l *Lighting) Present() bool { return hid.HasDevice("keyboard") }
 
 // Reopen re-discovers and reopens the Aura HID device, replacing (and
 // closing) any stale handle. Called under the daemon's device lock.
+//
+// A zone that is present in sysfs but missing from the opened set is a
+// *failed* reopen, not a smaller device. On reattach the keyboard's sysfs
+// entry appears before udev has applied permissions to the new /dev node, and
+// FindDevice silently drops nodes it cannot open — so without this check a
+// reattach-window Reopen returned a lightbar-only device as success, the
+// restore skipped the keyboard as "not present", and the hotplug watcher
+// latched and stopped retrying: the keyboard stayed dark until the next
+// physical detach. The watcher's whole retry path rides on this error.
+//
+// On failure the old handle is kept, so the zones it does hold (the fixed
+// lightbar) keep working through the retry window. A zone absent from sysfs
+// is fine — that is a detached cover, and the watcher calls again when it
+// returns.
 func (l *Lighting) Reopen() error {
-	dev, err := hid.FindDevice("")
+	dev, err := hidFind("")
 	if err != nil {
 		return err
+	}
+	for _, zone := range l.zones {
+		if !hidHas(zone) {
+			continue
+		}
+		if _, err := dev.FilteredView(zone); err != nil {
+			dev.Close()
+			return fmt.Errorf("zone %s is present but its hidraw node did not open (udev permissions not applied yet?): %w", zone, err)
+		}
 	}
 	if l.dev != nil {
 		l.dev.Close()

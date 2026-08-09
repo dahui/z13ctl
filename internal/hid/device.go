@@ -5,6 +5,8 @@ package hid
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -126,7 +128,22 @@ func (d *Device) FilteredView(nameOrPath string) (*Device, error) {
 		}
 	}
 	if len(matched) == 0 {
-		return nil, fmt.Errorf("device %q not found (available: keyboard, lightbar)", nameOrPath)
+		// Name the nodes actually open, not the names that could exist: during
+		// a keyboard reattach this device may hold only the lightbar, and the
+		// old hardcoded "available: keyboard, lightbar" reported the keyboard
+		// as available in the same breath as "keyboard not found".
+		names := make([]string, 0, len(d.nodes))
+		for _, n := range d.nodes {
+			if n.name != "" {
+				names = append(names, n.name)
+			}
+		}
+		sort.Strings(names)
+		avail := "none"
+		if len(names) > 0 {
+			avail = strings.Join(names, ", ")
+		}
+		return nil, fmt.Errorf("device %q not found (available: %s)", nameOrPath, avail)
 	}
 	return &Device{nodes: matched}, nil
 }
