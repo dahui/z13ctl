@@ -8,6 +8,7 @@
 *.so
 *.dylib
 voltaire
+voltaire-gui/voltaire-gui
 z13ctl
 dist/
 

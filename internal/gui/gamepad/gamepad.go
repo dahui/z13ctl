@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dahui/z13gui/internal/keyrepeat"
+	"github.com/dahui/voltaire/v2/internal/keyrepeat"
 	evdev "github.com/holoplot/go-evdev"
 )
 

@@ -14,19 +14,28 @@ import (
 // It prepends @define-color declarations, then appends the rules from
 // templateCSS (with its own @define-color lines stripped to avoid duplication).
 // The templateCSS is typically the embedded theme-default.css from the gui package.
+//
+// Every colour is defined under two names: the pre-rename @z13-* tokens and
+// their @voltaire-* aliases. Dual emission is the 2.0 compatibility shim —
+// user-authored theme.css files reference @z13-* and keep working through the
+// whole 2.x line, while bundled CSS is free to migrate to @voltaire-*. The
+// z13 names are removed at 3.0.
 func BuildThemeCSS(c Colors, templateCSS string) string {
-	defs := fmt.Sprintf(
-		"@define-color z13-accent      %s;\n"+
-			"@define-color z13-bg          %s;\n"+
-			"@define-color z13-surface     %s;\n"+
-			"@define-color z13-surface-alt %s;\n"+
-			"@define-color z13-text        %s;\n"+
-			"@define-color z13-text-dim    %s;\n"+
-			"@define-color z13-border      %s;\n"+
-			"@define-color z13-error       %s;\n",
-		c.Accent, c.Background, c.Surface, c.SurfaceAlt, c.Text, c.TextDim, c.Border, c.Error,
-	)
-	return defs + "\n" + StripDefineColors(templateCSS)
+	var defs strings.Builder
+	for _, tok := range [...]struct{ name, value string }{
+		{"accent", c.Accent},
+		{"bg", c.Background},
+		{"surface", c.Surface},
+		{"surface-alt", c.SurfaceAlt},
+		{"text", c.Text},
+		{"text-dim", c.TextDim},
+		{"border", c.Border},
+		{"error", c.Error},
+	} {
+		fmt.Fprintf(&defs, "@define-color z13-%-12s %s;\n", tok.name, tok.value)
+		fmt.Fprintf(&defs, "@define-color voltaire-%-12s %s;\n", tok.name, tok.value)
+	}
+	return defs.String() + "\n" + StripDefineColors(templateCSS)
 }
 
 // definePattern matches an "@define-color z13-foo …;" declaration, capturing the

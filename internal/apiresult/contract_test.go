@@ -1,14 +1,14 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package apiresult
 
 import (
 	"errors"
 	"path/filepath"
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // TestAPIReportsMissingDaemonWithoutAnError pins the api behaviour this whole

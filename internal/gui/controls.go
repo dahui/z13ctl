@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dahui/z13gui/internal/theme"
+	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
@@ -75,7 +75,7 @@ func (w *Window) buildContent() gtk.Widgetter {
 	titleRow.SetMarginStart(14)
 	titleRow.SetMarginEnd(14)
 
-	titleLabel := gtk.NewLabel("z13ctl")
+	titleLabel := gtk.NewLabel("Voltaire")
 	titleLabel.SetHAlign(gtk.AlignStart)
 	titleLabel.AddCSSClass("drawer-title")
 	titleRow.Append(titleLabel)

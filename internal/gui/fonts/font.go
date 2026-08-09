@@ -30,7 +30,7 @@ var interBold []byte
 // "Inter" family available to GTK/Pango CSS without installing system-wide.
 // Must be called before any GTK CSS providers are loaded.
 func Register() {
-	dir := filepath.Join(runtimeDir(), "z13gui", "fonts")
+	dir := filepath.Join(runtimeDir(), "voltaire-gui", "fonts")
 	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gocritic // err is checked
 		slog.Warn("fonts: cannot create dir", "path", dir, "err", err)
 		return

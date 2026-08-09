@@ -1,7 +1,7 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-package daemon
+package apiresult
 
 import (
 	"errors"

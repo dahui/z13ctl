@@ -101,7 +101,7 @@ jobs:
             cgo-${{ runner.os }}-
 
       - name: Build
-        run: make build
+        run: make build build-gui
       # Same target `make lint` depends on, so a formatting slip fails locally
       # before it can fail here. Previously this step carried its own copy of the
       # command and nothing in the Makefile checked formatting at all.

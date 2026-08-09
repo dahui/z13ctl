@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/dahui/z13gui/internal/colorconv"
-	"github.com/dahui/z13gui/internal/lighting"
+	"github.com/dahui/voltaire/v2/internal/colorconv"
+	"github.com/dahui/voltaire/v2/internal/lighting"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 

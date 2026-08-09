@@ -6,7 +6,7 @@ package lighting
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 func TestResolveMode(t *testing.T) {

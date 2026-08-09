@@ -5,7 +5,7 @@
 # for the active seat user. This file is a safety net for edge cases
 # (wireless dongles, unusual devices not in the default hwdb).
 #
-# Install: sudo cp 99-z13gui-gamepad.rules /etc/udev/rules.d/
+# Install: sudo cp 99-voltaire-gamepad.rules /etc/udev/rules.d/
 # Reload:  sudo udevadm control --reload-rules && sudo udevadm trigger
 
 SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"

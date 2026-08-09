@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=z13gui
-Comment=GTK4 overlay drawer for z13ctl
-Exec=z13gui
+Name=Voltaire
+Comment=Hardware control overlay for the ASUS ROG Flow Z13
+Exec=voltaire-gui
 Categories=Utility;System;
-Keywords=rog;asus;z13;lighting;
+Keywords=voltaire;rog;asus;z13;lighting;z13gui;z13ctl;

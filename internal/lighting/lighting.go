@@ -9,7 +9,7 @@
 // cannot be unit tested. These are decisions about daemon state, not widgets.
 package lighting
 
-import "github.com/dahui/z13ctl/api"
+import "github.com/dahui/voltaire/api/v2"
 
 // Defaults used when daemon state is unavailable — before the first sync, or when
 // the daemon is not running.

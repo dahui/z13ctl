@@ -16,7 +16,7 @@ package gui
 import (
 	"log/slog"
 
-	"github.com/dahui/z13gui/internal/focusgrid"
+	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 

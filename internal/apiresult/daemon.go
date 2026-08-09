@@ -1,7 +1,7 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-// Package daemon turns a z13ctl api call's result pair into a single error.
+// Package apiresult turns a voltaire api call's result pair into a single error.
 //
 // Every api.Send* function returns (handled bool, err error), where handled is
 // false and err is nil when the daemon is not running — the socket dial failed,
@@ -19,13 +19,13 @@
 // be. Err is shaped to take an api call's results directly:
 //
 //	if err := daemon.Err(api.SendTdpReset()); err != nil {
-package daemon
+package apiresult
 
 import "errors"
 
 // ErrNotRunning reports that the daemon was unreachable, so the request was
 // never sent. Worded for the error bar, which shows it to the user verbatim.
-var ErrNotRunning = errors.New("z13ctl daemon is not running")
+var ErrNotRunning = errors.New("voltaire daemon is not running")
 
 // Err collapses an api result pair into one error: nil only when the daemon
 // handled the request and reported no failure.

@@ -8,24 +8,57 @@ LDFLAGS  := -s -w -X github.com/dahui/voltaire/v2/internal/version.Version=$(VER
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
 SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 
-.PHONY: build test cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs clean help
+HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
+
+# HERMETIC_PKGS is every package that compiles without CGO and GTK4 headers,
+# derived rather than hand-listed so a newly added package is tested
+# automatically. internal/gui (the cgo island) and voltaire-gui (the main
+# package importing it) are excluded by construction — that is the boundary:
+# widgets there, decisions in the pure packages.
+HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | grep -v -e '/internal/gui' -e '/voltaire-gui')
+
+.PHONY: build build-gui test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs clean help
 
 ## build: compile voltaire with version from git tags
 build:
-	go build -ldflags "$(LDFLAGS)" -o voltaire .
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o voltaire .
 
-## test: run all tests (both modules — api/ is separate, so ./... misses it)
+## build-gui: compile voltaire-gui (needs gtk4 + gtk4-layer-shell headers).
+## The binary lands inside the source dir — a root dir and a root file cannot
+## share the name voltaire-gui, and the directory keeps the plan's layout.
+build-gui:
+	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o voltaire-gui/voltaire-gui ./voltaire-gui
+
+## test: run all tests (both modules — api/ is separate, so ./... misses it).
+## internal/gui is the cgo island and voltaire-gui is the main package that
+## imports it: neither has tests, but ./... would still compile both, dragging
+## GTK4 headers into what must stay a hermetic run.
 test:
-	go test ./...
+	go test $(HERMETIC_PKGS)
 	cd api && go test ./...
+
+## race: run unit tests under the race detector (both modules)
+race:
+	go test -race $(HERMETIC_PKGS)
+	cd api && go test -race ./...
 
 ## cover: run tests with coverage report
 cover:
-	go test -coverprofile=coverage.out ./...
+	go test -coverprofile=coverage.out $(HERMETIC_PKGS)
 	go tool cover -func=coverage.out
 
-## lint: run golangci-lint (both modules)
-lint:
+## fmt-check: fail if any file needs gofmt (generated bpf2go bindings excluded)
+fmt-check:
+	@unformatted="$$(gofmt -l . | grep -v -e '^$(HIDBLOCKER_DIR)/blocker_' -e '^dist/' -e '^site/' || true)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "These files need gofmt:"; \
+		echo "$$unformatted"; \
+		echo "Run: gofmt -w <file>"; \
+		exit 1; \
+	fi
+
+## lint: check formatting, then run golangci-lint (both modules)
+lint: fmt-check
 	golangci-lint run ./...
 	cd api && golangci-lint run ./...
 
@@ -86,7 +119,7 @@ docs:
 
 ## clean: remove all generated build and test artifacts
 clean:
-	rm -f voltaire z13ctl
+	rm -f voltaire z13ctl voltaire-gui/voltaire-gui
 	rm -rf dist/
 	find . -name '*.test' -delete
 	find . -name 'coverage.out' -o -name 'coverage.*' -o -name '*.coverprofile' -o -name 'profile.cov' | xargs rm -f

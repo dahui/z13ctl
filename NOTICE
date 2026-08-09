@@ -1,4 +1,4 @@
-z13gui
+Voltaire (formerly z13ctl and z13gui)
 Copyright 2026 Jeff Hagadorn
 
 This product includes software developed by Jeff Hagadorn.
@@ -25,7 +25,7 @@ Inter (typeface)
   Licensed under the SIL Open Font License, Version 1.1.
   Full license text: internal/gui/fonts/LICENSE-Inter.txt
 
-  These files are embedded into the z13gui binary with //go:embed, so every
+  These files are embedded into the voltaire-gui binary with //go:embed, so every
   built binary and every release artifact contains the font. The OFL requires
   its notice to travel with the font, which is why LICENSE-Inter.txt is shipped
   in the release archive and installed by the distribution packages rather than
@@ -35,7 +35,7 @@ Inter (typeface)
 Components linked but not distributed
 --------------------------------------------------------------------------------
 
-z13gui links dynamically against GTK 4 (LGPL-2.1-or-later) and
+voltaire-gui links dynamically against GTK 4 (LGPL-2.1-or-later) and
 gtk4-layer-shell (MIT), and statically against its Go module dependencies.
 Neither the shared libraries nor the Go dependencies' source are redistributed
 here; their licenses are recorded in go.mod / go.sum and in the respective

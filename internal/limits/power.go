@@ -1,8 +1,8 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-// Package power holds the TDP and fan-curve rules the drawer needs in order to
-// avoid offering the user a state the z13ctl daemon would refuse.
+// Package limits holds the TDP and fan-curve rules the drawer needs in order to
+// avoid offering the user a state the voltaire daemon would refuse.
 //
 // It exists to be testable. The GTK code in internal/gui cannot be unit tested
 // without CGO and GTK4 headers, so everything here is pure Go operating on plain
@@ -12,26 +12,26 @@
 // # Device limits
 //
 // The numbers live in a Limits value rather than in package constants, because
-// z13ctl is being extended to other AMD devices whose chips have different power
+// voltaire is being extended to other AMD devices whose chips have different power
 // limits and per-profile PPT defaults. DefaultLimits returns the 2025 Flow Z13's
 // values, which are correct for the only device supported today.
 //
-// The daemon does not yet serve its limits over the API — they live in z13ctl's
+// The daemon does not yet serve its limits over the API — they live in voltaire's
 // internal/cli, which is not exported through the api module, so they have to be
 // duplicated here for now. When that API lands the only change is where the
 // Limits value comes from: fetch once at startup, Sanitized, falling back to
 // DefaultLimits. Nothing else in the drawer moves. See the design brief in
-// z13ctl's .claude/plans/device-limits-api.md.
+// .claude/plans/device-limits-api.md.
 //
 // If the two ever disagree the daemon wins: it validates against hardware, and
 // these rules only exist so the UI does not present an option that gets rejected.
-package power
+package limits
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // ProfileCustom is the daemon's default custom profile name — the one created

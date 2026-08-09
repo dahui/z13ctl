@@ -3,8 +3,8 @@
 
 package main
 
-// z13gui — GTK4 Wayland overlay drawer for z13ctl.
-// Slides in from the right edge on Armoury Crate button press (via z13ctl daemon).
+// voltaire-gui — GTK4 Wayland overlay drawer for voltaire.
+// Slides in from the right edge on Armoury Crate button press (via the voltaire daemon).
 
 import (
 	"fmt"
@@ -14,17 +14,19 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/dahui/z13gui/internal/gui"
-	"github.com/dahui/z13gui/internal/gui/gamepad"
-	"github.com/dahui/z13gui/internal/startup"
-	"github.com/dahui/z13gui/internal/theme"
+	"github.com/dahui/voltaire/v2/internal/gui"
+	"github.com/dahui/voltaire/v2/internal/gui/gamepad"
+	"github.com/dahui/voltaire/v2/internal/startup"
+	"github.com/dahui/voltaire/v2/internal/theme"
+	"github.com/dahui/voltaire/v2/internal/version"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
-// Version is set at link time via -X main.Version=<version>.
-var Version = "dev"
-
 func main() {
+	// First-run migration from the pre-2.0 config directory. Must precede
+	// anything that reads config — including --print-theme below.
+	theme.MigrateFromZ13gui()
+
 	// Scan args for our flags before GTK sees them. The flag package cannot be
 	// used: app.Run() forwards the remainder to GLib's option parser, which errors
 	// on anything it does not recognise, so our flags must be removed from the
@@ -32,7 +34,7 @@ func main() {
 	args := startup.ParseArgs(os.Args)
 	switch args.Action {
 	case startup.ActionVersion:
-		fmt.Printf("z13gui %s\n", Version)
+		fmt.Printf("voltaire-gui %s\n", version.Version)
 		os.Exit(0)
 	case startup.ActionPrintTheme:
 		fmt.Print(gui.DefaultThemeTOML())
@@ -57,9 +59,9 @@ func main() {
 	text := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: appLevel})
 	slog.SetDefault(slog.New(startup.NewFilterHandler(text, appLevel, gtkLevel)))
 
-	slog.Info("starting", "version", Version)
+	slog.Info("starting", "version", version.Version)
 
-	// Disable GTK4 accessibility bridge (AT-SPI). z13gui is a hardware overlay
+	// Disable GTK4 accessibility bridge (AT-SPI). voltaire-gui is a hardware overlay
 	// controlled by a physical button — no accessibility consumers. Without this,
 	// GTK4 sends D-Bus events on every widget state change, which can timeout
 	// under systemd where the AT-SPI bus may not be available.
@@ -97,7 +99,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// GApplication registers com.github.dahui.z13gui on the session bus, so a
+	// GApplication registers io.github.dahui.Voltaire on the session bus, so a
 	// second launch of the binary does not start a second process: it forwards
 	// "activate" to the running instance and exits. Without this guard that fires
 	// gui.New again, building a second full drawer — its own layer surface,
@@ -105,7 +107,7 @@ func main() {
 	// Launching from the desktop entry while the user service runs is enough to
 	// trigger it. On re-activation, toggle the existing drawer instead.
 	var win *gui.Window
-	app := gtk.NewApplication("com.github.dahui.z13gui", 0)
+	app := gtk.NewApplication("io.github.dahui.Voltaire", 0)
 	app.ConnectActivate(func() {
 		if win != nil {
 			slog.Info("re-activated, toggling existing drawer")

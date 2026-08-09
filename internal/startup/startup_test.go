@@ -12,7 +12,7 @@ import (
 )
 
 func TestParseArgsPassesUnknownFlagsThrough(t *testing.T) {
-	got := ParseArgs([]string{"z13gui", "--gtk-something", "extra"})
+	got := ParseArgs([]string{"voltaire-gui", "--gtk-something", "extra"})
 
 	if got.Debug {
 		t.Error("Debug = true, want false")
@@ -20,7 +20,7 @@ func TestParseArgsPassesUnknownFlagsThrough(t *testing.T) {
 	if got.Action != ActionNone {
 		t.Errorf("Action = %q, want none", got.Action)
 	}
-	want := []string{"z13gui", "--gtk-something", "extra"}
+	want := []string{"voltaire-gui", "--gtk-something", "extra"}
 	assertArgs(t, got.GTKArgs, want)
 }
 
@@ -28,19 +28,19 @@ func TestParseArgsPassesUnknownFlagsThrough(t *testing.T) {
 // GLib's option parser, which errors on anything it does not recognise.
 func TestParseArgsConsumesOurFlags(t *testing.T) {
 	for _, flag := range []string{"-d", "--debug", "--version", "--print-theme", "--list-themes"} {
-		got := ParseArgs([]string{"z13gui", flag})
-		assertArgs(t, got.GTKArgs, []string{"z13gui"})
+		got := ParseArgs([]string{"voltaire-gui", flag})
+		assertArgs(t, got.GTKArgs, []string{"voltaire-gui"})
 	}
 }
 
 func TestParseArgsDebugFlag(t *testing.T) {
 	for _, flag := range []string{"-d", "--debug"} {
-		if got := ParseArgs([]string{"z13gui", flag}); !got.Debug {
+		if got := ParseArgs([]string{"voltaire-gui", flag}); !got.Debug {
 			t.Errorf("ParseArgs(%q) Debug = false, want true", flag)
 		}
 	}
 	// -d must be honoured wherever it appears, including after another flag.
-	got := ParseArgs([]string{"z13gui", "--print-theme", "-d"})
+	got := ParseArgs([]string{"voltaire-gui", "--print-theme", "-d"})
 	if !got.Debug {
 		t.Error("Debug = false, want true when -d follows an action")
 	}
@@ -59,7 +59,7 @@ func TestParseArgsActions(t *testing.T) {
 		{flag: "--list-themes", want: ActionListThemes},
 	}
 	for _, tt := range tests {
-		if got := ParseArgs([]string{"z13gui", tt.flag}); got.Action != tt.want {
+		if got := ParseArgs([]string{"voltaire-gui", tt.flag}); got.Action != tt.want {
 			t.Errorf("ParseArgs(%q) Action = %q, want %q", tt.flag, got.Action, tt.want)
 		}
 	}
@@ -68,7 +68,7 @@ func TestParseArgsActions(t *testing.T) {
 // Several actions on one line: the first wins, matching what a user sees from a
 // single flag — print and exit.
 func TestParseArgsFirstActionWins(t *testing.T) {
-	got := ParseArgs([]string{"z13gui", "--list-themes", "--version"})
+	got := ParseArgs([]string{"voltaire-gui", "--list-themes", "--version"})
 	if got.Action != ActionListThemes {
 		t.Errorf("Action = %q, want list-themes (the first given)", got.Action)
 	}
@@ -77,8 +77,8 @@ func TestParseArgsFirstActionWins(t *testing.T) {
 // GApplication expects argv[0]; dropping it would break option parsing in ways
 // that only show up at runtime.
 func TestParseArgsAlwaysKeepsArgv0(t *testing.T) {
-	got := ParseArgs([]string{"/usr/local/bin/z13gui", "-d"})
-	assertArgs(t, got.GTKArgs, []string{"/usr/local/bin/z13gui"})
+	got := ParseArgs([]string{"/usr/local/bin/voltaire-gui", "-d"})
+	assertArgs(t, got.GTKArgs, []string{"/usr/local/bin/voltaire-gui"})
 }
 
 func TestParseArgsHandlesEmptyArgv(t *testing.T) {

@@ -16,10 +16,10 @@ type AppConfig struct {
 	Accent string // accent ID within the theme; "" = use theme default
 }
 
-// LoadAppConfig reads ~/.config/z13gui/config.toml.
+// LoadAppConfig reads ~/.config/voltaire/config.toml.
 // Returns a default config (theme "rog-dark") if the file doesn't exist or can't be parsed.
 func LoadAppConfig() AppConfig {
-	path := filepath.Join(XDGConfigHome(), "z13gui", "config.toml")
+	path := filepath.Join(XDGConfigHome(), "voltaire", "config.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return AppConfig{Theme: "rog-dark"}
@@ -51,14 +51,14 @@ func LoadAppConfig() AppConfig {
 	return cfg
 }
 
-// SaveAppConfig writes the app config to ~/.config/z13gui/config.toml.
+// SaveAppConfig writes the app config to ~/.config/voltaire/config.toml.
 func SaveAppConfig(cfg AppConfig) {
-	dir := filepath.Join(XDGConfigHome(), "z13gui")
+	dir := filepath.Join(XDGConfigHome(), "voltaire")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("failed to create config dir", "path", dir, "err", err)
 		return
 	}
-	content := "# z13gui app configuration\ntheme = \"" + cfg.Theme + "\"\n"
+	content := "# voltaire-gui app configuration\ntheme = \"" + cfg.Theme + "\"\n"
 	if cfg.Accent != "" {
 		content += "accent = \"" + cfg.Accent + "\"\n"
 	}

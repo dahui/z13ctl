@@ -23,6 +23,19 @@ before:
 builds:
   - id: voltaire
     binary: voltaire
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/dahui/voltaire/v2/internal/version.Version={{.Version}}
+    goos:
+      - linux
+    goarch:
+      - amd64
+  - id: voltaire-gui
+    binary: voltaire-gui
+    main: ./voltaire-gui
+    env:
+      - CGO_ENABLED=1
     ldflags:
       - -s -w -X github.com/dahui/voltaire/v2/internal/version.Version={{.Version}}
     goos:
@@ -32,6 +45,7 @@ builds:
 
 archives:
   - id: voltaire
+    ids: [voltaire]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -45,6 +59,20 @@ archives:
       # as issue #12, reached a different way. goreleaser logs "no files matched"
       # rather than failing, so watch for that line in the release output.
       - contrib/udev/*
+
+  - id: voltaire-gui
+    ids: [voltaire-gui]
+    formats: [tar.gz]
+    name_template: "voltaire-gui_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      # Inter is embedded into the binary with //go:embed, so the OFL notice
+      # has to travel with every artifact, not just sit in the source tree.
+      - internal/gui/fonts/LICENSE-Inter.txt
+      - contrib/systemd/user/voltaire-gui.service
+      - contrib/voltaire-gui.desktop
+      - contrib/udev/99-voltaire-gamepad.rules
 
 checksum:
   name_template: "checksums.txt"
@@ -95,6 +123,59 @@ nfpms:
       archlinux:
         suggests:
           - "ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer"
+    rpm:
+      group: Applications/System
+
+  - id: voltaire-gui-pkg
+    package_name: voltaire-gui
+    ids: [voltaire-gui]
+    section: utils
+    formats:
+      - archlinux
+      - deb
+      - rpm
+    homepage: https://github.com/dahui/voltaire
+    maintainer: "Jeff Hagadorn <noreply@github.com>"
+    description: GTK4 overlay GUI for voltaire hardware control
+    license: Apache-2.0
+    dependencies:
+      - voltaire
+      - gtk4
+      - gtk4-layer-shell
+    provides:
+      - voltaire-gui
+      - z13gui
+    replaces:
+      - z13gui
+    conflicts:
+      - z13gui
+    scripts:
+      postinstall: contrib/nfpm/gui-postinstall.sh
+      preremove: contrib/nfpm/gui-preremove.sh
+      postremove: contrib/nfpm/gui-postremove.sh
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/voltaire-gui/LICENSE
+      - src: NOTICE
+        dst: /usr/share/licenses/voltaire-gui/NOTICE
+      # The embedded typeface ships inside the binary, so its licence belongs
+      # alongside the package's own.
+      - src: internal/gui/fonts/LICENSE-Inter.txt
+        dst: /usr/share/licenses/voltaire-gui/LICENSE-Inter.txt
+      - src: contrib/systemd/user/voltaire-gui.service
+        dst: /usr/lib/systemd/user/voltaire-gui.service
+      - src: contrib/voltaire-gui.desktop
+        dst: /usr/share/applications/voltaire-gui.desktop
+      - src: contrib/udev/99-voltaire-gamepad.rules
+        dst: /usr/lib/udev/rules.d/99-voltaire-gamepad.rules
+    overrides:
+      deb:
+        dependencies:
+          - voltaire
+          - libgtk-4-1
+          - libgtk4-layer-shell0
+    archlinux:
+      packager: "Jeff Hagadorn <noreply@github.com>"
     rpm:
       group: Applications/System
 

@@ -1,9 +1,9 @@
 /* Copyright 2026 Jeff Hagadorn
    SPDX-License-Identifier: Apache-2.0 */
 
-/* z13gui default theme — ROG dark red.
+/* voltaire-gui default theme — ROG dark red.
    To create a custom theme, copy this file to:
-       $XDG_CONFIG_HOME/z13gui/theme.css   (usually ~/.config/z13gui/theme.css)
+       $XDG_CONFIG_HOME/voltaire/theme.css   (usually ~/.config/voltaire/theme.css)
    and modify the @define-color values or any rule below.
 
    Available named colors:

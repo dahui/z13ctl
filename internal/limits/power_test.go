@@ -1,12 +1,12 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-package power
+package limits
 
 import (
 	"testing"
 
-	"github.com/dahui/z13ctl/api"
+	"github.com/dahui/voltaire/api/v2"
 )
 
 // otherDevice is a fictional second device with a deliberately different

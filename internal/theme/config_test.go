@@ -24,7 +24,7 @@ func TestLoadAppConfig_Default(t *testing.T) {
 func TestLoadAppConfig_WithTheme(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
-	dir := filepath.Join(tmp, "z13gui")
+	dir := filepath.Join(tmp, "voltaire")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestLoadAppConfig_WithTheme(t *testing.T) {
 func TestLoadAppConfig_Comments(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
-	dir := filepath.Join(tmp, "z13gui")
+	dir := filepath.Join(tmp, "voltaire")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestLoadAppConfig_Comments(t *testing.T) {
 func TestLoadAppConfig_EmptyThemeKeepsDefault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
-	dir := filepath.Join(tmp, "z13gui")
+	dir := filepath.Join(tmp, "voltaire")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSaveAppConfig_CreatesDirectory(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	SaveAppConfig(AppConfig{Theme: "nord"})
-	dir := filepath.Join(tmp, "z13gui")
+	dir := filepath.Join(tmp, "voltaire")
 	info, err := os.Stat(dir)
 	if err != nil {
 		t.Fatalf("config dir not created: %v", err)

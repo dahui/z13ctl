@@ -58,7 +58,7 @@ import (
 	"os"
 	"unsafe" //nolint:gocritic // used with cgo, requires separate import block
 
-	"github.com/dahui/z13gui/internal/uiscale"
+	"github.com/dahui/voltaire/v2/internal/uiscale"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )

@@ -1,4 +1,26 @@
-# z13gui — Project Context for Claude
+# voltaire-gui (`internal/gui`) — Project Context for Claude
+
+> **This file predates the 2.0 merge and has not been refreshed yet.** It was
+> the standalone z13gui repo's CLAUDE.md, moved here unchanged so its reasoning
+> survives the merge. The GTK, gamescope, focus, animation and CSS decisions
+> below are all still accurate — that is the value of the file. The *names
+> around them* are not:
+>
+> | It says | It is now |
+> |---|---|
+> | module `github.com/dahui/z13gui` | `github.com/dahui/voltaire/v2` (one module, two binaries) |
+> | binary / command `z13gui` | `voltaire-gui` (built to `voltaire-gui/voltaire-gui`) |
+> | sibling repo `z13ctl`, its `api/` at `api/v1.1.7` | same repo; `github.com/dahui/voltaire/api/v2` |
+> | `internal/power` | `internal/limits` |
+> | `internal/daemon` (the `Err` helper) | `internal/apiresult` |
+> | `main.go` at the repo root | `voltaire-gui/main.go` |
+> | socket `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` | `…/voltaire/voltaire.sock` (legacy path still served through 2.x) |
+> | config `~/.config/z13gui` | `~/.config/voltaire` (copied on first run) |
+> | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
+> | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
+> | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |
+>
+> The root `CLAUDE.md` is authoritative for layout, build and release.
 
 ## What this project is
 

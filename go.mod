@@ -10,7 +10,18 @@ require (
 
 require github.com/godbus/dbus/v5 v5.2.2
 
-require github.com/BurntSushi/toml v1.6.0
+require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/cilium/ebpf v0.21.0
+	github.com/diamondburned/gotk4-layer-shell/pkg v0.0.0-20240109211357-6efa9f6dc438
+	github.com/diamondburned/gotk4/pkg v0.3.1
+)
+
+require (
+	github.com/KarpelesLab/weak v0.1.1 // indirect
+	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+)
 
 require (
 	github.com/dahui/voltaire/api/v2 v2.0.0

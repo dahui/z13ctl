@@ -12,18 +12,18 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dahui/z13gui/internal/gui/gamepad/hidblocker"
+	"github.com/dahui/voltaire/v2/internal/gui/gamepad/hidblocker"
 )
 
 // pidFilePath returns the path to the frozen-PID state file.
-// Used for crash recovery: if z13gui is killed, the systemd ExecStopPost
+// Used for crash recovery: if voltaire-gui is killed, the systemd ExecStopPost
 // or signal handler reads this file to thaw the frozen Steam process.
 func pidFilePath() string {
 	runtime := os.Getenv("XDG_RUNTIME_DIR")
 	if runtime == "" {
 		runtime = fmt.Sprintf("/run/user/%d", os.Getuid())
 	}
-	return filepath.Join(runtime, "z13gui-frozen-pid")
+	return filepath.Join(runtime, "voltaire-gui-frozen-pid")
 }
 
 // FindSteamPID locates the main Steam process by scanning /proc.

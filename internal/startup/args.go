@@ -30,7 +30,7 @@ type Args struct {
 	GTKArgs []string // argv to hand to GApplication, including argv[0]
 }
 
-// ParseArgs scans argv for the flags z13gui handles itself and passes everything
+// ParseArgs scans argv for the flags voltaire-gui handles itself and passes everything
 // else through to GTK.
 //
 // The flag package is deliberately not used: app.Run() forwards the remaining

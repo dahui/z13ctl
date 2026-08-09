@@ -2,23 +2,32 @@
 
 ## What this project is
 
-`voltaire` (formerly `z13ctl`) is a Linux CLI for controlling RGB lighting, fan curves, TDP (PPT power
+`voltaire` (formerly `z13ctl` and `z13gui`) controls RGB lighting, fan curves, TDP (PPT power
 limits), and system settings on the 2025 ASUS ROG Flow Z13 via Linux hidraw,
 asus-wmi sysfs, and asus-armoury firmware-attributes interfaces.
 It uses the ASUS Aura HID protocol reverse-engineered from g-helper.
-Module path: `github.com/dahui/voltaire/v2`. Binary name: `voltaire`. License: Apache 2.0.
+Module path: `github.com/dahui/voltaire/v2`. License: Apache 2.0.
+
+**Two binaries from one module**: `voltaire` (the CLI + daemon, `CGO_ENABLED=0`)
+and `voltaire-gui` (the GTK4 overlay drawer, `CGO_ENABLED=1`), the latter merged
+in from the former z13gui repo at 2.0 with its history intact. They share
+`internal/version.Version` (one `-X` ldflag serves both) and talk to each other
+only through `api/` — the GUI is a socket client like any other.
 
 ## Package layout
 
 ```
 api/                         Public client API submodule (github.com/dahui/voltaire/api/v2)
-  go.mod                     Separate module; stdlib only; importable by z13gui and external tools
+  go.mod                     Separate module; stdlib only; importable by voltaire-gui and external tools
   types.go                   State, LightingState, FanCurvePoint, FanCurveState, TDPState, UndervoltState,
                              CustomProfile, AutoswitchState; IsCustomProfile/InCustomProfile/ActiveCustomProfile
   device.go                  DeviceInfo + section types — the device-get capability/limits document
   client.go                  SocketPath, Send*, Subscribe (all client functions)
   example_test.go            testable examples for all Send* and Subscribe functions
-main.go                      entry point
+main.go                      entry point (voltaire CLI/daemon)
+voltaire-gui/                entry point for the GUI binary (built to voltaire-gui/voltaire-gui
+  main.go                    locally — a root dir and a root binary cannot share the name);
+                             runs theme.MigrateFromZ13gui() before anything reads config
 cmd/                         Cobra subcommands
   root.go                    root command, Version var, dryRunFlag, deviceFlag, noButtonFlag, noSleepReleaseFlag
   apply.go                   apply lighting effect
@@ -103,15 +112,66 @@ internal/
     export_test.go           test-only exports: NewTestDevice, NewTestDeviceAnon,
                              UeventToDevPath, DeviceNameFromUevent, HasDeviceGlob,
                              DescriptorHasAuraReport
+  version/                   Version var — one -X ldflag serves both binaries
+                             (— device abstraction, M0–M2 —)
+  driver/                    the per-hardware-class interfaces the daemon and CLI program
+                             against (Fans, Power, Profile, Lighting, Buttons, …) +
+                             driver.PowerEnvelope; device support is implementations
+                             selected by data, not calls into one machine's sysfs layout
+  device/                    assembles a Device (per-class driver fields, nil where the
+                             machine has no such capability) from DMI identity matched
+                             against the embedded devices/*.toml
+    devices/                 device data — asus-rog-flow-z13-2025.toml
+  drivers/
+    asusz13/                 the 2025 ROG Flow Z13 (GZ302) driver: hwmon fan pair, PPT,
+                             platform_profile, battery threshold, asus-armoury toggles,
+                             ryzen_smu CO
+      register/             blank-import side-effect package wiring it into the registry
+    aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
+    evdevkey/                driver.Buttons over one key on an evdev device ("evdev-key")
+  safety/                    the thermal-safety rules between handlers and drivers, pure and
+                             parameterized by driver.PowerEnvelope (FloorPWMAt lives here)
+                             (— voltaire-gui, merged from z13gui at 2.0 —)
+  gui/                       GTK4 overlay drawer: Window, state sync, widgets, theming.
+                             The cgo island — excluded from make test/race/cover (see Testing)
+    layershell/              Wayland layer-shell backend (KDE, Hyprland, Sway)
+    overlay/                 fullscreen click-through backend for compositors without
+                             layer-shell — GNOME/Mutter above all
+    gamescope/               X11 overlay backend for Steam Gaming Mode
+    gamepad/                 evdev gamepad reader → normalized Actions (visible-only dispatch)
+      hidblocker/            BPF LSM blocker keeping games from seeing the pad while open
+    fonts/                   embedded Inter + fontconfig registration (see NOTICE)
+  theme/                     theme definitions, config persistence, CSS generation — pure Go
+    migrate.go               ~/.config/z13gui → ~/.config/voltaire first-run copy shim
+    css.go                   BuildThemeCSS — emits every token twice (@z13-* and
+                             @voltaire-*) through 2.x
+  apiresult/                 turns api's (handled, err) pair into one error; ErrNotRunning
+  limits/                    TDP + fan-curve rules the drawer needs so it never offers a
+                             state the daemon would refuse (the testable half of gui/tdp.go)
+  lighting/                  the drawer's RGB rules: mode from state, controls per mode
+  colorconv/                 RRGGBB ⇄ HSL for the colour picker (separate so it is testable)
+  focusgrid/                 D-pad focus navigation over rows/columns/sections
+  keyrepeat/                 which held direction owns the gamepad auto-repeat
+  panelgeom/                 panel rectangle + slide animation for the overlay backend
+  uiscale/                   UI scale factor for gamescope, where GTK cannot be asked
+  togglegate/                debounce window for the toggle signal
+  startup/                   pre-GTK process startup: argument scan + log filtering
 contrib/
   systemd/user/
     voltaire.socket          systemd user socket unit (socket activation; TWO ListenStream
                              lines — %t/voltaire/voltaire.sock + the pre-rename
                              %t/z13ctl/z13ctl.sock, served through all of 2.x)
     voltaire.service         systemd user service unit (Type=notify, Restart=on-failure)
+    voltaire-gui.service     user service for the drawer (frozen-pid watchdog marker)
   systemd/system/
     voltaire-perms.service   system oneshot unit: chgrp/chmod on battery, firmware-attributes,
                              PPT, and ryzen_smu sysfs at boot (keep in sync with buildServiceContent)
+  udev/                      packaged copies: 99-voltaire.rules (sysfs grants),
+                             99-voltaire-gamepad.rules (gamepad read access)
+  nfpm/                      package scripts: postinstall/preremove/postremove for voltaire,
+                             gui-* for voltaire-gui (each migrates the pre-rename unit)
+  voltaire-gui.desktop       desktop entry
+examples/themes/             shipped theme TOMLs (catppuccin, gruvbox, nord, rog-*, …)
 ```
 
 ## Key architectural decisions
@@ -918,6 +978,38 @@ contrib/
   tick. No action is taken on detach (the keyboard powers off in hardware). Run()'s
   device-close defer closes whatever `d.dev` currently is, since hotplug may have
   replaced it.
+- **The GUI is an ordinary socket client, and the merge did not change that.**
+  `voltaire-gui` reaches the daemon only through `api/` — the same public module
+  a Decky plugin or a third-party tool uses — so nothing in `internal/daemon`
+  may grow a GUI-shaped shortcut. The two binaries share exactly two things:
+  `internal/version.Version` and the `api` contract. That is what keeps the CLI
+  free of cgo and lets the daemon be tested without GTK.
+- **`internal/apiresult` exists because "the daemon is not running" is not an
+  error.** Every `api.Send*` returns `(handled bool, err error)`, where
+  `handled == false, err == nil` means the dial failed — a CLI caller falls back
+  to direct hardware there, but the GUI has no such path, so it collapses the
+  pair into one error with a `ErrNotRunning` sentinel and a message naming
+  voltaire. Turning the pair into an error at each call site is how a control
+  reports success on a write that never happened (issue #14).
+- **The 2.0 GUI migrations are copies, on the same terms as the daemon's.**
+  `theme.MigrateFromZ13gui` copies `~/.config/z13gui/*` to
+  `~/.config/voltaire/*` **only while the voltaire directory does not exist at
+  all**, and never moves: the old directory staying intact is what makes a
+  downgrade to 1.x safe for the whole 2.x line, and the existence check means it
+  can never overwrite something saved since. Only top-level regular files are
+  copied — everything the 1.x GUI ever wrote. It must run **before anything reads
+  config**, which is why it is the first statement in `main`, ahead of
+  `--print-theme` and any GTK call.
+- **`BuildThemeCSS` defines every token twice — `@z13-*` and `@voltaire-*` —
+  which is what lets the token rename be *staged*.** The generated
+  `@define-color` block is prepended to the bundled `theme-default.css`, and
+  that sheet still references `@z13-*`; emitting only the new names would drop
+  every rule using them and leave the drawer unstyled, so defines and references
+  cannot flip in the same commit. Both names now, bundled sheet migrates at M4,
+  `@z13-*` removed at 3.0 with the other shims. Note the asymmetry that makes
+  this safe: a user's `theme.css` is loaded **verbatim** (it supplies its own
+  defines and never sees ours), while a `theme.toml` is substituted into the
+  bundled template — so the alias affects the template path only.
 
 ## Go conventions established in this project
 
@@ -946,6 +1038,16 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
   `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
   sysfs tree (see below).
+- **`make test`/`race`/`cover` run `HERMETIC_PKGS`, not `./...`.** That is
+  `go list ./...` minus `internal/gui` (and its subpackages) and `voltaire-gui`.
+  Neither has tests, but `./...` still *compiles* them, which drags GTK4 headers
+  and cgo into a run that must work on any machine and in CI without them. The
+  boundary is why every rule worth testing on the GUI side lives in a pure-Go
+  package (`limits`, `lighting`, `theme`, `colorconv`, `focusgrid`, `keyrepeat`,
+  `panelgeom`, `uiscale`, `togglegate`, `startup`, `apiresult`) rather than in
+  `internal/gui` — adding logic to the cgo island puts it beyond every test.
+  `make lint` deliberately runs the **full** tree, GTK island included; it is a
+  local/dev gate where the headers are present.
 - Current coverage: ~87% cli, ~78% aura, ~40% hid, ~38% daemon, ~29% api, ~9% cmd.
   Re-measure with `go test -cover ./...` (plus `cd api`) rather than trusting these
   — they were stale by 17 points on daemon and 9 on api before v1.3.1.
@@ -980,10 +1082,14 @@ actual power limits.
 ## Build / release
 
 ```sh
-make build              # go build with version from git tags via ldflags
-make test               # go test ./...
+make build              # go build voltaire (CGO_ENABLED=0), version from git tags via ldflags
+make build-gui          # go build voltaire-gui (CGO=1; needs gtk4 + gtk4-layer-shell headers)
+                        #   → voltaire-gui/voltaire-gui
+make test               # go test over HERMETIC_PKGS (both modules; no cgo)
+make race               # same set under -race
 make cover              # test + coverage report
-make lint               # golangci-lint run ./...
+make fmt-check          # fail if any file needs gofmt (generated bpf2go bindings excluded)
+make lint               # fmt-check, then golangci-lint over the FULL tree (both modules)
 make mod-tidy           # go mod tidy for all modules (main + api/)
 sudo make install            # install pre-built binary to /usr/local/bin
 make install-service         # install + enable systemd user units (socket + service)
@@ -992,7 +1098,7 @@ sudo make install-perms-service    # install system oneshot service for sysfs pe
 sudo make uninstall-perms-service  # remove system permissions service
 make snapshot           # goreleaser release --snapshot --clean  (no publish)
 make release            # goreleaser release --clean             (requires pushed v* tag)
-make clean              # remove voltaire binary, dist/, coverage artifacts
+make clean              # remove both binaries, dist/, coverage artifacts
 ```
 
 Version is injected at link time:
@@ -1005,6 +1111,12 @@ builds without ldflags.
 
 Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.yml`.
 - Builds for `linux/amd64` only (hidraw is Linux-specific; Z13 is x86_64).
+- **Two builds, two archives, two packages.** `voltaire` (`CGO_ENABLED=0`) and
+  `voltaire-gui` (`main: ./voltaire-gui`, `CGO_ENABLED=1`). The gui package
+  `depends` on voltaire and on gtk4 + gtk4-layer-shell (deb names differ:
+  `libgtk-4-1`, `libgtk4-layer-shell0`), ships `LICENSE-Inter.txt` for the
+  embedded typeface (the OFL requires the notice to travel with the font), and
+  declares `provides`/`replaces`/`conflicts` z13gui, as voltaire does for z13ctl.
 - `before.hooks`: `go mod tidy` only.
 - Archives include `LICENSE`, `contrib/systemd/**/*` (user + system unit files) and
   `contrib/udev/*` (the rules file).
@@ -1034,6 +1146,11 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 - `docs/daemon.md` holds the user-facing socket protocol tables; keep them in
   sync with `dispatch()` in `internal/daemon/server.go`.
 - `docs/protocol.md` — technical HID protocol reference for developers.
+- `docs/gui/` and `voltaire-gui/README.md` came over from z13gui **unrenamed**.
+  They are the one place still describing a `z13gui` binary and its own install
+  story; both are rewritten by the Starlight port (M3 item 5), which is also when
+  `docs/` stops being an mkdocs site. Do not hand-rename them in the meantime —
+  the port replaces the content wholesale.
 
 ## Current status and next steps
 
@@ -1063,11 +1180,11 @@ sudo make install-perms-service  # installs battery sysfs permissions service
 make install-service             # installs daemon socket + service units
 ```
 
-### Phase 2 (GUI) — api/ SUBMODULE COMPLETE, z13gui IN PROGRESS
+### Phase 2 (GUI) — COMPLETE; merged into this repo at 2.0
 
 The `api/` submodule (now `github.com/dahui/voltaire/api/v2`; the frozen
-pre-2.0 releases live at `github.com/dahui/z13ctl/api`) is complete and ready
-for use by the GUI binary. Phase 2a changes:
+pre-2.0 releases live at `github.com/dahui/z13ctl/api`) is complete. Phase 2a
+changes:
 - Module path renamed from `z13ctl` to `github.com/dahui/z13ctl`
   (and again to `github.com/dahui/voltaire/v2` for the 2.0 rename — see
   CONTRIBUTING.md for the tag/module-path matrix)
@@ -1076,13 +1193,16 @@ for use by the GUI binary. Phase 2a changes:
 - `cmd/*.go` updated to call `api.Send*` directly
 - Multi-module dev setup: `go.work` (gitignored) + `replace` directive in `go.mod` for pre-publication
 
-**z13gui** will be a separate repo (`github.com/dahui/z13gui`) using:
-- `github.com/diamondburned/gotk4` + `github.com/diamondburned/gotk4-layer-shell`
-- Imports `github.com/dahui/voltaire/api/v2` for daemon communication
-- Right-edge Wayland overlay drawer (~320px wide), touch-first (48px+ tap targets)
-- Per-device tabs (Keyboard / Lightbar), mode grid, color swatches + custom picker,
-  brightness/speed sliders, profile list, battery slider
-- Trigger: Armoury Crate button → daemon → `gui-toggle` subscribe event → show/hide drawer
+The GUI shipped as the separate `github.com/dahui/z13gui` repo through 1.x and
+was merged here for 2.0 with its history intact (`--allow-unrelated-histories`,
+after a path-rewrite commit on its side). It is `voltaire-gui`: a right-edge
+overlay drawer on `gotk4` + `gotk4-layer-shell`, with three display backends
+(layer-shell, fullscreen overlay for GNOME, gamescope X11 for Gaming Mode),
+gamepad and touch navigation, and the Armoury Crate button reaching it as the
+daemon's `gui-toggle` subscribe event. `internal/gui/CLAUDE.md` holds its
+GTK-level decisions (its names are pre-merge — see the table at its head).
+The old repo is archived at release time with a pointer README; the AUR
+`z13gui-bin` package is superseded via `provides`/`replaces`/`conflicts`.
 
 **Multi-module release workflow (v2, post-rename):**
 1. Tag `api/v2.0.0` → `git tag api/v2.0.0 && git push origin api/v2.0.0`

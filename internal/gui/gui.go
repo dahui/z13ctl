@@ -1,7 +1,7 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-// Package gui implements the GTK4 overlay drawer for z13gui.
+// Package gui implements the GTK4 overlay drawer for voltaire-gui.
 // It provides the main Window type that handles daemon state synchronization,
 // GTK widget construction, and theming. Display-mode-specific concerns
 // (layer-shell, the gamescope X11 overlay, or the fullscreen click-through
@@ -18,16 +18,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dahui/z13ctl/api"
-	"github.com/dahui/z13gui/internal/daemon"
-	"github.com/dahui/z13gui/internal/gui/fonts"
-	"github.com/dahui/z13gui/internal/gui/gamepad"
-	"github.com/dahui/z13gui/internal/gui/gamescope"
-	"github.com/dahui/z13gui/internal/gui/layershell"
-	"github.com/dahui/z13gui/internal/gui/overlay"
-	"github.com/dahui/z13gui/internal/power"
-	"github.com/dahui/z13gui/internal/theme"
-	"github.com/dahui/z13gui/internal/togglegate"
+	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/apiresult"
+	"github.com/dahui/voltaire/v2/internal/gui/fonts"
+	"github.com/dahui/voltaire/v2/internal/gui/gamepad"
+	"github.com/dahui/voltaire/v2/internal/gui/gamescope"
+	"github.com/dahui/voltaire/v2/internal/gui/layershell"
+	"github.com/dahui/voltaire/v2/internal/gui/overlay"
+	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/theme"
+	"github.com/dahui/voltaire/v2/internal/togglegate"
 	"github.com/diamondburned/gotk4-layer-shell/pkg/gtk4layershell"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -94,10 +94,10 @@ type Window struct {
 	errDismissBtn *gtk.Button // dismiss button; navigable in every view's focus grid
 
 	// limits is the device's power/thermal envelope, driving every TDP and fan
-	// curve bound in the custom view. Defaulted to the Z13's values; when z13ctl
+	// curve bound in the custom view. Defaulted to the Z13's values; when the daemon
 	// grows an API for serving per-device limits this is the one place that
 	// changes — fetch once at startup, Sanitized, falling back to the defaults.
-	limits power.Limits
+	limits limits.Limits
 
 	// Widget references for syncState.
 	tabKB           *gtk.CheckButton
@@ -222,7 +222,7 @@ func layerShellUsable() bool {
 func New(app *gtk.Application) *Window {
 	w := &Window{
 		tab:         "keyboard",
-		limits:      power.DefaultLimits(),
+		limits:      limits.DefaultLimits(),
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 		modeButtons: make(map[string]*gtk.Button),
@@ -331,7 +331,7 @@ func (w *Window) Toggle() {
 			// A missing daemon arrives as ok=false with a nil error, so testing err
 			// alone opened the drawer on stale defaults with nothing to say. That is
 			// the worst moment to stay quiet: every control is about to lie.
-			if err := daemon.Err(ok, rawErr); err != nil {
+			if err := apiresult.Err(ok, rawErr); err != nil {
 				w.reportError("Read daemon state", err)
 				return
 			}
@@ -533,8 +533,8 @@ func (w *Window) subscribeLoop() {
 
 // loadCSS loads the layout CSS (always) then the user theme or the default theme.
 // Priority chain (first match wins):
-//  1. ~/.config/z13gui/theme.toml — custom color config (overrides everything)
-//  2. ~/.config/z13gui/theme.css  — full CSS override (power users)
+//  1. ~/.config/voltaire/theme.toml — custom color config (overrides everything)
+//  2. ~/.config/voltaire/theme.css  — full CSS override (power users)
 //  3. config.toml theme = "id"    — built-in theme selection
 //  4. embedded "rog-dark"         — compiled-in default
 func (w *Window) loadCSS() {
@@ -546,8 +546,8 @@ func (w *Window) loadCSS() {
 
 	w.themeProvider = gtk.NewCSSProvider()
 	base := theme.XDGConfigHome()
-	tomlPath := filepath.Join(base, "z13gui", "theme.toml")
-	cssPath := filepath.Join(base, "z13gui", "theme.css")
+	tomlPath := filepath.Join(base, "voltaire", "theme.toml")
+	cssPath := filepath.Join(base, "voltaire", "theme.css")
 
 	var loaded bool
 	switch {
@@ -590,7 +590,7 @@ func (w *Window) loadCSS() {
 			if missing := theme.UndefinedColorTokens(string(data)); len(missing) > 0 {
 				slog.Warn("custom theme CSS references colors it does not define; "+
 					"rules using them will be ignored — add @define-color lines or "+
-					"start from `z13gui --print-theme`",
+					"start from `voltaire-gui --print-theme`",
 					"path", cssPath, "undefined", missing)
 			}
 			w.themeProvider.LoadFromString(string(data))

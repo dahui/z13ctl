@@ -35,7 +35,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
-	"github.com/dahui/z13gui/internal/panelgeom"
+	"github.com/dahui/voltaire/v2/internal/panelgeom"
 )
 
 const (
