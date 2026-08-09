@@ -6,6 +6,7 @@ package api
 
 import (
 	"bufio"
+	"errors"
 	"net"
 	"os"
 	"runtime"
@@ -274,5 +275,49 @@ func TestIntGettersParseValues(t *testing.T) {
 				t.Errorf("limit = %d, want 80", got)
 			}
 		})
+	}
+}
+
+// TestUnknownCommandIsDistinguishable pins the version-skew signal a newer
+// client needs during an upgrade: the package replaces the binary while the
+// old daemon keeps running, so a command added later is answered "unknown
+// command". That must be tellable from a command that ran and failed —
+// clients with a direct-hardware equivalent fall back on it — while still
+// showing the daemon's own wording.
+func TestUnknownCommandIsDistinguishable(t *testing.T) {
+	stubDaemon(t, func(c net.Conn) {
+		_ = bufio.NewScanner(c).Scan()
+		_, _ = c.Write([]byte(`{"ok":false,"error":"unknown command: feature"}` + "\n"))
+		_ = c.Close()
+	})
+
+	handled, err := SendFeatureSet("boot_sound", 1)
+	if !handled {
+		t.Fatal("handled = false, want true when the daemon replied")
+	}
+	if !errors.Is(err, ErrUnknownCommand) {
+		t.Errorf("errors.Is(err, ErrUnknownCommand) = false for %v, want true", err)
+	}
+	if !strings.Contains(err.Error(), "unknown command: feature") {
+		t.Errorf("err = %v, want the daemon's own wording preserved", err)
+	}
+}
+
+// TestOrdinaryDaemonErrorIsNotUnknownCommand is the other half: a real
+// failure must not be mistaken for version skew, or a client would fall back
+// to direct hardware after the daemon already refused the operation.
+func TestOrdinaryDaemonErrorIsNotUnknownCommand(t *testing.T) {
+	stubDaemon(t, func(c net.Conn) {
+		_ = bufio.NewScanner(c).Scan()
+		_, _ = c.Write([]byte(`{"ok":false,"error":"setting boot_sound: permission denied"}` + "\n"))
+		_ = c.Close()
+	})
+
+	_, err := SendFeatureSet("boot_sound", 1)
+	if err == nil {
+		t.Fatal("err = nil, want the daemon's failure")
+	}
+	if errors.Is(err, ErrUnknownCommand) {
+		t.Errorf("errors.Is(err, ErrUnknownCommand) = true for %v, want false", err)
 	}
 }

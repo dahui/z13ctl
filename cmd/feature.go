@@ -149,7 +149,12 @@ func runFeatureSet(arg string) error {
 		return nil
 	}
 
-	if handled, sendErr := api.SendFeatureSet(id, value); handled {
+	// A daemon older than this command answers "unknown command", which is not
+	// a failure to report but a daemon to route around: firmware toggles are
+	// not daemon state (no handler persists or broadcasts them), so the direct
+	// write below is exactly equivalent. This is the ordinary state of affairs
+	// for the whole window between a package upgrade and the daemon restart.
+	if handled, sendErr := api.SendFeatureSet(id, value); handled && !errors.Is(sendErr, api.ErrUnknownCommand) {
 		if sendErr != nil {
 			return sendErr
 		}

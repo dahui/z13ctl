@@ -380,8 +380,13 @@ contrib/
   the APU, since a machine actually sustaining >75W is well past 60°C". A curve flat
   at 127 satisfied a scalar 127 everywhere, so 93W sustained at 90°C ran the fans at
   50% where every pre-1.3.1 path would have reached 100%. Temperatures are always
-  the user's — only PWM values move — and the floor is read at the matching *index*
-  rather than interpolated, which keeps the function pure and total.
+  the user's — only PWM values move — and the floor is read at each point's
+  *temperature*, interpolated piecewise-linearly between floor points
+  (`safety.FloorPWMAt`), clamped to the first/last PWM outside the range. An
+  earlier index-matched reading is what the temperature rule replaced: a point
+  at 48°C is measured against ~137, the ramp's value there, not against
+  whichever floor point shares its slice position. The function stays pure and
+  total either way.
   `FloorAdjustsCurve` is derived from `FanCurveForTDP` rather than reimplementing
   the comparison, so the two cannot disagree about what counts as an adjustment;
   the scalar version answered "no problem" for curves the ramp does raise.

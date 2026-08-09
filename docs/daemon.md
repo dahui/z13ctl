@@ -190,6 +190,16 @@ document needs no per-toggle code. `bootsound` and `paneloverdrive` remain as
 the named equivalents for the Z13's two toggles. `"bool"` toggles take 0 or 1;
 an unknown `id` is an error naming it.
 
+A daemon older than these commands answers `{"ok":false,"error":"unknown
+command: feature"}`. Treat that as "this daemon cannot help", not as a failed
+write, and go straight to sysfs — firmware toggles are BIOS settings the
+daemon neither persists nor broadcasts, so a direct write is equivalent. This
+is the normal state of things between a package upgrade and the daemon
+restart. Go clients get the distinction from `errors.Is(err,
+api.ErrUnknownCommand)`, which preserves the daemon's wording; other clients
+should match the `unknown command` prefix. Probe for the error — never gate on
+a version number.
+
 !!! warning "Unknown profile names are now rejected"
     Earlier daemons forwarded any string to `platform_profile`. A name that is
     neither a firmware profile nor a saved custom profile is now an error, so a

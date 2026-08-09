@@ -14,6 +14,7 @@ package api
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -23,6 +24,22 @@ import (
 	"time"
 )
 
+// ErrUnknownCommand reports that the daemon rejected a command it does not
+// know, which is how a client detects a daemon older than itself. It is
+// distinct from "the daemon is not running" (Send* returns handled=false) and
+// from a command that ran and failed.
+//
+// The distinction matters during an upgrade: the package replaces the binary
+// while the daemon keeps running the old one until the user restarts it, so a
+// new CLI routinely meets an old daemon. Callers whose command has an
+// equivalent direct-hardware path — the firmware toggles, which are not daemon
+// state — should treat this as unhandled and fall back. Callers whose command
+// only the daemon can perform should report it.
+//
+// Detect capabilities by probing for this error, never by comparing version
+// numbers.
+var ErrUnknownCommand = errors.New("daemon does not support this command")
+
 // SocketPath returns the runtime path for the daemon's Unix socket.
 func SocketPath() string {
 	runtime := os.Getenv("XDG_RUNTIME_DIR")
@@ -30,6 +47,25 @@ func SocketPath() string {
 		runtime = "/tmp"
 	}
 	return runtime + "/z13ctl/z13ctl.sock"
+}
+
+// unknownCommandError carries the daemon's own wording while matching
+// ErrUnknownCommand, so a client can branch on the cause without any Send*
+// caller having to reword the daemon.
+type unknownCommandError struct{ text string }
+
+func (e *unknownCommandError) Error() string { return e.text }
+func (e *unknownCommandError) Unwrap() error { return ErrUnknownCommand }
+
+// respErr turns a daemon error reply into an error, tagging the
+// unknown-command case so callers can distinguish an older daemon from a
+// command that ran and failed. Every Send* goes through it; a new command
+// added to the protocol therefore gets the distinction for free.
+func respErr(resp *response) error {
+	if strings.HasPrefix(resp.Error, "unknown command") {
+		return &unknownCommandError{text: resp.Error}
+	}
+	return fmt.Errorf("%s", resp.Error)
 }
 
 // request is a command sent to the daemon over the socket.
@@ -133,7 +169,7 @@ func SendApply(device, color, color2, mode, speed string, brightness int) (bool,
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -146,7 +182,7 @@ func SendOff(device string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -159,7 +195,7 @@ func SendBrightness(device string, level int) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -174,7 +210,7 @@ func SendProfileGet() (handled bool, profile string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -189,7 +225,7 @@ func SendBatteryLimitGet() (handled bool, limit int, err error) {
 		return handled, 0, err
 	}
 	if !resp.OK {
-		return true, 0, fmt.Errorf("%s", resp.Error)
+		return true, 0, respErr(resp)
 	}
 	limit, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
 	if parseErr != nil {
@@ -205,7 +241,7 @@ func SendProfileSet(profile string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -217,7 +253,7 @@ func SendBatteryLimitSet(limit int) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -229,7 +265,7 @@ func SendBootSoundSet(value int) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -241,7 +277,7 @@ func SendPanelOverdriveSet(value int) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -255,7 +291,7 @@ func SendBootSoundGet() (handled bool, value int, err error) {
 		return handled, 0, err
 	}
 	if !resp.OK {
-		return true, 0, fmt.Errorf("%s", resp.Error)
+		return true, 0, respErr(resp)
 	}
 	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
 	if parseErr != nil {
@@ -273,7 +309,7 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 		return handled, 0, err
 	}
 	if !resp.OK {
-		return true, 0, fmt.Errorf("%s", resp.Error)
+		return true, 0, respErr(resp)
 	}
 	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
 	if parseErr != nil {
@@ -291,7 +327,7 @@ func SendFanCurveGet() (handled bool, value string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -311,7 +347,7 @@ func SendFanCurveSetFor(profile, curve string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -330,7 +366,7 @@ func SendFanCurveResetFor(profile string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -344,7 +380,7 @@ func SendTdpGet() (handled bool, value string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -372,7 +408,7 @@ func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, erro
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -390,7 +426,7 @@ func SendTdpResetFor(profile string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -404,7 +440,7 @@ func SendUndervoltGet() (handled bool, value string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -425,7 +461,7 @@ func SendUndervoltSetFor(profile, cpu string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -443,7 +479,7 @@ func SendUndervoltResetFor(profile string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -455,7 +491,7 @@ func SendProfileCreate(name string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -468,7 +504,7 @@ func SendProfileSave(name string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -481,7 +517,7 @@ func SendProfileDelete(name string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -496,7 +532,7 @@ func SendProfileList() (handled bool, value string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -514,7 +550,7 @@ func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
@@ -529,7 +565,7 @@ func SendAutoswitchGet() (handled bool, value string, err error) {
 		return handled, "", err
 	}
 	if !resp.OK {
-		return true, "", fmt.Errorf("%s", resp.Error)
+		return true, "", respErr(resp)
 	}
 	return true, resp.Value, nil
 }
@@ -542,7 +578,7 @@ func SendGetState() (bool, *State, error) {
 		return handled, nil, err
 	}
 	if !resp.OK {
-		return true, nil, fmt.Errorf("%s", resp.Error)
+		return true, nil, respErr(resp)
 	}
 	return true, resp.State, nil
 }
@@ -559,7 +595,7 @@ func SendDeviceGet() (handled bool, info *DeviceInfo, err error) {
 		return handled, nil, err
 	}
 	if !resp.OK {
-		return true, nil, fmt.Errorf("%s", resp.Error)
+		return true, nil, respErr(resp)
 	}
 	return true, resp.Device, nil
 }
@@ -573,7 +609,7 @@ func SendFeatureGet(id string) (handled bool, value int, err error) {
 		return handled, 0, err
 	}
 	if !resp.OK {
-		return true, 0, fmt.Errorf("%s", resp.Error)
+		return true, 0, respErr(resp)
 	}
 	v, err := strconv.Atoi(strings.TrimSpace(resp.Value))
 	if err != nil {
@@ -590,7 +626,7 @@ func SendFeatureSet(id string, value int) (bool, error) {
 		return handled, err
 	}
 	if !resp.OK {
-		return true, fmt.Errorf("%s", resp.Error)
+		return true, respErr(resp)
 	}
 	return true, nil
 }
