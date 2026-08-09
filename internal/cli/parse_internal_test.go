@@ -2,8 +2,9 @@ package cli
 
 // parse_internal_test.go — in-package tests for the pure validation helpers
 // that moved here with the driver extraction: fan-curve parsing, TDP flag
-// resolution, and custom profile names. In-package (unlike parse_test.go's
-// external suite) because the profile-name cases pin maxProfileNameLen.
+// resolution, and custom profile names. The profile-name cases stay here even
+// though the rules moved to api.ValidateProfileName: they pin the cli wrapper
+// still enforcing them, which is what the daemon and CLI actually call.
 
 import (
 	"strings"
@@ -207,8 +208,8 @@ func TestValidateProfileName(t *testing.T) {
 		{"space inside", "my profile", true},
 		{"punctuation", "gaming!", true},
 		{"slash would escape the state map", "a/b", true},
-		{"too long", strings.Repeat("a", maxProfileNameLen+1), true},
-		{"at the length limit", strings.Repeat("a", maxProfileNameLen), false},
+		{"too long", strings.Repeat("a", api.MaxProfileNameLen+1), true},
+		{"at the length limit", strings.Repeat("a", api.MaxProfileNameLen), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

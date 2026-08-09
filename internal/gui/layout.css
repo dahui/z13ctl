@@ -30,6 +30,21 @@
     min-height: 52px;
 }
 
+/* The custom view's profile selector. It reads as a dropdown but expands in
+   the flow of the view: GtkDropDown and popovers create their own windows,
+   which gamescope does not composite. The label is left-aligned and the
+   arrow trails it, so the collapsed row looks like the control it stands in
+   for. */
+.drawer .btn-group button.profile-select {
+    padding-left: 12px;
+    padding-right: 12px;
+}
+.drawer .btn-group button.profile-select label {
+    /* The arrow is part of the label text, so pushing the label wide is what
+       separates the name from it. */
+    padding-right: 2px;
+}
+
 /* TDP warning text */
 .tdp-warning {
     font-size: 10px;

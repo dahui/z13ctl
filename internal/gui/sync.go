@@ -14,6 +14,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
 	"github.com/dahui/voltaire/v2/internal/lighting"
+	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
@@ -56,14 +57,13 @@ func (w *Window) syncState() {
 	w.syncing = true
 	defer func() { w.syncing = false }()
 	w.syncLightingSection()
-	w.syncProfile()
+	w.syncProfiles()
+	w.syncAutoswitch()
 	w.syncBattery()
 	w.syncOverdrive()
 	w.syncBootSound()
 	w.syncCustomView()
-	if w.headerTelemetry != nil {
-		w.headerTelemetry.SetLabel(fmt.Sprintf("%d°C · %d RPM", w.state.Temperature, w.state.FanRPM))
-	}
+	w.updateHeader()
 }
 
 // syncLightingSection updates mode, colors, speed, and brightness from the
@@ -101,12 +101,20 @@ func (w *Window) syncLightingSection() {
 	w.syncModeVis()
 }
 
-// syncProfile highlights the profile button matching the daemon state.
-func (w *Window) syncProfile() {
-	if w.state == nil || w.state.Profile == "" {
+// updateHeader refreshes the header line: the power source when it is known,
+// then live temperature and fan speed. The power label deliberately shows
+// nothing when the source is unknown (a VM, a desktop, a pre-2.0 daemon) —
+// see profileui.PowerLabel. Refreshed by syncState, the telemetry poll, and
+// refreshState, which the power-source event triggers.
+func (w *Window) updateHeader() {
+	if w.headerTelemetry == nil || w.state == nil {
 		return
 	}
-	setActiveButton(w.profileBtns, w.state.Profile)
+	text := fmt.Sprintf("%d°C · %d RPM", w.state.Temperature, w.state.FanRPM)
+	if p := profileui.PowerLabel(w.state); p != "" {
+		text = p + " · " + text
+	}
+	w.headerTelemetry.SetLabel(text)
 }
 
 // syncBattery sets the battery limit scale to match the daemon state.

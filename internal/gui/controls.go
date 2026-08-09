@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -95,6 +96,7 @@ func (w *Window) buildContent() gtk.Widgetter {
 	// TDP AND POWER section.
 	inner.Append(groupLabel("TDP AND POWER"))
 	inner.Append(w.buildProfileSection())
+	inner.Append(w.buildAutoswitchSection())
 	inner.Append(w.buildBatterySection())
 	inner.Append(separator())
 
@@ -460,6 +462,7 @@ func (w *Window) buildHSLScale(_ string, lo, hi float64) *gtk.Scale {
 	sc.SetDigits(0)
 	sc.SetDrawValue(true)
 	sc.SetFocusable(false)
+	w.wheelScrollsView(sc)
 	sc.ConnectValueChanged(func() { w.onHSLChanged() })
 	return sc
 }
@@ -480,8 +483,9 @@ func (w *Window) showMainView() {
 	}
 }
 
-// showCustomView switches the view stack to the custom TDP/fan view.
-// Lazy-builds the view on first access.
+// showCustomView switches the view stack to the custom profile view, opening
+// on the running custom profile when there is one and "custom" otherwise.
+// Lazy-builds the view on first access; a second tap returns to the main view.
 func (w *Window) showCustomView() {
 	if w.viewStack == nil {
 		return
@@ -490,9 +494,17 @@ func (w *Window) showCustomView() {
 		w.showMainView()
 		return
 	}
+	w.editProfile = profileui.DefaultEditTarget(w.state)
 	if w.customScroll == nil {
 		w.viewStack.AddNamed(w.buildCustomView(), "custom")
 		w.buildCustomFocusList()
+	}
+	w.disarmDelete()
+	// Collapse the selector each time the view opens, so it always presents
+	// the same one-row shape rather than however it was left.
+	w.profileExpanded = false
+	if w.profileSelBox != nil {
+		w.profileSelBox.SetVisible(false)
 	}
 	w.syncCustomView()
 	w.viewStack.SetVisibleChildName("custom")
@@ -652,6 +664,7 @@ func (w *Window) buildBrightnessBox() *gtk.Box {
 	sc.SetDrawValue(true)
 	sc.SetValue(3)
 	sc.SetFocusable(false)
+	w.wheelScrollsView(sc)
 	sc.ConnectValueChanged(func() {
 		w.queueApply()
 	})
@@ -660,43 +673,8 @@ func (w *Window) buildBrightnessBox() *gtk.Box {
 	return box
 }
 
-// profiles lists the available performance profiles. "custom" opens the TDP/fan view.
-var profiles = []string{"quiet", "balanced", "performance", "custom"}
-
 // speeds lists the available lighting animation speeds.
 var speeds = []string{"slow", "normal", "fast"}
-
-// buildProfileSection creates the 2x2 profile button grid.
-func (w *Window) buildProfileSection() *gtk.Box {
-	box := gtk.NewBox(gtk.OrientationVertical, 4)
-	box.Append(sectionLabel("PROFILE"))
-
-	grid := gtk.NewGrid()
-	grid.SetColumnSpacing(4)
-	grid.SetRowSpacing(4)
-	grid.SetColumnHomogeneous(true)
-	grid.AddCSSClass("btn-group")
-
-	for i, p := range profiles {
-		prof := p
-		btn := gtk.NewButtonWithLabel(strings.Title(prof)) //nolint:staticcheck // strings.Title is fine for ASCII-only labels
-		btn.ConnectClicked(func() {
-			if prof == "custom" {
-				w.showCustomView()
-			} else {
-				setActiveButton(w.profileBtns, prof)
-				// sendProfileSet refreshes state itself once the daemon has
-				// applied the profile; fetching it here in parallel would race.
-				w.sendProfileSet(prof)
-			}
-		})
-		w.profileBtns[prof] = btn
-		grid.Attach(btn, i%2, i/2, 1, 1)
-	}
-
-	box.Append(grid)
-	return box
-}
 
 // buildBatterySection creates the battery charge limit scale (40–100%).
 func (w *Window) buildBatterySection() *gtk.Box {
@@ -708,6 +686,7 @@ func (w *Window) buildBatterySection() *gtk.Box {
 	sc.SetDrawValue(true)
 	sc.SetValue(80)
 	sc.SetFocusable(false)
+	w.wheelScrollsView(sc)
 	w.battScale = sc
 	w.initBatteryDebounce(sc)
 
@@ -747,26 +726,67 @@ func separator() *gtk.Separator {
 
 // buildMainFocusList builds the 2D focus grid for the main drawer view.
 // Items are arranged by visual row/col matching the drawer layout.
+//
+// Row numbers are assigned with a running counter rather than literals: the
+// profile list holds one row per custom-family profile, so everything below it
+// shifts as profiles are created and deleted. syncProfiles rebuilds this list
+// whenever the profile row set changes.
 func (w *Window) buildMainFocusList() {
 	var items []focusItem
 	boxVisible := func(box *gtk.Box) func() bool {
 		return func() bool { return box.IsVisible() }
 	}
 
-	// Profiles — 2x2 grid.
-	for i, p := range profiles {
-		btn := w.profileBtns[p]
+	// Profiles: the three firmware buttons share a row, and the Custom button
+	// that opens the custom view sits below them. The custom profiles
+	// themselves are navigated in that view, not here.
+	row := 0
+	for col, r := range profileui.StockRows(nil) {
+		btn := w.profileBtns[r.Name]
 		items = append(items, focusItem{
-			widget: btn, row: i / 2, col: i % 2,
+			widget: btn, row: row, col: col,
 			section:    "profile",
 			onActivate: func() { btn.Activate() },
+		})
+	}
+	row++
+	items = append(items, focusItem{
+		widget: w.customBtn, row: row, col: 0,
+		section:    "profile",
+		onActivate: func() { w.customBtn.Activate() },
+	})
+
+	// Autoswitch: enable switch, then a cycle button per power source. The
+	// two target rows only exist while autoswitch is enabled, so they carry
+	// the container's visibility.
+	if w.autoswitchSwitch != nil {
+		sw := w.autoswitchSwitch
+		row++
+		items = append(items, focusItem{
+			widget: sw, row: row, col: 0,
+			section:    "autoswitch",
+			onActivate: func() { sw.SetActive(!sw.Active()) },
+		})
+		targetsVis := boxVisible(w.autoswitchTargets)
+		row++
+		items = append(items, focusItem{
+			widget: w.autoswitchACBtn, row: row, col: 0,
+			section: "autoswitch", isVisible: targetsVis,
+			onActivate: func() { w.autoswitchACBtn.Activate() },
+		})
+		row++
+		items = append(items, focusItem{
+			widget: w.autoswitchBattBtn, row: row, col: 0,
+			section: "autoswitch", isVisible: targetsVis,
+			onActivate: func() { w.autoswitchBattBtn.Activate() },
 		})
 	}
 
 	// Battery slider.
 	battLeft, battRight, battGet, battSet := scaleAdjust(w.battScale, 5)
+	row++
 	items = append(items, focusItem{
-		widget: w.battScale, row: 2, col: 0,
+		widget: w.battScale, row: row, col: 0,
 		section:  "battery",
 		editable: true,
 		onLeft:   battLeft, onRight: battRight,
@@ -774,39 +794,44 @@ func (w *Window) buildMainFocusList() {
 	})
 
 	// Device tabs — horizontal row.
+	row++
 	for col, btn := range []*gtk.CheckButton{w.tabKB, w.tabLB} {
 		btn := btn
 		items = append(items, focusItem{
-			widget: btn, row: 3, col: col,
+			widget: btn, row: row, col: col,
 			section:    "tabs",
 			onActivate: func() { btn.SetActive(true) },
 		})
 	}
 
 	// Mode buttons — 3x2 grid.
+	modeBase := row + 1
 	for i, m := range modeOrder {
 		btn := w.modeButtons[m]
 		items = append(items, focusItem{
-			widget: btn, row: 4 + i/3, col: i % 3,
+			widget: btn, row: modeBase + i/3, col: i % 3,
 			section:    "mode",
 			onActivate: func() { btn.Activate() },
 		})
 	}
+	row = modeBase + 1
 
 	// Color 1 presets — horizontal row of 8 buttons.
 	if w.color1 != nil {
 		vis := boxVisible(w.color1Box)
+		row++
 		for col, btn := range w.color1.presetBtns {
 			btn := btn
 			items = append(items, focusItem{
-				widget: btn, row: 6, col: col,
+				widget: btn, row: row, col: col,
 				section: "color1", isVisible: vis,
 				onActivate: func() { btn.Activate() },
 			})
 		}
 		// Custom button on its own row below presets.
+		row++
 		items = append(items, focusItem{
-			widget: w.color1.customBtn, row: 7, col: 0,
+			widget: w.color1.customBtn, row: row, col: 0,
 			section: "color1", isVisible: vis,
 			onActivate: func() { w.showColorView(w.color1) },
 		})
@@ -815,26 +840,29 @@ func (w *Window) buildMainFocusList() {
 	// Color 2 presets.
 	if w.color2 != nil {
 		vis := boxVisible(w.color2Box)
+		row++
 		for col, btn := range w.color2.presetBtns {
 			btn := btn
 			items = append(items, focusItem{
-				widget: btn, row: 8, col: col,
+				widget: btn, row: row, col: col,
 				section: "color2", isVisible: vis,
 				onActivate: func() { btn.Activate() },
 			})
 		}
+		row++
 		items = append(items, focusItem{
-			widget: w.color2.customBtn, row: 9, col: 0,
+			widget: w.color2.customBtn, row: row, col: 0,
 			section: "color2", isVisible: vis,
 			onActivate: func() { w.showColorView(w.color2) },
 		})
 	}
 
 	// Speed buttons — horizontal row.
+	row++
 	for col, s := range speeds {
 		btn := w.speedBtns[s]
 		items = append(items, focusItem{
-			widget: btn, row: 10, col: col,
+			widget: btn, row: row, col: col,
 			section: "speed", isVisible: boxVisible(w.speedBox),
 			onActivate: func() { btn.Activate() },
 		})
@@ -842,8 +870,9 @@ func (w *Window) buildMainFocusList() {
 
 	// Brightness slider.
 	brLeft, brRight, brGet, brSet := scaleAdjust(w.brightScale, 1)
+	row++
 	items = append(items, focusItem{
-		widget: w.brightScale, row: 11, col: 0,
+		widget: w.brightScale, row: row, col: 0,
 		section: "brightness", isVisible: boxVisible(w.brightBox),
 		editable: true,
 		onLeft:   brLeft, onRight: brRight,
@@ -851,9 +880,10 @@ func (w *Window) buildMainFocusList() {
 	})
 
 	// Footer: theme button, overdrive, boot sound.
+	row++
 	col := 0
 	items = append(items, focusItem{
-		widget: w.paletteBtn, row: 12, col: col,
+		widget: w.paletteBtn, row: row, col: col,
 		section:    "footer",
 		onActivate: func() { w.showThemeView() },
 	})
@@ -861,7 +891,7 @@ func (w *Window) buildMainFocusList() {
 	if w.overdriveSwitch != nil {
 		sw := w.overdriveSwitch
 		items = append(items, focusItem{
-			widget: sw, row: 12, col: col,
+			widget: sw, row: row, col: col,
 			section:    "footer",
 			onActivate: func() { sw.SetActive(!sw.Active()) },
 		})
@@ -870,7 +900,7 @@ func (w *Window) buildMainFocusList() {
 	if w.bootSoundSwitch != nil {
 		sw := w.bootSoundSwitch
 		items = append(items, focusItem{
-			widget: sw, row: 12, col: col,
+			widget: sw, row: row, col: col,
 			section:    "footer",
 			onActivate: func() { sw.SetActive(!sw.Active()) },
 		})

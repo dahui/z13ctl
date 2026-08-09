@@ -253,7 +253,77 @@ fan curve, a custom TDP (safe range, e.g. 40 W), and `./voltaire undervolt --set
       and the floor curve re-applied with the limit on the way back.
 - [ ] Cleanup: `./voltaire tdp --reset`.
 
-## 13. Cleanup
+## 13. The drawer's profile UI (voltaire-gui, 2.0)
+
+Run the voltaire-gui build under test against the daemon under test. These are
+the drawer paths that cannot run in the hermetic suite (the widget layer is
+cgo); the rules behind them are unit tested in `internal/profileui`.
+
+- [ ] The main view's PROFILE section is quiet/balanced/performance on one row
+      plus a single Custom button, and the **whole main view fits without
+      scrolling** (profile through brightness). The Custom button is labelled
+      with the running custom profile's name, and highlighted, when one is
+      active.
+- [ ] The mouse wheel over any slider — battery, brightness, TDP, undervolt —
+      scrolls the view and leaves the value alone (`batterylimit --get` and
+      the PL readouts unchanged afterwards).
+- [ ] Custom view: the selector names the profile being edited; tapping it
+      expands the list in place (no popup), tapping a name re-targets the
+      editor and collapses it. Create a profile from the CLI
+      (`./voltaire profile --create smoke-gui`) while the view is open — it
+      appears in the list on the next state event.
+- [ ] Selecting a profile does **not** activate it; Activate does. Activate is
+      insensitive for the running profile and for one with no settings
+      (tooltip says which).
+- [ ] Editor on a profile that is **not** running shows the "Not active —
+      changes are stored…" note, displays the profile's own stored values (not
+      the live machine's), and Save TDP does not change `ppt_pl1_spl`.
+      Activating the profile afterwards applies what was stored.
+- [ ] Editor on the **running** profile shows no note and Save TDP moves
+      sysfs, exactly as 1.x did.
+- [ ] Fan floor in a stored edit follows the *profile's* TDP: store 80W in a
+      non-running profile — its editor draws the floor line even while the
+      machine sits at stock limits, and Reset Fans is refused/insensitive
+      there.
+- [ ] + New prefills a free name; OK on the prefill creates it (gamepad-only
+      path). Save As is insensitive on a stock profile, works from a custom
+      one.
+- [ ] Delete Profile needs two taps, is insensitive for the active profile
+      and for autoswitch targets (tooltip names the reason), and returns to
+      the main view on success.
+- [ ] AUTOSWITCH section: switch + both targets mirror
+      `./voltaire autoswitch --get`; cycling a target and toggling the switch
+      land in `autoswitch --get` after the debounce; targets offered exclude
+      empty profiles and include "(don't change)".
+- [ ] The header shows `AC · <temp> · <rpm>` on mains and `Battery · …`
+      unplugged, updating on plug/unplug without reopening (power-source
+      event); on a daemon without `source_known` (pre-2.0) it shows no power
+      label at all.
+- [ ] Gamepad: D-pad reaches the firmware buttons and Custom in the main view,
+      and in the custom view the selector, its expanded rows,
+      Activate/New/Save As, OK/Cancel, and Delete; the autoswitch cycle
+      buttons are reachable while enabled and skipped while not. Section jump
+      (L1/R1) includes "profile" and "autoswitch".
+- [ ] Gamepad cannot reach a control the pointer cannot use: with a custom
+      profile **active**, its editor's Delete is skipped by D-pad navigation
+      (focus wraps past it), as is an empty profile's activate button — the
+      ✎ beside it stays reachable. `gtk_widget_activate()` ignores
+      sensitivity, so this is a real path, not a theoretical one.
+- [ ] Cleanup: `./voltaire profile --delete smoke-gui`.
+
+:::note[Driving this checklist without a physical controller]
+A uinput virtual gamepad plus an *absolute* pointer (the QEMU usb-tablet
+shape: `ABS_X`/`ABS_Y` over 0–65535 with `BTN_LEFT` and no `BTN_TOUCH`, which
+udev tags `ID_INPUT_MOUSE`) drives the whole of this section with screenshots
+for verification. Two traps found the hard way: park the pointer away from
+screen **corners**, because a hot corner takes focus and the layer-shell
+backend then treats it as a genuine click-elsewhere and dismisses the drawer;
+and keep it inside the drawer while screenshotting, since the backend
+deliberately ignores focus loss with the pointer inside and dismisses with it
+outside.
+:::
+
+## 14. Cleanup
 
 - [ ] `./voltaire tdp --reset`, `./voltaire fancurve --reset` (if not already on
       a stock profile), `./voltaire undervolt --reset`.

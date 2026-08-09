@@ -36,11 +36,27 @@ type focusItem struct {
 }
 
 // visible returns true if this item should be navigable.
+//
+// Insensitive widgets are skipped, not merely un-activatable. GTK's
+// gtk_widget_activate() emits the activate signal without consulting
+// sensitivity — GtkButton turns that straight into "clicked" — so the
+// gamepad path would otherwise fire controls a pointer physically cannot,
+// and every one of them is desensitized precisely because the daemon would
+// refuse it: an empty profile's activate button, Save As with no custom
+// profile to copy, Reset Fans under the high-TDP floor, Delete on the active
+// profile. Reachable-but-refused is worse than unreachable, because the
+// controller user gets an error bar where a pointer user gets a greyed
+// control and a tooltip.
+//
+// Skipping here rather than in each onActivate is what keeps the rule in one
+// place: the result feeds focusgrid.Item.Visible, so the pure navigation
+// logic treats these exactly as it already treats hidden items.
 func (fi *focusItem) visible() bool {
 	if fi.isVisible != nil && !fi.isVisible() {
 		return false
 	}
-	return gtk.BaseWidget(fi.widget).IsVisible()
+	w := gtk.BaseWidget(fi.widget)
+	return w.IsVisible() && w.IsSensitive()
 }
 
 // gridSnapshot flattens focusItems into the pure representation focusgrid works
@@ -93,6 +109,13 @@ func (w *Window) activateOrEdit() {
 		return
 	}
 	fi := w.focusItems[w.focusIdx]
+	// Re-check rather than trusting that navigation skipped it: a state
+	// refresh can desensitize the focused widget after focus landed on it —
+	// autoswitch selecting a profile makes its Delete illegal mid-edit — and
+	// nothing re-runs navigation on a sync.
+	if !fi.visible() {
+		return
+	}
 	if fi.editable {
 		w.enterEditMode()
 	} else if fi.onActivate != nil {
@@ -197,23 +220,28 @@ func (w *Window) swapFocusList(items []focusItem) {
 	}
 }
 
+// activeScroll returns the scroller of the view currently on screen, or nil
+// when that view does not scroll (the colour picker).
+func (w *Window) activeScroll() *gtk.ScrolledWindow {
+	if w.viewStack == nil {
+		return nil
+	}
+	switch w.viewStack.VisibleChildName() {
+	case "main":
+		return w.mainScroll
+	case "theme":
+		return w.themeScroll
+	case "custom":
+		return w.customScroll
+	}
+	return nil
+}
+
 // ensureVisible scrolls the active ScrolledWindow so that widget is in view.
 // Translates the widget's position to viewport-relative coordinates, then
 // converts to content-relative coordinates for ClampPage.
 func (w *Window) ensureVisible(widget gtk.Widgetter) {
-	var scroll *gtk.ScrolledWindow
-	if w.viewStack != nil {
-		switch w.viewStack.VisibleChildName() {
-		case "main":
-			scroll = w.mainScroll
-		case "theme":
-			scroll = w.themeScroll
-		case "custom":
-			scroll = w.customScroll
-		default:
-			return // color view has no scroll
-		}
-	}
+	scroll := w.activeScroll()
 	if scroll == nil {
 		return
 	}
@@ -232,6 +260,48 @@ func (w *Window) ensureVisible(widget gtk.Widgetter) {
 	h := float64(base.Height())
 	const scrollPadding = 20 // breathing room below focused widget
 	adj.ClampPage(contentY, contentY+h+scrollPadding)
+}
+
+// wheelScrollsView makes the mouse wheel scroll the drawer when the pointer
+// happens to be over a slider, instead of changing that slider's value.
+//
+// GtkRange consumes scroll events to adjust itself, so a wheel flick that
+// passed over the TDP, brightness or battery sliders silently changed a
+// hardware setting rather than scrolling — on the Z13, scrolling past PL3
+// moved it from 90W to 30W. The drawer is a tall scrolling panel of sliders,
+// so the pointer is over one most of the time, and no other control in it
+// answers the wheel at all.
+//
+// A capture-phase controller sees the event before GtkRange's own (bubble)
+// handler, so consuming it there is what keeps the range from acting; the
+// scroll is then applied to the enclosing scroller by hand. Returning false
+// when there is nothing to scroll leaves the colour picker's sliders — the
+// one view with no scroller — responding to the wheel exactly as before.
+func (w *Window) wheelScrollsView(sc *gtk.Scale) {
+	ctl := gtk.NewEventControllerScroll(gtk.EventControllerScrollVertical)
+	ctl.SetPropagationPhase(gtk.PhaseCapture)
+	ctl.ConnectScroll(func(_, dy float64) bool {
+		scroll := w.activeScroll()
+		if scroll == nil {
+			return false
+		}
+		adj := scroll.VAdjustment()
+		// A fraction of the visible height per notch, rather than the
+		// adjustment's step increment: a ScrolledWindow's step is a couple of
+		// pixels, which made a wheel flick move the view almost not at all.
+		// Page-relative also keeps the feel identical under gamescope, where
+		// every dimension is scaled.
+		v := adj.Value() + dy*adj.PageSize()*0.12
+		if top := adj.Upper() - adj.PageSize(); v > top {
+			v = top
+		}
+		if v < adj.Lower() {
+			v = adj.Lower()
+		}
+		adj.SetValue(v)
+		return true
+	})
+	sc.AddController(ctl)
 }
 
 // scaleAdjust returns onLeft/onRight/getValue/setValue functions for a slider.

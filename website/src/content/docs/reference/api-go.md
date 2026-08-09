@@ -54,6 +54,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [func SocketPath\(\) string](<#SocketPath>)
 - [func SocketPaths\(\) \[\]string](<#SocketPaths>)
 - [func Subscribe\(events \[\]string\) \(eventCh \<\-chan string, cancel func\(\), err error\)](<#Subscribe>)
+- [func ValidateProfileName\(name string\) error](<#ValidateProfileName>)
 - [type AutoswitchState](<#AutoswitchState>)
   - [func \(a \*AutoswitchState\) Target\(onAC bool\) string](<#AutoswitchState.Target>)
 - [type CustomProfile](<#CustomProfile>)
@@ -111,6 +112,12 @@ const (
 const DefaultCustomProfile = "custom"
 ```
 
+<a name="MaxProfileNameLen"></a>MaxProfileNameLen bounds a custom profile name. It is a state file key and a command\-line argument, not a display string; anything longer is a mistake.
+
+```go
+const MaxProfileNameLen = 32
+```
+
 ## Variables
 
 <a name="AllEvents"></a>AllEvents lists every event name the daemon can emit. Subscribing with an empty event list is equivalent to subscribing to all of them.
@@ -136,7 +143,7 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
 <a name="IsStockProfileName"></a>
-## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L47>)
+## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L48>)
 
 ```go
 func IsStockProfileName(name string) bool
@@ -1639,8 +1646,21 @@ func main() {
 </p>
 </details>
 
+<a name="ValidateProfileName"></a>
+## func [ValidateProfileName](<https://github.com/dahui/z13ctl/blob/main/api/profilename.go#L35>)
+
+```go
+func ValidateProfileName(name string) error
+```
+
+ValidateProfileName checks a user\-supplied custom profile name.
+
+The firmware profile names are reserved so that selecting one always reaches the firmware profile and can never be shadowed by a custom profile. That reservation is load\-bearing beyond avoiding confusion: the daemon treats any name absent from its stock power table as custom and disables its stale\-cache fallback, which is right for a custom profile and wrong for a stock one — so a custom profile called "balanced" would misreport the machine's power limits. "custom" is reserved separately: it is the profile created implicitly by the first custom setting.
+
+Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
+
 <a name="AutoswitchState"></a>
-## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L75-L79>)
+## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L76-L80>)
 
 AutoswitchState configures automatic profile selection by power source. An empty AC or Battery target means "leave the profile alone on that source", which is how a caller hands one side back to power\-profiles\-daemon.
 
@@ -1653,7 +1673,7 @@ type AutoswitchState struct {
 ```
 
 <a name="AutoswitchState.Target"></a>
-### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L83>)
+### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L84>)
 
 ```go
 func (a *AutoswitchState) Target(onAC bool) string
@@ -1662,7 +1682,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="CustomProfile"></a>
-## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L59-L64>)
+## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L60-L65>)
 
 CustomProfile is a named set of custom hardware settings. Each subsystem is a pointer so that nil means "this profile does not control that subsystem", which is what lets a profile stay loadable as new subsystems are added.
 
@@ -1676,7 +1696,7 @@ type CustomProfile struct {
 ```
 
 <a name="CustomProfile.Empty"></a>
-### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L68>)
+### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L69>)
 
 ```go
 func (p CustomProfile) Empty() bool
@@ -1758,7 +1778,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L141-L144>)
+## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L142-L145>)
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -1770,7 +1790,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L147-L150>)
+## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L148-L151>)
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -1807,7 +1827,7 @@ type LightingInfo struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L131-L138>)
+## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L132-L139>)
 
 LightingState captures all parameters needed to reproduce one lighting zone.
 
@@ -1848,7 +1868,7 @@ type ProfileInfo struct {
 ```
 
 <a name="State"></a>
-## type [State](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L17-L33>)
+## type [State](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L17-L34>)
 
 State holds the last\-applied settings for all controllable subsystems. It is returned by SendGetState and broadcast as part of daemon responses.
 
@@ -1864,13 +1884,14 @@ type State struct {
     PanelOverdrive     int                      `json:"panel_overdrive,omitempty"`
     CustomProfiles     map[string]CustomProfile `json:"custom_profiles,omitempty"` // saved custom profiles keyed by name
     Autoswitch         *AutoswitchState         `json:"autoswitch,omitempty"`
-    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`   // projection; see the type doc
-    TDP                *TDPState                `json:"tdp,omitempty"`         // projection; see the type doc
-    Undervolt          *UndervoltState          `json:"undervolt,omitempty"`   // projection; see the type doc
-    UndervoltAvailable bool                     `json:"undervolt_available"`   // true if ryzen_smu is loaded
-    OnAC               bool                     `json:"on_ac"`                 // true when running on mains power
-    Temperature        int                      `json:"temperature,omitempty"` // APU temp, degrees Celsius
-    FanRPM             int                      `json:"fan_rpm,omitempty"`     // fan1 speed in RPM
+    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`    // projection; see the type doc
+    TDP                *TDPState                `json:"tdp,omitempty"`          // projection; see the type doc
+    Undervolt          *UndervoltState          `json:"undervolt,omitempty"`    // projection; see the type doc
+    UndervoltAvailable bool                     `json:"undervolt_available"`    // true if ryzen_smu is loaded
+    OnAC               bool                     `json:"on_ac"`                  // true when running on mains power
+    SourceKnown        bool                     `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
+    Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
+    FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 }
 ```
 
@@ -1916,7 +1937,7 @@ func main() {
 </details>
 
 <a name="State.ActiveCustomProfile"></a>
-### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L118>)
+### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L119>)
 
 ```go
 func (s State) ActiveCustomProfile() (CustomProfile, bool)
@@ -1925,7 +1946,7 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool)
 ActiveCustomProfile returns the active custom profile and true, or the zero value and false when a stock profile is active.
 
 <a name="State.InCustomProfile"></a>
-### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L114>)
+### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L115>)
 
 ```go
 func (s State) InCustomProfile() bool
@@ -1934,7 +1955,7 @@ func (s State) InCustomProfile() bool
 InCustomProfile reports whether the active profile is a custom one.
 
 <a name="State.IsCustomProfile"></a>
-### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L102>)
+### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L103>)
 
 ```go
 func (s State) IsCustomProfile(name string) bool
@@ -1947,7 +1968,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L161-L167>)
+## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L162-L168>)
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -1987,7 +2008,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L155-L158>)
+## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L156-L159>)
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

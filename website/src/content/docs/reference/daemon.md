@@ -413,9 +413,11 @@ Nothing needs to be done by hand.
 
 On `get-state` requests the daemon also populates `temperature` (APU die
 temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
-is plugged in), and `undervolt_available` (whether the `ryzen_smu` kernel
-module is present) from live sysfs reads. These are not persisted — they are
-real-time sensor values.
+is plugged in), `source_known` (whether `on_ac` reflects a real reading — on a
+machine with no mains supply to read, such as a VM, `on_ac` is false with
+`source_known` false, which means *unknown*, not battery), and
+`undervolt_available` (whether the `ryzen_smu` kernel module is present) from
+live sysfs reads. These are not persisted — they are real-time sensor values.
 
 On startup the daemon reads this file, resolves what the current power source
 calls for if autoswitch is configured, and restores all saved settings before

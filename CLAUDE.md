@@ -8,7 +8,7 @@ asus-wmi sysfs, and asus-armoury firmware-attributes interfaces.
 It uses the ASUS Aura HID protocol reverse-engineered from g-helper.
 Module path: `github.com/dahui/voltaire/v2`. License: Apache 2.0.
 
-**Two binaries from one module**: `voltaire` (the CLI + daemon, `CGO_ENABLED=0`)
+**Two binaries from one module**: `voltaire` (the CLI + daemon, `CGO_ENABLED=0`)va
 and `voltaire-gui` (the GTK4 overlay drawer, `CGO_ENABLED=1`), the latter merged
 in from the former z13gui repo at 2.0 with its history intact. They share
 `internal/version.Version` (one `-X` ldflag serves both) and talk to each other
@@ -149,6 +149,9 @@ internal/
   limits/                    TDP + fan-curve rules the drawer needs so it never offers a
                              state the daemon would refuse (the testable half of gui/tdp.go)
   lighting/                  the drawer's RGB rules: mode from state, controls per mode
+  profileui/                 the drawer's profile rules: list rows + affordances, live-vs-stored
+                             edit planning (PlanEdit/ForEditor), name pre-checks, autoswitch
+                             target options, power-source label
   colorconv/                 RRGGBB ⇄ HSL for the colour picker (separate so it is testable)
   focusgrid/                 D-pad focus navigation over rows/columns/sections
   keyrepeat/                 which held direction owns the gamepad auto-repeat
@@ -312,7 +315,7 @@ website/                     the docs site (Astro Starlight; see Documentation)
   | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
   | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac/source_known) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
 
   `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `undervolt` and
@@ -1028,6 +1031,101 @@ website/                     the docs site (Astro Starlight; see Documentation)
   copied — everything the 1.x GUI ever wrote. It must run **before anything reads
   config**, which is why it is the first statement in `main`, ahead of
   `--print-theme` and any GTK call.
+- **The profile name rules live in `api` (`ValidateProfileName`,
+  `MaxProfileNameLen`); `cli.ValidateProfileName` is a delegating wrapper.**
+  They moved for the drawer's inline name entry: the GUI may not import
+  `internal/cli` (the binaries share only `api` and `internal/version`), and a
+  second copy of the rules would drift from the one the daemon refuses with.
+  Any client-side pre-check must call the api function, never re-state a rule.
+- **`State.SourceKnown`: `on_ac` false with `source_known` false means
+  *unknown*, never battery.** `cli.OnACPower` errors when no Mains supply
+  exists (VM, desktop), and get-state used to flatten that to `on_ac: false` —
+  indistinguishable from running on battery. Clients must claim nothing when
+  it is false (`profileui.PowerLabel` returns ""), and a pre-2.0 daemon omits
+  the field, so old daemons read as unknown by construction.
+- **The custom profiles live in the custom view, not the main view.** The main
+  view offers the three firmware profiles and one `Custom` button standing for
+  the whole family (`profileui.StockRows` / `profileui.Custom`); the custom
+  view's selector offers the profiles themselves (`profileui.CustomRows`). One
+  row per saved profile pushed RGB and battery off the bottom of a 320px
+  drawer — with the split, the entire main view fits on screen without
+  scrolling, which is the property to preserve when adding to it. The `Custom`
+  button is labelled with the *running* custom profile, so the main view still
+  says what is in force without listing anything.
+- **The profile selector expands in the flow of the view; it is not a
+  `GtkDropDown`.** It reads as a dropdown — one row collapsed, `▾`/`▴`, the
+  current target highlighted — but a real dropdown's popup is a separate
+  window that gamescope does not composite, so Gaming Mode would be choosing
+  from an invisible list. Expanding in place also means the rows are ordinary
+  widgets the existing focus grid navigates via `isVisible`, with no second
+  mechanism for a popup's contents. Same reasoning as the autoswitch cycle
+  buttons and the inline name entry; `grep Popover internal/` must stay empty.
+- **The selector is rebuilt only when `profileui.Signature` changes**;
+  highlights, sensitivity and tooltips move on the existing widgets otherwise,
+  so a background state refresh cannot tear buttons out from under the
+  pointer. Selecting a profile in it only re-targets the editor —
+  **`Activate` is what applies it** — and every refusal reason a tooltip shows
+  comes from `profileui` (`ActivateBlock`, `DeleteBlockFor`, `SaveAsBlock`,
+  `CreateNameProblem`), mirroring the daemon's own text so the tooltip and the
+  error agree. Delete sits at the bottom of the editor with a two-tap arm
+  rather than a confirm dialog, for the same no-popup reason.
+- **The autoswitch target rows are shown only while autoswitch is enabled.**
+  They are meaningless when it is off, and this is the main view, where three
+  permanent rows for a feature most users leave alone is the crowding the
+  profile list was moved out to avoid. Enabling with both sides unset is
+  harmless — "leave alone" on both sources is a no-op — so nothing is lost by
+  configuring after enabling.
+- **The editor addresses its target through `profileui.PlanEdit`, and every
+  stored-target send is preceded by `probeStoredTarget`.** A plan is live —
+  bare sends, hardware applied — in exactly two cases: the target is the
+  active profile, or it is "custom" while a firmware profile is active (the
+  drawer's historical create-and-activate flow, kept byte-identical for old
+  daemons). Everything else goes through the `...For` variants and stores
+  only; the probe (SendProfileList, exactly `cmd.ensureProfileTargetSupported`'s
+  trick) is what keeps a pre-1.3 daemon from silently applying the edit to
+  the running machine behind an `ok`. The plan is resolved per operation, not
+  stored — the active profile can move underneath an open editor. The fan
+  floor is evaluated against `editorFloorPL1` (live PL1 for a live target,
+  the profile's *own* saved TDP for a stored one — hardware says nothing
+  about a profile that is not running), and `ForEditor`/`CurveToShow` decide
+  what the widgets display, including that a stored curve is adopted on
+  presence while a live one requires `FanCurveIsCustom`.
+- **The mouse wheel scrolls the drawer even over a slider
+  (`Window.wheelScrollsView`).** `GtkRange` consumes scroll events to adjust
+  itself, and the drawer is a tall scrolling panel that is mostly sliders, so
+  a wheel flick passing over one silently changed a hardware setting instead
+  of scrolling — found on hardware, where scrolling past PL3 moved it from
+  90W to 30W. A **capture-phase** `EventControllerScroll` is what makes this
+  work: it sees the event before GtkRange's own bubble-phase handler, so
+  consuming it there is what stops the range acting, and the scroll is then
+  applied to the enclosing scroller by hand. The step is a fraction of
+  `PageSize`, not the adjustment's `StepIncrement` (a couple of pixels, which
+  moved the view almost not at all) — page-relative also keeps the feel
+  identical under gamescope, where every dimension is scaled. Returning false
+  when there is no scroller leaves the colour picker's sliders, in the one
+  view that does not scroll, answering the wheel as before. Every new
+  `gtk.Scale` must be passed through it.
+- **The gamepad focus grid skips *insensitive* widgets, not just hidden ones.**
+  `gtk_widget_activate()` does not consult sensitivity — it emits the activate
+  signal, which GtkButton turns straight into `clicked` — so the controller
+  path could fire controls a pointer physically cannot. Every desensitized
+  control in the drawer is desensitized because the daemon would refuse it, so
+  this presented as an error bar for controller users where mouse users get a
+  greyed button and a tooltip. Caught on hardware: a gamepad reached Delete on
+  the *active* profile and got `profile-delete: gaming is the active profile`.
+  The check lives in `focusItem.visible()`, whose result feeds
+  `focusgrid.Item.Visible`, so the pure navigation logic needs no change and
+  treats these exactly as it already treats hidden items; `activateOrEdit`
+  re-checks, because a state refresh can desensitize the focused widget after
+  focus landed on it. Skipping is deliberately not "focus but refuse": a
+  controller cannot read a tooltip, so a focusable-but-dead item says nothing.
+- **The autoswitch UI uses cycle buttons and a debounced single send.**
+  Cycle-on-tap instead of a dropdown for the standing gamescope reason;
+  `profileui.TargetOptions` deliberately excludes empty custom profiles even
+  though the daemon accepts them (a target that fails at every transition is a
+  trap); and the 300ms debounce is about ordering, not chattiness — per-click
+  goroutines can land on the daemon out of order and store an intermediate
+  choice.
 - **`BuildThemeCSS` defines every token twice — `@z13-*` and `@voltaire-*` —
   which is what lets the token rename be *staged*.** The generated
   `@define-color` block is prepended to the bundled `theme-default.css`, and
@@ -1071,9 +1169,10 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   Neither has tests, but `./...` still *compiles* them, which drags GTK4 headers
   and cgo into a run that must work on any machine and in CI without them. The
   boundary is why every rule worth testing on the GUI side lives in a pure-Go
-  package (`limits`, `lighting`, `theme`, `colorconv`, `focusgrid`, `keyrepeat`,
-  `panelgeom`, `uiscale`, `togglegate`, `startup`, `apiresult`) rather than in
-  `internal/gui` — adding logic to the cgo island puts it beyond every test.
+  package (`limits`, `lighting`, `profileui`, `theme`, `colorconv`, `focusgrid`,
+  `keyrepeat`, `panelgeom`, `uiscale`, `togglegate`, `startup`, `apiresult`)
+  rather than in `internal/gui` — adding logic to the cgo island puts it beyond
+  every test.
   `make lint` deliberately runs the **full** tree, GTK island included; it is a
   local/dev gate where the headers are present.
 - Current coverage: ~87% cli, ~78% aura, ~40% hid, ~38% daemon, ~29% api, ~9% cmd.

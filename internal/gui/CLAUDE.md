@@ -20,6 +20,9 @@
 > | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
 > | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
 > | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |
+> | the 2×2 profile grid | three firmware buttons + one `Custom` button in the main view; the custom profiles are an expanding selector inside the custom view (`profiles.go` + `internal/profileui`) |
+> | `GtkDropDown in gamescope` → "use buttons" | still true, and now also why the profile selector expands **in the flow of the view** rather than as a popup |
+> | bare `api.SendTdpSet`/`SendFanCurveSet`/`SendUndervoltSet` everywhere | the `...For` variants, addressed per operation by `profileui.PlanEdit` (live vs stored) with a `SendProfileList` probe before every stored send |
 >
 > The root `CLAUDE.md` is authoritative for layout, build and release.
 

@@ -125,42 +125,13 @@ func TDPStateFor(watts, pl1, pl2, pl3 int) api.TDPState {
 	}
 }
 
-// maxProfileNameLen bounds a custom profile name. It is a state file key and a
-// command-line argument, not a display string; anything longer is a mistake.
-const maxProfileNameLen = 32
-
 // ValidateProfileName checks a user-supplied custom profile name.
 //
-// The firmware profile names are reserved so that selecting one always reaches
-// the firmware profile and can never be shadowed by a custom profile. That
-// reservation is load-bearing beyond avoiding confusion: the safety engine's
-// ReadEffective treats any name absent from the envelope's stock table as
-// custom and disables its stale-cache fallback, which is right for a custom
-// profile and wrong for a stock one — so a custom profile called "balanced"
-// would misreport the machine's power limits. "custom" is reserved separately:
-// it is the profile created implicitly by the first custom setting.
+// The rules moved to api.ValidateProfileName so that socket clients (the GUI,
+// Decky) can pre-check a name with the same code the daemon refuses it with;
+// this wrapper remains because everything daemon- and CLI-side reaches the
+// rules through cli. The reasoning behind the reservations is documented on
+// the api function.
 func ValidateProfileName(name string) error {
-	if name == "" {
-		return fmt.Errorf("profile name must not be empty")
-	}
-	if name != strings.ToLower(name) {
-		return fmt.Errorf("profile name %q must be lowercase", name)
-	}
-	if api.IsStockProfileName(name) {
-		return fmt.Errorf("%q is a firmware profile name and cannot be used for a custom profile", name)
-	}
-	if name == api.DefaultCustomProfile {
-		return fmt.Errorf("%q is reserved for the profile created by the first custom setting", name)
-	}
-	if len(name) > maxProfileNameLen {
-		return fmt.Errorf("profile name %q is longer than %d characters", name, maxProfileNameLen)
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
-		default:
-			return fmt.Errorf("profile name %q may only contain a-z, 0-9, '-' and '_'", name)
-		}
-	}
-	return nil
+	return api.ValidateProfileName(name)
 }

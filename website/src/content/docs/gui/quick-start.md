@@ -15,11 +15,14 @@ close it.
 
 | Section | What it does |
 |---------|-------------|
-| **Profile** | Switch between quiet, balanced, performance, and custom TDP profiles. Selecting custom opens a dedicated view. |
+| **Profile** | The three firmware profiles (quiet, balanced, performance) and a **Custom** button. The Custom button is labelled with whichever custom profile is running, and opens the custom profile view. |
+| **Autoswitch** | Turn it on, then pick a profile to apply on AC and one on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. |
+| **Custom profile view** | Every custom profile lives here. The selector at the top names the one you are editing — tap it to expand the list, tap a name to switch to it. **Activate** applies it to the machine, **+ New** creates an empty named profile, **Save As** copies the active profile under a new name, and **Delete Profile** (tap twice) removes one that is not active or referenced by autoswitch. |
+| **Live vs stored edits** | Editing the *active* profile applies changes to the hardware immediately. Editing any other profile stores them, to apply when it is activated — the view says "Not active — changes are stored" when that is what is happening. |
 | **Custom TDP** | Configurable power limits with basic (single slider) and advanced (PL1 sustained / PL2 short boost / PL3 fast boost) modes |
-| **Fan Curve** | Edit the fan response curve per-profile (custom profile, advanced mode) |
-| **Undervolt** | CPU Curve Optimizer offset (custom profile, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
-| **Telemetry** | Live APU temperature and fan RPM readouts (custom profile view) |
+| **Fan Curve** | Edit the fan response curve per-profile (profile editor, advanced mode) |
+| **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
+| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |

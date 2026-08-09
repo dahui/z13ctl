@@ -26,6 +26,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/gui/layershell"
 	"github.com/dahui/voltaire/v2/internal/gui/overlay"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/dahui/voltaire/v2/internal/togglegate"
@@ -112,12 +113,63 @@ type Window struct {
 	brightBox       *gtk.Box // BRIGHTNESS label + scale — hidden when mode is "off"
 	speedBtns       map[string]*gtk.Button
 	brightScale     *gtk.Scale
-	profileBtns     map[string]*gtk.Button
 	battScale       *gtk.Scale
 	overdriveSwitch *gtk.Switch
 	bootSoundSwitch *gtk.Switch
 
+	// Main-view profile controls: the three firmware buttons, plus one button
+	// standing for the whole custom family. The custom profiles themselves
+	// live in the custom view's selector, so this section never changes shape
+	// and needs no rebuild.
+	profileBtns map[string]*gtk.Button // firmware profile buttons by name
+	customBtn   *gtk.Button            // opens the custom view; labelled with the running custom profile
+
+	// Custom-view profile selector (see profiles.go). Collapsed it is one
+	// row; expanding reveals one button per custom profile, in the flow of
+	// the view rather than in a popup — see buildProfileSelector.
+	customRows      []profileui.Row        // rows the selector is currently built from
+	customSig       string                 // profileui.Signature of customRows
+	profileSelBtn   *gtk.Button            // the collapsed selector itself
+	profileSelBox   *gtk.Box               // container the expanded rows are built into
+	profileSelBtns  map[string]*gtk.Button // one per custom profile, inside profileSelBox
+	profileExpanded bool
+	activateBtn     *gtk.Button
+	newProfileBtn   *gtk.Button
+	saveAsBtn       *gtk.Button
+	nameRow         *gtk.Box // inline create/save-as name entry row, hidden until needed
+	nameEntry       *gtk.Entry
+	nameOKBtn       *gtk.Button
+	nameCancelBtn   *gtk.Button
+	nameMode        string // nameModeCreate or nameModeSaveAs while nameRow is up
+
+	// Autoswitch section. The three value fields mirror the widgets so a send
+	// can snapshot them on the GTK thread; they are synced from daemon state.
+	autoswitchSwitch  *gtk.Switch
+	autoswitchTargets *gtk.Box // the two target rows; shown only while enabled
+	autoswitchACBtn   *gtk.Button
+	autoswitchBattBtn *gtk.Button
+	autoswitchEnabled bool
+	autoswitchAC      string
+	autoswitchBatt    string
+	autoswitchTimer   *time.Timer // debounce, so cycling a target sends once
+
 	// Custom profile view.
+	//
+	// editProfile is the profile the view is editing; the edit affordance on
+	// each profile row sets it before showing the view. Whether edits are live
+	// (bare sends, applied to hardware) or stored (the ...For variants) is
+	// resolved per operation by editPlan() — the answer can change underneath
+	// an open editor when the active profile moves.
+	//
+	// editorFloorPL1 is the sustained limit the fan floor is evaluated
+	// against for the current target: the applied hardware limit for a live
+	// edit, the profile's own saved TDP for a stored one. The chart's floor
+	// line, drag clamping, and the Reset Fans gate all read it.
+	editProfile        string
+	editorFloorPL1     int
+	editorNote         *gtk.Label // "stored only" note; hidden for live edits
+	deleteBtn          *gtk.Button
+	deleteArmed        bool // first tap of the two-tap delete confirmation
 	customScroll       *gtk.ScrolledWindow
 	customBackBtn      *gtk.Button
 	tdpBasicScale      *gtk.Scale
@@ -226,6 +278,7 @@ func New(app *gtk.Application) *Window {
 		limits:      limits.DefaultLimits(),
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
+		editProfile: api.DefaultCustomProfile,
 		modeButtons: make(map[string]*gtk.Button),
 		speedBtns:   make(map[string]*gtk.Button),
 		profileBtns: make(map[string]*gtk.Button),

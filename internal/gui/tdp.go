@@ -6,14 +6,17 @@ package gui
 // tdp.go — Custom profile view: TDP sliders, fan curve editor, telemetry.
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -52,26 +55,46 @@ func (fc *fanCurveEditor) tempRange() (lo, hi int) {
 	return l.TempMin, l.TempMax
 }
 
-// fanFloorPWM returns the minimum fan PWM the daemon will currently accept.
+// fanFloorPWM returns the minimum fan PWM the daemon will accept for the
+// editor's current target.
 //
-// Derived from the daemon's applied state rather than the slider position: the
-// daemon validates against hardware, and a slider the user has moved but not
-// saved has not been applied. Must be called from the GTK main thread.
+// Derived from editorFloorPL1 rather than the slider position: the daemon
+// validates against the applied limit (live target) or the profile's own
+// saved TDP (stored target), and a slider the user has moved but not saved is
+// neither. Must be called from the GTK main thread.
 func (w *Window) fanFloorPWM() int {
-	if w.state == nil || w.state.TDP == nil {
-		return limits.PWMMin
-	}
-	return w.limits.FanFloorPWM(w.state.TDP.PL1SPL)
+	return w.limits.FanFloorPWM(w.editorFloorPL1)
 }
 
-// floor is the fan floor curve currently in force, nil when unconstrained or
-// when the editor has no parent window. Like fanFloorPWM it is derived from the
-// daemon's applied state, not the slider position.
+// floor is the fan floor curve in force for the editor's target, nil when
+// unconstrained or when the editor has no parent window. Like fanFloorPWM it
+// reads editorFloorPL1, not the slider position.
 func (fc *fanCurveEditor) floor() []api.FanCurvePoint {
-	if fc.w == nil || fc.w.state == nil || fc.w.state.TDP == nil {
+	if fc.w == nil {
 		return nil
 	}
-	return fc.limits().ActiveFloor(fc.w.state.TDP.PL1SPL)
+	return fc.limits().ActiveFloor(fc.w.editorFloorPL1)
+}
+
+// editPlan resolves how the custom view must address its target right now.
+// Computed fresh per operation rather than stored: the answer changes
+// underneath an open editor when the active profile moves (autoswitch, the
+// CLI, another client). Must be called from the GTK main thread; the result
+// is a value, safe to hand to a goroutine.
+func (w *Window) editPlan() profileui.EditPlan {
+	target := w.editProfile
+	if target == "" {
+		target = api.DefaultCustomProfile
+	}
+	return profileui.PlanEdit(w.state, target)
+}
+
+// updateEditorFloor recomputes the floor limit for the editor's target from
+// fresh state. For a live target the applied PL1 can move underneath the
+// editor (the CLI, another client); a stored target's own TDP only moves
+// through this editor, but recomputing costs nothing.
+func (w *Window) updateEditorFloor() {
+	w.editorFloorPL1 = profileui.ForEditor(w.state, w.editPlan()).FloorPL1
 }
 
 // pwmPct renders a PWM value as a rounded percentage for display. Plain integer
@@ -422,17 +445,35 @@ func (w *Window) buildCustomView() *gtk.Box {
 	header.SetMarginBottom(6)
 	header.SetMarginStart(14)
 	header.Append(w.customBackBtn)
-	lbl := gtk.NewLabel("Custom Profile")
+	lbl := gtk.NewLabel("Custom Profiles")
 	lbl.SetHAlign(gtk.AlignStart)
 	lbl.AddCSSClass("drawer-title")
 	header.Append(lbl)
 	view.Append(header)
+
+	// Shown only for a stored edit — a target that is not running — where
+	// nothing on this view touches hardware. Without it, Save doing nothing
+	// observable reads as a dead button.
+	w.editorNote = gtk.NewLabel("")
+	w.editorNote.SetWrap(true)
+	w.editorNote.SetHAlign(gtk.AlignStart)
+	w.editorNote.AddCSSClass("scale-value")
+	w.editorNote.SetMarginStart(14)
+	w.editorNote.SetMarginEnd(14)
+	w.editorNote.SetVisible(false)
+	view.Append(w.editorNote)
 
 	content := gtk.NewBox(gtk.OrientationVertical, 8)
 	content.SetMarginTop(4)
 	content.SetMarginBottom(12)
 	content.SetMarginStart(12)
 	content.SetMarginEnd(12)
+
+	// --- PROFILE SELECTOR ---
+	// The custom profiles live here rather than in the main view; everything
+	// below edits whichever one this selects.
+	content.Append(w.buildProfileSelector())
+	content.Append(separator())
 
 	// --- TELEMETRY ---
 	content.Append(sectionLabel("TELEMETRY"))
@@ -466,6 +507,7 @@ func (w *Window) buildCustomView() *gtk.Box {
 	w.tdpBasicScale.SetDrawValue(false)
 	w.tdpBasicScale.SetValue(float64(50))
 	w.tdpBasicScale.SetFocusable(false)
+	w.wheelScrollsView(w.tdpBasicScale)
 	w.tdpBasicLabel = gtk.NewLabel("50 W")
 	w.tdpBasicLabel.AddCSSClass("scale-value")
 	w.tdpBasicScale.ConnectValueChanged(func() {
@@ -582,6 +624,17 @@ func (w *Window) buildCustomView() *gtk.Box {
 
 	content.Append(resetRow)
 
+	// --- DELETE ---
+	// Lives in the editor rather than on the profile row: the editor knows its
+	// target, and a delete affordance on every row is an accidental tap away
+	// from data loss. Two taps stand in for a confirm dialog (no popovers —
+	// they do not composite under gamescope); sensitivity mirrors the daemon's
+	// refusals via profileui.DeleteBlockFor.
+	content.Append(separator())
+	w.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
+	w.deleteBtn.ConnectClicked(func() { w.deleteProfileClicked() })
+	content.Append(w.deleteBtn)
+
 	scroll := newDrawerScroll(content)
 	w.customScroll = scroll
 	view.Append(scroll)
@@ -606,6 +659,7 @@ func (w *Window) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) {
 	sc.SetDrawValue(false)
 	sc.SetValue(50)
 	sc.SetFocusable(false)
+	w.wheelScrollsView(sc)
 	valLabel := gtk.NewLabel("50 W")
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
@@ -627,6 +681,7 @@ func (w *Window) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gtk.La
 	sc.SetDrawValue(false)
 	sc.SetValue(0)
 	sc.SetFocusable(false)
+	w.wheelScrollsView(sc)
 	valLabel := gtk.NewLabel(uvLabel(label, 0))
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
@@ -645,7 +700,9 @@ func uvLabel(name string, val int) string {
 	return fmt.Sprintf("%s: %d", name, val)
 }
 
-// syncCustomView populates the custom view widgets from daemon state.
+// syncCustomView populates the custom view widgets for the current edit
+// target. Which values it shows — the live projections or a stored profile's
+// own settings — is profileui.ForEditor's decision, driven by the edit plan.
 func (w *Window) syncCustomView() {
 	if w.state == nil {
 		return
@@ -654,9 +711,22 @@ func (w *Window) syncCustomView() {
 	w.syncing = true
 	defer func() { w.syncing = prev }()
 
+	plan := w.editPlan()
+	es := profileui.ForEditor(w.state, plan)
+	w.editorFloorPL1 = es.FloorPL1
+
+	// The selector names the target, so the header stays a fixed title.
+	w.syncProfileSelector()
+	if w.editorNote != nil {
+		w.editorNote.SetVisible(!plan.Live)
+		if !plan.Live {
+			w.editorNote.SetLabel("Not active — changes are stored and apply when this profile is activated.")
+		}
+	}
+
 	// TDP.
-	if w.state.TDP != nil {
-		tdp := w.state.TDP
+	if es.TDP != nil {
+		tdp := es.TDP
 		if w.tdpBasicScale != nil {
 			v := float64(tdp.PL1SPL)
 			if m := float64(w.limits.BasicSliderMax()); v > m {
@@ -678,53 +748,64 @@ func (w *Window) syncCustomView() {
 			w.tdpPL3Label.SetLabel(fmt.Sprintf("%d W", tdp.FPPT))
 		}
 
-		// Switch to the advanced view when the applied TDP cannot be expressed in
-		// basic mode. Otherwise the basic slider silently clamps and its label
-		// reports the clamped number, so the drawer claims 70W while the hardware
-		// runs at 80W. Only ever forced on, never off: once the user unchecks it
-		// that is a deliberate choice to edit in basic terms.
+		// Switch to the advanced view when the displayed TDP cannot be
+		// expressed in basic mode. Otherwise the basic slider silently clamps
+		// and its label reports the clamped number, so the drawer claims 70W
+		// while the profile holds 80W. Only ever forced on, never off: once
+		// the user unchecks it that is a deliberate choice to edit in basic
+		// terms.
 		if w.tdpAdvancedCheck != nil && !w.tdpAdvancedCheck.Active() &&
-			w.limits.NeedsAdvanced(w.state.InCustomProfile(), *tdp) {
+			w.limits.NeedsAdvanced(es.HasTDP, *tdp) {
 			w.tdpAdvancedCheck.SetActive(true)
 		}
+	} else {
+		// The target saves no TDP of its own. Reset the sliders, or the
+		// previous target's values linger when the editor is retargeted.
+		w.resetTdpWidgets()
 	}
 
-	// Fan curve. Only adopt the daemon's points when the fans are actually
-	// following them: on a stock profile the fans are released to firmware auto
-	// but the curve registers still read back the last custom curve, so copying
-	// them unconditionally left the editor showing a curve that was not in force.
-	// Redraw either way — the PWM floor line depends on PL1, which may have just
-	// changed.
+	// Fan curve. Whether the daemon's points are worth adopting is
+	// profileui.CurveToShow's decision: for a live target only a curve
+	// actually in force counts (the registers keep stale points after a
+	// release); for a stored target the profile either saves one or not.
+	// Redraw either way — the PWM floor line depends on the target's limit,
+	// which may have just changed.
 	if w.fanCurve != nil {
-		if limits.FanCurveIsCustom(w.state.FanCurve) {
-			copy(w.fanCurve.points[:], w.state.FanCurve.Points)
+		if pts, ok := profileui.CurveToShow(plan, es.FanCurve); ok {
+			copy(w.fanCurve.points[:], pts)
 		} else {
 			w.fanCurve.points = w.limits.DefaultCurve()
 		}
-	}
-	if w.fanCurve != nil {
-		// A curve saved while the floor was off can sit below it once a high TDP
-		// is applied. Lift it so what is drawn is what the daemon would accept.
+		// A curve saved while the floor was off can sit below it once a high
+		// TDP is applied. Lift it so what is drawn is what the daemon would
+		// accept.
 		w.fanCurve.enforceConstraints(0)
 		w.fanCurve.area.QueueDraw()
 	}
 
 	w.syncFanResetSensitivity()
 
-	// Undervolt.
+	// Undervolt. The slider position is profileui's decision: the applied
+	// offset for a live target (0 while a stock profile is active — CO is
+	// reset in hardware there), the profile's saved offset for a stored one.
 	if w.uvBox != nil {
 		w.uvBox.SetVisible(w.state.UndervoltAvailable)
 	}
-	// InCustomProfile, not Profile == "custom": named custom profiles (z13ctl
-	// v1.3+) must show their offset too, and the projected Undervolt field
-	// carries the active custom profile's value either way.
-	cpuCO := 0
-	if w.state.Undervolt != nil && w.state.InCustomProfile() {
-		cpuCO = w.state.Undervolt.CPUCO
-	}
 	if w.uvCpuScale != nil {
-		w.uvCpuScale.SetValue(float64(cpuCO))
-		w.uvCpuLabel.SetLabel(uvLabel("CPU Curve Optimizer", cpuCO))
+		w.uvCpuScale.SetValue(float64(es.CO))
+		w.uvCpuLabel.SetLabel(uvLabel("CPU Curve Optimizer", es.CO))
+	}
+
+	// Delete affordance, mirroring the daemon's refusals.
+	if w.deleteBtn != nil {
+		w.disarmDelete()
+		block := profileui.DeleteBlockFor(w.state, plan.Target)
+		w.deleteBtn.SetSensitive(block == "")
+		if block == "" {
+			w.deleteBtn.SetTooltipText("Remove this saved profile")
+		} else {
+			w.deleteBtn.SetTooltipText("Cannot delete: " + block)
+		}
 	}
 
 	// Telemetry.
@@ -733,6 +814,29 @@ func (w *Window) syncCustomView() {
 	}
 	if w.telemetryFanLabel != nil {
 		w.telemetryFanLabel.SetLabel(fmt.Sprintf("Fan: %d RPM", w.state.FanRPM))
+	}
+}
+
+// resetTdpWidgets returns the TDP sliders to a neutral default, for a target
+// that saves no TDP of its own.
+func (w *Window) resetTdpWidgets() {
+	const def = 50
+	if w.tdpBasicScale != nil {
+		w.tdpBasicScale.SetValue(def)
+		w.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", def))
+	}
+	for _, sc := range []struct {
+		scale *gtk.Scale
+		label *gtk.Label
+	}{
+		{w.tdpPL1Scale, w.tdpPL1Label},
+		{w.tdpPL2Scale, w.tdpPL2Label},
+		{w.tdpPL3Scale, w.tdpPL3Label},
+	} {
+		if sc.scale != nil {
+			sc.scale.SetValue(def)
+			sc.label.SetLabel(fmt.Sprintf("%d W", def))
+		}
 	}
 }
 
@@ -791,10 +895,10 @@ func (w *Window) readTdpRequest() tdpRequest {
 	return tdpRequest{watts: fmt.Sprintf("%d", int(w.tdpBasicScale.Value()))}
 }
 
-// send performs the socket round-trip. Safe to call from a goroutine — it holds
-// only plain strings.
-func (r tdpRequest) send() error {
-	return apiresult.Err(api.SendTdpSet(r.watts, r.pl1, r.pl2, r.pl3, r.force))
+// send performs the socket round-trip for the plan's target. Safe to call
+// from a goroutine — it holds only plain strings.
+func (r tdpRequest) send(plan profileui.EditPlan) error {
+	return apiresult.Err(api.SendTdpSetFor(plan.WireProfile(), r.watts, r.pl1, r.pl2, r.pl3, r.force))
 }
 
 // readFanCurve snapshots the fan curve as its wire string. Must be called from
@@ -806,19 +910,45 @@ func (w *Window) readFanCurve() string {
 	return w.fanCurve.curveString()
 }
 
-// sendFanCurve sends a previously snapshotted curve. Safe from a goroutine.
-func sendFanCurve(curve string) error {
+// sendFanCurve sends a previously snapshotted curve for the plan's target.
+// Safe from a goroutine.
+func sendFanCurve(plan profileui.EditPlan, curve string) error {
 	if curve == "" {
 		return nil
 	}
-	return apiresult.Err(api.SendFanCurveSet(curve))
+	return apiresult.Err(api.SendFanCurveSetFor(plan.WireProfile(), curve))
 }
 
-// refreshProfile fetches state and updates the profile button highlight.
-// refreshState fetches daemon state and re-syncs both the custom view and the
-// profile buttons. Every custom-profile operation uses it rather than syncing the
-// profile alone: the fan curve editor's PWM floor is derived from the applied
-// PL1, so a TDP change has to re-evaluate the whole view, not just the highlight.
+// probeStoredTarget guards every stored-target send. A daemon older than the
+// profile field unmarshals the request, silently drops the field, applies the
+// edit to the running machine, and answers ok — the exact opposite of what a
+// stored edit means, behind a success response. SendProfileList is the
+// capability probe (such a daemon answers unknown-command to it), the same
+// probe the CLI runs before every --profile send. A live plan needs no guard:
+// bare sends mean the same thing on every daemon.
+//
+// Safe from a goroutine — it is a socket round-trip on plain values.
+func probeStoredTarget(plan profileui.EditPlan) error {
+	if plan.WireProfile() == "" {
+		return nil
+	}
+	handled, _, err := api.SendProfileList()
+	if e := apiresult.Err(handled, err); e != nil {
+		if errors.Is(e, apiresult.ErrNotRunning) {
+			return e
+		}
+		return fmt.Errorf("this daemon does not support editing a profile that is not running — "+
+			"restart it after upgrading (systemctl --user restart voltaire): %w", e)
+	}
+	return nil
+}
+
+// refreshState fetches daemon state and re-syncs the custom view, the profile
+// section, the autoswitch section, and the header. Every profile operation
+// and daemon event uses it rather than syncing one widget: the fan curve
+// editor's PWM floor is derived from the target's limit, so a TDP change has
+// to re-evaluate the whole view, not just a highlight — and a profile
+// created or deleted by another client has to reshape the list.
 // Safe to call from a background goroutine.
 func (w *Window) refreshState() {
 	ok, state, rawErr := api.SendGetState()
@@ -837,21 +967,28 @@ func (w *Window) refreshState() {
 		w.state = state
 		w.syncCustomView()
 		w.syncing = true
-		w.syncProfile()
+		w.syncProfiles()
+		w.syncAutoswitch()
 		w.syncing = false
+		w.updateHeader()
 	})
 }
 
 // saveCustomTdp commits only the TDP values.
 func (w *Window) saveCustomTdp() {
 	req := w.readTdpRequest() // widget reads stay on the GTK thread
+	plan := w.editPlan()      // resolved on the GTK thread; the goroutine gets a value
 	go func() {
-		if err := req.send(); err != nil {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Save TDP", err)
+			return
+		}
+		if err := req.send(plan); err != nil {
 			w.reportError("Save TDP", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("custom TDP saved")
+		slog.Info("custom TDP saved", "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
@@ -859,13 +996,18 @@ func (w *Window) saveCustomTdp() {
 // saveCustomFanCurve commits only the fan curve.
 func (w *Window) saveCustomFanCurve() {
 	curve := w.readFanCurve() // widget read stays on the GTK thread
+	plan := w.editPlan()
 	go func() {
-		if err := sendFanCurve(curve); err != nil {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Save fan curve", err)
+			return
+		}
+		if err := sendFanCurve(plan, curve); err != nil {
 			w.reportError("Save fan curve", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("custom fan curve saved")
+		slog.Info("custom fan curve saved", "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
@@ -874,9 +1016,14 @@ func (w *Window) saveCustomFanCurve() {
 func (w *Window) saveCustomBoth() {
 	req := w.readTdpRequest() // widget reads stay on the GTK thread
 	curve := w.readFanCurve()
+	plan := w.editPlan()
 	go func() {
-		tdpErr := req.send()
-		fanErr := sendFanCurve(curve)
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Save profile", err)
+			return
+		}
+		tdpErr := req.send(plan)
+		fanErr := sendFanCurve(plan, curve)
 		switch {
 		case tdpErr != nil:
 			// TDP first: a rejected TDP is usually why the fan write failed too
@@ -886,65 +1033,132 @@ func (w *Window) saveCustomBoth() {
 			w.reportError("Save fan curve", fanErr)
 		default:
 			w.clearErrorAsync()
-			slog.Info("custom profile saved (TDP + fans)")
+			slog.Info("custom profile saved (TDP + fans)", "profile", plan.Target, "live", plan.Live)
 		}
 		w.refreshState()
 	}()
 }
 
-// resetTdp resets TDP to firmware defaults.
+// resetTdp resets TDP: to firmware defaults for a live target, or removes the
+// stored TDP from a target that is not running.
 func (w *Window) resetTdp() {
+	plan := w.editPlan()
 	go func() {
-		if err := apiresult.Err(api.SendTdpReset()); err != nil {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Reset TDP", err)
+			return
+		}
+		if err := apiresult.Err(api.SendTdpResetFor(plan.WireProfile())); err != nil {
 			w.reportError("Reset TDP", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("tdp reset to defaults")
+		slog.Info("tdp reset", "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
 
-// resetFanCurve resets fan curves to firmware auto mode.
+// resetFanCurve resets the fan curve: to firmware auto for a live target, or
+// removes the stored curve from a target that is not running.
 func (w *Window) resetFanCurve() {
+	plan := w.editPlan()
 	go func() {
-		if err := apiresult.Err(api.SendFanCurveReset()); err != nil {
-			// The daemon refuses this while sustained TDP is above the safe max —
-			// firmware auto has no PWM floor. Reset TDP is the way out.
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Reset fans", err)
+			return
+		}
+		if err := apiresult.Err(api.SendFanCurveResetFor(plan.WireProfile())); err != nil {
+			// The daemon refuses this while the target's sustained TDP is above
+			// the safe max — firmware auto has no PWM floor. Reset TDP is the
+			// way out.
 			w.reportError("Reset fans", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("fan curve reset to auto")
+		slog.Info("fan curve reset", "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
 
-// saveUndervolt commits the current Curve Optimizer offsets to the daemon.
+// saveUndervolt commits the current Curve Optimizer offset.
 func (w *Window) saveUndervolt() {
 	cpu := fmt.Sprintf("%d", int(w.uvCpuScale.Value())) // GTK thread
+	plan := w.editPlan()
 	go func() {
-		if err := apiresult.Err(api.SendUndervoltSet(cpu)); err != nil {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Save undervolt", err)
+			return
+		}
+		if err := apiresult.Err(api.SendUndervoltSetFor(plan.WireProfile(), cpu)); err != nil {
 			w.reportError("Save undervolt", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("undervolt saved", "cpu", cpu)
+		slog.Info("undervolt saved", "cpu", cpu, "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
 
-// resetUndervolt resets Curve Optimizer to stock (0).
+// resetUndervolt resets the Curve Optimizer to stock for a live target, or
+// removes the stored offset from a target that is not running.
 func (w *Window) resetUndervolt() {
+	plan := w.editPlan()
 	go func() {
-		if err := apiresult.Err(api.SendUndervoltReset()); err != nil {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Reset undervolt", err)
+			return
+		}
+		if err := apiresult.Err(api.SendUndervoltResetFor(plan.WireProfile())); err != nil {
 			w.reportError("Reset undervolt", err)
 			return
 		}
 		w.clearErrorAsync()
-		slog.Info("undervolt reset to stock")
+		slog.Info("undervolt reset", "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
+}
+
+// deleteProfileClicked deletes the editor's target profile, with a two-tap
+// confirmation in the button itself: the first tap arms it and it disarms on
+// its own after a few seconds, on any retarget, and on every sync.
+func (w *Window) deleteProfileClicked() {
+	if !w.deleteArmed {
+		w.deleteArmed = true
+		w.deleteBtn.SetLabel("Tap again to delete")
+		time.AfterFunc(3*time.Second, func() {
+			glib.IdleAdd(func() bool {
+				w.disarmDelete()
+				return false
+			})
+		})
+		return
+	}
+	name := w.editProfile
+	w.disarmDelete()
+	go func() {
+		if err := apiresult.Err(api.SendProfileDelete(name)); err != nil {
+			w.reportError("Delete profile", err)
+			return
+		}
+		w.clearErrorAsync()
+		slog.Info("profile deleted", "profile", name)
+		// The target no longer exists. Fall back to "custom", which is always
+		// addressable, rather than leaving the view pointed at a profile the
+		// next sync cannot find.
+		glib.IdleAdd(func() bool {
+			w.setEditTarget(api.DefaultCustomProfile)
+			return false
+		})
+		w.refreshState()
+	}()
+}
+
+// disarmDelete returns the delete button to its resting label.
+func (w *Window) disarmDelete() {
+	w.deleteArmed = false
+	if w.deleteBtn != nil {
+		w.deleteBtn.SetLabel("Delete Profile")
+	}
 }
 
 // startTelemetryPolling begins polling the daemon for APU temp and fan RPM
@@ -985,9 +1199,7 @@ func (w *Window) startTelemetryPolling() {
 				w.state = state
 
 				// Header telemetry (visible on all views).
-				if w.headerTelemetry != nil {
-					w.headerTelemetry.SetLabel(fmt.Sprintf("%d°C · %d RPM", state.Temperature, state.FanRPM))
-				}
+				w.updateHeader()
 
 				// Custom view telemetry (only when active).
 				if w.viewStack != nil && w.viewStack.VisibleChildName() == "custom" {
@@ -1000,8 +1212,10 @@ func (w *Window) startTelemetryPolling() {
 					if w.fanCurve != nil {
 						w.fanCurve.area.QueueDraw()
 					}
-					// The floor line moved with the fresh PL1, so the button that is
-					// gated on the same value has to follow it.
+					// The floor can move with fresh state (a live target's PL1
+					// changed elsewhere), and the chart line and the Reset Fans
+					// gate both read it.
+					w.updateEditorFloor()
 					w.syncFanResetSensitivity()
 				}
 			})
@@ -1011,21 +1225,71 @@ func (w *Window) startTelemetryPolling() {
 }
 
 // buildCustomFocusList builds the 2D focus grid for the custom profile view.
+//
+// Row numbers run off a counter rather than literals because the profile
+// selector contributes one row per custom profile when expanded, so
+// everything below it shifts as profiles are created and deleted.
+// syncProfileSelector rebuilds this list whenever that set changes.
 func (w *Window) buildCustomFocusList() {
 	var items []focusItem
 
 	// Row 0: back button.
+	row := 0
 	items = append(items, focusItem{
-		widget: w.customBackBtn, row: 0, col: 0,
+		widget: w.customBackBtn, row: row, col: 0,
 		section:    "nav",
 		onActivate: func() { w.showMainView() },
 	})
 
-	// Row 1: basic TDP slider.
+	// Profile selector: the collapsed row, then one row per profile while it
+	// is expanded, then the actions and the inline name entry.
+	row++
+	items = append(items, focusItem{
+		widget: w.profileSelBtn, row: row, col: 0,
+		section:    "profile",
+		onActivate: func() { w.profileSelBtn.Activate() },
+	})
+	listVis := func() bool { return w.profileSelBox != nil && w.profileSelBox.IsVisible() }
+	for _, r := range w.customRows {
+		btn := w.profileSelBtns[r.Name]
+		if btn == nil {
+			continue
+		}
+		row++
+		items = append(items, focusItem{
+			widget: btn, row: row, col: 0,
+			section: "profile", isVisible: listVis,
+			onActivate: func() { btn.Activate() },
+		})
+	}
+	row++
+	for col, btn := range []*gtk.Button{w.activateBtn, w.newProfileBtn, w.saveAsBtn} {
+		btn := btn
+		items = append(items, focusItem{
+			widget: btn, row: row, col: col,
+			section:    "profile",
+			onActivate: func() { btn.Activate() },
+		})
+	}
+	row++
+	nameVis := func() bool { return w.nameRow != nil && w.nameRow.IsVisible() }
+	items = append(items, focusItem{
+		widget: w.nameOKBtn, row: row, col: 0,
+		section: "profile", isVisible: nameVis,
+		onActivate: func() { w.nameOKBtn.Activate() },
+	})
+	items = append(items, focusItem{
+		widget: w.nameCancelBtn, row: row, col: 1,
+		section: "profile", isVisible: nameVis,
+		onActivate: func() { w.nameCancelBtn.Activate() },
+	})
+
+	// Basic TDP slider.
 	if w.tdpBasicScale != nil {
+		row++
 		oL, oR, gV, sV := scaleAdjust(w.tdpBasicScale, 5)
 		items = append(items, focusItem{
-			widget: w.tdpBasicScale, row: 1, col: 0,
+			widget: w.tdpBasicScale, row: row, col: 0,
 			section:  "tdp",
 			editable: true,
 			onLeft:   oL, onRight: oR,
@@ -1034,21 +1298,23 @@ func (w *Window) buildCustomFocusList() {
 		})
 	}
 
-	// Row 2: advanced checkbox.
+	// Advanced checkbox.
 	if w.tdpAdvancedCheck != nil {
+		row++
 		items = append(items, focusItem{
-			widget: w.tdpAdvancedCheck, row: 2, col: 0,
+			widget: w.tdpAdvancedCheck, row: row, col: 0,
 			section:    "tdp",
 			onActivate: func() { w.tdpAdvancedCheck.SetActive(!w.tdpAdvancedCheck.Active()) },
 		})
 	}
 
-	// Rows 3-5: PL1/PL2/PL3 sliders.
+	// PL1/PL2/PL3 sliders.
 	advVis := func() bool { return w.tdpAdvancedBox.IsVisible() }
-	for i, sc := range []*gtk.Scale{w.tdpPL1Scale, w.tdpPL2Scale, w.tdpPL3Scale} {
+	for _, sc := range []*gtk.Scale{w.tdpPL1Scale, w.tdpPL2Scale, w.tdpPL3Scale} {
+		row++
 		oL, oR, gV, sV := scaleAdjust(sc, 1)
 		items = append(items, focusItem{
-			widget: sc, row: 3 + i, col: 0,
+			widget: sc, row: row, col: 0,
 			section:   "tdp",
 			editable:  true,
 			isVisible: advVis,
@@ -1057,64 +1323,66 @@ func (w *Window) buildCustomFocusList() {
 		})
 	}
 
-	// Row 6: fan curve (editable with custom behavior).
+	// Fan curve (navigable, dragged by touch/mouse).
 	if w.fanCurve != nil {
+		row++
 		items = append(items, focusItem{
-			widget: w.fanCurve.area, row: 6, col: 0,
+			widget: w.fanCurve.area, row: row, col: 0,
 			section: "fan",
-			// Fan curve is navigable but not editable via gamepad in this first pass.
-			// Touch/mouse drag handles interaction.
 		})
 	}
 
-	// Rows 7-9: undervolt (visible only when available).
+	// Undervolt (visible only when available).
 	uvVis := func() bool { return w.tdpAdvancedBox.IsVisible() && w.uvBox != nil && w.uvBox.IsVisible() }
 	if w.uvCpuScale != nil {
+		row++
 		oL, oR, gV, sV := scaleAdjust(w.uvCpuScale, 1)
 		items = append(items, focusItem{
-			widget: w.uvCpuScale, row: 7, col: 0,
+			widget: w.uvCpuScale, row: row, col: 0,
 			section: "undervolt", editable: true, isVisible: uvVis,
 			onLeft: oL, onRight: oR, getValue: gV, setValue: sV,
 		})
 	}
+	row++
 	items = append(items, focusItem{
-		widget: w.saveUvBtn, row: 8, col: 0,
+		widget: w.saveUvBtn, row: row, col: 0,
 		section: "undervolt", isVisible: uvVis,
 		onActivate: func() { w.saveUvBtn.Activate() },
 	})
 	items = append(items, focusItem{
-		widget: w.resetUvBtn, row: 8, col: 1,
+		widget: w.resetUvBtn, row: row, col: 1,
 		section: "undervolt", isVisible: uvVis,
 		onActivate: func() { w.resetUvBtn.Activate() },
 	})
 
-	// Row 9: save buttons.
-	items = append(items, focusItem{
-		widget: w.saveTdpBtn, row: 9, col: 0,
-		section:    "actions",
-		onActivate: func() { w.saveTdpBtn.Activate() },
-	})
-	items = append(items, focusItem{
-		widget: w.saveFanBtn, row: 9, col: 1,
-		section:    "actions",
-		onActivate: func() { w.saveFanBtn.Activate() },
-	})
-	items = append(items, focusItem{
-		widget: w.saveBothBtn, row: 9, col: 2,
-		section:    "actions",
-		onActivate: func() { w.saveBothBtn.Activate() },
-	})
+	// Save buttons.
+	row++
+	for col, btn := range []*gtk.Button{w.saveTdpBtn, w.saveFanBtn, w.saveBothBtn} {
+		btn := btn
+		items = append(items, focusItem{
+			widget: btn, row: row, col: col,
+			section:    "actions",
+			onActivate: func() { btn.Activate() },
+		})
+	}
 
-	// Row 10: reset buttons.
+	// Reset buttons.
+	row++
+	for col, btn := range []*gtk.Button{w.resetTdpBtn, w.resetFanBtn} {
+		btn := btn
+		items = append(items, focusItem{
+			widget: btn, row: row, col: col,
+			section:    "actions",
+			onActivate: func() { btn.Activate() },
+		})
+	}
+
+	// Delete (its two-tap arm makes it safe to reach by D-pad).
+	row++
 	items = append(items, focusItem{
-		widget: w.resetTdpBtn, row: 10, col: 0,
+		widget: w.deleteBtn, row: row, col: 0,
 		section:    "actions",
-		onActivate: func() { w.resetTdpBtn.Activate() },
-	})
-	items = append(items, focusItem{
-		widget: w.resetFanBtn, row: 10, col: 1,
-		section:    "actions",
-		onActivate: func() { w.resetFanBtn.Activate() },
+		onActivate: func() { w.deleteBtn.Activate() },
 	})
 
 	items = append(items, w.errBarFocusItem())
