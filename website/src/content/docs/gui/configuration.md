@@ -37,8 +37,14 @@ layout.
 
 ```toml
 [quickbar]
+edge = "left"
 controls = ["profile", "battery", "lighting"]
 ```
+
+`edge` is which side of the screen the drawer slides in from — `right` (the
+default) or `left`. `top` and `bottom` are not available: the drawer is a
+fixed-width column, so a horizontal edge would need every section laid out along
+the other axis. Asking for one logs a warning saying so and uses `right`.
 
 | ID | Section |
 |----|---------|

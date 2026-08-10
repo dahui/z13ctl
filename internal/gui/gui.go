@@ -28,6 +28,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/gui/layershell"
 	"github.com/dahui/voltaire/v2/internal/gui/overlay"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/panelgeom"
 	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/dahui/voltaire/v2/internal/togglegate"
@@ -101,6 +102,11 @@ type Window struct {
 	// grows an API for serving per-device limits this is the one place that
 	// changes — fetch once at startup, Sanitized, falling back to the defaults.
 	limits limits.Limits
+
+	// edge is the screen edge the drawer anchors to and slides from, resolved
+	// once at startup from gui.toml. All three backends take it; nothing reads
+	// it after Configure.
+	edge panelgeom.Edge
 
 	// controls is which sections this drawer builds and in what order,
 	// resolved once at startup from gui.toml and the device document. Both
@@ -326,19 +332,22 @@ func deviceLimits(info *api.DeviceInfo) limits.Limits {
 	return l
 }
 
-// deviceControls resolves which sections the drawer builds and in what order:
-// the user's gui.toml if they have one, filtered by what the device can
-// actually do.
-//
-// Every failure resolves to the defaults rather than to nothing. The drawer is
-// the only way some users reach these settings, so a typo in an optional file
-// must never be what stops it opening — and a nil document means the daemon did
-// not answer, which is not evidence that the machine lacks capabilities.
-func deviceControls(info *api.DeviceInfo) []controls.Control {
+// guiConfig reads gui.toml once. A malformed file is logged and treated as
+// absent: the drawer is the only way some users reach these settings, so a typo
+// in an optional file must never be what stops it opening.
+func guiConfig() controls.Config {
 	cfg, err := controls.Load(theme.XDGConfigHome() + "/voltaire")
 	if err != nil {
-		slog.Warn("using the default control layout", "err", err)
+		slog.Warn("using the default drawer layout", "err", err)
 	}
+	return cfg
+}
+
+// resolveControls picks which sections the drawer builds and in what order:
+// the user's list if they have one, filtered by what the device can actually
+// do. A nil document means the daemon did not answer, which is not evidence
+// that the machine lacks capabilities, so nothing is filtered out there.
+func resolveControls(cfg controls.Config, info *api.DeviceInfo) []controls.Control {
 	resolved, complaints := controls.Resolve(cfg, info)
 	for _, c := range complaints {
 		slog.Warn(c)
@@ -347,15 +356,29 @@ func deviceControls(info *api.DeviceInfo) []controls.Control {
 	return resolved
 }
 
+// resolveEdge picks the screen edge the drawer lives on. Every parse failure
+// still yields a usable edge, so an unrecognised value costs a warning and the
+// default rather than a drawer that will not open.
+func resolveEdge(cfg controls.Config) panelgeom.Edge {
+	edge, err := panelgeom.ParseEdge(cfg.Quickbar.Edge)
+	if err != nil {
+		slog.Warn("drawer edge", "err", err)
+	}
+	slog.Info("drawer edge", "edge", edge)
+	return edge
+}
+
 // New creates the overlay window and attaches it to app. Called from the
 // GTK Activate signal.
 func New(app *gtk.Application) *Window {
 	// One document, two readers: the widgets' bounds and the control list.
 	doc := deviceDocument()
+	cfg := guiConfig()
 	w := &Window{
 		tab:         "keyboard",
 		limits:      deviceLimits(doc),
-		controls:    deviceControls(doc),
+		controls:    resolveControls(cfg, doc),
+		edge:        resolveEdge(cfg),
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 		editProfile: api.DefaultCustomProfile,
@@ -378,15 +401,15 @@ func New(app *gtk.Application) *Window {
 	// unanchored, unsized box in the middle of the screen (issue #16). Ask first.
 	switch {
 	case w.gamescope:
-		w.backend = gamescope.New(w.win, w.gtkWin, drawerWidth)
+		w.backend = gamescope.New(w.win, w.gtkWin, drawerWidth, w.edge)
 	case layerShellUsable():
-		w.backend = layershell.New(w.win, w.gtkWin, drawerWidth)
+		w.backend = layershell.New(w.win, w.gtkWin, drawerWidth, w.edge)
 	default:
 		slog.Info("layer-shell unavailable, using the overlay backend "+
 			"(the drawer is drawn in a transparent click-through window instead of "+
 			"anchored to the screen edge)",
 			"desktop", os.Getenv("XDG_CURRENT_DESKTOP"), "session", os.Getenv("XDG_SESSION_TYPE"))
-		w.backend = overlay.New(w.win, w.gtkWin, drawerWidth)
+		w.backend = overlay.New(w.win, w.gtkWin, drawerWidth, w.edge)
 	}
 
 	w.backend.Configure(w.visible.Load, w.hide)

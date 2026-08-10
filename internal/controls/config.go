@@ -34,8 +34,15 @@ type Config struct {
 }
 
 // QuickbarConfig is the [quickbar] table.
+//
+// Edge is a plain string here rather than a panelgeom.Edge because this package
+// is about *which* controls exist, not where the panel sits; panelgeom.ParseEdge
+// owns the spellings and the refusals, and the caller pairs the two. Keeping
+// both settings in one file and one struct is what stops a second config file
+// appearing the first time the drawer grows another preference.
 type QuickbarConfig struct {
 	Controls *[]string `toml:"controls"`
+	Edge     string    `toml:"edge"`
 }
 
 // Load reads gui.toml from dir. A missing file is not an error — it is the

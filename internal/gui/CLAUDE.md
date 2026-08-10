@@ -469,32 +469,66 @@ to stock GTK colours and stopped following the theme. Both are now removed, with
 changes, grep the CSS for its element selector**: a rule that no longer matches
 fails silently and looks like a theming gap rather than dead code.
 
-### Focus coordinates: `focusgrid.Builder` exists; the views are not converted yet
+### Focus coordinates come from `focusgrid.Builder`; nothing hand-numbers a row
 
-`internal/focusgrid/builder.go` (M4 groundwork, landed pure and tested ahead of
-any widget change — that ordering is the mitigation for the plan's risk #4)
-declares a layout and computes the coordinates, instead of the views
-incrementing a `row` variable between appends. `buildMainFocusList` and
-`buildCustomFocusList` still hand-number, and
-`TestReproducesTheMainViewLayout` pins the Builder against the main view's
-current coordinates so the conversion has a parity proof to convert *to*.
+All four focus lists (main, custom, theme, colour) declare a layout and let
+`internal/focusgrid/builder.go` compute the coordinates. No view increments a
+`row` variable between appends any more, and no new one should. The Builder
+landed pure and tested *before* any widget changed — that ordering is the
+mitigation for the plan's risk #4 — and four parity tests pin each view's
+coordinates against what the hand-numbered code produced.
 
-Two things the hand-numbered form gets wrong that the Builder cannot:
+The main view's conversion was verified against the **running drawer**: the
+`-d` dump of its focus list is byte-identical to the pre-conversion one, 42
+items including the error-bar sentinel. The custom, theme and colour lists are
+covered by parity tests but have not been checked at runtime, which needs a
+view switch with `-d` set; the coordinates to diff against are in
+`internal/focusgrid/builder_test.go`.
 
-- A grid's height is written twice — `modeBase + i/3` in the loop and
+Two things the hand-numbered form got wrong that the Builder cannot:
+
+- A grid's height was written twice — `modeBase + i/3` in the loop and
   `row = modeBase + 1` after it. Those agree only while `modeOrder` holds
-  exactly six entries. A seventh mode puts a button on the row the next section
-  claims, so D-pad down from the grid reaches the wrong control and nothing
-  looks wrong on screen. `Grid` advances by the ceiling.
+  exactly six entries. A seventh mode would have put a button on the row the
+  next section claims, so D-pad down from the grid reaches the wrong control
+  and nothing looks wrong on screen. `Grid` advances by the ceiling.
 - Every coordinate assumes the panel stacks downward, so a top- or bottom-edge
   quickbar needs all of them transposed. `Orientation` applies that once, at
   the end; `Horizontal` is *defined* as the transpose of `Vertical` rather than
   as a second set of rules, and a property test asserts it over a non-trivial
-  layout.
+  layout. Nothing uses `Horizontal` yet — see the edge note below.
 
-Until the conversion lands, a new row still has to be hand-numbered — but add
-it to the Builder's parity test in the same commit, or the test stops
-describing the view it is meant to guard.
+`logFocusList` dumps each list at Debug as `row:col:section`. It is the only
+way to check that a layout change moved what it meant to and nothing else,
+since these lists live where no test can reach them.
+
+### The drawer moves between the left and right edges, and no further
+
+`gui.toml`'s `[quickbar] edge` picks the screen edge. `panelgeom.Edge` carries
+it, all three backends take it, and the geometry is pure and table-tested:
+`Panel` aligns the rect, `HiddenX` says which way "away" is, and `HasNeighbor`
+answers whether sliding off that edge would bleed onto another monitor.
+
+That last one is the reason to be careful here. The layer-shell backend fades
+in place instead of sliding when another output sits beyond the edge, because
+KWin does not clip a layer surface's overflow — and the check asked
+exclusively about the *right* until the drawer could move. An assumption like
+that survives a move silently and produces a drawer bleeding onto the monitor
+it used to be nowhere near. Every anchor and margin write now goes through
+`shellEdge()` for the same reason: there must be no path that relocates the
+panel while leaving the animation driving the opposite side.
+
+Gamescope has no rectangle to compute — it composites the whole fullscreen
+window — so its edge is the append order of backdrop and panel around the
+expanding spacer.
+
+**Top and bottom are refused, and `ParseEdge` says why.** They are not an
+anchor change: the drawer is a fixed-width column of stacked sections, so a
+horizontal edge means laying every section out along the other axis — a
+different panel, not a moved one. `focusgrid.Horizontal` is already written and
+tested for the day that content work happens; until then a user who writes
+`edge = "top"` gets a warning naming the reason and the default, rather than
+"unknown edge" or a silent no-op.
 
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 

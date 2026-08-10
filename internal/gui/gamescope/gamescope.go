@@ -57,6 +57,7 @@ import (
 	"log/slog"
 	"unsafe" //nolint:gocritic // used with cgo, requires separate import block
 
+	"github.com/dahui/voltaire/v2/internal/panelgeom"
 	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/uiscale"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -73,6 +74,7 @@ type Backend struct {
 	appWin      *gtk.ApplicationWindow
 	gtkWin      *gtk.Window
 	drawerWidth int
+	edge        panelgeom.Edge
 
 	xdisplay unsafe.Pointer
 	xid      C.ulong
@@ -86,11 +88,12 @@ type Backend struct {
 }
 
 // New creates a gamescope backend. drawerWidth is the drawer panel width in pixels.
-func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int) *Backend {
+func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int, edge panelgeom.Edge) *Backend {
 	return &Backend{
 		appWin:      appWin,
 		gtkWin:      gtkWin,
 		drawerWidth: drawerWidth,
+		edge:        edge,
 	}
 }
 
@@ -198,8 +201,17 @@ func (b *Backend) WrapContent(drawer gtk.Widgetter) gtk.Widgetter {
 	}
 
 	panel.Append(drawer)
-	wrapper.Append(backdrop)
-	wrapper.Append(panel)
+	// Order is the alignment: the backdrop expands, so whichever child is
+	// appended first is pushed against that side of the wrapper. There is no
+	// rectangle to compute here — gamescope composites the whole fullscreen
+	// window — so the edge shows up as append order rather than as geometry.
+	if b.edge == panelgeom.EdgeLeft {
+		wrapper.Append(panel)
+		wrapper.Append(backdrop)
+	} else {
+		wrapper.Append(backdrop)
+		wrapper.Append(panel)
+	}
 
 	// Inject gamescope CSS overrides. At scale=1.0 the pixel values match
 	// layout.css but the higher priority ensures they override any GTK theme

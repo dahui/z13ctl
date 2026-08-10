@@ -170,7 +170,7 @@ internal/
   colorconv/                 RRGGBB ⇄ HSL for the colour picker (separate so it is testable)
   focusgrid/                 D-pad focus navigation over rows/columns/sections
   keyrepeat/                 which held direction owns the gamepad auto-repeat
-  panelgeom/                 panel rectangle + slide animation for the overlay backend
+  panelgeom/                 panel rectangle, edge, slide animation, multi-monitor neighbour test
   uiscale/                   UI scale factor for gamescope, where GTK cannot be asked
   togglegate/                debounce window for the toggle signal
   startup/                   pre-GTK process startup: argument scan + log filtering
@@ -1235,6 +1235,28 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   A nil document means the daemon did not answer, not that the machine has no
   capabilities, so everything is kept — the same posture `limits.FromDevice`
   takes, and for the same reason.
+- **The drawer's edge is `panelgeom.Edge`, and every anchor and margin write
+  goes through one accessor.** `gui.toml`'s `[quickbar] edge` moves the drawer
+  between the left and right screen edges; all three backends take it, and the
+  geometry is pure — `Panel` aligns the rect, `HiddenX` says which way "away"
+  is, `HasNeighbor` answers whether sliding off that edge would bleed onto
+  another output. That last one is why this needed care rather than a flag:
+  the layer-shell backend fades in place instead of sliding when a monitor sits
+  beyond the edge (KWin does not clip a layer surface's overflow), and the check
+  asked exclusively about the *right* until the drawer could move. An assumption
+  like that survives a move silently and produces a drawer bleeding onto the
+  monitor it used to be nowhere near. `shellEdge()` exists so there is no path
+  that relocates the panel while leaving the animation driving the opposite
+  side; gamescope has no rectangle at all, so its edge is the append order of
+  backdrop and panel.
+  **Top and bottom are refused with a message that says why.** They are not an
+  anchor change — the drawer is a fixed-width column of stacked sections, so a
+  horizontal edge means laying every section out along the other axis, which is
+  a different panel rather than a moved one. `focusgrid.Horizontal` is already
+  written and tested for the day that lands; until then `ParseEdge` names the
+  reason instead of answering "unknown edge", and every parse failure still
+  returns a usable edge so a bad config costs a warning and not a drawer that
+  will not open.
 - **Generic toggle rows are deliberately still absent, and need two things
   first.** The roadmap has this registry rendering the firmware toggles (and
   later plugin features) from the device document instead of the bottom bar's two

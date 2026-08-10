@@ -57,6 +57,7 @@ type Backend struct {
 	geomReady  bool
 	monW, monH int
 	rest       panelgeom.Rect // panel rectangle at rest
+	edge       panelgeom.Edge // screen edge the panel rests against
 
 	progress  float64 // 0 = parked off the right edge, 1 = at rest
 	animGen   uint64  // incremented to cancel in-flight animations
@@ -76,8 +77,8 @@ type Backend struct {
 }
 
 // New creates an overlay backend. drawerWidth is the drawer panel width in pixels.
-func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int) *Backend {
-	return &Backend{appWin: appWin, gtkWin: gtkWin, drawerWidth: drawerWidth}
+func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int, edge panelgeom.Edge) *Backend {
+	return &Backend{appWin: appWin, gtkWin: gtkWin, drawerWidth: drawerWidth, edge: edge}
 }
 
 // Configure sets up the fullscreen window, Escape dismiss and focus-loss
@@ -153,7 +154,7 @@ func (b *Backend) updateGeometry() {
 
 	geo := monitor.Geometry()
 	b.monW, b.monH = geo.Width(), geo.Height()
-	b.rest = panelgeom.Panel(b.monW, b.monH, b.drawerWidth, panelgeom.DefaultMarginFraction)
+	b.rest = panelgeom.Panel(b.monW, b.monH, b.drawerWidth, panelgeom.DefaultMarginFraction, b.edge)
 	b.geomReady = b.rest.W > 0 && b.rest.H > 0
 	if !b.geomReady {
 		slog.Warn("overlay: monitor reported an unusable geometry", "w", b.monW, "h", b.monH)
@@ -281,7 +282,11 @@ func (b *Backend) currentRest() panelgeom.Rect {
 	if w > b.monW {
 		w = b.monW
 	}
-	r.W, r.X = w, b.monW-w
+	r.W = w
+	r.X = b.monW - w
+	if b.edge == panelgeom.EdgeLeft {
+		r.X = 0
+	}
 	return r
 }
 
@@ -292,7 +297,7 @@ func (b *Backend) applyProgress(p float64) {
 		return
 	}
 	rest := b.currentRest()
-	x := panelgeom.SlideX(rest, b.monW, p)
+	x := panelgeom.SlideX(rest, panelgeom.HiddenX(rest, b.monW, b.edge), p)
 	b.fixed.Move(b.panel, float64(x), float64(rest.Y))
 }
 
@@ -303,7 +308,7 @@ func (b *Backend) applyInputRegion() {
 		return
 	}
 	rest := b.currentRest()
-	x := panelgeom.SlideX(rest, b.monW, b.progress)
+	x := panelgeom.SlideX(rest, panelgeom.HiddenX(rest, b.monW, b.edge), b.progress)
 	// Log the rectangle actually applied, not the requested one: this is the
 	// width after GTK's allocation, which is the number that matters when the
 	// drawer looks misplaced. The "geometry" line above is logged before

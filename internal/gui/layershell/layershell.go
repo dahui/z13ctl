@@ -11,6 +11,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/dahui/voltaire/v2/internal/panelgeom"
 	"github.com/diamondburned/gotk4-layer-shell/pkg/gtk4layershell"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -30,6 +31,7 @@ type Backend struct {
 	gtkWin *gtk.Window
 
 	drawerWidth   int
+	edge          panelgeom.Edge
 	hiddenMargin  int
 	margin        int       // current right margin: 0=on-screen, hiddenMargin=1px visible
 	opacity       float64   // current window opacity, tracked for fade interpolation
@@ -39,12 +41,14 @@ type Backend struct {
 	showTime      time.Time // when Show() was last called; used to ignore early focus loss
 }
 
-// New creates a layer-shell backend. drawerWidth is the drawer panel width in pixels.
-func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int) *Backend {
+// New creates a layer-shell backend. drawerWidth is the drawer panel width in
+// pixels; edge is the screen edge the drawer anchors to and slides from.
+func New(appWin *gtk.ApplicationWindow, gtkWin *gtk.Window, drawerWidth int, edge panelgeom.Edge) *Backend {
 	return &Backend{
 		appWin:       appWin,
 		gtkWin:       gtkWin,
 		drawerWidth:  drawerWidth,
+		edge:         edge,
 		hiddenMargin: -(drawerWidth - 1),
 		margin:       -(drawerWidth - 1),
 	}
@@ -58,11 +62,11 @@ func (b *Backend) Configure(isVisible func() bool, onDismiss func()) {
 
 	gtk4layershell.InitForWindow(b.gtkWin)
 	gtk4layershell.SetLayer(b.gtkWin, gtk4layershell.LayerShellLayerOverlay)
-	gtk4layershell.SetAnchor(b.gtkWin, gtk4layershell.LayerShellEdgeRight, true)
+	gtk4layershell.SetAnchor(b.gtkWin, b.shellEdge(), true)
 	gtk4layershell.SetAnchor(b.gtkWin, gtk4layershell.LayerShellEdgeTop, true)
 	gtk4layershell.SetAnchor(b.gtkWin, gtk4layershell.LayerShellEdgeBottom, true)
 	gtk4layershell.SetKeyboardMode(b.gtkWin, gtk4layershell.LayerShellKeyboardModeNone)
-	gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeRight, b.hiddenMargin)
+	gtk4layershell.SetMargin(b.gtkWin, b.shellEdge(), b.hiddenMargin)
 	b.appWin.SetSizeRequest(b.drawerWidth, -1)
 
 	// Pin the layer surface to its monitor and set top/bottom margins to
@@ -195,11 +199,11 @@ func (b *Backend) Scale() float64 { return 1.0 }
 
 // Show starts the slide-in animation using a smoothstep easing curve.
 func (b *Backend) Show() {
-	slog.Debug("backend.Show", "startMargin", b.margin, "rightNeighbor", b.hasRightNeighbor())
+	slog.Debug("backend.Show", "startMargin", b.margin, "neighborBeyondEdge", b.hasNeighborBeyondEdge())
 	b.showTime = time.Now()
 
 	gtk4layershell.SetKeyboardMode(b.gtkWin, gtk4layershell.LayerShellKeyboardModeOnDemand)
-	if b.hasRightNeighbor() {
+	if b.hasNeighborBeyondEdge() {
 		// A monitor sits to the right: a rightward slide-off would cross onto it
 		// while opaque (KWin does not clip layer-surface overflow to the assigned
 		// output). Fade in place at margin 0, fully on the primary instead.
@@ -215,13 +219,13 @@ func (b *Backend) Show() {
 
 // Hide starts the slide-out (or fade-out) animation.
 func (b *Backend) Hide() {
-	slog.Debug("backend.Hide", "startMargin", b.margin, "rightNeighbor", b.hasRightNeighbor())
+	slog.Debug("backend.Hide", "startMargin", b.margin, "neighborBeyondEdge", b.hasNeighborBeyondEdge())
 	if w := b.gtkWin.Width(); w > 0 {
 		b.hiddenMargin = -(w - 1)
 	}
 	gtk4layershell.SetKeyboardMode(b.gtkWin, gtk4layershell.LayerShellKeyboardModeNone)
 	b.pointerInside = false // clear stale state; surface stays mapped off-screen
-	if b.hasRightNeighbor() {
+	if b.hasNeighborBeyondEdge() {
 		// Fade out in place (margin 0, on the primary), then park the now-invisible
 		// surface off-screen. The drawer never crosses onto the right monitor.
 		b.fadeOpacity(0, func() {
@@ -260,7 +264,7 @@ func (b *Backend) slideMargin(target int, onDone func()) uint64 {
 		t := float64(time.Since(t0)) / float64(animDuration)
 		if t >= 1.0 {
 			b.margin = target
-			gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeRight, target)
+			gtk4layershell.SetMargin(b.gtkWin, b.shellEdge(), target)
 			b.invalidateSurface()
 			slog.Debug("anim complete", "gen", gen, "margin", target)
 			if onDone != nil {
@@ -270,7 +274,7 @@ func (b *Backend) slideMargin(target int, onDone func()) uint64 {
 		}
 		t = t * t * (3 - 2*t) // smoothstep
 		b.margin = start + int(math.Round(float64(target-start)*t))
-		gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeRight, b.margin)
+		gtk4layershell.SetMargin(b.gtkWin, b.shellEdge(), b.margin)
 		b.invalidateSurface()
 		return true
 	})
@@ -278,10 +282,20 @@ func (b *Backend) slideMargin(target int, onDone func()) uint64 {
 	return gen
 }
 
-// setMargin sets the right margin and keeps b.margin in sync.
+// shellEdge is the layer-shell edge the drawer anchors to and animates. Every
+// anchor and margin write goes through it, so there is no path that moves the
+// panel while leaving the animation driving the opposite side.
+func (b *Backend) shellEdge() gtk4layershell.Edge {
+	if b.edge == panelgeom.EdgeLeft {
+		return gtk4layershell.LayerShellEdgeLeft
+	}
+	return gtk4layershell.LayerShellEdgeRight
+}
+
+// setMargin sets the anchored edge's margin and keeps b.margin in sync.
 func (b *Backend) setMargin(m int) {
 	b.margin = m
-	gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeRight, m)
+	gtk4layershell.SetMargin(b.gtkWin, b.shellEdge(), m)
 }
 
 // setOpacity sets the window opacity and keeps b.opacity in sync.
@@ -323,11 +337,17 @@ func (b *Backend) fadeOpacity(target float64, onDone func()) {
 	})
 }
 
-// hasRightNeighbor reports whether any monitor sits to the right of the drawer's
-// monitor (vertically overlapping its band). When true, hiding by sliding the
-// surface rightward off the primary would bleed onto that monitor, so a fade is
-// used instead. Recomputed per Show/Hide so monitor hotplug is handled.
-func (b *Backend) hasRightNeighbor() bool {
+// hasNeighborBeyondEdge reports whether another monitor sits past the edge the
+// drawer slides towards, overlapping it vertically. KWin does not clip a layer
+// surface's overflow to its assigned output, so the backend fades in place
+// instead of sliding when this is true. Recomputed per Show/Hide, so monitor
+// hotplug is handled.
+//
+// The geometry is panelgeom.HasNeighbor's; this only collects the rectangles.
+// It asked exclusively about the right until the drawer could move, which is
+// precisely the kind of assumption that survives a move and produces a drawer
+// bleeding onto the neighbour it used to be nowhere near.
+func (b *Backend) hasNeighborBeyondEdge() bool {
 	surface := b.appWin.Surface()
 	if surface == nil {
 		return false
@@ -341,20 +361,20 @@ func (b *Backend) hasRightNeighbor() bool {
 		return false
 	}
 	g := self.Geometry()
-	rightEdge := g.X() + g.Width()
+	selfRect := panelgeom.Rect{X: g.X(), Y: g.Y(), W: g.Width(), H: g.Height()}
+
 	monitors := display.Monitors()
 	n := monitors.NItems()
+	others := make([]panelgeom.Rect, 0, n)
 	for i := uint(0); i < n; i++ {
 		m, ok := monitors.Item(i).Cast().(*gdk.Monitor)
 		if !ok || m == nil {
 			continue
 		}
 		mg := m.Geometry()
-		if mg.X() >= rightEdge && mg.Y() < g.Y()+g.Height() && mg.Y()+mg.Height() > g.Y() {
-			return true
-		}
+		others = append(others, panelgeom.Rect{X: mg.X(), Y: mg.Y(), W: mg.Width(), H: mg.Height()})
 	}
-	return false
+	return panelgeom.HasNeighbor(selfRect, others, b.edge)
 }
 
 // invalidateSurface forces both widget-level and GDK surface-level
