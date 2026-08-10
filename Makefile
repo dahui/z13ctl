@@ -140,13 +140,27 @@ install-service:
 # writes /etc/systemd/user/*.target.wants — root-owned, outside this target's
 # reach, and reinstated at every login. The disable above therefore *looks*
 # like it worked (the unit does stop) while is-enabled still reports enabled.
-# Saying so here is the difference between one command and a long evening.
-	@for u in $(LEGACY_USER_UNITS); do \
+#
+# Masking is the one way a target running as the user can hold that shut, and
+# it has to hold: with both units enabled, login runs the same binary twice
+# (ExecStart=z13gui resolves through the compatibility symlink) and the loser
+# of the GApplication race forwards "activate" to the winner, which the drawer
+# reads as a toggle and opens itself in the user's face. The Conflicts= in our
+# units keeps that to one process but does not decide which unit survives;
+# this does. Reversed by uninstall-service, and by "systemctl --user unmask".
+	@masked=""; \
+	for u in $(LEGACY_USER_UNITS); do \
 		if [ "$$(systemctl --user is-enabled $$u 2>/dev/null)" = "enabled" ]; then \
-			echo "WARNING: $$u is still enabled system-wide and returns at next login."; \
-			echo "         Uninstall the pre-2.0 package, or: sudo systemctl --global disable $$u"; \
+			systemctl --user mask $$u >/dev/null 2>&1 && masked="$$masked $$u"; \
 		fi; \
-	done
+	done; \
+	if [ -n "$$masked" ]; then \
+		systemctl --user daemon-reload; \
+		echo "NOTE: masked pre-2.0 unit(s) still enabled system-wide by an old package:$$masked"; \
+		echo "      A --user disable cannot remove a --global enable, so they would have"; \
+		echo "      returned at next login and raced the voltaire units."; \
+		echo "      Undo with 'systemctl --user unmask', or remove the old package for good."; \
+	fi
 # Start the drawer only where it can run: voltaire-gui.service is
 # PartOf=graphical-session.target, so starting it from a TTY only fails.
 	@if systemctl --user --quiet is-active graphical-session.target 2>/dev/null; then \
@@ -161,6 +175,10 @@ uninstall-service:
 	-systemctl --user disable --now voltaire.socket voltaire.service voltaire-gui.service
 	rm -f $(SYSTEMD_USER_DIR)/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.service \
 	      $(SYSTEMD_USER_DIR)/voltaire-gui.service
+# Leave nothing of ours behind, including the masks install-service applied:
+# uninstalling voltaire is precisely when a still-installed pre-2.0 package
+# should be allowed to work again.
+	-systemctl --user unmask $(LEGACY_USER_UNITS) 2>/dev/null
 	systemctl --user daemon-reload
 	@echo "Units removed."
 

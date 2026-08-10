@@ -1,7 +1,12 @@
 [Unit]
 Description=voltaire device daemon
 Requires=voltaire.socket
-After=voltaire.socket
+After=voltaire.socket z13ctl.service
+
+# Two daemons driving the same hidraw nodes, PPT attributes and fan controller
+# is worse than either alone, and the pre-2.0 unit is socket-activated as well
+# as WantedBy=graphical-session.target, so it has two ways to appear.
+Conflicts=z13ctl.service
 
 [Service]
 Type=notify

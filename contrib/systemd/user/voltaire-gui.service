@@ -4,6 +4,23 @@ Documentation=https://github.com/dahui/voltaire
 After=graphical-session.target
 PartOf=graphical-session.target
 
+# Never let the pre-2.0 unit run beside this one. Both are
+# WantedBy=graphical-session.target, and the compatibility symlink means
+# ExecStart=z13gui resolves to voltaire-gui — so with both enabled, login starts
+# the same binary twice. The second registers io.github.dahui.Voltaire, finds
+# the first already holding it, forwards "activate" and exits; "activate" on a
+# running instance is a toggle, so the drawer greets the user wide open.
+#
+# This pair guarantees only that *one* of them runs, which is what fixes the
+# drawer opening at login. It does NOT decide which: measured over ten login
+# transactions, whichever unit systemd happened to process second stopped the
+# other, so naming order in the .wants directory picks the winner. Making
+# voltaire-gui win is the job of removing the old unit — "systemctl --global
+# disable" for a package that enabled it system-wide, or the mask that
+# "make install-service" applies when it finds one it cannot disable.
+Conflicts=z13gui.service
+After=z13gui.service
+
 [Service]
 Type=simple
 ExecStart=voltaire-gui

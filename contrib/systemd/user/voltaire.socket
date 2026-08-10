@@ -1,6 +1,13 @@
 [Unit]
 Description=voltaire control socket
 
+# z13ctl.socket declares %t/z13ctl/z13ctl.sock too, so the two cannot both be
+# active: whichever binds second fails, and which one that is comes down to a
+# race at login. Stop it before binding ours. See voltaire-gui.service for why
+# Conflicts= and After= are always written as a pair here.
+Conflicts=z13ctl.socket
+After=z13ctl.socket
+
 [Socket]
 # The daemon serves the canonical voltaire path and the pre-rename z13ctl
 # path through the whole 2.x line: the Decky plugin and pre-2.0 clients

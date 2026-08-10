@@ -245,12 +245,15 @@ install` then installs only what it finds and says so. Don't mix the two —
 installing a freshly built daemon beside a stale GUI binary is a pairing this
 project does not test, and `make install` warns when it sees one.
 
-If `make install-service` reports that a pre-2.0 unit is *still enabled
-system-wide*, an old `z13ctl`/`z13gui` package is still installed: it enabled
-its units with `systemctl --global`, which writes `/etc/systemd/user` and cannot
-be undone by a `--user` command. Uninstall the old package, or run the
-`systemctl --global disable` line the warning prints — otherwise the old units
-come back at every login.
+If `make install-service` reports that it **masked** a pre-2.0 unit, an old
+`z13ctl`/`z13gui` package is still installed. Those packages enable their units
+with `systemctl --global`, which writes `/etc/systemd/user` and cannot be undone
+by a `--user` command, so masking is how a command running as you holds them
+shut. It matters more than tidiness: with both GUI units enabled, login starts
+the same binary twice, and the second launch toggles the first drawer *open* —
+so you log in to a drawer nobody opened. Uninstalling the old package is the
+real fix; `systemctl --user unmask` reverses the mask if you want the old unit
+back, and so does `make uninstall-service`.
 
 </TabItem>
 

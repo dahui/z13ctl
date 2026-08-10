@@ -236,16 +236,39 @@ website/                     the docs site (Astro Starlight; see Documentation)
   those symlinks exist. `LEGACY_USER_UNITS` is therefore one list covering both
   the daemon and the GUI, and `install-service` and `uninstall-service` are
   each written against the full set.
-- **`systemctl --user disable` cannot undo a `--global` enable, and the failure
-  is silent.** The pre-2.0 packages enable their units with
-  `systemctl --global`, which writes root-owned symlinks under
+- **`systemctl --user disable` cannot undo a `--global` enable, so
+  `install-service` masks what it cannot disable.** The pre-2.0 packages enable
+  their units with `systemctl --global`, which writes root-owned symlinks under
   `/etc/systemd/user/*.target.wants`. A `--user disable --now` stops the unit
   for the session — so it looks like it worked — but `is-enabled` still reports
-  `enabled` and the unit returns at the next login, where `z13ctl.socket` then
-  contends with `voltaire.socket` for the legacy listen path both of them
-  declare. `install-service` re-checks `is-enabled` after its own cleanup and
-  prints the `--global disable` line rather than pretending; a make target run
-  as the user has no business writing `/etc` itself.
+  `enabled` and the unit returns at the next login. Printing the
+  `--global disable` line was the first attempt and is not enough: it leaves a
+  broken login one un-run command away, and the consequence is not subtle (see
+  the next entry). Masking is the one lever a target running as the user has,
+  it is user-scope only, `uninstall-service` unmasks, and the note names
+  `systemctl --user unmask`. A make target run as the user still has no
+  business writing `/etc` itself.
+- **Two enabled GUI units make the drawer open itself at login, and the
+  compatibility symlinks are why.** `voltaire-gui` is a GApplication holding
+  `io.github.dahui.Voltaire`, so a second launch does not start a second
+  drawer: it forwards `activate` to the running instance and exits, and
+  `activate` on a running instance is deliberately a *toggle* (that is what
+  makes the desktop entry work as a show gesture). Leave `z13gui.service`
+  enabled beside `voltaire-gui.service` and login starts the same binary twice
+  — `ExecStart=z13gui` resolves through `/usr/local/bin/z13gui` →
+  `voltaire-gui` — 0.6 ms apart, and the loser toggles the winner open. The
+  user meets a drawer they never asked for, and nothing in the drawer's own
+  logic is wrong.
+  Both halves of the fix are needed and neither substitutes for the other.
+  `Conflicts=` + `After=` in the shipped units guarantees only *one* process:
+  measured over ten login transactions it removed the spurious toggle every
+  time but let **either** unit win, because when both are queued together
+  systemd resolves the conflict by processing order and the second one
+  processed stops the first. Making `voltaire-gui` the survivor is the job of
+  removing the old unit — `--global disable` in the package scripts, the mask
+  in `install-service`. With the mask in place the same ten-run sweep is
+  unanimous. Any future unit pair aliased by a compatibility symlink needs the
+  same treatment.
 - **`make install` must not pair a fresh daemon with a stale drawer.** `make
   build` builds only the CLI, so `make build && sudo make install` installed
   whatever `voltaire-gui/voltaire-gui` happened to be lying in the tree — the
