@@ -23,6 +23,7 @@ close it.
 | **Fan Curve** | Edit the fan response curve per-profile (profile editor, advanced mode) |
 | **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
 | **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source |
+| **Telemetry charts** | The chart button at the bottom-left opens a history view: APU temperature and fan speed over the last 1, 5 or 15 minutes. See [Telemetry charts](#telemetry-charts). |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
@@ -37,6 +38,37 @@ persist across reboots while the daemon is running.
 
 The theme picker button at the bottom-left of the drawer opens the theme
 view. See [Theming](/voltaire/gui/theming/) for details.
+
+## Telemetry charts
+
+The chart button in the bottom bar opens a history view. The daemon samples the
+machine once a second and keeps the last five minutes, so the charts are drawn
+from readings taken whether or not the drawer was open.
+
+There is one chart per quantity the machine actually measures — on the Z13 that
+is APU temperature and the two fan speeds. Both fans share one chart and one
+scale, so you can compare them directly. A quantity your hardware does not
+report gets no chart at all rather than a line sitting at zero, which would look
+like a measurement.
+
+The buttons above the charts pick how far back to look. Only spans the daemon
+can fill are offered.
+
+Two things worth knowing when reading a chart:
+
+- **Gaps are real.** Time runs left to right, so a suspend leaves a break in the
+  line rather than a straight ramp across the hours the machine was asleep. A
+  reading the daemon could not take is left out for the same reason.
+- **The scale is stable, not fitted.** It stays put while values move around
+  inside the normal range and only grows when a reading falls outside it, so the
+  shape of the trace means the same thing from one second to the next.
+
+If the view says the daemon does not serve telemetry history, the daemon is
+older than the GUI — restart it after upgrading:
+
+```sh
+systemctl --user restart voltaire
+```
 
 ## Custom color picker
 

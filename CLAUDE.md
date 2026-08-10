@@ -172,6 +172,10 @@ internal/
   focusgrid/                 D-pad focus navigation over rows/columns/sections
   keyrepeat/                 which held direction owns the gamepad auto-repeat
   panelgeom/                 panel rectangle, edge, slide animation, multi-monitor neighbour test
+  popupgeom/                 in-surface popup placement: below/above/shortened, always in bounds
+  telemetryplot/             M4: the dashboard's series shaping — Build(samples, now, window,
+                             maxGap) → time-placed points, gap-broken segments, per-kind shared
+                             axis, Groups/Shape. Pure; internal/gui only strokes the result
   uiscale/                   UI scale factor for gamescope, where GTK cannot be asked
   togglegate/                debounce window for the toggle signal
   startup/                   pre-GTK process startup: argument scan + log filtering
@@ -1335,6 +1339,51 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   duration. The ring cannot tell a caller that meant "everything" from one that
   failed to parse its own field; the protocol can, and every other read command
   here answers with all it has when given no argument.
+- **The dashboard's three rules live in `internal/telemetryplot`, and each is
+  there because the obvious alternative draws something false.** (1) Points are
+  placed by **timestamp**, never by slice index — the samples are not evenly
+  spaced, so an index-placed plot renders a ten-hour suspend as though no time
+  passed. (2) A gap **breaks the line**; interpolating across one draws a smooth
+  ramp through hours nobody measured. `DefaultMaxGap` is 5 s — four consecutive
+  misses — and is deliberately generous, because the gap worth showing is a
+  suspend while a single failed sysfs read is noise, and a threshold tight enough
+  to catch one would fragment the chart on any machine with a flaky sensor.
+  (3) A quantity **no sample carries produces no series at all**: the same
+  honesty rule as `TestTelemetryDeclaresNoPowerSourceYet`, one layer up. This is
+  live on the Z13 — `Sample()` reports no package power, so the dashboard draws
+  two charts and not three, where a flat line at 0 W would read as a measurement.
+  The wire cannot distinguish absent from zero (every field is `omitempty`), so
+  presence is decided per field on what a zero would *mean*: 0°C is not a
+  plausible APU temperature and reads as absent, while 0 RPM is a stopped fan and
+  is a reading — hence the RPM **slice's** presence is the test there, not its
+  value. That asymmetry looks like an inconsistency until you know why, so
+  `TestZeroMeansAbsentForTemperatureButNotForFans` pins it.
+- **The axis is framed per *kind*, not per series, and the nominal frame is a
+  starting point that expands rather than a clamp.** Two fans are drawn on one
+  chart, so separate axes would make their line heights incomparable — which is
+  the one thing a viewer will use them for. The nominal ranges (30–100 °C,
+  0–6000 RPM, 0–60 W) keep the axis steady while values wander, because a chart
+  that rescales every second at a 1 Hz refresh is unreadable; anything outside
+  expands the frame to a step boundary, so no reading is ever cut off. That
+  invariant is what makes it safe to carry one laptop's numbers in a package
+  meant to serve every device, and it is a test
+  (`TestTheAxisNeverClipsAReading`) rather than a comment.
+  `Plot.Shape()` is the rebuild key: chart widgets are torn down only when the
+  *layout* changes (a fan stops being reported, a power source appears), never
+  when the values do — the same reasoning as the profile selector's signature.
+- **The dashboard polls `telemetry-history` only while it is the visible view.**
+  It is a separate loop from `startTelemetryPolling`, which reads `get-state` for
+  the header's live numbers on every view: history is a different command and a
+  much larger reply, so running it drawer-wide would be a per-second
+  few-hundred-sample round trip nobody is looking at. Every path that leaves the
+  view calls `stopDashboardPolling`, including `hide()`, which has no view switch
+  to be caught by the tick's own visible-child guard.
+  Failures are silent for the same reason the telemetry poll's are — a background
+  refresh the user did not ask for must not repaint the error bar every second —
+  but the *empty* state names which kind of nothing it is: daemon not running,
+  daemon too old, or no readings yet. Any error reads as "too old", on the same
+  grounds as `probeStoredTarget`; over-claiming is cheap here only because the
+  refresh runs every second, so a transient failure shows it for one tick.
 - **`internal/apiresult` exists because "the daemon is not running" is not an
   error.** Every `api.Send*` returns `(handled bool, err error)`, where
   `handled == false, err == nil` means the dial failed — a CLI caller falls back
@@ -1662,7 +1711,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | started: `internal/telemetryring` + the two device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`) done. Remaining: the 1 Hz sampler and `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, window split, full window + dashboard, double-tap `gui-open-full`, bundled CSS to `@voltaire-*` |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). Remaining: the window split, the full window (`gui-open-full` has no consumer until it exists), bundled CSS to `@voltaire-*` |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

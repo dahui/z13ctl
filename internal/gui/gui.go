@@ -114,6 +114,12 @@ type Window struct {
 	// visual order and the gamepad order the same list rather than two.
 	controls []controls.Control
 
+	// device is the capability document, kept for the readers that need more
+	// than the bounds limits.FromDevice narrows it to — the dashboard asks it
+	// how much history the daemon retains. nil when the daemon did not answer,
+	// which means "unknown", never "the machine has no capabilities".
+	device *api.DeviceInfo
+
 	// Widget references for syncState.
 	tabKB           *gtk.CheckButton
 	tabLB           *gtk.CheckButton
@@ -229,6 +235,7 @@ type Window struct {
 	paletteBtn         *gtk.Button         // theme button in bottom bar
 	themeBackBtn       *gtk.Button         // back button in theme view
 	colorBackBtn       *gtk.Button         // back button in color picker view
+	dashboardBtn       *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
 	colorPickerPresets []*gtk.Button       // preset buttons in color picker view
 	themeRadios        []*gtk.CheckButton  // collected during appendThemeChoices
 	themeDots          [][]*gtk.Button     // accent dot buttons per theme
@@ -243,16 +250,22 @@ type Window struct {
 	steamPID     int
 
 	// Gamepad focus navigation.
-	gamepadReader     *gamepad.Reader
-	focusItems        []focusItem  // active view's navigable widgets (points to one of the lists below)
-	focusIdx          int          // current position in focusItems
-	gamepadActive     bool         // true when gamepad focus indicator is shown
-	focusEditing      bool         // true when a slider is in edit mode
-	editOriginalValue float64      // saved value for cancel on B
-	mainFocusItems    []focusItem  // focus grid for main drawer view
-	themeFocusItems   []focusItem  // focus grid for theme picker view
-	colorFocusItems   []focusItem  // focus grid for HSL color picker view
-	focusStack        []focusFrame // suspended focus lists while a popup is open
+	gamepadReader       *gamepad.Reader
+	focusItems          []focusItem  // active view's navigable widgets (points to one of the lists below)
+	focusIdx            int          // current position in focusItems
+	gamepadActive       bool         // true when gamepad focus indicator is shown
+	focusEditing        bool         // true when a slider is in edit mode
+	editOriginalValue   float64      // saved value for cancel on B
+	mainFocusItems      []focusItem  // focus grid for main drawer view
+	themeFocusItems     []focusItem  // focus grid for theme picker view
+	colorFocusItems     []focusItem  // focus grid for HSL color picker view
+	dashboardFocusItems []focusItem  // focus grid for the telemetry dashboard
+	focusStack          []focusFrame // suspended focus lists while a popup is open
+
+	// dashboard is the telemetry view; nil until first navigation. It owns its
+	// own refresh loop because it reads telemetry-history rather than
+	// get-state, and nothing else in the drawer wants that reply.
+	dashboard *dashboardView
 
 	// In-surface popup layer (popup.go) and anchored hints (hint.go).
 	popup   *popupLayer
@@ -376,6 +389,7 @@ func New(app *gtk.Application) *Window {
 	cfg := guiConfig()
 	w := &Window{
 		tab:         "keyboard",
+		device:      doc,
 		limits:      deviceLimits(doc),
 		controls:    resolveControls(cfg, doc),
 		edge:        resolveEdge(cfg),
@@ -602,6 +616,7 @@ func (w *Window) hide() {
 	w.closePopup()
 	w.clearError()   // don't greet the next open with a stale failure
 	w.telemetryGen++ // stop any running telemetry poll
+	w.stopDashboardPolling()
 	if w.viewStack != nil {
 		w.viewStack.SetVisibleChildName("main")
 		w.swapFocusList(w.mainFocusItems)

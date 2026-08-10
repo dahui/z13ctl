@@ -136,6 +136,11 @@ window.z13-drawer-window {
     border: 1px solid @z13-border;
 }
 
+.dash-chart {
+    background: @z13-surface;
+    border: 1px solid @z13-border;
+}
+
 
 /* Sliders */
 .drawer scale trough {

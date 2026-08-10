@@ -315,6 +315,7 @@ func (b *Backend) scaledCSS() string {
 .gamepad-editing { outline-width: %.0fpx; outline-offset: %.0fpx; }
 .tdp-warning { font-size: %.0fpx; margin-top: %.0fpx; margin-bottom: %.0fpx; }
 .fan-curve-area { min-height: %.0fpx; border-radius: %.0fpx; }
+.dash-chart { min-height: %.0fpx; border-radius: %.0fpx; margin-bottom: %.0fpx; }
 .custom-actions button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .advanced-check { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .error-bar { padding: %.0fpx %.0fpx; margin: 0 %.0fpx %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -354,6 +355,7 @@ func (b *Backend) scaledCSS() string {
 		2*s, 2*s, // gamepad-editing (outline-width, outline-offset)
 		10*s, 4*s, 4*s, // tdp-warning (font-size, margin-top, margin-bottom)
 		240*s, 6*s, // fan-curve-area (min-height, border-radius)
+		96*s, 6*s, 8*s, // dash-chart (min-height, border-radius, margin-bottom)
 		36*s, 4*s, 8*s, 6*s, // custom-actions button (min-height, padding-v, padding-h, border-radius)
 		36*s, 4*s, 10*s, 6*s, // advanced-check (min-height, padding-v, padding-h, border-radius)
 		// Error bar. Omitting it left the drawer's only failure report at 1x while

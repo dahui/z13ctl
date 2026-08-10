@@ -73,6 +73,14 @@
     border-radius: 6px;
 }
 
+/* Telemetry dashboard chart. Shorter than the fan curve editor because there
+   are several stacked, and nothing in one is dragged — it is read, not edited. */
+.dash-chart {
+    min-height: 96px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+
 /* Custom view action buttons */
 .custom-actions button {
     min-height: 36px;

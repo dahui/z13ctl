@@ -338,13 +338,15 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
 
 ### View switching
 
-`buildContent()` wraps content in a `gtk.Stack` with 4 pages, in **both** backends:
+`buildContent()` wraps content in a `gtk.Stack` with 5 pages, in **both** backends:
 - `"main"` — normal drawer (profiles, RGB, battery, etc.)
 - `"custom"` — custom profile view (TDP, fan curve, undervolt, telemetry)
+- `"dashboard"` — telemetry charts over the daemon's sample history (`dashboard.go`)
 - `"theme"` — theme picker (radio buttons + accent dots)
 - `"color"` — HSL color picker (H/S/L sliders + presets + preview)
 
 Bottom bar stays visible across all views. `hide()` resets to "main".
+Every page but `"main"` is lazy-built on first navigation.
 
 **There are no popovers left anywhere.** The stack replaced them in both modes
 (`e19f76f`, which added gamepad support). `grep Popover internal/` returns nothing,
@@ -529,6 +531,48 @@ different panel, not a moved one. `focusgrid.Horizontal` is already written and
 tested for the day that content work happens; until then a user who writes
 `edge = "top"` gets a warning naming the reason and the default, rather than
 "unknown edge" or a silent no-op.
+
+### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
+
+The `"dashboard"` view draws the daemon's sample history: one Cairo chart per
+measured quantity, refreshed once a second while it is the visible view.
+
+**Everything about *what* to draw is in `internal/telemetryplot`**, which is pure
+and 100% covered: which series exist at all, where each reading sits in the
+window, where the line breaks across a suspend, and what the y-axis spans.
+`dashboard.go` measures the widget, multiplies by `Backend.Scale()`, and strokes
+the result — the same split `fanCurveEditor` has with `internal/limits`, and for
+the same reason. The three rules and the axis policy are written up in the root
+`CLAUDE.md`; the ones that bite here are:
+
+- **A quantity no sample carries gets no chart.** On the Z13 that means two
+  charts, not three: `Sample()` reports no package power, and a flat line at 0 W
+  would read as a measurement. Verified on hardware, not just in the table test.
+- **Series of one kind share an axis**, because two fans on one chart are only
+  worth drawing together if their heights are comparable.
+- **`Plot.Shape()` is the rebuild key.** Chart widgets are torn down only when
+  the layout changes, never when the values do — a per-second `DrawingArea`
+  rebuild is the kind of churn that shows up as flicker.
+
+GTK-side facts worth keeping:
+
+- The chart is **painted, not styled**, so it applies `Backend.Scale()` by hand
+  and reads `Window.colors` — the standing rule for anything Cairo. Trace colours
+  come from the theme (`Accent`, then `Text`), never a hardcoded hue, or a light
+  palette gets a trace it cannot see.
+- `.dash-chart` restates its `min-height` in `gamescope.scaledCSS()`, as
+  `.fan-curve-area` does. A `SetSizeRequest` height alone would stay at 1x.
+- **The history poll is its own loop**, separate from `startTelemetryPolling`'s
+  `get-state` poll: history is a much larger reply and only this view wants it.
+  Every exit calls `stopDashboardPolling()`, `hide()` included — the tick's
+  visible-child guard would catch a view switch a second later, but `hide()`
+  leaves no view switch to catch.
+- **Charts are not in the focus grid.** There is nothing to activate on one, so
+  the list is the back button plus the span selector, and a shape change cannot
+  invalidate it.
+- The bottom-bar button is hidden when `device.Telemetry` is nil, and kept when
+  the whole document is nil — absence means the machine lacks the capability,
+  while a missing document only means the daemon did not answer.
 
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 

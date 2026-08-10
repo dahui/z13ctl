@@ -240,6 +240,18 @@ func (w *Window) buildBottomBar() *gtk.Box {
 	w.paletteBtn.ConnectClicked(func() { w.showThemeView() })
 	bar.Append(w.paletteBtn)
 
+	// Telemetry, when the device reports any. Capability absence hides the
+	// button rather than opening a view with nothing in it — a nil document
+	// means the daemon did not answer, which is not evidence the machine
+	// measures nothing, so it keeps the button.
+	if w.device == nil || w.device.Telemetry != nil {
+		w.dashboardBtn = gtk.NewButton()
+		w.dashboardBtn.SetIconName("utilities-system-monitor-symbolic")
+		w.setHint(w.dashboardBtn, "Temperature and fan history")
+		w.dashboardBtn.ConnectClicked(func() { w.showDashboardView() })
+		bar.Append(w.dashboardBtn)
+	}
+
 	// Spacer pushes toggles to the right.
 	spacer := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	spacer.SetHExpand(true)
@@ -556,9 +568,20 @@ func hslScaleBox(label string, sc *gtk.Scale) *gtk.Box {
 // would leave the scrim and list floating over the wrong view.
 func (w *Window) showMainView() {
 	w.closePopup()
+	w.stopDashboardPolling()
 	if w.viewStack != nil {
 		w.viewStack.SetVisibleChildName("main")
 		w.swapFocusList(w.mainFocusItems)
+	}
+}
+
+// stopDashboardPolling ends the dashboard's history refresh. Every path that
+// leaves the dashboard calls it: the tick's own visible-child guard would stop
+// it within a second anyway, but that is a second of a few-hundred-sample round
+// trip nobody is looking at, and hide() has no view switch to be caught by.
+func (w *Window) stopDashboardPolling() {
+	if w.dashboard != nil {
+		w.dashboard.stopPolling()
 	}
 }
 
@@ -570,6 +593,7 @@ func (w *Window) showCustomView() {
 		return
 	}
 	w.closePopup()
+	w.stopDashboardPolling()
 	if w.viewStack.VisibleChildName() == "custom" {
 		w.showMainView()
 		return
@@ -593,6 +617,7 @@ func (w *Window) showThemeView() {
 		return
 	}
 	w.closePopup()
+	w.stopDashboardPolling()
 	if w.viewStack.VisibleChildName() == "theme" {
 		w.showMainView()
 		return
@@ -1017,6 +1042,12 @@ func (w *Window) focusFooter(b *focusgrid.Builder, items *[]focusItem) {
 		widget   gtk.Widgetter
 		activate func()
 	}{{w.paletteBtn, func() { w.showThemeView() }}}
+	if btn := w.dashboardBtn; btn != nil {
+		footer = append(footer, struct {
+			widget   gtk.Widgetter
+			activate func()
+		}{btn, func() { w.showDashboardView() }})
+	}
 	if sw := w.overdriveSwitch; sw != nil {
 		footer = append(footer, struct {
 			widget   gtk.Widgetter
