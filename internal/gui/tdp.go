@@ -15,6 +15,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
+	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/limits"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/theme"
@@ -1247,64 +1248,68 @@ func (w *Window) startTelemetryPolling() {
 // grid shifts when profiles are created or deleted.
 func (w *Window) buildCustomFocusList() {
 	var items []focusItem
+	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
-	// Row 0: back button.
-	row := 0
+	// buttonLine appends n buttons across one line in the current section.
+	buttonLine := func(btns ...*gtk.Button) {
+		for i, c := range b.Line(len(btns)) {
+			btn := btns[i]
+			items = append(items, focusItem{
+				widget: btn, row: c.Row, col: c.Col, section: c.Section,
+				onActivate: func() { btn.Activate() },
+			})
+		}
+	}
+	// sliderLine appends one editable slider on its own line.
+	sliderLine := func(sc *gtk.Scale, step float64, vis func() bool) {
+		oL, oR, gV, sV := scaleAdjust(sc, step)
+		c := b.One()
+		items = append(items, focusItem{
+			widget: sc, row: c.Row, col: c.Col, section: c.Section,
+			editable: true, isVisible: vis,
+			onLeft: oL, onRight: oR,
+			getValue: gV, setValue: sV,
+		})
+	}
+
+	// Back button.
+	c := b.Section("nav").One()
 	items = append(items, focusItem{
-		widget: w.customBackBtn, row: row, col: 0,
-		section:    "nav",
+		widget: w.customBackBtn, row: c.Row, col: c.Col, section: c.Section,
 		onActivate: func() { w.showMainView() },
 	})
 
 	// Profile selector dropdown, then the actions and the inline name entry.
-	row++
+	b.Section("profile")
+	c = b.One()
 	items = append(items, focusItem{
-		widget: w.profileSelDD.btn, row: row, col: 0,
-		section:    "profile",
+		widget: w.profileSelDD.btn, row: c.Row, col: c.Col, section: c.Section,
 		onActivate: func() { w.profileSelDD.btn.Activate() },
 	})
-	row++
-	for col, btn := range []*gtk.Button{w.activateBtn, w.newProfileBtn, w.saveAsBtn} {
-		btn := btn
+	buttonLine(w.activateBtn, w.newProfileBtn, w.saveAsBtn)
+
+	nameVis := func() bool { return w.nameRow != nil && w.nameRow.IsVisible() }
+	nameBtns := []*gtk.Button{w.nameOKBtn, w.nameCancelBtn}
+	for i, nc := range b.Line(len(nameBtns)) {
+		btn := nameBtns[i]
 		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section:    "profile",
+			widget: btn, row: nc.Row, col: nc.Col, section: nc.Section,
+			isVisible:  nameVis,
 			onActivate: func() { btn.Activate() },
 		})
 	}
-	row++
-	nameVis := func() bool { return w.nameRow != nil && w.nameRow.IsVisible() }
-	items = append(items, focusItem{
-		widget: w.nameOKBtn, row: row, col: 0,
-		section: "profile", isVisible: nameVis,
-		onActivate: func() { w.nameOKBtn.Activate() },
-	})
-	items = append(items, focusItem{
-		widget: w.nameCancelBtn, row: row, col: 1,
-		section: "profile", isVisible: nameVis,
-		onActivate: func() { w.nameCancelBtn.Activate() },
-	})
 
 	// Basic TDP slider.
+	b.Section("tdp")
 	if w.tdpBasicScale != nil {
-		row++
-		oL, oR, gV, sV := scaleAdjust(w.tdpBasicScale, 5)
-		items = append(items, focusItem{
-			widget: w.tdpBasicScale, row: row, col: 0,
-			section:  "tdp",
-			editable: true,
-			onLeft:   oL, onRight: oR,
-			getValue: gV, setValue: sV,
-			isVisible: func() bool { return w.tdpBasicScale.IsVisible() },
-		})
+		sliderLine(w.tdpBasicScale, 5, func() bool { return w.tdpBasicScale.IsVisible() })
 	}
 
 	// Advanced checkbox.
 	if w.tdpAdvancedCheck != nil {
-		row++
+		c = b.One()
 		items = append(items, focusItem{
-			widget: w.tdpAdvancedCheck, row: row, col: 0,
-			section:    "tdp",
+			widget: w.tdpAdvancedCheck, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { w.tdpAdvancedCheck.SetActive(!w.tdpAdvancedCheck.Active()) },
 		})
 	}
@@ -1312,80 +1317,41 @@ func (w *Window) buildCustomFocusList() {
 	// PL1/PL2/PL3 sliders.
 	advVis := func() bool { return w.tdpAdvancedBox.IsVisible() }
 	for _, sc := range []*gtk.Scale{w.tdpPL1Scale, w.tdpPL2Scale, w.tdpPL3Scale} {
-		row++
-		oL, oR, gV, sV := scaleAdjust(sc, 1)
-		items = append(items, focusItem{
-			widget: sc, row: row, col: 0,
-			section:   "tdp",
-			editable:  true,
-			isVisible: advVis,
-			onLeft:    oL, onRight: oR,
-			getValue: gV, setValue: sV,
-		})
+		sliderLine(sc, 1, advVis)
 	}
 
 	// Fan curve (navigable, dragged by touch/mouse).
 	if w.fanCurve != nil {
-		row++
+		c = b.Section("fan").One()
 		items = append(items, focusItem{
-			widget: w.fanCurve.area, row: row, col: 0,
-			section: "fan",
+			widget: w.fanCurve.area, row: c.Row, col: c.Col, section: c.Section,
 		})
 	}
 
 	// Undervolt (visible only when available).
 	uvVis := func() bool { return w.tdpAdvancedBox.IsVisible() && w.uvBox != nil && w.uvBox.IsVisible() }
+	b.Section("undervolt")
 	if w.uvCpuScale != nil {
-		row++
-		oL, oR, gV, sV := scaleAdjust(w.uvCpuScale, 1)
-		items = append(items, focusItem{
-			widget: w.uvCpuScale, row: row, col: 0,
-			section: "undervolt", editable: true, isVisible: uvVis,
-			onLeft: oL, onRight: oR, getValue: gV, setValue: sV,
-		})
+		sliderLine(w.uvCpuScale, 1, uvVis)
 	}
-	row++
-	items = append(items, focusItem{
-		widget: w.saveUvBtn, row: row, col: 0,
-		section: "undervolt", isVisible: uvVis,
-		onActivate: func() { w.saveUvBtn.Activate() },
-	})
-	items = append(items, focusItem{
-		widget: w.resetUvBtn, row: row, col: 1,
-		section: "undervolt", isVisible: uvVis,
-		onActivate: func() { w.resetUvBtn.Activate() },
-	})
-
-	// Save buttons.
-	row++
-	for col, btn := range []*gtk.Button{w.saveTdpBtn, w.saveFanBtn, w.saveBothBtn} {
-		btn := btn
+	uvBtns := []*gtk.Button{w.saveUvBtn, w.resetUvBtn}
+	for i, uc := range b.Line(len(uvBtns)) {
+		btn := uvBtns[i]
 		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section:    "actions",
+			widget: btn, row: uc.Row, col: uc.Col, section: uc.Section,
+			isVisible:  uvVis,
 			onActivate: func() { btn.Activate() },
 		})
 	}
 
-	// Reset buttons.
-	row++
-	for col, btn := range []*gtk.Button{w.resetTdpBtn, w.resetFanBtn} {
-		btn := btn
-		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section:    "actions",
-			onActivate: func() { btn.Activate() },
-		})
-	}
-
-	// Delete (its two-tap arm makes it safe to reach by D-pad).
-	row++
-	items = append(items, focusItem{
-		widget: w.deleteBtn, row: row, col: 0,
-		section:    "actions",
-		onActivate: func() { w.deleteBtn.Activate() },
-	})
+	// Save, reset, and delete. Delete's two-tap arm makes it safe to reach by
+	// D-pad.
+	b.Section("actions")
+	buttonLine(w.saveTdpBtn, w.saveFanBtn, w.saveBothBtn)
+	buttonLine(w.resetTdpBtn, w.resetFanBtn)
+	buttonLine(w.deleteBtn)
 
 	items = append(items, w.errBarFocusItem())
+	logFocusList("custom", items)
 	w.customFocusItems = items
 }

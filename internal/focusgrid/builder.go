@@ -86,6 +86,13 @@ func (b *Builder) Line(n int) []Coord {
 	return b.Grid(n, n)
 }
 
+// One appends a single item on its own line and returns its coordinate.
+// Most of the drawer's controls are one-per-row, and `c := b.One()` reads
+// better at those call sites than ranging over a one-element slice.
+func (b *Builder) One() Coord {
+	return b.Line(1)[0]
+}
+
 // Grid appends n items wrapped at cols per line, advancing past every line it
 // used — including a partial last one. That is the arithmetic the hand-written
 // version got right in the loop and wrong in the follow-up assignment.

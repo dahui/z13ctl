@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -779,22 +780,30 @@ func (w *Window) buildMainFocusList() {
 		return func() bool { return box.IsVisible() }
 	}
 
+	// Coordinates come from focusgrid.Builder, not a hand-incremented row: the
+	// declaration order below IS the visual order, and the arithmetic that used
+	// to be spread through this function (a grid's height written once in the
+	// loop and again in the follow-up assignment) lives in one tested place.
+	// internal/focusgrid/builder.go has the two defects that shape invited.
+	// A section the caller skips consumes no line, so an absent optional
+	// control still leaves everything below it where it was.
+	b := focusgrid.NewBuilder(focusgrid.Vertical)
+
 	// Profiles: the three firmware buttons share a row, and the Custom button
 	// that opens the custom view sits below them. The custom profiles
 	// themselves are navigated in that view, not here.
-	row := 0
-	for col, r := range profileui.StockRows(nil) {
-		btn := w.profileBtns[r.Name]
+	b.Section("profile")
+	stock := profileui.StockRows(nil)
+	for i, c := range b.Line(len(stock)) {
+		btn := w.profileBtns[stock[i].Name]
 		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section:    "profile",
+			widget: btn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { btn.Activate() },
 		})
 	}
-	row++
+	c := b.One()
 	items = append(items, focusItem{
-		widget: w.customBtn, row: row, col: 0,
-		section:    "profile",
+		widget: w.customBtn, row: c.Row, col: c.Col, section: c.Section,
 		onActivate: func() { w.customBtn.Activate() },
 	})
 
@@ -802,153 +811,136 @@ func (w *Window) buildMainFocusList() {
 	// target rows only exist while autoswitch is enabled, so they carry the
 	// container's visibility.
 	if w.autoswitchSwitch != nil {
+		b.Section("autoswitch")
 		sw := w.autoswitchSwitch
-		row++
+		c = b.One()
 		items = append(items, focusItem{
-			widget: sw, row: row, col: 0,
-			section:    "autoswitch",
+			widget: sw, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { sw.SetActive(!sw.Active()) },
 		})
 		targetsVis := boxVisible(w.autoswitchTargets)
-		row++
+		c = b.One()
 		items = append(items, focusItem{
-			widget: w.autoswitchACDD.btn, row: row, col: 0,
-			section: "autoswitch", isVisible: targetsVis,
+			widget: w.autoswitchACDD.btn, row: c.Row, col: c.Col, section: c.Section,
+			isVisible:  targetsVis,
 			onActivate: func() { w.autoswitchACDD.btn.Activate() },
 		})
-		row++
+		c = b.One()
 		items = append(items, focusItem{
-			widget: w.autoswitchBattDD.btn, row: row, col: 0,
-			section: "autoswitch", isVisible: targetsVis,
+			widget: w.autoswitchBattDD.btn, row: c.Row, col: c.Col, section: c.Section,
+			isVisible:  targetsVis,
 			onActivate: func() { w.autoswitchBattDD.btn.Activate() },
 		})
 	}
 
 	// Battery slider.
 	battLeft, battRight, battGet, battSet := scaleAdjust(w.battScale, 5)
-	row++
+	c = b.Section("battery").One()
 	items = append(items, focusItem{
-		widget: w.battScale, row: row, col: 0,
-		section:  "battery",
+		widget: w.battScale, row: c.Row, col: c.Col, section: c.Section,
 		editable: true,
 		onLeft:   battLeft, onRight: battRight,
 		getValue: battGet, setValue: battSet,
 	})
 
 	// Device tabs — horizontal row.
-	row++
-	for col, btn := range []*gtk.CheckButton{w.tabKB, w.tabLB} {
-		btn := btn
+	b.Section("tabs")
+	tabs := []*gtk.CheckButton{w.tabKB, w.tabLB}
+	for i, tc := range b.Line(len(tabs)) {
+		btn := tabs[i]
 		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section:    "tabs",
+			widget: btn, row: tc.Row, col: tc.Col, section: tc.Section,
 			onActivate: func() { btn.SetActive(true) },
 		})
 	}
 
-	// Mode buttons — 3x2 grid.
-	modeBase := row + 1
-	for i, m := range modeOrder {
-		btn := w.modeButtons[m]
+	// Mode buttons — a grid three wide. Grid owns how many rows that is, so
+	// adding a seventh mode no longer collides with the section below.
+	b.Section("mode")
+	for i, mc := range b.Grid(len(modeOrder), 3) {
+		btn := w.modeButtons[modeOrder[i]]
 		items = append(items, focusItem{
-			widget: btn, row: modeBase + i/3, col: i % 3,
-			section:    "mode",
+			widget: btn, row: mc.Row, col: mc.Col, section: mc.Section,
 			onActivate: func() { btn.Activate() },
 		})
 	}
-	row = modeBase + 1
 
-	// Color 1 presets — horizontal row of 8 buttons.
-	if w.color1 != nil {
-		vis := boxVisible(w.color1Box)
-		row++
-		for col, btn := range w.color1.presetBtns {
-			btn := btn
+	// Colour presets: a row of swatches, then the custom button below them.
+	addColor := func(section string, ci *colorInput, box *gtk.Box) {
+		if ci == nil {
+			return
+		}
+		vis := boxVisible(box)
+		b.Section(section)
+		for i, pc := range b.Line(len(ci.presetBtns)) {
+			btn := ci.presetBtns[i]
 			items = append(items, focusItem{
-				widget: btn, row: row, col: col,
-				section: "color1", isVisible: vis,
+				widget: btn, row: pc.Row, col: pc.Col, section: pc.Section,
+				isVisible:  vis,
 				onActivate: func() { btn.Activate() },
 			})
 		}
-		// Custom button on its own row below presets.
-		row++
+		cc := b.One()
 		items = append(items, focusItem{
-			widget: w.color1.customBtn, row: row, col: 0,
-			section: "color1", isVisible: vis,
-			onActivate: func() { w.showColorView(w.color1) },
+			widget: ci.customBtn, row: cc.Row, col: cc.Col, section: cc.Section,
+			isVisible:  vis,
+			onActivate: func() { w.showColorView(ci) },
 		})
 	}
-
-	// Color 2 presets.
-	if w.color2 != nil {
-		vis := boxVisible(w.color2Box)
-		row++
-		for col, btn := range w.color2.presetBtns {
-			btn := btn
-			items = append(items, focusItem{
-				widget: btn, row: row, col: col,
-				section: "color2", isVisible: vis,
-				onActivate: func() { btn.Activate() },
-			})
-		}
-		row++
-		items = append(items, focusItem{
-			widget: w.color2.customBtn, row: row, col: 0,
-			section: "color2", isVisible: vis,
-			onActivate: func() { w.showColorView(w.color2) },
-		})
-	}
+	addColor("color1", w.color1, w.color1Box)
+	addColor("color2", w.color2, w.color2Box)
 
 	// Speed buttons — horizontal row.
-	row++
-	for col, s := range speeds {
-		btn := w.speedBtns[s]
+	b.Section("speed")
+	for i, sc := range b.Line(len(speeds)) {
+		btn := w.speedBtns[speeds[i]]
 		items = append(items, focusItem{
-			widget: btn, row: row, col: col,
-			section: "speed", isVisible: boxVisible(w.speedBox),
+			widget: btn, row: sc.Row, col: sc.Col, section: sc.Section,
+			isVisible:  boxVisible(w.speedBox),
 			onActivate: func() { btn.Activate() },
 		})
 	}
 
 	// Brightness slider.
 	brLeft, brRight, brGet, brSet := scaleAdjust(w.brightScale, 1)
-	row++
+	c = b.Section("brightness").One()
 	items = append(items, focusItem{
-		widget: w.brightScale, row: row, col: 0,
-		section: "brightness", isVisible: boxVisible(w.brightBox),
-		editable: true,
-		onLeft:   brLeft, onRight: brRight,
+		widget: w.brightScale, row: c.Row, col: c.Col, section: c.Section,
+		isVisible: boxVisible(w.brightBox),
+		editable:  true,
+		onLeft:    brLeft, onRight: brRight,
 		getValue: brGet, setValue: brSet,
 	})
 
-	// Footer: theme button, overdrive, boot sound.
-	row++
-	col := 0
-	items = append(items, focusItem{
-		widget: w.paletteBtn, row: row, col: col,
-		section:    "footer",
-		onActivate: func() { w.showThemeView() },
-	})
-	col++
-	if w.overdriveSwitch != nil {
-		sw := w.overdriveSwitch
-		items = append(items, focusItem{
-			widget: sw, row: row, col: col,
-			section:    "footer",
-			onActivate: func() { sw.SetActive(!sw.Active()) },
-		})
-		col++
+	// Footer: theme button, then whichever firmware toggles this device has.
+	// They share one line, so the count is known only after the nil checks.
+	b.Section("footer")
+	footer := []struct {
+		widget   gtk.Widgetter
+		activate func()
+	}{{w.paletteBtn, func() { w.showThemeView() }}}
+	if sw := w.overdriveSwitch; sw != nil {
+		footer = append(footer, struct {
+			widget   gtk.Widgetter
+			activate func()
+		}{sw, func() { sw.SetActive(!sw.Active()) }})
 	}
-	if w.bootSoundSwitch != nil {
-		sw := w.bootSoundSwitch
+	if sw := w.bootSoundSwitch; sw != nil {
+		footer = append(footer, struct {
+			widget   gtk.Widgetter
+			activate func()
+		}{sw, func() { sw.SetActive(!sw.Active()) }})
+	}
+	for i, fc := range b.Line(len(footer)) {
+		f := footer[i]
 		items = append(items, focusItem{
-			widget: sw, row: row, col: col,
-			section:    "footer",
-			onActivate: func() { sw.SetActive(!sw.Active()) },
+			widget: f.widget, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: f.activate,
 		})
 	}
 
 	items = append(items, w.errBarFocusItem())
+	logFocusList("main", items)
 	w.mainFocusItems = items
 }
 
@@ -956,73 +948,78 @@ func (w *Window) buildMainFocusList() {
 // Must be called after appendThemeChoices has populated w.themeRadios/w.themeDots.
 func (w *Window) buildThemeFocusList() {
 	var items []focusItem
+	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
-	// Row 0: back button.
+	// Back button.
 	if w.themeBackBtn != nil {
+		c := b.Section("nav").One()
 		items = append(items, focusItem{
-			widget: w.themeBackBtn, row: 0, col: 0,
-			section:    "nav",
+			widget: w.themeBackBtn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { w.showMainView() },
 		})
 	}
 
-	row := 1
+	// Each theme is a radio on its own line, followed by that theme's accent
+	// dots wrapped at dotsPerRow. Grid owns the wrap arithmetic, so a theme
+	// with a number of accents that does not divide evenly cannot overlap the
+	// next theme's radio.
+	b.Section("theme")
 	for i, btn := range w.themeRadios {
 		btn := btn
+		c := b.One()
 		items = append(items, focusItem{
-			widget: btn, row: row, col: 0,
-			section:    "theme",
+			widget: btn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { btn.SetActive(true) },
 		})
-		row++
-
-		// Accent dots for this theme.
-		if i < len(w.themeDots) && len(w.themeDots[i]) > 0 {
-			for j, dot := range w.themeDots[i] {
-				dot := dot
-				items = append(items, focusItem{
-					widget: dot, row: row + j/dotsPerRow, col: j % dotsPerRow,
-					section:    "theme",
-					onActivate: func() { dot.Activate() },
-				})
-			}
-			row += (len(w.themeDots[i])-1)/dotsPerRow + 1
+		if i >= len(w.themeDots) {
+			continue
+		}
+		dots := w.themeDots[i]
+		for j, dc := range b.Grid(len(dots), dotsPerRow) {
+			dot := dots[j]
+			items = append(items, focusItem{
+				widget: dot, row: dc.Row, col: dc.Col, section: dc.Section,
+				onActivate: func() { dot.Activate() },
+			})
 		}
 	}
 
 	items = append(items, w.errBarFocusItem())
+	logFocusList("theme", items)
 	w.themeFocusItems = items
 }
 
 // buildColorFocusList builds the 2D focus grid for the HSL color picker view.
 func (w *Window) buildColorFocusList() {
 	var items []focusItem
+	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
-	// Row 0: back button.
+	// Back button.
 	if w.colorBackBtn != nil {
+		c := b.Section("nav").One()
 		items = append(items, focusItem{
-			widget: w.colorBackBtn, row: 0, col: 0,
-			section:    "nav",
+			widget: w.colorBackBtn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { w.showMainView() },
 		})
 	}
 
-	// Row 1: color presets.
-	for col, btn := range w.colorPickerPresets {
-		btn := btn
+	// Colour presets.
+	b.Section("presets")
+	for i, pc := range b.Line(len(w.colorPickerPresets)) {
+		btn := w.colorPickerPresets[i]
 		items = append(items, focusItem{
-			widget: btn, row: 1, col: col,
-			section:    "presets",
+			widget: btn, row: pc.Row, col: pc.Col, section: pc.Section,
 			onActivate: func() { btn.Activate() },
 		})
 	}
 
-	// Rows 2-4: HSL sliders (editable).
-	for i, sc := range []*gtk.Scale{w.colorHue, w.colorSat, w.colorLit} {
+	// HSL sliders (editable), one per line.
+	b.Section("sliders")
+	for _, sc := range []*gtk.Scale{w.colorHue, w.colorSat, w.colorLit} {
 		oL, oR, gV, sV := scaleAdjust(sc, 5)
+		c := b.One()
 		items = append(items, focusItem{
-			widget: sc, row: 2 + i, col: 0,
-			section:  "sliders",
+			widget: sc, row: c.Row, col: c.Col, section: c.Section,
 			editable: true,
 			onLeft:   oL, onRight: oR,
 			getValue: gV, setValue: sV,
@@ -1030,5 +1027,6 @@ func (w *Window) buildColorFocusList() {
 	}
 
 	items = append(items, w.errBarFocusItem())
+	logFocusList("color", items)
 	w.colorFocusItems = items
 }

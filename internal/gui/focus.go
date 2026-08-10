@@ -14,7 +14,10 @@ package gui
 // list. swapFocusList switches between them on view change.
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -57,6 +60,27 @@ func (fi *focusItem) visible() bool {
 	}
 	w := gtk.BaseWidget(fi.widget)
 	return w.IsVisible() && w.IsSensitive()
+}
+
+// logFocusList dumps a freshly built list's coordinates at Debug level.
+//
+// The focus lists are built in the cgo island, so no test can see them; this is
+// the only way to check that a change to a view's layout moved what it meant to
+// and nothing else. It is what verified the conversion from hand-incremented
+// rows to focusgrid.Builder: dump before, dump after, diff. Debug-only, so it
+// costs nothing unless -d is passed.
+func logFocusList(name string, items []focusItem) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	var b strings.Builder
+	for i := range items {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%d:%d:%s", items[i].row, items[i].col, items[i].section)
+	}
+	slog.Debug("focus list built", "view", name, "n", len(items), "coords", b.String())
 }
 
 // gridSnapshot flattens focusItems into the pure representation focusgrid works

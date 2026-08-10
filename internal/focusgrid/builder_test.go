@@ -78,6 +78,19 @@ func TestGridPartialLastLineStillConsumesIt(t *testing.T) {
 	}
 }
 
+func TestOneIsALineOfOne(t *testing.T) {
+	b := NewBuilder(Vertical).Section("a")
+	first := b.One()
+	second := b.One()
+	if first != (Coord{Row: 0, Col: 0, Section: "a"}) {
+		t.Errorf("first = %+v", first)
+	}
+	if second != (Coord{Row: 1, Col: 0, Section: "a"}) {
+		t.Errorf("second = %+v", second)
+	}
+	assertCoords(t, b.Build(), []string{"0:0:a", "1:0:a"})
+}
+
 // A section the caller skips must not leave a gap, or the same view built with
 // and without an optional control disagrees about every row below it.
 func TestEmptyDeclarationsConsumeNothing(t *testing.T) {
@@ -154,6 +167,99 @@ func coordsToItems(cs []Coord) []Item {
 		items[i] = Item{Row: c.Row, Col: c.Col, Section: c.Section, Visible: true}
 	}
 	return items
+}
+
+// TestReproducesTheCustomViewLayout pins the custom profile view's coordinates
+// as buildCustomFocusList produced them before the conversion, for the Z13 case
+// where the basic slider, advanced checkbox, fan curve and undervolt scale all
+// exist. Its conditionals are the interesting part: each optional control sat
+// behind a nil check that also owned a `row++`, so a device missing one shifted
+// everything below it — which the Builder reproduces exactly, since a skipped
+// declaration consumes no line.
+func TestReproducesTheCustomViewLayout(t *testing.T) {
+	b := NewBuilder(Vertical)
+	b.Section("nav")
+	b.One() // back
+	b.Section("profile")
+	b.One()   // profile selector dropdown
+	b.Line(3) // activate / new / save-as
+	b.Line(2) // inline name entry: OK / cancel
+	b.Section("tdp")
+	b.One() // basic TDP slider
+	b.One() // advanced checkbox
+	b.One() // PL1
+	b.One() // PL2
+	b.One() // PL3
+	b.Section("fan")
+	b.One() // curve editor
+	b.Section("undervolt")
+	b.One()   // CPU CO slider
+	b.Line(2) // save / reset
+	b.Section("actions")
+	b.Line(3) // save TDP / fan / both
+	b.Line(2) // reset TDP / fan
+	b.Line(1) // delete
+
+	assertCoords(t, b.Build(), []string{
+		"0:0:nav",
+		"1:0:profile",
+		"2:0:profile", "2:1:profile", "2:2:profile",
+		"3:0:profile", "3:1:profile",
+		"4:0:tdp", "5:0:tdp", "6:0:tdp", "7:0:tdp", "8:0:tdp",
+		"9:0:fan",
+		"10:0:undervolt", "11:0:undervolt", "11:1:undervolt",
+		"12:0:actions", "12:1:actions", "12:2:actions",
+		"13:0:actions", "13:1:actions",
+		"14:0:actions",
+	})
+}
+
+// TestReproducesTheThemeViewLayout pins the theme picker: a back button, then
+// each theme's radio followed by that theme's accent dots wrapped at
+// dotsPerRow (7). The old code advanced with `(n-1)/dotsPerRow + 1`, which is
+// the same ceiling Grid applies — this fixes that agreement in a test rather
+// than leaving it to two expressions in different files.
+func TestReproducesTheThemeViewLayout(t *testing.T) {
+	const dotsPerRow = 7
+	b := NewBuilder(Vertical)
+	b.Section("nav")
+	b.One()
+	b.Section("theme")
+	b.One()               // theme 0 radio
+	b.Grid(9, dotsPerRow) // 9 accents → two lines, second partial
+	b.One()               // theme 1 radio
+	b.Grid(0, dotsPerRow) // a theme with no accents consumes no line
+	b.One()               // theme 2 radio
+
+	assertCoords(t, b.Build(), []string{
+		"0:0:nav",
+		"1:0:theme",
+		"2:0:theme", "2:1:theme", "2:2:theme", "2:3:theme", "2:4:theme", "2:5:theme", "2:6:theme",
+		"3:0:theme", "3:1:theme",
+		"4:0:theme",
+		"5:0:theme",
+	})
+}
+
+// TestReproducesTheColorViewLayout pins the HSL picker: back, a row of presets,
+// then the three sliders one per line.
+func TestReproducesTheColorViewLayout(t *testing.T) {
+	b := NewBuilder(Vertical)
+	b.Section("nav")
+	b.One()
+	b.Section("presets")
+	b.Line(8)
+	b.Section("sliders")
+	b.One() // hue
+	b.One() // saturation
+	b.One() // lightness
+
+	assertCoords(t, b.Build(), []string{
+		"0:0:nav",
+		"1:0:presets", "1:1:presets", "1:2:presets", "1:3:presets",
+		"1:4:presets", "1:5:presets", "1:6:presets", "1:7:presets",
+		"2:0:sliders", "3:0:sliders", "4:0:sliders",
+	})
 }
 
 // TestReproducesTheMainViewLayout is the parity guard for the conversion in
