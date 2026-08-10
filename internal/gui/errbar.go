@@ -9,13 +9,18 @@ package gui
 // drop its error into slog and return, which made a failed operation look like a
 // button that did nothing (see z13ctl issue #14, where "Save TDP" was silently
 // rejected with "permission denied" for weeks). The bar lives outside the view
-// stack, between it and the bottom bar, so one instance serves the main, custom,
-// theme and color views in both the layer-shell and gamescope backends.
+// stack, between it and the bottom bar, so one instance serves every view in all
+// three backends.
 //
 // Deliberately a plain Box + Label + Button: popovers are not composited under
 // gamescope, and gtk.Revealer smears during the slide animation. Buttons use a
 // CAPTURE-phase gesture internally, so touch works in gamescope without the
 // addTouchActivate workaround needed for CheckButton and Switch.
+//
+// The widgets live on errBarView rather than on Window. Window.reportError and
+// friends stay as thin delegates: the ~50 call sites across the package say what
+// they mean already, and a refactor whose point is to shrink the Window struct
+// should not also churn every caller.
 
 import (
 	"log/slog"
@@ -30,39 +35,49 @@ import (
 // inside the content area, so the bar never drives the drawer wider.
 const errLabelMaxChars = 34
 
-// buildErrorBar returns the hidden-by-default error strip. It is shown by
-// reportError and hidden by clearError.
-func (w *Window) buildErrorBar() *gtk.Box {
-	bar := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	bar.AddCSSClass("error-bar")
-	bar.SetVisible(false)
+// errBarView is the error strip: hidden by default, shown by report, hidden by
+// clear.
+type errBarView struct {
+	w *Window
 
-	w.errLabel = gtk.NewLabel("")
-	w.errLabel.SetXAlign(0)
-	w.errLabel.SetHExpand(true)
-	w.errLabel.AddCSSClass("error-text")
+	bar     *gtk.Box
+	label   *gtk.Label
+	dismiss *gtk.Button
+}
+
+// buildErrorBar returns the hidden-by-default error strip.
+func (w *Window) buildErrorBar() *gtk.Box {
+	e := &errBarView{w: w}
+	w.errView = e
+
+	e.bar = gtk.NewBox(gtk.OrientationHorizontal, 4)
+	e.bar.AddCSSClass("error-bar")
+	e.bar.SetVisible(false)
+
+	e.label = gtk.NewLabel("")
+	e.label.SetXAlign(0)
+	e.label.SetHExpand(true)
+	e.label.AddCSSClass("error-text")
 	// Daemon messages embed sysfs paths, which are single unbreakable tokens.
 	// A plain wrapping label reports the longest such token as its minimum width,
 	// which widens the whole drawer to fit
 	// "/sys/devices/platform/asus-nb-wmi/ppt_pl1_spl". WrapWordChar lets pango
 	// break mid-token, and MaxWidthChars caps the natural width so the label
 	// wraps into the drawer instead of stretching it.
-	w.errLabel.SetWrap(true)
-	w.errLabel.SetWrapMode(pango.WrapWordChar)
-	w.errLabel.SetMaxWidthChars(errLabelMaxChars)
-	bar.Append(w.errLabel)
+	e.label.SetWrap(true)
+	e.label.SetWrapMode(pango.WrapWordChar)
+	e.label.SetMaxWidthChars(errLabelMaxChars)
+	e.bar.Append(e.label)
 
-	dismiss := gtk.NewButton()
-	dismiss.SetIconName("window-close-symbolic")
-	w.setHint(dismiss, "Dismiss")
-	dismiss.AddCSSClass("error-dismiss")
-	dismiss.SetVAlign(gtk.AlignStart)
-	dismiss.ConnectClicked(func() { w.clearError() })
-	bar.Append(dismiss)
+	e.dismiss = gtk.NewButton()
+	e.dismiss.SetIconName("window-close-symbolic")
+	w.setHint(e.dismiss, "Dismiss")
+	e.dismiss.AddCSSClass("error-dismiss")
+	e.dismiss.SetVAlign(gtk.AlignStart)
+	e.dismiss.ConnectClicked(func() { e.clear() })
+	e.bar.Append(e.dismiss)
 
-	w.errBar = bar
-	w.errDismissBtn = dismiss
-	return bar
+	return e.bar
 }
 
 // errBarRow places the error bar after every other row in every view's focus
@@ -79,11 +94,47 @@ const errBarRow = 10000
 // exactly what a user staring at a failure is unsure how to do. It is only
 // navigable while the bar is showing.
 func (w *Window) errBarFocusItem() focusItem {
-	return focusItem{
-		widget: w.errDismissBtn, row: errBarRow, col: 0,
-		section:    "error",
-		isVisible:  func() bool { return w.errBar != nil && w.errBar.IsVisible() },
+	e := w.errView
+	item := focusItem{
+		row: errBarRow, col: 0, section: "error",
+		isVisible:  func() bool { return e != nil && e.bar != nil && e.bar.IsVisible() },
 		onActivate: func() { w.clearError() },
+	}
+	if e != nil {
+		item.widget = e.dismiss
+	}
+	return item
+}
+
+// report shows err in the bar. Safe from any goroutine; the widget work is
+// marshalled onto the GTK main thread.
+func (e *errBarView) report(op, msg string) {
+	glib.IdleAdd(func() {
+		if e.bar == nil || e.label == nil {
+			return
+		}
+		// A call still in flight when the drawer closes lands here afterwards, and
+		// showing the bar then means it is already up the next time the drawer
+		// opens — the stale failure hide()'s clearError exists to prevent. The
+		// journal still has it.
+		if !e.w.visible.Load() {
+			slog.Debug("error suppressed: drawer already closed", "op", op)
+			return
+		}
+		// Most recent error wins; the bar shows one message at a time.
+		e.label.SetLabel(msg)
+		e.bar.SetVisible(true)
+	})
+}
+
+// clear hides the bar. Must be called from the GTK main thread.
+func (e *errBarView) clear() {
+	if e.bar == nil {
+		return
+	}
+	e.bar.SetVisible(false)
+	if e.label != nil {
+		e.label.SetLabel("")
 	}
 }
 
@@ -98,35 +149,18 @@ func (w *Window) reportError(op string, err error) {
 		return
 	}
 	slog.Warn("operation failed", "op", op, "err", err)
-	msg := op + ": " + err.Error()
-	glib.IdleAdd(func() {
-		if w.errBar == nil || w.errLabel == nil {
-			return
-		}
-		// A call still in flight when the drawer closes lands here afterwards, and
-		// showing the bar then means it is already up the next time the drawer
-		// opens — the stale failure hide()'s clearError exists to prevent. The
-		// journal still has it.
-		if !w.visible.Load() {
-			slog.Debug("error suppressed: drawer already closed", "op", op)
-			return
-		}
-		// Most recent error wins; the bar shows one message at a time.
-		w.errLabel.SetLabel(msg)
-		w.errBar.SetVisible(true)
-	})
+	if w.errView == nil {
+		return
+	}
+	w.errView.report(op, op+": "+err.Error())
 }
 
 // clearError hides the error bar. Must be called from the GTK main thread.
 // Called on each successful operation and from hide(), so a stale failure does
 // not greet the user the next time the drawer opens.
 func (w *Window) clearError() {
-	if w.errBar == nil {
-		return
-	}
-	w.errBar.SetVisible(false)
-	if w.errLabel != nil {
-		w.errLabel.SetLabel("")
+	if w.errView != nil {
+		w.errView.clear()
 	}
 }
 

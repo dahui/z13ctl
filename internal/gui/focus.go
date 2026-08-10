@@ -318,9 +318,15 @@ func (w *Window) activeScroll() *gtk.ScrolledWindow {
 	case "main":
 		return w.mainScroll
 	case "theme":
-		return w.themeScroll
+		if w.themeView != nil {
+			return w.themeView.scroll
+		}
 	case "custom":
 		return w.customScroll
+	case "dashboard":
+		if w.dashboard != nil {
+			return w.dashboard.scroll
+		}
 	}
 	return nil
 }

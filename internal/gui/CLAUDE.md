@@ -482,10 +482,25 @@ coordinates against what the hand-numbered code produced.
 
 The main view's conversion was verified against the **running drawer**: the
 `-d` dump of its focus list is byte-identical to the pre-conversion one, 42
-items including the error-bar sentinel. The custom, theme and colour lists are
-covered by parity tests but have not been checked at runtime, which needs a
-view switch with `-d` set; the coordinates to diff against are in
-`internal/focusgrid/builder_test.go`.
+items including the error-bar sentinel (43 since the dashboard button joined
+the footer).
+
+**`VOLTAIRE_GUI_DUMP_FOCUS=1` dumps all five lists at startup**, which is what
+made that check available for the other four. Every view but `"main"` is built
+on first navigation, so their lists previously existed only after a person
+tapped a button — leaving them verified by the parity tests in
+`internal/focusgrid` and by nothing that could confirm the widgets those tests
+describe are the widgets actually built. `dumpAllFocusLists` calls the build
+halves of the `show*View` functions (not the functions themselves —
+`showCustomView` resolves an edit target and starts a poll, neither of which a
+dump should do), so:
+
+```sh
+VOLTAIRE_GUI_DUMP_FOCUS=1 voltaire-gui -d 2>&1 | grep 'focus list built'
+```
+
+is a five-line fingerprint of the whole drawer's gamepad navigation. Capture it
+before a refactor and diff after — that is how the view split below was checked.
 
 Two things the hand-numbered form got wrong that the Builder cannot:
 
@@ -531,6 +546,62 @@ different panel, not a moved one. `focusgrid.Horizontal` is already written and
 tested for the day that content work happens; until then a user who writes
 `edge = "top"` gets a warning naming the reason and the default, rather than
 "unknown edge" or a silent no-op.
+
+### The window split: views own their widgets, `Window` owns the process
+
+`Window` was a ~200-line struct of widget pointers for every view at once. M4
+moves them into per-view structs, each with its own build, sync and focus list,
+so the full window can host a view without a second implementation of it.
+
+Done so far — `errBarView` (`errbar.go`), `colorView` (`colorview.go`),
+`themeView` (`themeview.go`), `lightingView` (`lightingview.go`),
+`profileSection` and `autoswitchSection` (`mainprofile.go`), and
+`dashboardView` (`dashboard.go`, built in this shape from the start). Still on
+`Window`: the **custom profile view** — ~40 fields across `tdp.go` and
+`profiles.go`, much the largest and worth its own pass — plus the battery
+slider and the two footer toggles.
+
+Four rules the moves follow:
+
+- **A nil view pointer is the built-yet test.** `showThemeView` checks
+  `w.themeView == nil` where it used to check `w.themeScroll == nil`. One field
+  means one thing, and there is no way to get a half-built view.
+- **State that outlives a view stays on `Window`.** The palette
+  (`colors`, `themeProvider`, `isCustomTheme`, `customColors`, `customAccents`)
+  is resolved by `loadCSS` at startup, long before the theme picker is built,
+  and `applyTheme` swaps a display-wide provider. Moving it into `themeView`
+  would mean the theme could not be applied until the user had opened the
+  picker. `themeView` is the chooser, not the theme engine.
+- **The call surface does not churn.** `w.reportError(...)` still exists at ~50
+  sites and delegates to `errView`; only the *state* moved. A refactor whose
+  point is to shrink one struct should not also rewrite every caller.
+- **A `Window`-level entry point nil-guards its section, and that guard is
+  load-bearing, not defensive.** `controls.Resolve` genuinely drops a section on
+  a device without the capability, so `w.lighting` can be nil on a real machine
+  — `syncLightingSection`, `syncModeVis`, `updateSwatches`, `sendApply` and
+  `queueApply` are all reachable while it is. One guard per entry point replaced
+  a dozen scattered per-widget nil checks (`if w.color1 != nil`, `if
+  w.brightScale != nil`, …), which is the same consolidation `errBarFocusItem`
+  got: the section either exists or it does not, and that is one question.
+
+**Zero behaviour change is checked, not asserted.** Two instruments, because
+they cover different halves:
+
+- **Build paths**: all five focus lists byte-identical to the pre-split baseline
+  after *each* view moved, via `VOLTAIRE_GUI_DUMP_FOCUS` above.
+- **Sync paths**: the focus dump never calls a `sync*` function, so those are
+  exercised by driving a real `state-changed` — `voltaire profile --set quiet`
+  then back — against a running drawer with `-d`. The subscribe loop's
+  `refreshState` runs `syncCustomView`, `syncProfiles`, `syncAutoswitch`,
+  `syncLightingSection`, `syncBattery` and `updateHeader` **whether or not the
+  drawer is visible**, so this needs no interaction. Two clean refreshes with no
+  panic is the check.
+
+The linter earns its keep too, catching what a mechanical move strands:
+`Window.updateColorPreview` went dead the moment its last caller moved into
+`colorView`, and `Window.applyTimer` and `Window.tab` the moment `lightingView`
+took them. Run `make lint` after every view, not just at the end — an unused
+field is the signal that something was copied rather than moved.
 
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 

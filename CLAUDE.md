@@ -1391,6 +1391,18 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   pair into one error with a `ErrNotRunning` sentinel and a message naming
   voltaire. Turning the pair into an error at each call site is how a control
   reports success on a write that never happened (issue #14).
+- **`VOLTAIRE_GUI_DUMP_FOCUS=1` exists because the drawer's focus lists were the
+  one checkable thing no test could reach.** `internal/gui` needs GTK4 headers,
+  so `make test` cannot compile it, and every view but the main one is built on
+  first navigation — so four of the five gamepad grids existed at runtime only
+  after a person tapped a button, and the parity tests in `internal/focusgrid`
+  could say the coordinates were right without saying they described the widgets
+  actually built. The flag builds every view at startup and logs all five grids
+  as `row:col:section`, giving a five-line fingerprint of the whole drawer that a
+  refactor can be diffed against. It is what made the M4 window split verifiable
+  rather than merely careful: each view moved out of `Window` with the dump
+  byte-identical to the baseline. Any future change that touches widget
+  construction or navigation should capture it first.
 - **The GUI's environment variables renamed with a fallback:
   `startup.GUIEnv(suffix)`** reads `VOLTAIRE_GUI_<suffix>` and falls back to the
   pre-rename `Z13GUI_<suffix>` when the new name is empty — same 2.x contract as
@@ -1711,7 +1723,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). Remaining: the window split, the full window (`gui-open-full` has no consumer until it exists), bundled CSS to `@voltaire-*` |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **6 of 7 done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection` and `dashboardView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. Remaining: the custom profile view (~40 fields across `tdp.go` and `profiles.go`); the full window (`gui-open-full` has no consumer until it exists); bundled CSS to `@voltaire-*` |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

@@ -70,7 +70,6 @@ type Window struct {
 	backend   Backend     // display backend (layer-shell or gamescope)
 	gamescope bool        // true when running under gamescope (X11 overlay mode)
 	state     *api.State  // latest daemon state; nil until first successful fetch
-	tab       string      // active device tab: "keyboard" or "lightbar"
 
 	// visible is true when the drawer is on-screen or animating in. Atomic
 	// because it is the one piece of Window state read off the GTK thread: the
@@ -84,8 +83,7 @@ type Window struct {
 	// that knows the intended order. See gamepad.Reader.SetGrabbed.
 	grabGen uint64
 
-	swatchProvider *gtk.CSSProvider // dynamic swatch background colors
-	themeProvider  *gtk.CSSProvider // current theme; replaced on applyTheme()
+	themeProvider *gtk.CSSProvider // current theme; replaced on applyTheme()
 
 	// colors is the active palette, kept alongside the CSS built from it because
 	// the fan curve chart is painted with Cairo rather than styled by CSS and so
@@ -93,9 +91,9 @@ type Window struct {
 	// the drawer the theme did not reach.
 	colors theme.Colors
 
-	errBar        *gtk.Box    // error surface; hidden unless an operation failed
-	errLabel      *gtk.Label  // message shown in errBar
-	errDismissBtn *gtk.Button // dismiss button; navigable in every view's focus grid
+	// errView is the drawer's single error surface, outside the view stack so
+	// one instance serves every view. See errbar.go.
+	errView *errBarView
 
 	// limits is the device's power/thermal envelope, driving every TDP and fan
 	// curve bound in the custom view. Defaulted to the Z13's values; when the daemon
@@ -120,28 +118,20 @@ type Window struct {
 	// which means "unknown", never "the machine has no capabilities".
 	device *api.DeviceInfo
 
+	// lighting is the RGB section of the main view; nil on a device with no
+	// lighting capability, which controls.Resolve drops the section for.
+	// See lightingview.go.
+	lighting *lightingView
+
 	// Widget references for syncState.
-	tabKB           *gtk.CheckButton
-	tabLB           *gtk.CheckButton
-	modeButtons     map[string]*gtk.Button
-	color1          *colorInput
-	color2          *colorInput
-	color1Box       *gtk.Box // COLOR 1 label + row — visibility toggled by syncModeVis
-	color2Box       *gtk.Box // COLOR 2 label + row — visibility toggled by syncModeVis
-	speedBox        *gtk.Box // SPEED label + row — visibility toggled by syncModeVis
-	brightBox       *gtk.Box // BRIGHTNESS label + scale — hidden when mode is "off"
-	speedBtns       map[string]*gtk.Button
-	brightScale     *gtk.Scale
 	battScale       *gtk.Scale
 	overdriveSwitch *gtk.Switch
 	bootSoundSwitch *gtk.Switch
 
-	// Main-view profile controls: the three firmware buttons, plus one button
-	// standing for the whole custom family. The custom profiles themselves
-	// live in the custom view's selector, so this section never changes shape
-	// and needs no rebuild.
-	profileBtns map[string]*gtk.Button // firmware profile buttons by name
-	customBtn   *gtk.Button            // opens the custom view; labelled with the running custom profile
+	// Main-view sections the control registry can drop independently.
+	// See mainprofile.go.
+	profiles   *profileSection
+	autoswitch *autoswitchSection
 
 	// Custom-view profile selector (see profiles.go): a dropdown over
 	// profileui.CustomRows, built fresh on every open — no rebuild machinery.
@@ -155,17 +145,6 @@ type Window struct {
 	nameOKBtn     *gtk.Button
 	nameCancelBtn *gtk.Button
 	nameMode      string // nameModeCreate or nameModeSaveAs while nameRow is up
-
-	// Autoswitch section. The three value fields mirror the widgets so a send
-	// can snapshot them on the GTK thread; they are synced from daemon state.
-	autoswitchSwitch  *gtk.Switch
-	autoswitchTargets *gtk.Box // the two target rows; shown only while enabled
-	autoswitchACDD    *dropdown
-	autoswitchBattDD  *dropdown
-	autoswitchEnabled bool
-	autoswitchAC      string
-	autoswitchBatt    string
-	autoswitchTimer   *time.Timer // debounce, so re-picking a target sends once
 
 	// Custom profile view.
 	//
@@ -217,28 +196,18 @@ type Window struct {
 	telemetryBusy      bool // a poll request is in flight; skip ticks until it lands
 	customFocusItems   []focusItem
 
-	syncing    bool        // true while syncState is updating widgets; suppresses sendApply
-	applyTimer *time.Timer // debounce for continuous inputs (brightness, color wheel)
+	syncing bool // true while syncState is updating widgets; suppresses sendApply
 
 	// View switching (main/theme/color views).
-	mainScroll         *gtk.ScrolledWindow // scrollable area in main drawer view
-	themeScroll        *gtk.ScrolledWindow // scrollable area in theme picker view
-	viewStack          *gtk.Stack          // switches between main/theme/color views
-	editingColor       *colorInput         // which color the color-picker view is editing
-	colorViewTitle     *gtk.Label          // "COLOR 1" or "COLOR 2" in color view header
-	colorHue           *gtk.Scale          // H: 0-360
-	colorSat           *gtk.Scale          // S: 0-100
-	colorLit           *gtk.Scale          // L: 0-100
-	colorPreview       *gtk.Box            // swatch preview in color view
-	colorHexLabel      *gtk.Label          // hex display in color view
-	colorSwatchProv    *gtk.CSSProvider    // color picker preview swatch CSS
-	paletteBtn         *gtk.Button         // theme button in bottom bar
-	themeBackBtn       *gtk.Button         // back button in theme view
-	colorBackBtn       *gtk.Button         // back button in color picker view
-	dashboardBtn       *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
-	colorPickerPresets []*gtk.Button       // preset buttons in color picker view
-	themeRadios        []*gtk.CheckButton  // collected during appendThemeChoices
-	themeDots          [][]*gtk.Button     // accent dot buttons per theme
+	mainScroll   *gtk.ScrolledWindow // scrollable area in main drawer view
+	viewStack    *gtk.Stack          // switches between the drawer's views
+	paletteBtn   *gtk.Button         // theme button in bottom bar
+	dashboardBtn *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
+
+	// Lazily-built stack views. Each owns its widgets and its focus list, and a
+	// nil pointer is also the built-yet test every show*View uses.
+	colorView *colorView // HSL picker (colorview.go)
+	themeView *themeView // theme picker (themeview.go)
 
 	// Custom theme state (set when theme.toml exists).
 	isCustomTheme bool
@@ -257,8 +226,6 @@ type Window struct {
 	focusEditing        bool         // true when a slider is in edit mode
 	editOriginalValue   float64      // saved value for cancel on B
 	mainFocusItems      []focusItem  // focus grid for main drawer view
-	themeFocusItems     []focusItem  // focus grid for theme picker view
-	colorFocusItems     []focusItem  // focus grid for HSL color picker view
 	dashboardFocusItems []focusItem  // focus grid for the telemetry dashboard
 	focusStack          []focusFrame // suspended focus lists while a popup is open
 
@@ -388,7 +355,6 @@ func New(app *gtk.Application) *Window {
 	doc := deviceDocument()
 	cfg := guiConfig()
 	w := &Window{
-		tab:         "keyboard",
 		device:      doc,
 		limits:      deviceLimits(doc),
 		controls:    resolveControls(cfg, doc),
@@ -396,9 +362,6 @@ func New(app *gtk.Application) *Window {
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 		editProfile: api.DefaultCustomProfile,
-		modeButtons: make(map[string]*gtk.Button),
-		speedBtns:   make(map[string]*gtk.Button),
-		profileBtns: make(map[string]*gtk.Button),
 	}
 
 	w.win = gtk.NewApplicationWindow(app)
@@ -437,10 +400,6 @@ func New(app *gtk.Application) *Window {
 
 	// Load CSS (layout + theme).
 	w.loadCSS()
-
-	// Swatch provider: separate from theme so we can update it per-color at runtime.
-	w.swatchProvider = gtk.NewCSSProvider()
-	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), w.swatchProvider, gtk.STYLE_PROVIDER_PRIORITY_USER+10)
 
 	// Build content and let the backend wrap it if needed.
 	w.syncing = true
@@ -511,8 +470,51 @@ func New(app *gtk.Application) *Window {
 	})
 	w.gtkWin.AddController(keyBlock)
 
+	if startup.GUIEnv("DUMP_FOCUS") != "" {
+		w.dumpAllFocusLists()
+	}
+
 	slog.Info("drawer initialized")
 	return w
+}
+
+// dumpAllFocusLists eagerly builds every lazy view and logs its focus grid.
+//
+// It exists because the focus lists are the one part of the drawer with a
+// checkable fingerprint and no test that can reach them: internal/gui needs
+// GTK4 headers, so `make test` cannot compile it, and every view but "main" is
+// built on first navigation — which needs a person to tap a button. That left
+// the custom, theme and colour lists verified only by the parity tests in
+// internal/focusgrid, with no evidence the widgets they describe are the
+// widgets actually built. This closes that: `VOLTAIRE_GUI_DUMP_FOCUS=1 -d`
+// prints all five, so a refactor can be diffed against a baseline rather than
+// reasoned about.
+//
+// It calls the build halves of the show*View functions, not the functions
+// themselves — showCustomView resolves an edit target and starts the telemetry
+// poll, neither of which a dump should do. Views already built are left alone,
+// so this is idempotent and only ever runs before the drawer is shown.
+func (w *Window) dumpAllFocusLists() {
+	if w.viewStack == nil {
+		return
+	}
+	if w.customScroll == nil {
+		w.viewStack.AddNamed(w.buildCustomView(), "custom")
+		w.buildCustomFocusList()
+	}
+	if w.dashboard == nil {
+		w.viewStack.AddNamed(w.buildDashboardView(), "dashboard")
+		w.buildDashboardFocusList()
+	}
+	if w.themeView == nil {
+		w.viewStack.AddNamed(w.buildThemeView(), "theme")
+		w.buildThemeFocusList()
+	}
+	if w.colorView == nil {
+		w.viewStack.AddNamed(w.buildColorPickerView(), "color")
+		w.buildColorFocusList()
+	}
+	w.viewStack.SetVisibleChildName("main")
 }
 
 // Toggle shows or hides the drawer. Must be called from the GTK main thread.
