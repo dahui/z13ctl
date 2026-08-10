@@ -31,6 +31,16 @@ type State struct {
 	SourceKnown        bool                     `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
 	Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
 	FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+
+	// BatteryHealth is full-charge capacity as a percentage of design
+	// capacity, or zero when the device does not report it — which is what
+	// DeviceInfo.Battery.Health says in advance, so a client knows whether to
+	// show the reading before it has one. It is read on demand here rather
+	// than sampled into the telemetry ring: it moves over months, not seconds.
+	//
+	// It is not clamped to 100; a freshly calibrated pack genuinely reads
+	// slightly above its design capacity.
+	BatteryHealth int `json:"battery_health,omitempty"`
 }
 
 // StockProfiles are the firmware performance profiles that can be written to

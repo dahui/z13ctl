@@ -544,14 +544,27 @@ func (d *Daemon) env() driver.PowerEnvelope {
 // mains device (a VM, a desktop, a driver not yet bound) would otherwise run
 // the battery profile forever.
 func (d *Daemon) acPower() (onAC, known bool) {
-	if d.hw == nil || d.hw.Battery == nil {
-		return false, false
-	}
-	st, err := d.hw.Battery.Status()
-	if err != nil {
+	st, ok := d.batteryStatus()
+	if !ok {
 		return false, false
 	}
 	return st.OnAC, st.ACKnown
+}
+
+// batteryStatus reads the battery once, for callers that want more from it
+// than the power source. ok is false when the device has no battery capability
+// or the read failed; get-state wants the charge level, the power source and
+// state of health together, and a helper per field would read sysfs three
+// times for one answer.
+func (d *Daemon) batteryStatus() (driver.BatteryStatus, bool) {
+	if d.hw == nil || d.hw.Battery == nil {
+		return driver.BatteryStatus{}, false
+	}
+	st, err := d.hw.Battery.Status()
+	if err != nil {
+		return driver.BatteryStatus{}, false
+	}
+	return st, true
 }
 
 // uvAvailable reports whether the Curve Optimizer path actually works on this

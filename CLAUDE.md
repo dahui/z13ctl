@@ -135,6 +135,9 @@ internal/
                              ApplyTDPSafely, ReleaseTDP, Read, ReadEffective, RestoreStock,
                              CheckFanFloorRelease, Envelope. Device carries the Engine, not
                              the raw driver.PowerLimiter, so the floor cannot be bypassed.
+  telemetryring/             M4: the daemon's bounded sample history — fixed-capacity ring,
+                             copy-in/copy-out, Since(now, d) window. Pure; the one package
+                             that carries its own lock, and says why.
                              (— voltaire-gui, merged from z13gui at 2.0 —)
   gui/                       GTK4 overlay drawer: Window, state sync, widgets, theming.
                              The cgo island — excluded from make test/race/cover (see Testing)
@@ -408,7 +411,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
   | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac/source_known) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac/source_known + battery_health) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
 
   `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `undervolt` and
@@ -1136,6 +1139,63 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `Curve` becoming a slice (`Shape().Points`) and firmware profile names coming
   from `ProfileInfo` rather than `api.StockProfiles`: all three need a device
   that actually differs before they can be anything but untested generality.
+- **A capability the document declares must be one the driver actually reads.**
+  Capability discovery is by absence, so a declared-but-unread source does not
+  degrade to "nothing shown" — it degrades to a dashboard drawing a graph that
+  is flat at zero, which is worse than no graph because it looks like a
+  measurement. This bit at `telemetry.power_draw`: the Z13 *does* expose
+  powercap RAPL (`intel-rapl:0`, name `package-0`), but `energy_uj` is
+  `0400 root:root` under the Platypus mitigation, so reading it needs a udev
+  grant through `voltaire setup` and the packaged rules — work nobody has done.
+  `asusz13`'s `Sample()` therefore reports zero package power and the device
+  TOML names no source.
+  `TestTelemetryDeclaresNoPowerSourceYet` (`internal/daemon`) pins both
+  directions: it fails if the document names a source while `Sample()` reports
+  zero, and it fails if `Sample()` starts reporting power while the document
+  names nothing. The fix in either direction is to make the two agree and
+  delete the test. Any new capability field with a reading behind it wants the
+  same guard.
+- **`battery` and `telemetry` are document *sections*, not presence bools,
+  because their contents are independently absent.** A machine can report state
+  of health while exposing no charge-limit attribute, and the reverse — a
+  single `battery: true` cannot say either, so a client rendering from it
+  guesses. `BatteryConfig.ChargeLimit` is a `*bool` for the same reason absent
+  and false must differ: every battery driver written so far exists to control
+  the threshold, so a bare block means the usual thing and a device that only
+  reads a level has to say so. A block declaring neither is a validation error
+  ("drop the block instead"), matching the empty-`toggles` rule.
+- **State of health crosses the driver boundary as a ratio, never as the pair
+  it is computed from.** `power_supply` publishes either
+  `charge_full`/`charge_full_design` in µAh or `energy_full`/`energy_full_design`
+  in µWh depending on the battery driver — and the Z13's ACPI battery reports
+  *energy*, where `driver.BatteryStatus`'s first draft assumed charge and named
+  its fields `ChargeFull`/`ChargeFullDesign`. Only the ratio means the same
+  thing on every machine, and it is the form a dashboard shows anyway, so
+  `HealthPercent` is what the interface carries and
+  `asusz13.ReadBatteryHealthPercent` tries both pairs. It is deliberately **not
+  clamped to 100**: a freshly calibrated pack genuinely reads above its design
+  capacity, and 103% is more useful than a number quietly adjusted to look
+  plausible. The read is best-effort inside `Status()` for the same reason RPM
+  is inside `Sample()` — a missing full-charge attribute must not make the
+  charge level unreadable — and it is gated on the declared capability, so a
+  device whose data does not claim health reports zero even where the
+  attributes happen to exist.
+- **`telemetryring` timestamps with wall-clock time and carries its own lock,
+  and both are deliberate.** The ring stores the timestamp its caller supplies,
+  because it cannot know whether the caller means wall-clock or monotonic and
+  the two answer differently across a suspend: Go's monotonic clock does not
+  advance while the machine is asleep (the same fact `reconcileSuspendMaxTicks`
+  is counted in *ticks* for), so a ten-hour suspend would look like no elapsed
+  time and the pre-suspend samples would sit inside the window forever. The
+  daemon passes wall-clock, and the ring is written to survive what that costs —
+  a backwards clock step cannot make it panic, reorder its contents, or drop
+  anything it was not asked to. The lock is an exception to "serialization lives
+  in the daemon" that is safe because it is never held across a call out: it
+  guards a slice copy, so it cannot participate in the `hwMu` → `d.mu` order.
+  A fifth daemon lock taken by a watcher *and* by socket handlers is the shape
+  that produced the `saveState` race. Every value crossing the boundary is
+  deep-copied in both directions, because `driver.Sample` carries an RPM slice
+  a driver is free to reuse.
 - **`internal/apiresult` exists because "the daemon is not running" is not an
   error.** Every `api.Send*` returns `(handled bool, err error)`, where
   `handled == false, err == nil` means the dial failed — a CLI caller falls back
@@ -1463,7 +1523,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | not started |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | started: `internal/telemetryring` + the two device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`) done. Remaining: the 1 Hz sampler and `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, window split, full window + dashboard, double-tap `gui-open-full`, bundled CSS to `@voltaire-*` |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -1472,11 +1532,11 @@ Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
 instead); `limits.Curve` becoming a slice gated by `Shape().Points`; firmware
 profile names from `api.ProfileInfo` rather than the hardcoded
-`api.StockProfiles`. Two device-document fields specified in the plan and still
-missing are **M4 prerequisites**, since the dashboard and telemetry ring were
-specified to read them: `battery.health` and
-`telemetry.{power_draw,history_seconds}`. `undervolt_available` is also still a
-live probe rather than derived from capabilities.
+`api.StockProfiles`. The two device-document fields the plan specified and M2
+left out — `battery.health` and `telemetry.{power_draw,history_seconds}` — are
+**done**; they were M4 prerequisites, since the dashboard and telemetry ring
+were specified to read them. `undervolt_available` is still a live probe rather
+than derived from capabilities.
 
 ### The daemon — COMPLETE
 

@@ -4,6 +4,7 @@ package asusz13
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -194,9 +195,47 @@ func ReadAPUTemperature() (int, error) {
 
 // FindBatteryCapacityPath returns the sysfs path for the current battery charge level.
 func FindBatteryCapacityPath() string {
-	matches, _ := filepath.Glob(sysPowerSupplyDir + "/BAT*/capacity")
+	return findBatteryAttr("capacity")
+}
+
+// findBatteryAttr returns the path to one attribute of the system battery,
+// globbing BAT* to avoid hardcoding BAT0 vs BAT1 as the other finders do. The
+// BAT0 fallback keeps the returned path nameable in an error message when no
+// battery exists at all.
+func findBatteryAttr(name string) string {
+	matches, _ := filepath.Glob(sysPowerSupplyDir + "/BAT*/" + name)
 	if len(matches) > 0 {
 		return matches[0]
 	}
-	return sysPowerSupplyDir + "/BAT0/capacity"
+	return sysPowerSupplyDir + "/BAT0/" + name
+}
+
+// ReadBatteryHealthPercent returns the battery's full-charge capacity as a
+// percentage of its design capacity.
+//
+// It reads whichever pair the supply publishes: this machine's ACPI battery
+// reports energy_full/energy_full_design in µWh, while many power_supply
+// drivers report charge_full/charge_full_design in µAh. The units cancel in
+// the ratio, which is exactly why driver.BatteryStatus carries the ratio and
+// not the pair.
+//
+// The result is not clamped to 100. A freshly calibrated pack genuinely reads
+// slightly above its design capacity, and reporting 103% is more useful than a
+// number that has been quietly adjusted to look plausible.
+func ReadBatteryHealthPercent() (int, error) {
+	for _, pair := range [][2]string{
+		{"energy_full", "energy_full_design"},
+		{"charge_full", "charge_full_design"},
+	} {
+		full, err := readIntFile(findBatteryAttr(pair[0]))
+		if err != nil {
+			continue
+		}
+		design, err := readIntFile(findBatteryAttr(pair[1]))
+		if err != nil || design <= 0 {
+			continue
+		}
+		return int(math.Round(float64(full) * 100 / float64(design))), nil
+	}
+	return 0, fmt.Errorf("battery state of health: neither energy_full nor charge_full is readable")
 }

@@ -195,24 +195,45 @@ type Toggles interface {
 }
 
 // BatteryStatus is a point-in-time battery reading. Fields the hardware does
-// not report are zero; ChargeFull and ChargeFullDesign together give state of
-// health.
+// not report are zero.
 //
 // OnAC is only meaningful when ACKnown is true. On machines with no Mains
 // supply (VMs, desktops, a driver not yet bound) the source cannot be
 // observed, and the established invariant is that unknown must never be read
 // as "on battery" — a bool alone cannot say that.
+//
+// HealthPercent is state of health as a ratio, not the raw pair it is computed
+// from, because the pair is not portable: power_supply reports either
+// charge_full/charge_full_design in µAh or energy_full/energy_full_design in
+// µWh depending on the battery driver, and the Z13's ACPI battery reports
+// energy where this interface's first draft assumed charge. Only the ratio
+// means the same thing on every machine, and it is the form a dashboard shows
+// anyway. A driver that cannot read either pair leaves it zero.
 type BatteryStatus struct {
-	Capacity         int     // percent
-	ChargeFull       int     // µAh, current full-charge capacity
-	ChargeFullDesign int     // µAh, design capacity
-	OnAC             bool    // mains power attached; meaningless unless ACKnown
-	ACKnown          bool    // whether the power source could be observed
-	PowerNowW        float64 // instantaneous draw or charge rate, watts
+	Capacity      int     // percent
+	HealthPercent int     // full charge as a percentage of design capacity; 0 = not reported
+	OnAC          bool    // mains power attached; meaningless unless ACKnown
+	ACKnown       bool    // whether the power source could be observed
+	PowerNowW     float64 // instantaneous draw or charge rate, watts
+}
+
+// BatteryCaps is what a device's battery interface offers. Like every other
+// capability in this package it is declared by device data rather than probed,
+// so it is static for the device's lifetime and safe to serve in the device
+// document without touching hardware.
+//
+// Both fields earn their place by being independently absent: a machine can
+// report a charge level and its state of health while exposing no charge-limit
+// attribute at all, and the Z13 exposes the limit while a generic fallback
+// device may not.
+type BatteryCaps struct {
+	ChargeLimit bool // the charge end threshold can be read and written
+	Health      bool // Status reports HealthPercent
 }
 
 // Battery reads and writes battery charge policy.
 type Battery interface {
+	Caps() BatteryCaps
 	ChargeLimit() (int, error)
 	SetChargeLimit(percent int) error
 	Status() (BatteryStatus, error)
@@ -253,9 +274,30 @@ type Sample struct {
 	Battery       BatteryStatus
 }
 
+// TelemetryInfo describes a telemetry source without reading it, so the device
+// document can say what a dashboard may draw before any sample exists.
+//
+// PowerDraw names the package-power source — "rapl", "pm-table" — and is empty
+// when the device has none. It is deliberately a name rather than a bool: a
+// client showing provenance ("package power via RAPL") needs it, and a device
+// that gains a second source later adds a name rather than a field. Leaving it
+// empty is how a driver says Sample.PackagePowerW will be zero, and a driver
+// must not name a source it does not actually read — capability absence is
+// what makes a client hide the control, and a declared-but-unread source draws
+// a flat zero line instead.
+//
+// HistorySeconds is how much history the daemon retains for this device, and
+// so the largest window a telemetry-history request can usefully ask for. Zero
+// means no history is kept; live readings still work.
+type TelemetryInfo struct {
+	PowerDraw      string
+	HistorySeconds int
+}
+
 // Telemetry produces the readings the status command, the GUI title row, and
 // the dashboard's history ring all consume.
 type Telemetry interface {
+	Info() TelemetryInfo
 	Sample() (Sample, error)
 }
 

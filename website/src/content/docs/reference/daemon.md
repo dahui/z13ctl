@@ -143,7 +143,9 @@ render controls against, instead of hardcoding one device's numbers:
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
   "undervolt":{"min":-40,"max":0},
-  "battery":true,"telemetry":true,"buttons":true}}
+  "battery":{"charge_limit":true,"health":true},
+  "telemetry":{"history_seconds":300},
+  "buttons":true}}
 ```
 
 Capability discovery is **by absence**: a section that is missing means the
@@ -156,6 +158,18 @@ display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].id` is the wire identifier the `feature` commands
 below take.
+
+`battery` and `telemetry` are sections rather than plain `true` because their
+contents are independently absent. `battery.charge_limit` says the
+`batterylimit` commands work; `battery.health` says `get-state` reports
+`battery_health`, the pack's full-charge capacity as a percentage of its design
+capacity (it is not clamped to 100 — a freshly calibrated pack reads slightly
+above design). `telemetry.history_seconds` is the largest history window worth
+requesting, and `telemetry.power_draw` names the package-power source
+(`"rapl"`, `"pm-table"`) — **absent when the device reads none**, in which case
+package power is always zero and the graph should be hidden rather than drawn
+flat. The Z13 currently declares no power source: its `energy_uj` is root-only
+under the Platypus mitigation, so nothing reads it yet.
 
 `power.stock_profile_ppt` gives each firmware profile's PPT defaults, which is
 how a client tells "the firmware's numbers" from "numbers the user chose" —
@@ -423,9 +437,12 @@ On `get-state` requests the daemon also populates `temperature` (APU die
 temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
 is plugged in), `source_known` (whether `on_ac` reflects a real reading — on a
 machine with no mains supply to read, such as a VM, `on_ac` is false with
-`source_known` false, which means *unknown*, not battery), and
-`undervolt_available` (whether the `ryzen_smu` kernel module is present) from
-live sysfs reads. These are not persisted — they are real-time sensor values.
+`source_known` false, which means *unknown*, not battery),
+`undervolt_available` (whether the `ryzen_smu` kernel module is present), and
+`battery_health` (full-charge capacity as a percentage of design capacity, zero
+when the device does not report it — `device-get`'s `battery.health` says which
+in advance) from live sysfs reads. These are not persisted — they are real-time
+sensor values.
 
 On startup the daemon reads this file, resolves what the current power source
 calls for if autoswitch is configured, and restores all saved settings before

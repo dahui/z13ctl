@@ -109,9 +109,45 @@ func TestDeviceGetProjectsTheAssembledDevice(t *testing.T) {
 	if info.Undervolt == nil || info.Undervolt.Min != c.Undervolt.Min || info.Undervolt.Max != c.Undervolt.Max {
 		t.Errorf("undervolt = %+v, want the config's %d..%d", info.Undervolt, c.Undervolt.Min, c.Undervolt.Max)
 	}
-	if !info.Battery || !info.Telemetry || !info.Buttons {
-		t.Errorf("presence flags = battery:%v telemetry:%v buttons:%v, want all true on the Z13",
-			info.Battery, info.Telemetry, info.Buttons)
+	if info.Battery == nil || !info.Battery.ChargeLimit || !info.Battery.Health {
+		t.Errorf("battery = %+v, want both charge_limit and health on the Z13", info.Battery)
+	}
+	tel := c.Telemetry.Info()
+	if info.Telemetry == nil || info.Telemetry.HistorySeconds != tel.HistorySeconds ||
+		info.Telemetry.PowerDraw != tel.PowerDraw {
+		t.Errorf("telemetry = %+v, want the config's %+v", info.Telemetry, tel)
+	}
+	if !info.Buttons {
+		t.Error("buttons = false, want true on the Z13")
+	}
+}
+
+// TestTelemetryDeclaresNoPowerSourceYet is an honesty guard, not a statement
+// about what the Z13 can do. The machine does expose powercap RAPL, but
+// energy_uj is root-only (the Platypus mitigation) and asusz13's Sample()
+// reads nothing for it, so PackagePowerW is always zero. Naming a source in
+// the document while that is true tells a dashboard to draw a graph that is
+// flat at zero, where an absent source tells it to hide the graph — capability
+// absence is the whole contract clients render against.
+//
+// So this fails the day someone implements the read without declaring it, and
+// it fails just as loudly the day someone declares it without implementing the
+// read. Either way the fix is to make the two agree and delete this test.
+func TestTelemetryDeclaresNoPowerSourceYet(t *testing.T) {
+	info := deviceInfoFor(testDev)
+	if info.Telemetry == nil {
+		t.Fatal("telemetry section missing")
+	}
+	if info.Telemetry.PowerDraw != "" {
+		t.Errorf("telemetry.power_draw = %q; if Sample() now reads package power, "+
+			"delete this test — if it does not, the document is claiming a graph "+
+			"that would be flat at zero", info.Telemetry.PowerDraw)
+	}
+	// Sample() only reads sysfs, so this is safe here in the way a write would
+	// not be; it fails on a machine that is not a Z13 and that is fine to skip.
+	if s, err := testDev.Telemetry.Sample(); err == nil && s.PackagePowerW != 0 {
+		t.Errorf("Sample reports %.1fW of package power but the document names no "+
+			"source; declare it in the device data", s.PackagePowerW)
 	}
 }
 
@@ -156,6 +192,26 @@ func TestDeviceGetCapabilityByAbsence(t *testing.T) {
 	// always has hw set, but the projection must not depend on it.
 	if doc := deviceInfoFor(nil); doc == nil {
 		t.Error("deviceInfoFor(nil) = nil, want an empty document")
+	}
+}
+
+// TestDeviceGetWireKeys pins the JSON key names of the capability sections.
+// The Go field names are ours to rename; these are not — a Decky plugin or any
+// other non-Go client reads them literally, and nothing else in the suite would
+// notice a struct tag being edited.
+func TestDeviceGetWireKeys(t *testing.T) {
+	data, err := json.Marshal(deviceInfoFor(testDev))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"battery":{"charge_limit":true,"health":true}`,
+		`"telemetry":{"history_seconds":300}`, // power_draw omitted: no source declared
+		`"buttons":true`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("document does not contain %s\ngot: %s", want, data)
+		}
 	}
 }
 

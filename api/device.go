@@ -23,12 +23,12 @@ type DeviceInfo struct {
 	Lighting  *LightingInfo  `json:"lighting,omitempty"`
 	Toggles   []ToggleInfo   `json:"toggles,omitempty"`
 	Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
+	Battery   *BatteryInfo   `json:"battery,omitempty"`
+	Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
-	// Presence-only capabilities: no client-facing limits, just whether the
-	// controls and readings exist at all.
-	Battery   bool `json:"battery,omitempty"`
-	Telemetry bool `json:"telemetry,omitempty"`
-	Buttons   bool `json:"buttons,omitempty"`
+	// Presence-only capability: the daemon watches a hardware button and emits
+	// the events a client can subscribe to. There is nothing to parameterize.
+	Buttons bool `json:"buttons,omitempty"`
 }
 
 // FanInfo is the device's fan-curve shape: how many points a curve holds and
@@ -86,4 +86,28 @@ type ToggleInfo struct {
 type UndervoltInfo struct {
 	Min int `json:"min"`
 	Max int `json:"max"`
+}
+
+// BatteryInfo says what the device's battery interface offers. The section
+// being present means there is a battery to report on at all; the two fields
+// are independently absent, so a machine can report state of health while
+// exposing no charge-limit attribute, or the reverse.
+type BatteryInfo struct {
+	ChargeLimit bool `json:"charge_limit,omitempty"` // batterylimit get/set work
+	Health      bool `json:"health,omitempty"`       // get-state reports state of health
+}
+
+// TelemetryInfo describes what the device's telemetry source reports, so a
+// dashboard knows which graphs to draw before it has asked for a single
+// sample.
+//
+// PowerDraw names the package-power source ("rapl", "pm-table") and is empty
+// when the device reads none — in which case Sample's package power is always
+// zero and the graph should be hidden rather than drawn flat. HistorySeconds
+// is the largest window a telemetry-history request can usefully ask for; zero
+// means the daemon keeps no history for this device and only live readings are
+// available.
+type TelemetryInfo struct {
+	PowerDraw      string `json:"power_draw,omitempty"`
+	HistorySeconds int    `json:"history_seconds,omitempty"`
 }

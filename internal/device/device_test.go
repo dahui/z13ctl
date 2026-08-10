@@ -204,6 +204,61 @@ func TestAssembleRefusesAnUnregisteredMethod(t *testing.T) {
 	}
 }
 
+func TestBatteryCapsDefaults(t *testing.T) {
+	// charge_limit is a pointer precisely so "absent" and "false" differ: every
+	// battery driver written so far exists to control the threshold, so a block
+	// that says nothing means the usual thing, and a device that only reads a
+	// level has to say so.
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		cfg  BatteryConfig
+		want driver.BatteryCaps
+	}{
+		{"bare block", BatteryConfig{Method: "m"}, driver.BatteryCaps{ChargeLimit: true}},
+		{"health declared", BatteryConfig{Method: "m", Health: true},
+			driver.BatteryCaps{ChargeLimit: true, Health: true}},
+		{"limit explicitly off", BatteryConfig{Method: "m", ChargeLimit: &no, Health: true},
+			driver.BatteryCaps{Health: true}},
+		{"limit explicitly on", BatteryConfig{Method: "m", ChargeLimit: &yes},
+			driver.BatteryCaps{ChargeLimit: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.Caps(); got != tc.want {
+				t.Errorf("Caps() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTelemetryInfoHistoryDefault(t *testing.T) {
+	// The default is applied here rather than at the ring, so the number the
+	// document advertises and the number the ring is sized to are the same
+	// value from the same place.
+	for _, tc := range []struct {
+		name string
+		cfg  TelemetryConfig
+		want driver.TelemetryInfo
+	}{
+		{"unset takes the default", TelemetryConfig{Method: "m"},
+			driver.TelemetryInfo{HistorySeconds: DefaultHistorySeconds}},
+		{"explicit value wins", TelemetryConfig{Method: "m", HistorySeconds: 60},
+			driver.TelemetryInfo{HistorySeconds: 60}},
+		// Negative would otherwise reach telemetryring.New as a capacity, and
+		// "keep no history" is the only sane reading of it.
+		{"negative means no history", TelemetryConfig{Method: "m", HistorySeconds: -5},
+			driver.TelemetryInfo{HistorySeconds: 0}},
+		{"power source is carried through", TelemetryConfig{Method: "m", PowerDraw: "rapl", HistorySeconds: 120},
+			driver.TelemetryInfo{PowerDraw: "rapl", HistorySeconds: 120}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.Info(); got != tc.want {
+				t.Errorf("Info() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateCatchesBrokenConfigs(t *testing.T) {
 	base := func() Config {
 		return Config{Device: Meta{ID: "x", Model: "X", Match: []Match{{Vendor: "V", Product: "P"}}}}
@@ -236,6 +291,10 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 		{"undervolt bounds above zero", func(c *Config) {
 			c.Undervolt = &UndervoltConfig{Method: "m", Min: -10, Max: 5}
 		}, "min <= max <= 0"},
+		{"battery block offering nothing", func(c *Config) {
+			no := false
+			c.Battery = &BatteryConfig{Method: "m", ChargeLimit: &no}
+		}, "drop the block instead"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,6 +418,7 @@ func (fakeToggles) Set(string, int) error     { return nil }
 
 type fakeBattery struct{}
 
+func (fakeBattery) Caps() driver.BatteryCaps              { return driver.BatteryCaps{ChargeLimit: true} }
 func (fakeBattery) ChargeLimit() (int, error)             { return 100, nil }
 func (fakeBattery) SetChargeLimit(int) error              { return nil }
 func (fakeBattery) Status() (driver.BatteryStatus, error) { return driver.BatteryStatus{}, nil }
@@ -373,6 +433,7 @@ func (fakeUndervolt) Reset() error         { return nil }
 
 type fakeTelemetry struct{}
 
+func (fakeTelemetry) Info() driver.TelemetryInfo     { return driver.TelemetryInfo{} }
 func (fakeTelemetry) Sample() (driver.Sample, error) { return driver.Sample{}, nil }
 
 type fakeButtons struct{}

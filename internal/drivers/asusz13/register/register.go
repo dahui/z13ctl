@@ -34,14 +34,14 @@ func init() {
 		}
 		return asusz13.NewToggles(specs)
 	})
-	device.RegisterBattery("power-supply", func(device.BatteryConfig) (driver.Battery, error) {
-		return asusz13.NewBattery(), nil
+	device.RegisterBattery("power-supply", func(c device.BatteryConfig) (driver.Battery, error) {
+		return asusz13.NewBattery(c.Caps()), nil
 	})
 	device.RegisterUndervolt("ryzen-smu-co", func(c device.UndervoltConfig) (driver.Undervolter, error) {
 		return asusz13.NewUndervolter(c.Min, c.Max), nil
 	})
-	device.RegisterTelemetry("hwmon-rapl", func(device.TelemetryConfig) (driver.Telemetry, error) {
-		return asusz13.NewTelemetry(), nil
+	device.RegisterTelemetry("hwmon-rapl", func(c device.TelemetryConfig) (driver.Telemetry, error) {
+		return asusz13.NewTelemetry(c.Info()), nil
 	})
 	// Lighting and buttons live in their own driver packages — the Aura HID
 	// protocol and a watched evdev key are not Z13 sysfs concerns — but the Z13

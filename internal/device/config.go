@@ -131,9 +131,24 @@ type TogglesConfig struct {
 	Entries []ToggleEntry `toml:"entries"`
 }
 
-// BatteryConfig selects the battery driver.
+// BatteryConfig selects the battery driver and declares what it offers.
+//
+// ChargeLimit defaults to true when the block is present, because every
+// battery driver written so far exists to control the charge threshold; a
+// device that only reads a charge level says charge_limit = false.
 type BatteryConfig struct {
-	Method string `toml:"method"`
+	Method      string `toml:"method"`
+	ChargeLimit *bool  `toml:"charge_limit"` // pointer: absent means the default, not false
+	Health      bool   `toml:"health"`       // Status reports state of health
+}
+
+// Caps returns the battery capabilities this device declares.
+func (c BatteryConfig) Caps() driver.BatteryCaps {
+	limit := true
+	if c.ChargeLimit != nil {
+		limit = *c.ChargeLimit
+	}
+	return driver.BatteryCaps{ChargeLimit: limit, Health: c.Health}
 }
 
 // UndervoltConfig selects the undervolt driver and its offset bounds.
@@ -143,9 +158,36 @@ type UndervoltConfig struct {
 	Max    int    `toml:"max"`
 }
 
-// TelemetryConfig selects the telemetry driver.
+// TelemetryConfig selects the telemetry driver and describes what it reports.
+//
+// PowerDraw names the package-power source and must be left unset until the
+// driver actually reads one — see driver.TelemetryInfo. HistorySeconds sizes
+// the daemon's sample ring and is what clients read as the largest history
+// window worth asking for; unset means DefaultHistorySeconds.
 type TelemetryConfig struct {
-	Method string `toml:"method"`
+	Method         string `toml:"method"`
+	PowerDraw      string `toml:"power_draw"`
+	HistorySeconds int    `toml:"history_seconds"`
+}
+
+// DefaultHistorySeconds is the sample history a device keeps when its data
+// does not say: five minutes at the sampler's 1 Hz, which is the window the
+// dashboard graphs were specified against.
+const DefaultHistorySeconds = 300
+
+// Info returns the telemetry description this device declares, with the
+// history default applied. A negative history_seconds is treated as zero —
+// "keep no history" — rather than propagating to a ring capacity, which is the
+// one caller that would have to defend against it.
+func (c TelemetryConfig) Info() driver.TelemetryInfo {
+	secs := c.HistorySeconds
+	switch {
+	case secs == 0:
+		secs = DefaultHistorySeconds
+	case secs < 0:
+		secs = 0
+	}
+	return driver.TelemetryInfo{PowerDraw: c.PowerDraw, HistorySeconds: secs}
 }
 
 // ButtonConfig selects the hardware-button driver.
@@ -271,8 +313,15 @@ func (c Config) Validate() error {
 			}
 		}
 	}
-	if c.Battery != nil && c.Battery.Method == "" {
-		fail("battery.method is required")
+	if c.Battery != nil {
+		if c.Battery.Method == "" {
+			fail("battery.method is required")
+		}
+		// Same rule as an empty toggles block: a capability that offers nothing
+		// still tells every client the controls exist. Say so by omission.
+		if caps := c.Battery.Caps(); !caps.ChargeLimit && !caps.Health {
+			fail("battery block offers neither charge_limit nor health; drop the block instead")
+		}
 	}
 	if c.Undervolt != nil {
 		if c.Undervolt.Method == "" {

@@ -69,8 +69,11 @@ label = "POST boot sound"
 id    = "panel_overdrive"
 label = "Panel overdrive"
 
+# The ACPI battery reports energy_full / energy_full_design (µWh), not the
+# charge_* (µAh) pair — hence state of health is served as a ratio.
 [battery]
 method = "power-supply"
+health = true
 
 # CPU Curve Optimizer via ryzen_smu (amkillam fork required on Strix Halo);
 # iGPU CO is unsupported on this silicon.
@@ -79,8 +82,15 @@ method = "ryzen-smu-co"
 min    = -40
 max    = 0
 
+# power_draw is deliberately unset. This machine does expose powercap RAPL
+# (intel-rapl:0, name "package-0"), but energy_uj is 0400 root:root — the
+# Platypus mitigation — so reading it needs a udev grant through voltaire setup
+# and the packaged rules, which nothing has added yet. Naming a source here
+# before Sample() reads one would put a flat zero line on the dashboard instead
+# of hiding the graph, and capability absence is what clients hide on.
 [telemetry]
-method = "hwmon-rapl"
+method          = "hwmon-rapl"
+history_seconds = 300
 
 # The Armoury Crate button: KEY_PROG3 on the "Asus WMI hotkeys" input device
 # (older ASUS models use KEY_PROG1). The same node carries SW_TABLET_MODE —

@@ -70,8 +70,14 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 		lo, hi := hw.Undervolt.Range()
 		info.Undervolt = &api.UndervoltInfo{Min: lo, Max: hi}
 	}
-	info.Battery = hw.Battery != nil
-	info.Telemetry = hw.Telemetry != nil
+	if hw.Battery != nil {
+		caps := hw.Battery.Caps()
+		info.Battery = &api.BatteryInfo{ChargeLimit: caps.ChargeLimit, Health: caps.Health}
+	}
+	if hw.Telemetry != nil {
+		t := hw.Telemetry.Info()
+		info.Telemetry = &api.TelemetryInfo{PowerDraw: t.PowerDraw, HistorySeconds: t.HistorySeconds}
+	}
 	info.Buttons = hw.Buttons != nil
 	return info
 }

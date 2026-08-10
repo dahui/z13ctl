@@ -174,12 +174,15 @@ func (t toggles) Set(id string, value int) error {
 	return p.set(value)
 }
 
-// NewBattery returns the power_supply battery driver.
-func NewBattery() driver.Battery {
-	return battery{}
+// NewBattery returns the power_supply battery driver with the capabilities
+// device data declares.
+func NewBattery(caps driver.BatteryCaps) driver.Battery {
+	return battery{caps: caps}
 }
 
-type battery struct{}
+type battery struct{ caps driver.BatteryCaps }
+
+func (b battery) Caps() driver.BatteryCaps { return b.caps }
 
 func (battery) ChargeLimit() (int, error) { return readIntFile(FindBatteryThresholdPath()) }
 
@@ -187,7 +190,7 @@ func (battery) SetChargeLimit(percent int) error {
 	return writeIntFile(FindBatteryThresholdPath(), percent)
 }
 
-func (battery) Status() (driver.BatteryStatus, error) {
+func (b battery) Status() (driver.BatteryStatus, error) {
 	var st driver.BatteryStatus
 	pct, err := readIntFile(FindBatteryCapacityPath())
 	if err != nil {
@@ -199,17 +202,28 @@ func (battery) Status() (driver.BatteryStatus, error) {
 	if on, err := OnACPower(); err == nil {
 		st.OnAC, st.ACKnown = on, true
 	}
+	// Health is best-effort for the same reason RPM is in Sample: a pack whose
+	// full-charge attributes are missing must not make the charge level
+	// unreadable. Zero is the documented "not reported".
+	if b.caps.Health {
+		if health, err := ReadBatteryHealthPercent(); err == nil {
+			st.HealthPercent = health
+		}
+	}
 	return st, nil
 }
 
-// NewTelemetry returns the hwmon-based telemetry source. Package power (RAPL /
-// pm-table) is not read yet and reports zero; it lands with the dashboard
-// work, which is what consumes it.
-func NewTelemetry() driver.Telemetry {
-	return telemetry{}
+// NewTelemetry returns the hwmon-based telemetry source described by device
+// data. Package power (RAPL / pm-table) is not read yet and reports zero,
+// which is why the Z13's data names no power_draw source; it lands with the
+// dashboard work, which is what consumes it.
+func NewTelemetry(info driver.TelemetryInfo) driver.Telemetry {
+	return telemetry{info: info}
 }
 
-type telemetry struct{}
+type telemetry struct{ info driver.TelemetryInfo }
+
+func (t telemetry) Info() driver.TelemetryInfo { return t.info }
 
 func (telemetry) Sample() (driver.Sample, error) {
 	var s driver.Sample

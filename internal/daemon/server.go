@@ -178,12 +178,18 @@ func (d *Daemon) dispatch(req request) response {
 		// overwritten with live sysfs readings below.
 		s := withLegacyProjection(cloneState(d.state))
 		d.mu.Unlock()
-		if onAC, known := d.acPower(); known {
-			s.OnAC = onAC
-			// SourceKnown is what lets a client distinguish "on battery" from
-			// "no Mains supply exists here" (a VM, a desktop): OnAC is false in
-			// both. Left false, a client must claim nothing about power.
-			s.SourceKnown = true
+		if bat, ok := d.batteryStatus(); ok {
+			if bat.ACKnown {
+				s.OnAC = bat.OnAC
+				// SourceKnown is what lets a client distinguish "on battery"
+				// from "no Mains supply exists here" (a VM, a desktop): OnAC is
+				// false in both. Left false, a client must claim nothing about
+				// power.
+				s.SourceKnown = true
+			}
+			// Zero unless the device declares battery.health, which is what
+			// DeviceInfo.Battery.Health tells a client to expect.
+			s.BatteryHealth = bat.HealthPercent
 		}
 		// Populate firmware-managed fields from hardware (not cached in daemon
 		// state); a failed read reports zero, as it always has.
