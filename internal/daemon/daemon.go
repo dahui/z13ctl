@@ -85,7 +85,10 @@ type Daemon struct {
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 
-	buttonCh chan struct{}
+	// buttonCh carries the moment of each hardware-button press. It is a
+	// timestamp rather than a bare signal because the press *timing* is what
+	// distinguishes a single press from a double one; see button.go.
+	buttonCh chan time.Time
 
 	// sleepRelease is false under --no-sleep-release: the fans keep the custom
 	// curve through sleep. Set once by Run before any watcher starts, and read-only
@@ -142,7 +145,7 @@ func assembleDevice() (*device.Device, error) {
 // Unix socket.
 func Run(ctx context.Context, opts Options) error {
 	d := &Daemon{
-		buttonCh:     make(chan struct{}, 4),
+		buttonCh:     make(chan time.Time, 4),
 		sleepRelease: opts.SleepRelease,
 	}
 
@@ -418,9 +421,11 @@ func (d *Daemon) getListeners() ([]net.Listener, error) {
 	return lns, nil
 }
 
-// broadcastLoop forwards Armoury Crate button presses to all subscribers
-// until ctx is done, then closes all subscriber connections.
+// broadcastLoop turns Armoury Crate button presses into subscriber events until
+// ctx is done, then closes all subscriber connections. What a press means is
+// pressTick's decision; this only carries the state between presses.
 func (d *Daemon) broadcastLoop(ctx context.Context) {
+	var presses pressState
 	for {
 		select {
 		case <-ctx.Done():
@@ -431,12 +436,10 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 			d.subscribers = nil
 			d.subMu.Unlock()
 			return
-		case <-d.buttonCh:
-			// OK must be true: `ok` has no omitempty, so leaving it zero ships
-			// {"ok":false,...} on a perfectly good event, and any client that
-			// checks ok before dispatching — the documented contract — silently
-			// drops every button press.
-			d.broadcast(response{OK: true, Event: api.EventGUIToggle})
+		case at := <-d.buttonCh:
+			var act pressAction
+			presses, act = pressTick(presses, at)
+			d.emitPress(act)
 		}
 	}
 }
@@ -648,29 +651,6 @@ func normalizeLightingState(ls, fallback api.LightingState) api.LightingState {
 	// there, so fall back to the default rather than treating empty as unset.
 	ls.Color2 = pick(ls.Color2, fallback.Color2, def.Color2)
 	return ls
-}
-
-// watchButtons runs the device's button watcher, forwarding each press to
-// buttonCh for the broadcast loop. The daemon decides what a press means
-// (which client event to emit); the driver only reports that one happened.
-func (d *Daemon) watchButtons(ctx context.Context) {
-	events := make(chan driver.ButtonEvent, 4)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-events:
-				select {
-				case d.buttonCh <- struct{}{}:
-				default: // non-blocking: discard if nobody consuming
-				}
-			}
-		}
-	}()
-	if err := d.hw.Buttons.Watch(ctx, events); err != nil {
-		slog.Warn("button watcher stopped", "err", err)
-	}
 }
 
 // reopenAndRestore re-opens the lighting device and re-applies the saved

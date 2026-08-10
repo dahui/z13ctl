@@ -339,7 +339,7 @@ restore paths — startup, resume, and selecting a custom profile.
 | Command | Request | Response |
 |---|---|---|
 | Full state | `{"cmd":"get-state"}` | `ok`, `state` |
-| Subscribe | `{"cmd":"subscribe","events":["gui-toggle","power-source","state-changed"]}` | `ok`, then streamed events |
+| Subscribe | `{"cmd":"subscribe","events":["gui-toggle","gui-open-full","power-source","state-changed"]}` | `ok`, then streamed events |
 
 `get-state` merges persisted state with live sysfs reads — see
 [State file](#state-file).
@@ -355,8 +355,19 @@ Each streamed event is a full response object with an `event` field:
 | Event | Emitted when |
 |---|---|
 | `gui-toggle` | the Armoury Crate button is pressed |
+| `gui-open-full` | the button is pressed twice in quick succession — sent **in addition to** the second `gui-toggle` |
 | `power-source` | the machine moves between mains and battery power |
 | `state-changed` | the active profile, its settings, the saved profiles, or the autoswitch configuration change |
+
+`gui-open-full` never replaces `gui-toggle`: every press toggles immediately, so
+the first one opens your window with no added latency, and a client that wants
+the two-press gesture subscribes to both and closes whatever the toggle opened
+when the escalation arrives. Waiting to find out whether a second press was
+coming would put the whole detection window onto every single press.
+
+The window is 50–400 ms between presses. The lower bound is not padding: some
+firmware reports one press twice in the same instant, and without a floor every
+press would look like a double. Three presses in a row escalate once, not twice.
 
 `power-source` fires on the transition itself, whether or not autoswitch is
 configured, so a client can drive a plug/battery indicator from it alone.

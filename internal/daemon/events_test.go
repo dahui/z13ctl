@@ -132,6 +132,7 @@ func TestBroadcastDropsAWedgedSubscriber(t *testing.T) {
 func TestEventNamesAreStable(t *testing.T) {
 	want := map[string]string{
 		"gui-toggle":    api.EventGUIToggle,
+		"gui-open-full": api.EventGUIOpenFull,
 		"power-source":  api.EventPowerSource,
 		"state-changed": api.EventStateChanged,
 	}

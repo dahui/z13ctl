@@ -65,8 +65,9 @@ internal/
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Options, Run(), getListener() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
-    button.go                evdev button watcher (KEY_PROG3 / Armoury Crate button on 2025 Z13);
-                             eventDevice seam — no Grab method, see issue #10
+    button.go                button watcher + pure pressTick seam: every press emits gui-toggle,
+                             a second within [50ms, 400ms] also emits gui-open-full
+    button_test.go           pressTick decision table (no evdev device, no clock)
     button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
@@ -422,6 +423,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
   | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac/source_known + battery_health) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
+  (events: `gui-toggle`, `gui-open-full`, `power-source`, `state-changed`)
 
   `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `undervolt` and
   `undervolt-reset` take an optional `"profile"` field naming the custom profile
@@ -1268,6 +1270,29 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   own state without a socket round trip per toggle per sync. Shipping a `Kind`
   field before either exists would be the same trap as a device document
   declaring a capability nothing reads.
+- **A double press emits `gui-open-full` *in addition to* `gui-toggle`, and
+  never instead of it.** The first press opens the quickbar immediately; a
+  client that wants the escalation subscribes to both and hides whatever the
+  toggle opened when the second arrives. The brief flash is the accepted trade
+  for never adding the window's length to a single press — a daemon that waited
+  to see whether a second press was coming would put 400 ms onto every press on
+  the machine.
+  **Both bounds are measured, and the lower one is the important one.** Some
+  firmware revisions report a single Armoury Crate press twice in the same evdev
+  instant — the duplicate `internal/togglegate` exists to swallow client-side.
+  Without a floor, *every* press on that hardware is a double press, so the full
+  window opens every time and the quickbar becomes unreachable. 50 ms is
+  togglegate's own figure, from the same hardware. The ceiling sits above the
+  measured 129 ms human tapping floor so a deliberate double tap (200–300 ms)
+  pairs, and below the gap between two unrelated presses.
+  A completed pair clears the state, so a triple tap escalates once rather than
+  on every press after the first. The press *timestamp is taken in the watcher*,
+  not where `buttonCh` is read: the reader can be held up broadcasting to a slow
+  subscriber, and two presses queued behind one of those would be read back to
+  back and misread as a hardware duplicate.
+  Nothing consumes `gui-open-full` yet — the full window it is meant to open
+  does not exist. It is additive and subscription-filtered, so no existing
+  client sees it.
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing
