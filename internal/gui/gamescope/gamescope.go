@@ -278,6 +278,7 @@ func (b *Backend) scaledCSS() string {
 	return fmt.Sprintf(`/* Gamescope resolution scaling (%.1fx) */
 .drawer { font-family: 'Inter', sans-serif; font-size: %.0fpx; }
 .drawer .btn-group button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
+.drawer .btn-group button.dropdown-trigger { padding-left: %.0fpx; padding-right: %.0fpx; }
 .drawer checkbutton { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .drawer .mode-grid.btn-group button { min-height: %.0fpx; }
 .tab-btn { min-height: %.0fpx; }
@@ -313,6 +314,10 @@ func (b *Backend) scaledCSS() string {
 		s,
 		14*s,                 // .drawer font-size
 		48*s, 4*s, 10*s, 6*s, // btn-group button
+		12*s, 12*s, // dropdown-trigger horizontal padding — the rule above sets
+		// the padding *shorthand* at this sheet's higher provider priority, so
+		// without restating it here layout.css's 12px is overridden to 10*s and
+		// the trigger looks like every other button under gamescope only.
 		48*s, 4*s, 10*s, 6*s, // checkbutton
 		52*s,       // mode-grid btn-group button
 		48*s,       // tab-btn

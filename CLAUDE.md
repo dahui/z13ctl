@@ -53,27 +53,12 @@ internal/
   aura/                      Aura HID protocol implementation
     aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
     modes.go                 Mode and Speed constants + ModeFromString/SpeedFromString
-  cli/                       CLI helpers shared by cmd/ and internal/daemon/
-    cli.go                   package doc file only
+  cli/                       pure presentation remainder — NOT hardware access.
+                             M1 moved everything that touches sysfs out of here;
+                             see "Where the hardware code lives" below.
+    doc.go                   package doc file only
     colors.go                named color table, ResolveColor, PrintColorList
-    parse.go                 ParseColor, ParseBrightness
-    sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
-    power.go                 FindACOnlinePath, OnACPower (Mains-only discovery), IsStockProfile, ValidateProfileName
-    power_test.go            mains discovery vs the decoy supplies; profile-name rules
-    fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
-    paths.go                 sysfs roots as vars (injectable by tests); see Testing
-    tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
-                             SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor/CheckCurveAgainstTDP,
-                             CheckFanFloorRelease/CheckFanFloorReleaseAt (the *At forms are pure, for inactive profiles)
-    smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
-    undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
-    undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
-    fan_test.go              ParseFanCurve, FanModeName tests
-    sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
-    fan_sysfs_test.go        fan curve/mode/RPM + profile/battery/firmware-attr tests
-    smu_test.go              SMU mailbox protocol + Curve Optimizer tests
-    tdp_test.go              SetTDPState/SetTDP/StockProfilePPT/ReadEffectivePPT tests +
-                             ApplyTDPSafely fan-floor refusal (the thermal-guard regression test)
+    parse.go                 ParseColor, ParseBrightness, ParseFanCurve
     dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunProfileCreate/Save/Delete,
                              DryRunAutoswitch, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve,
                              DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
@@ -125,12 +110,31 @@ internal/
   drivers/
     asusz13/                 the 2025 ROG Flow Z13 (GZ302) driver: hwmon fan pair, PPT,
                              platform_profile, battery threshold, asus-armoury toggles,
-                             ryzen_smu CO
+                             ryzen_smu CO. This is where internal/cli's hardware code
+                             moved at M1 — same files, same tests, same assertions.
+      drivers.go             the driver.* implementations the registry constructs
+      fan.go                 hwmon discovery, curve read/write (both fans), RPM, mode control,
+                             SetAllFansFullSpeed, VerifyFanCurveActive
+      sysfs.go               FindProfilePath, SetProfile, battery threshold, boot sound,
+                             panel overdrive, APU temperature, battery capacity
+      power.go               FindACOnlinePath, OnACPower (Mains-only discovery)
+      tdp.go                 PPT read/write: SetTDP, SetTDPState, ReadAllPPT
+      smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
+      undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues
+      paths.go               sysfs roots as vars (injectable by tests); see Testing
+      sysfs_fake_test.go     fake sysfs tree + fakeSMU mailbox + ppdRunner stub
+      fan_sysfs_test.go / smu_test.go / tdp_test.go / power_test.go / undervolt_test.go
       register/             blank-import side-effect package wiring it into the registry
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
     evdevkey/                driver.Buttons over one key on an evdev device ("evdev-key")
   safety/                    the thermal-safety rules between handlers and drivers, pure and
-                             parameterized by driver.PowerEnvelope (FloorPWMAt lives here)
+                             parameterized by driver.PowerEnvelope
+    safety.go                pure rules: FanCurveForTDP, FloorPWMAt, FloorAdjustsCurve,
+                             CheckCurveAgainstTDP, CheckFanFloorReleaseAt
+    engine.go                Engine{Fans, Power} — the only path to a PPT write:
+                             ApplyTDPSafely, ReleaseTDP, Read, ReadEffective, RestoreStock,
+                             CheckFanFloorRelease, Envelope. Device carries the Engine, not
+                             the raw driver.PowerLimiter, so the floor cannot be bypassed.
                              (— voltaire-gui, merged from z13gui at 2.0 —)
   gui/                       GTK4 overlay drawer: Window, state sync, widgets, theming.
                              The cgo island — excluded from make test/race/cover (see Testing)
@@ -185,6 +189,36 @@ website/                     the docs site (Astro Starlight; see Documentation)
   astro.config.mjs           site config: base /voltaire, sidebar nav, links validator
   src/content/docs/          page sources (.md/.mdx); reference/api-go.md is generated
 ```
+
+## Where the hardware code lives
+
+M1 moved every function that touches sysfs out of `internal/cli` and into
+`internal/drivers/asusz13`, and lifted the thermal-safety rules into
+`internal/safety`. **Many decision entries below still name the pre-M1
+`cli.*` symbols.** Their reasoning is unchanged and still load-bearing — only
+the package moved — so read them through this table rather than trusting the
+prefix:
+
+| Written as | Now |
+|---|---|
+| `cli.ApplyTDPSafely` | `safety.Engine.ApplyTDPSafely` |
+| `cli.ReadEffectivePPT` | `safety.Engine.ReadEffective` |
+| `cli.CheckFanCurveFloor` | `safety.Engine.CheckFanFloorRelease` (live) / `safety.CheckCurveAgainstTDP` (pure) |
+| `cli.CheckFanFloorRelease` / `…At` | `safety.Engine.CheckFanFloorRelease` / `safety.CheckFanFloorReleaseAt` |
+| `cli.FanCurveForTDP`, `cli.FloorPWMAt`, `cli.FloorAdjustsCurve` | `safety.*` (same names) |
+| `cli.HighTDPFanCurve`, `cli.TDPMaxSafe`, `cli.HighTDPMinPWM` | `driver.PowerEnvelope` fields, from the device TOML |
+| `cli.StockProfilePPT` | `driver.PowerEnvelope.StockProfilePPT`, loaded by `internal/device/config.go` |
+| `cli.SetProfile`, `cli.IsStockProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/asusz13` |
+| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.LiveFanCurve`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` |
+| `cli.SMUAvailable`, `cli.SMUProbeUndervolt`, `cli.SetCurveOptimizer`, `cli.ResetCurveOptimizer` | `internal/drivers/asusz13` |
+| `cli.ValidateProfileName` | still `cli` — a wrapper delegating to `api.ValidateProfileName` |
+| `cli.ParseFanCurve`, `cli.ParseColor`, `cli.ResolveColor`, `cli.DryRun*` | still `cli` — presentation, no hardware |
+
+The structural rule the move bought: `Device` carries a `safety.Engine`, never
+the raw `driver.PowerLimiter`, so no handler or plugin can reach a PPT write
+without the fan floor. Drivers are passive — no locking, no goroutines, no
+policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
+`internal/safety`.
 
 ## Key architectural decisions
 
@@ -619,10 +653,11 @@ website/                     the docs site (Astro Starlight; see Documentation)
   failure is deliberately not a refusal — it must not make fan control
   unavailable.
 - **Daemon tests cannot exercise the fan-floor guards.** Whether they refuse
-  depends on the real `ppt_*` values and `internal/cli`'s path vars are
-  unexported, so a daemon test that passes the guard writes the machine's actual
-  fan mode. `internal/daemon/server_test.go` stays on parse-rejection paths; the
-  guards themselves are covered hermetically in `internal/cli/tdp_test.go`.
+  depends on the real `ppt_*` values and `internal/drivers/asusz13`'s path vars
+  are unexported, so a daemon test that passes the guard writes the machine's
+  actual fan mode. `internal/daemon/server_test.go` stays on parse-rejection
+  paths; the guards themselves are covered hermetically in
+  `internal/drivers/asusz13/tdp_test.go` and `internal/safety/safety_test.go`.
 - **Per-device lighting states must be normalized before use.** `handleOff`
   saves a named zone as `{Enabled: false}` with no mode/colour/speed, so
   `handleBrightness` reusing that entry produced an *enabled* state with empty
@@ -1274,7 +1309,7 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   — they were stale by 17 points on daemon and 9 on api before v1.3.1.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
-### Fake sysfs (`internal/cli`)
+### Fake sysfs (`internal/drivers/asusz13`)
 
 All sysfs roots this package touches live in `paths.go` as package **vars**, not
 consts, purely so tests can redirect them. `sysfs_fake_test.go` provides
@@ -1293,12 +1328,14 @@ Two seams exist specifically to stop tests from touching the developer's machine
   files cannot. `resetSMUProbe(t)` clears the `sync.Once` behind
   `SMUProbeUndervolt` so each case re-probes.
 
-**Never let a test reach a real sysfs write.** `internal/daemon` handlers call
-`cli` directly and `cli`'s path vars are unexported, so daemon tests must stay on
-validation/rejection paths that return before any hardware access —
-`server_test.go` documents this at `TestHandleTDPForceBoundaryRejections`. A
-daemon test that gets past `handleTDP` validation will change the machine's
-actual power limits.
+**Never let a test reach a real sysfs write.** `internal/daemon` handlers reach
+hardware through the assembled `device.Device`, and `asusz13`'s path vars are
+unexported, so daemon tests must stay on validation/rejection paths that return
+before any hardware access — `server_test.go` documents this at
+`TestHandleTDPForceBoundaryRejections`. A daemon test that gets past
+`handleTDP` validation will change the machine's actual power limits.
+`deviceinfo_test.go` is the exception and says why: `deviceInfoFor` is a pure
+projection of constructor data, so it can drive the real Z13 assembly safely.
 
 ## Build / release
 
@@ -1414,7 +1451,34 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 
 ## Current status and next steps
 
-### Phase 1 (daemon) — COMPLETE
+**Everything below M6 ships as voltaire 2.0. There is exactly one release.**
+The milestones M0–M6 in `~/.claude/plans/i-want-to-explore-snoopy-puffin.md`
+are sequencing, not release boundaries; an earlier revision of that plan
+assigned 2.1.0/2.2.0/2.3+ to M4/M5/M6, which was never requested and
+contradicts the plan's own title. Do not reintroduce dot releases.
+
+| Milestone | State |
+|---|---|
+| M0 — two live GUI bugs + AllEvents subscription | done |
+| M1 — driver extraction, registry, device TOMLs, safety engine | done |
+| M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
+| M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | not started |
+| M5 — external plugin tier + OXP X2 Mini Pro device | not started |
+| M6 — ROG Ally + generic-AMD device TOMLs | not started |
+| OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
+
+Carried into M5 from M2, because its OXP device is what makes them testable:
+capability *absence* hiding controls (`limits.FromDevice` fills defaults
+instead); `limits.Curve` becoming a slice gated by `Shape().Points`; firmware
+profile names from `api.ProfileInfo` rather than the hardcoded
+`api.StockProfiles`. Two device-document fields specified in the plan and still
+missing are **M4 prerequisites**, since the dashboard and telemetry ring were
+specified to read them: `battery.health` and
+`telemetry.{power_draw,history_seconds}`. `undervolt_available` is also still a
+live probe rather than derived from capabilities.
+
+### The daemon — COMPLETE
 
 The daemon is fully implemented and passing `make build && make test && make lint`.
 
@@ -1440,10 +1504,14 @@ sudo make install-perms-service  # installs battery sysfs permissions service
 make install-service             # installs daemon socket + service units
 ```
 
-### Phase 2 (GUI) — COMPLETE; merged into this repo at 2.0
+### The GUI and the api module — merged into this repo at 2.0
+
+(This section and the one above predate the M0–M6 roadmap and describe the
+pre-merge "Phase 1 / Phase 2" split. Kept for the still-current detail; the
+table above is the authoritative status.)
 
 The `api/` submodule (now `github.com/dahui/voltaire/api/v2`; the frozen
-pre-2.0 releases live at `github.com/dahui/z13ctl/api`) is complete. Phase 2a
+pre-2.0 releases live at `github.com/dahui/z13ctl/api`) is complete. Its
 changes:
 - Module path renamed from `z13ctl` to `github.com/dahui/z13ctl`
   (and again to `github.com/dahui/voltaire/v2` for the 2.0 rename — see

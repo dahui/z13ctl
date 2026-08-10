@@ -469,6 +469,45 @@ to stock GTK colours and stopped following the theme. Both are now removed, with
 changes, grep the CSS for its element selector**: a rule that no longer matches
 fails silently and looks like a theming gap rather than dead code.
 
+### Control sizing: 48px is the touch target, and the autoswitch rows now match
+
+Every tappable control in the drawer is `min-height: 48px` — `.btn-group
+button`, `checkbutton`, `.tab-btn` — because the drawer is driven by touch and
+a gamepad at least as often as by a pointer. The autoswitch target rows were
+the exception until the dropdown conversion: they used plain `gtk.Button`s at
+GTK's default height (~34px), so they were the smallest tap targets in a view
+otherwise built around 48px.
+
+Converting them to dropdown triggers put them in a `.btn-group` row and so
+brought them to 48px, growing the main view by roughly 28px when autoswitch is
+enabled (~42px under gamescope, where everything scales). **That is a
+deliberate keep, not drift** — Jeff chose the touch-friendly size once it was
+measured. It is recorded because it is now part of M4's parity referent: the
+restructure must reproduce *this* drawer, and a future reader finding the main
+view 28px taller than 1.x should not "fix" it.
+
+The main view must still fit without scrolling on the documented baseline
+(that is why the custom profiles live in their own view — see the profile
+selector notes above), so this spends real headroom. Check it before adding
+another main-view row.
+
+The coupling is worth understanding if the height is ever revisited: the
+`.dropdown-trigger` padding rule is scoped `.drawer .btn-group
+button.dropdown-trigger`, so the trigger only gets its own styling *because*
+the row carries `.btn-group` — which is also what supplies the 48px. To change
+the height independently, rescope the rule to `.drawer button.dropdown-trigger`
+first, then set the height explicitly. Do not simply drop `.btn-group` from the
+row: that removes the padding and the border radius with it.
+
+**`scaledCSS` must restate the trigger's horizontal padding.** The gamescope
+sheet is `PRIORITY_APPLICATION+1` and sets the `padding` *shorthand* on
+`.drawer .btn-group button`, which beats `layout.css`'s `padding-left/right` on
+`.dropdown-trigger` regardless of specificity — provider priority wins over
+specificity in GTK. Without the restated rule the trigger renders with ordinary
+button padding under gamescope only, so the two sheets look identical in review
+and differ on screen. `.popup-scrim` is the opposite case and correctly has no
+scaled rule: it is a colour with no dimensions, so there is nothing to scale.
+
 ### Service environment
 
 `contrib/z13gui.service` uses `EnvironmentFile=-%t/gamescope-environment` (optional).
