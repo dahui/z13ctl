@@ -140,6 +140,9 @@ internal/
                              ApplyTDPSafely, ReleaseTDP, Read, ReadEffective, RestoreStock,
                              CheckFanFloorRelease, Envelope. Device carries the Engine, not
                              the raw driver.PowerLimiter, so the floor cannot be bypassed.
+  controls/                  M4: which drawer sections exist, what each needs from the device,
+                             and their order — Resolve(gui.toml, device) + Layout (headings and
+                             separators). Pure; internal/gui holds only ID→builder.
   telemetryring/             M4: the daemon's bounded sample history — fixed-capacity ring,
                              copy-in/copy-out, Since(now, d) window. Pure; the one package
                              that carries its own lock, and says why.
@@ -1202,6 +1205,47 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   that produced the `saveState` race. Every value crossing the boundary is
   deep-copied in both directions, because `driver.Sample` carries an RPM slice
   a driver is free to reuse.
+- **The drawer's sections come from `internal/controls`, and the default list is
+  a transcription of what shipped — not a fresh design.** `buildContent` used to
+  answer "which sections exist", "in what order" and "what does each look like"
+  with one literal run of `Append` calls. The quickbar M4 wants needs the first
+  two as *data*, before any widget exists, so they moved to a pure package and
+  `internal/gui` kept only the third. The acceptance test is that a user with no
+  `gui.toml` sees the drawer they had before, which is why
+  `TestDefaultOrderIsTheShippedLayout` reads as a transcription and should only
+  ever change alongside a deliberate decision to move something.
+  **`Layout` is part of that, not a convenience.** The heading/separator rule —
+  a heading wherever the group changes, a separator before every heading but the
+  first — is what the user actually sees, so it belongs where `make test` can
+  reach it rather than in the build loop. Group is a field on the *control* so a
+  reorder cannot strand a heading above the wrong section; interleaving two
+  groups repeats the heading, which is the honest rendering of what was asked
+  for.
+  **The two halves of a control live in one struct (`controlBuilder`).** The
+  build run and the focus-list run were two literal sequences nothing forced to
+  agree, and a control present in one but not the other is either invisible or
+  unreachable by controller — the second being the failure nobody notices with a
+  mouse in their hand. Both now come from one map, walked in the resolved order.
+  The footer is deliberately *not* a registry control: it is fixed chrome outside
+  the scroll area, so "the things you can reorder" and "the things that scroll"
+  stay the same set.
+  `Requires` is a slice because autoswitch genuinely needs two capabilities —
+  it selects profiles, and it fires on a power-source change the daemon can only
+  observe through the battery capability (`acPower` returns unknown without it).
+  A nil document means the daemon did not answer, not that the machine has no
+  capabilities, so everything is kept — the same posture `limits.FromDevice`
+  takes, and for the same reason.
+- **Generic toggle rows are deliberately still absent, and need two things
+  first.** The roadmap has this registry rendering the firmware toggles (and
+  later plugin features) from the device document instead of the bottom bar's two
+  bespoke switches. That is blocked on (1) a description field on
+  `api.ToggleInfo` — the switches carry prose hints ("may cause ghosting") the
+  document cannot express, and rendering from labels alone would silently drop
+  them — and (2) a per-feature value in `get-state`, which today carries named
+  `boot_sound`/`panel_overdrive` fields, so a generic row has no way to learn its
+  own state without a socket round trip per toggle per sync. Shipping a `Kind`
+  field before either exists would be the same trap as a device document
+  declaring a capability nothing reads.
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing

@@ -9,8 +9,10 @@ package gui
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/theme"
@@ -63,6 +65,67 @@ func newDrawerScroll(child gtk.Widgetter) *gtk.ScrolledWindow {
 	return scroll
 }
 
+// controlBuilder is the two halves of one control: the widgets it appends to
+// the scrolling box, and the focus items it contributes to the gamepad grid.
+//
+// They live in one struct, in one map, because they used to be two separate
+// literal sequences — an Append run in buildContent and a matching run in
+// buildMainFocusList — that nothing forced to agree. A control added to one and
+// not the other is either invisible or unreachable by controller, and the
+// second is the failure nobody notices with a mouse in their hand.
+type controlBuilder struct {
+	build func(inner *gtk.Box)
+	focus func(b *focusgrid.Builder, items *[]focusItem)
+}
+
+// controlBuilders maps a registry ID to the code that builds it. This is the
+// only place internal/gui knows what a control *is*; internal/controls decides
+// whether and where it appears.
+func (w *Window) controlBuilders() map[string]controlBuilder {
+	return map[string]controlBuilder{
+		"profile": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildProfileSection()) },
+			focus: w.focusProfileSection,
+		},
+		"autoswitch": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildAutoswitchSection()) },
+			focus: w.focusAutoswitchSection,
+		},
+		"battery": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildBatterySection()) },
+			focus: w.focusBatterySection,
+		},
+		"lighting": {
+			build: w.buildLightingSection,
+			focus: w.focusLightingSection,
+		},
+	}
+}
+
+// buildLightingSection appends the whole RGB block: zone tabs, effect modes,
+// both colour rows, speed and brightness. It is one control because its parts
+// are not independently meaningful — syncModeVis already decides which of them
+// are visible from the selected effect.
+func (w *Window) buildLightingSection(inner *gtk.Box) {
+	inner.Append(w.buildTabRow())
+	inner.Append(w.buildModeSection())
+
+	// Initialize color inputs here so syncModeVis can reference them.
+	w.color1 = w.newColorInput("FF0000", "color1-swatch", "COLOR 1")
+	w.color2 = w.newColorInput("000000", "color2-swatch", "COLOR 2")
+	w.updateSwatches()
+
+	w.color1Box = colorSubBox("COLOR 1", w.color1.row)
+	w.color2Box = colorSubBox("COLOR 2", w.color2.row)
+	inner.Append(w.color1Box)
+	inner.Append(w.color2Box)
+
+	w.speedBox = w.buildSpeedBox()
+	inner.Append(w.speedBox)
+	w.brightBox = w.buildBrightnessBox()
+	inner.Append(w.brightBox)
+}
+
 // buildContent builds the scrolled content box and returns it as the window child.
 // Content, theme view, and color picker view are in a gtk.Stack so views can be
 // swapped for gamepad navigation (and in gamescope where popovers don't work).
@@ -94,34 +157,34 @@ func (w *Window) buildContent() gtk.Widgetter {
 	inner.SetMarginStart(12)
 	inner.SetMarginEnd(12)
 
-	// TDP AND POWER section.
-	inner.Append(groupLabel("TDP AND POWER"))
-	inner.Append(w.buildProfileSection())
-	inner.Append(w.buildAutoswitchSection())
-	inner.Append(w.buildBatterySection())
-	inner.Append(separator())
+	// The sections, their group headings and the separators between them all
+	// come from the resolved control list rather than from a literal sequence
+	// of Appends. With no gui.toml this produces exactly the sequence that used
+	// to be written out here — controls.TestLayoutReproducesTheShippedChrome
+	// pins that — and a user who reorders or hides a section gets the headings
+	// following their choice instead of stranded above the wrong content.
+	builders := w.controlBuilders()
+	for _, row := range controls.Layout(w.controls) {
+		if row.Separator {
+			inner.Append(separator())
+		}
+		if row.Heading != "" {
+			inner.Append(groupLabel(row.Heading))
+		}
+		cb, ok := builders[row.Control.ID]
+		if !ok {
+			// The registry names a control this build has no builder for. It
+			// cannot happen from a config file (Resolve drops unknown IDs), so
+			// it means the two lists have drifted — log rather than panic, and
+			// leave the rest of the drawer usable.
+			slog.Warn("no builder for control; skipping", "id", row.Control.ID)
+			continue
+		}
+		cb.build(inner)
+	}
 
-	// RGB section.
-	inner.Append(groupLabel("RGB"))
-	inner.Append(w.buildTabRow())
-	inner.Append(w.buildModeSection())
-
-	// Initialize color inputs here so syncModeVis can reference them.
-	w.color1 = w.newColorInput("FF0000", "color1-swatch", "COLOR 1")
-	w.color2 = w.newColorInput("000000", "color2-swatch", "COLOR 2")
-	w.updateSwatches()
-
-	w.color1Box = colorSubBox("COLOR 1", w.color1.row)
-	w.color2Box = colorSubBox("COLOR 2", w.color2.row)
-	inner.Append(w.color1Box)
-	inner.Append(w.color2Box)
-
-	w.speedBox = w.buildSpeedBox()
-	inner.Append(w.speedBox)
-	w.brightBox = w.buildBrightnessBox()
-	inner.Append(w.brightBox)
-
-	// Set initial visibility based on default mode (static).
+	// Set initial visibility based on default mode (static). Safe when the
+	// lighting section was not built: every widget it touches is nil-guarded.
 	w.syncModeVis()
 
 	scroll := newDrawerScroll(inner)
@@ -776,9 +839,6 @@ func separator() *gtk.Separator {
 // whenever the profile row set changes.
 func (w *Window) buildMainFocusList() {
 	var items []focusItem
-	boxVisible := func(box *gtk.Box) func() bool {
-		return func() bool { return box.IsVisible() }
-	}
 
 	// Coordinates come from focusgrid.Builder, not a hand-incremented row: the
 	// declaration order below IS the visual order, and the arithmetic that used
@@ -789,66 +849,99 @@ func (w *Window) buildMainFocusList() {
 	// control still leaves everything below it where it was.
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
-	// Profiles: the three firmware buttons share a row, and the Custom button
-	// that opens the custom view sits below them. The custom profiles
-	// themselves are navigated in that view, not here.
+	// Walk the same resolved list buildContent built from, so the gamepad's
+	// order is the visual order by construction rather than by two literal
+	// sequences that have to be kept in step by hand.
+	builders := w.controlBuilders()
+	for _, c := range w.controls {
+		if cb, ok := builders[c.ID]; ok {
+			cb.focus(b, &items)
+		}
+	}
+
+	w.focusFooter(b, &items)
+
+	items = append(items, w.errBarFocusItem())
+	logFocusList("main", items)
+	w.mainFocusItems = items
+}
+
+// boxVisible reports a container's visibility, for focus items whose widgets
+// are shown and hidden as a group.
+func boxVisible(box *gtk.Box) func() bool {
+	return func() bool { return box.IsVisible() }
+}
+
+// focusProfileSection: the three firmware buttons share a row, and the Custom
+// button that opens the custom view sits below them. The custom profiles
+// themselves are navigated in that view, not here.
+func (w *Window) focusProfileSection(b *focusgrid.Builder, items *[]focusItem) {
 	b.Section("profile")
 	stock := profileui.StockRows(nil)
 	for i, c := range b.Line(len(stock)) {
 		btn := w.profileBtns[stock[i].Name]
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: btn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { btn.Activate() },
 		})
 	}
 	c := b.One()
-	items = append(items, focusItem{
+	*items = append(*items, focusItem{
 		widget: w.customBtn, row: c.Row, col: c.Col, section: c.Section,
 		onActivate: func() { w.customBtn.Activate() },
 	})
+}
 
-	// Autoswitch: enable switch, then a dropdown per power source. The two
-	// target rows only exist while autoswitch is enabled, so they carry the
-	// container's visibility.
-	if w.autoswitchSwitch != nil {
-		b.Section("autoswitch")
-		sw := w.autoswitchSwitch
-		c = b.One()
-		items = append(items, focusItem{
-			widget: sw, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: func() { sw.SetActive(!sw.Active()) },
-		})
-		targetsVis := boxVisible(w.autoswitchTargets)
-		c = b.One()
-		items = append(items, focusItem{
-			widget: w.autoswitchACDD.btn, row: c.Row, col: c.Col, section: c.Section,
-			isVisible:  targetsVis,
-			onActivate: func() { w.autoswitchACDD.btn.Activate() },
-		})
-		c = b.One()
-		items = append(items, focusItem{
-			widget: w.autoswitchBattDD.btn, row: c.Row, col: c.Col, section: c.Section,
-			isVisible:  targetsVis,
-			onActivate: func() { w.autoswitchBattDD.btn.Activate() },
-		})
+// focusAutoswitchSection: enable switch, then a dropdown per power source. The
+// two target rows only exist while autoswitch is enabled, so they carry the
+// container's visibility.
+func (w *Window) focusAutoswitchSection(b *focusgrid.Builder, items *[]focusItem) {
+	if w.autoswitchSwitch == nil {
+		return
 	}
+	b.Section("autoswitch")
+	sw := w.autoswitchSwitch
+	c := b.One()
+	*items = append(*items, focusItem{
+		widget: sw, row: c.Row, col: c.Col, section: c.Section,
+		onActivate: func() { sw.SetActive(!sw.Active()) },
+	})
+	targetsVis := boxVisible(w.autoswitchTargets)
+	c = b.One()
+	*items = append(*items, focusItem{
+		widget: w.autoswitchACDD.btn, row: c.Row, col: c.Col, section: c.Section,
+		isVisible:  targetsVis,
+		onActivate: func() { w.autoswitchACDD.btn.Activate() },
+	})
+	c = b.One()
+	*items = append(*items, focusItem{
+		widget: w.autoswitchBattDD.btn, row: c.Row, col: c.Col, section: c.Section,
+		isVisible:  targetsVis,
+		onActivate: func() { w.autoswitchBattDD.btn.Activate() },
+	})
+}
 
-	// Battery slider.
-	battLeft, battRight, battGet, battSet := scaleAdjust(w.battScale, 5)
-	c = b.Section("battery").One()
-	items = append(items, focusItem{
+// focusBatterySection: the charge-limit slider.
+func (w *Window) focusBatterySection(b *focusgrid.Builder, items *[]focusItem) {
+	left, right, get, set := scaleAdjust(w.battScale, 5)
+	c := b.Section("battery").One()
+	*items = append(*items, focusItem{
 		widget: w.battScale, row: c.Row, col: c.Col, section: c.Section,
 		editable: true,
-		onLeft:   battLeft, onRight: battRight,
-		getValue: battGet, setValue: battSet,
+		onLeft:   left, onRight: right,
+		getValue: get, setValue: set,
 	})
+}
 
+// focusLightingSection: zone tabs, the mode grid, both colour rows, speed and
+// brightness — the focus half of buildLightingSection, in the same order.
+func (w *Window) focusLightingSection(b *focusgrid.Builder, items *[]focusItem) {
 	// Device tabs — horizontal row.
 	b.Section("tabs")
 	tabs := []*gtk.CheckButton{w.tabKB, w.tabLB}
 	for i, tc := range b.Line(len(tabs)) {
 		btn := tabs[i]
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: btn, row: tc.Row, col: tc.Col, section: tc.Section,
 			onActivate: func() { btn.SetActive(true) },
 		})
@@ -859,7 +952,7 @@ func (w *Window) buildMainFocusList() {
 	b.Section("mode")
 	for i, mc := range b.Grid(len(modeOrder), 3) {
 		btn := w.modeButtons[modeOrder[i]]
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: btn, row: mc.Row, col: mc.Col, section: mc.Section,
 			onActivate: func() { btn.Activate() },
 		})
@@ -874,14 +967,14 @@ func (w *Window) buildMainFocusList() {
 		b.Section(section)
 		for i, pc := range b.Line(len(ci.presetBtns)) {
 			btn := ci.presetBtns[i]
-			items = append(items, focusItem{
+			*items = append(*items, focusItem{
 				widget: btn, row: pc.Row, col: pc.Col, section: pc.Section,
 				isVisible:  vis,
 				onActivate: func() { btn.Activate() },
 			})
 		}
 		cc := b.One()
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: ci.customBtn, row: cc.Row, col: cc.Col, section: cc.Section,
 			isVisible:  vis,
 			onActivate: func() { w.showColorView(ci) },
@@ -894,7 +987,7 @@ func (w *Window) buildMainFocusList() {
 	b.Section("speed")
 	for i, sc := range b.Line(len(speeds)) {
 		btn := w.speedBtns[speeds[i]]
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: btn, row: sc.Row, col: sc.Col, section: sc.Section,
 			isVisible:  boxVisible(w.speedBox),
 			onActivate: func() { btn.Activate() },
@@ -902,18 +995,23 @@ func (w *Window) buildMainFocusList() {
 	}
 
 	// Brightness slider.
-	brLeft, brRight, brGet, brSet := scaleAdjust(w.brightScale, 1)
-	c = b.Section("brightness").One()
-	items = append(items, focusItem{
+	left, right, get, set := scaleAdjust(w.brightScale, 1)
+	c := b.Section("brightness").One()
+	*items = append(*items, focusItem{
 		widget: w.brightScale, row: c.Row, col: c.Col, section: c.Section,
 		isVisible: boxVisible(w.brightBox),
 		editable:  true,
-		onLeft:    brLeft, onRight: brRight,
-		getValue: brGet, setValue: brSet,
+		onLeft:    left, onRight: right,
+		getValue: get, setValue: set,
 	})
+}
 
-	// Footer: theme button, then whichever firmware toggles this device has.
-	// They share one line, so the count is known only after the nil checks.
+// focusFooter: the theme button, then whichever firmware toggles this device
+// has. They share one line, so the count is known only after the nil checks.
+//
+// The footer is fixed chrome outside the scroll area, so it is not a registry
+// control and always comes last regardless of how the sections are ordered.
+func (w *Window) focusFooter(b *focusgrid.Builder, items *[]focusItem) {
 	b.Section("footer")
 	footer := []struct {
 		widget   gtk.Widgetter
@@ -933,15 +1031,11 @@ func (w *Window) buildMainFocusList() {
 	}
 	for i, fc := range b.Line(len(footer)) {
 		f := footer[i]
-		items = append(items, focusItem{
+		*items = append(*items, focusItem{
 			widget: f.widget, row: fc.Row, col: fc.Col, section: fc.Section,
 			onActivate: f.activate,
 		})
 	}
-
-	items = append(items, w.errBarFocusItem())
-	logFocusList("main", items)
-	w.mainFocusItems = items
 }
 
 // buildThemeFocusList builds the 2D focus grid for the theme picker view.

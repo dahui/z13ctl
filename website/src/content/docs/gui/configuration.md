@@ -29,6 +29,46 @@ is **copied** to `~/.config/voltaire/` — never moved, so a downgrade still
 finds its config. The copy only happens while the voltaire directory does not
 exist, so it can never overwrite settings you have saved since.
 
+## Choosing which sections appear
+
+`~/.config/voltaire/gui.toml` controls which sections the drawer shows and in
+what order. It does not exist by default, and without it you get the standard
+layout.
+
+```toml
+[quickbar]
+controls = ["profile", "battery", "lighting"]
+```
+
+| ID | Section |
+|----|---------|
+| `profile` | The three firmware profiles plus the Custom button |
+| `autoswitch` | The AC/battery autoswitch row and its two targets |
+| `battery` | The charge-limit slider |
+| `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
+
+The list is both the contents *and* the order, so moving an entry moves the
+section. Leaving one out hides it. The `TDP AND POWER` and `RGB` headings follow
+their sections rather than staying put, so a reordered drawer still reads
+correctly.
+
+RGB is one entry rather than five because the drawer already decides which of
+its parts to show from the selected effect — hiding the whole block is the
+choice that makes sense.
+
+Some notes on the edges:
+
+- A section the machine cannot do is dropped whether or not you listed it, so
+  the same file works on more than one machine.
+- An unknown ID is skipped and logged; run with `-d` to see the warning naming
+  it. A typo is not silently ignored.
+- `controls = []` really does mean an empty drawer. Delete the key (or the file)
+  to get the defaults back.
+- The bottom bar — the theme button and the firmware toggles — is fixed and not
+  part of the list.
+- Changes take effect the next time voltaire-gui starts:
+  `systemctl --user restart voltaire-gui`.
+
 ## Theme priority
 
 voltaire-gui resolves its theme using the following priority chain (first

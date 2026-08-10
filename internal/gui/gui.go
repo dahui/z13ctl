@@ -21,6 +21,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
+	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/gui/fonts"
 	"github.com/dahui/voltaire/v2/internal/gui/gamepad"
 	"github.com/dahui/voltaire/v2/internal/gui/gamescope"
@@ -100,6 +101,12 @@ type Window struct {
 	// grows an API for serving per-device limits this is the one place that
 	// changes — fetch once at startup, Sanitized, falling back to the defaults.
 	limits limits.Limits
+
+	// controls is which sections this drawer builds and in what order,
+	// resolved once at startup from gui.toml and the device document. Both
+	// buildContent and buildMainFocusList walk it, which is what keeps the
+	// visual order and the gamepad order the same list rather than two.
+	controls []controls.Control
 
 	// Widget references for syncState.
 	tabKB           *gtk.CheckButton
@@ -288,14 +295,29 @@ func layerShellUsable() bool {
 // the daemon is down — rare, since voltaire.socket is socket-activated and up
 // before graphical-session.target, and harmless on the one device shipping
 // today, where FromDevice and DefaultLimits agree by test.
-func deviceLimits() limits.Limits {
+// deviceDocument fetches the capability document once, or nil when the daemon
+// cannot be reached. Two things read it — the widgets' limits and the control
+// list — and they must see the same answer: fetching twice would let a daemon
+// that started between the calls give the drawer bounds for a device whose
+// controls it had already decided without.
+func deviceDocument() *api.DeviceInfo {
 	handled, info, err := api.SendDeviceGet()
 	switch {
 	case err != nil:
-		slog.Warn("device-get failed, using built-in limits", "err", err)
-		return limits.DefaultLimits()
+		slog.Warn("device-get failed, using built-in defaults", "err", err)
+		return nil
 	case !handled:
-		slog.Info("daemon not running, using built-in limits")
+		slog.Info("daemon not running, using built-in defaults")
+		return nil
+	}
+	return info
+}
+
+// deviceLimits derives the widgets' bounds from the document, falling back to
+// the built-in Z13 values on any failure — a drawer with slightly wrong bounds
+// is worth having, and the daemon validates every write anyway.
+func deviceLimits(info *api.DeviceInfo) limits.Limits {
+	if info == nil {
 		return limits.DefaultLimits()
 	}
 	l := limits.FromDevice(info)
@@ -304,12 +326,36 @@ func deviceLimits() limits.Limits {
 	return l
 }
 
+// deviceControls resolves which sections the drawer builds and in what order:
+// the user's gui.toml if they have one, filtered by what the device can
+// actually do.
+//
+// Every failure resolves to the defaults rather than to nothing. The drawer is
+// the only way some users reach these settings, so a typo in an optional file
+// must never be what stops it opening — and a nil document means the daemon did
+// not answer, which is not evidence that the machine lacks capabilities.
+func deviceControls(info *api.DeviceInfo) []controls.Control {
+	cfg, err := controls.Load(theme.XDGConfigHome() + "/voltaire")
+	if err != nil {
+		slog.Warn("using the default control layout", "err", err)
+	}
+	resolved, complaints := controls.Resolve(cfg, info)
+	for _, c := range complaints {
+		slog.Warn(c)
+	}
+	slog.Info("controls", "ids", controls.IDsOf(resolved))
+	return resolved
+}
+
 // New creates the overlay window and attaches it to app. Called from the
 // GTK Activate signal.
 func New(app *gtk.Application) *Window {
+	// One document, two readers: the widgets' bounds and the control list.
+	doc := deviceDocument()
 	w := &Window{
 		tab:         "keyboard",
-		limits:      deviceLimits(),
+		limits:      deviceLimits(doc),
+		controls:    deviceControls(doc),
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 		editProfile: api.DefaultCustomProfile,
