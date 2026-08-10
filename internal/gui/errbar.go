@@ -54,7 +54,7 @@ func (w *Window) buildErrorBar() *gtk.Box {
 
 	dismiss := gtk.NewButton()
 	dismiss.SetIconName("window-close-symbolic")
-	dismiss.SetTooltipText("Dismiss")
+	w.setHint(dismiss, "Dismiss")
 	dismiss.AddCSSClass("error-dismiss")
 	dismiss.SetVAlign(gtk.AlignStart)
 	dismiss.ConnectClicked(func() { w.clearError() })

@@ -222,6 +222,42 @@ website/                     the docs site (Astro Starlight; see Documentation)
   `/usr/lib` while setup writes `/etc`; identical content, `/etc` wins, and
   removing the package leaves the setup-written copy governing — same shape as
   the pre-rename package.
+- **`make install-service` installs all three user units, and a source install
+  is the only path where forgetting one is invisible.** `voltaire-gui.service`
+  has been packaged in `contrib/systemd/user/` and enabled by every
+  distribution package since 2.0, but no make target installed it — so on a
+  source install `systemctl --user restart voltaire-gui` answered "unit not
+  found" while the drawer *was* running, started by the pre-2.0
+  `z13gui.service` the target also never disabled. The compatibility symlinks
+  are what make that confusing rather than merely broken: `/usr/local/bin`
+  precedes `/usr/bin`, so `ExecStart=z13gui` in the old unit resolves through
+  `z13gui` → `voltaire-gui` and runs the *new* binary under the *old* unit
+  name. A unit name stops being evidence of which binary is running the moment
+  those symlinks exist. `LEGACY_USER_UNITS` is therefore one list covering both
+  the daemon and the GUI, and `install-service` and `uninstall-service` are
+  each written against the full set.
+- **`systemctl --user disable` cannot undo a `--global` enable, and the failure
+  is silent.** The pre-2.0 packages enable their units with
+  `systemctl --global`, which writes root-owned symlinks under
+  `/etc/systemd/user/*.target.wants`. A `--user disable --now` stops the unit
+  for the session — so it looks like it worked — but `is-enabled` still reports
+  `enabled` and the unit returns at the next login, where `z13ctl.socket` then
+  contends with `voltaire.socket` for the legacy listen path both of them
+  declare. `install-service` re-checks `is-enabled` after its own cleanup and
+  prints the `--global disable` line rather than pretending; a make target run
+  as the user has no business writing `/etc` itself.
+- **`make install` must not pair a fresh daemon with a stale drawer.** `make
+  build` builds only the CLI, so `make build && sudo make install` installed
+  whatever `voltaire-gui/voltaire-gui` happened to be lying in the tree — the
+  CLI/GUI version skew that shipping the two as one package is meant to make
+  structurally impossible, reintroduced by the one install path that predates
+  the merge. `make build-all` is the pair; `install` compares the ldflags
+  version string embedded in the GUI binary against `$(VERSION)` and warns.
+  It reads the string with `grep -aqF` rather than running the binary, because
+  the recipe runs as root and `voltaire-gui`'s first statement is
+  `theme.MigrateFromZ13gui()`. The old line was
+  `[ -f x ] && install ... || true`, which reported nothing when the binary was
+  absent and swallowed a real `install` failure with it.
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and
   calls the appropriate `cli.DryRun*` function.
 - `--no-button` is a global persistent flag; only affects the daemon subcommand.
@@ -1212,14 +1248,15 @@ actual power limits.
 make build              # go build voltaire (CGO_ENABLED=0), version from git tags via ldflags
 make build-gui          # go build voltaire-gui (CGO=1; needs gtk4 + gtk4-layer-shell headers)
                         #   → voltaire-gui/voltaire-gui
+make build-all          # both — what `make install` wants (see below)
 make test               # go test over HERMETIC_PKGS (both modules; no cgo)
 make race               # same set under -race
 make cover              # test + coverage report
 make fmt-check          # fail if any file needs gofmt (generated bpf2go bindings excluded)
 make lint               # fmt-check, then golangci-lint over the FULL tree (both modules)
 make mod-tidy           # go mod tidy for all modules (main + api/)
-sudo make install            # install pre-built binary to /usr/local/bin
-make install-service         # install + enable systemd user units (socket + service)
+sudo make install            # install pre-built binaries to /usr/local/bin (+ z13ctl/z13gui symlinks)
+make install-service         # install + enable all three user units (socket, daemon, GUI)
 make uninstall-service       # stop, disable, and remove systemd user units
 sudo make install-perms-service    # install system oneshot service for sysfs permissions on boot
 sudo make uninstall-perms-service  # remove system permissions service

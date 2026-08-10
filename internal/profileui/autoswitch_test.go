@@ -42,32 +42,6 @@ func TestTargetOptions(t *testing.T) {
 	}
 }
 
-func TestCycleTarget(t *testing.T) {
-	opts := []string{"", "quiet", "balanced"}
-	cases := []struct {
-		cur  string
-		dir  int
-		want string
-	}{
-		{"", +1, "quiet"},
-		{"quiet", +1, "balanced"},
-		{"balanced", +1, ""}, // wraps
-		{"", -1, "balanced"}, // wraps backward
-		{"quiet", -1, ""},
-		// A stale target (profile emptied, hand-edited state) lands on the
-		// safe first option instead of being unreachable.
-		{"ghost", +1, ""},
-	}
-	for _, tt := range cases {
-		if got := profileui.CycleTarget(opts, tt.cur, tt.dir); got != tt.want {
-			t.Errorf("CycleTarget(%q, %+d) = %q, want %q", tt.cur, tt.dir, got, tt.want)
-		}
-	}
-	if got := profileui.CycleTarget(nil, "x", 1); got != "x" {
-		t.Errorf("CycleTarget with no options moved to %q", got)
-	}
-}
-
 func TestTargetLabel(t *testing.T) {
 	if got := profileui.TargetLabel(profileui.LeaveAlone); got != "(don't change)" {
 		t.Errorf("TargetLabel(leave alone) = %q", got)

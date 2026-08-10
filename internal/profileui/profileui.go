@@ -200,15 +200,3 @@ func Label(name string) string {
 	}
 	return name
 }
-
-// Signature identifies the row structure. The GTK side rebuilds the selector
-// (and its focus rows) only when this changes; Active and the block reasons
-// are applied to the existing widgets instead, so a state refresh during
-// interaction does not tear the buttons out from under the pointer.
-func Signature(rows []Row) string {
-	names := make([]string, len(rows))
-	for i, r := range rows {
-		names[i] = r.Name
-	}
-	return strings.Join(names, "\x00")
-}

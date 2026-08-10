@@ -176,6 +176,10 @@ func (w *Window) setFocusIdx(idx int) {
 	if idx < len(w.focusItems) {
 		gtk.BaseWidget(w.focusItems[idx].widget).AddCSSClass("gamepad-focus")
 		w.ensureVisible(w.focusItems[idx].widget)
+		// Focused-control help — the same hint map the pointer dwell reads,
+		// shown immediately: a controller has no hover to dwell with.
+		// showHint hides the label when the widget has no registered text.
+		w.showHint(w.focusItems[idx].widget)
 		slog.Debug("gamepad: focus", "idx", idx,
 			"row", w.focusItems[idx].row, "col", w.focusItems[idx].col,
 			"section", w.focusItems[idx].section)
@@ -200,19 +204,74 @@ func (w *Window) hideGamepadFocus() {
 		w.exitEditMode(true)
 	}
 	w.gamepadActive = false
+	w.hideHint()
 	if w.focusIdx < len(w.focusItems) {
 		gtk.BaseWidget(w.focusItems[w.focusIdx].widget).RemoveCSSClass("gamepad-focus")
+	}
+}
+
+// focusFrame is one suspended focus list — the drawer's own list while a
+// popup is open. The stack lives here rather than in focusgrid because a
+// frame holds gtk.Widgetter references; the pure re-anchoring policy applied
+// when a frame resumes is focusgrid.Restore.
+type focusFrame struct {
+	items []focusItem
+	idx   int
+}
+
+// clearFocusHighlight removes the focus and editing markers from the focused
+// item and leaves edit mode, ahead of replacing the focus list.
+func (w *Window) clearFocusHighlight() {
+	if w.focusIdx < len(w.focusItems) {
+		base := gtk.BaseWidget(w.focusItems[w.focusIdx].widget)
+		base.RemoveCSSClass("gamepad-focus")
+		base.RemoveCSSClass("gamepad-editing")
+	}
+	w.focusEditing = false
+}
+
+// pushFocusList suspends the current focus list and makes items the active
+// one — the popup's contents. Balanced by popFocusList via closePopup.
+func (w *Window) pushFocusList(items []focusItem) {
+	w.clearFocusHighlight()
+	w.focusStack = append(w.focusStack, focusFrame{items: w.focusItems, idx: w.focusIdx})
+	w.focusItems = items
+	w.focusIdx = 0
+	if w.gamepadActive {
+		w.focusFirstVisible()
+	}
+}
+
+// popFocusList resumes the most recently suspended focus list. The item that
+// was focused when the popup opened may have been hidden or desensitized
+// while it was open — selecting a profile can make the very button that
+// opened the dropdown illegal — so focusgrid.Restore re-anchors rather than
+// trusting the saved index.
+func (w *Window) popFocusList() {
+	if len(w.focusStack) == 0 {
+		return
+	}
+	w.clearFocusHighlight()
+	frame := w.focusStack[len(w.focusStack)-1]
+	w.focusStack = w.focusStack[:len(w.focusStack)-1]
+	w.focusItems = frame.items
+	w.focusIdx = focusgrid.Restore(w.gridSnapshot(), frame.idx)
+	if w.gamepadActive && w.focusIdx >= 0 && w.focusIdx < len(w.focusItems) {
+		gtk.BaseWidget(w.focusItems[w.focusIdx].widget).AddCSSClass("gamepad-focus")
+		w.ensureVisible(w.focusItems[w.focusIdx].widget)
 	}
 }
 
 // swapFocusList switches to a different focus item list (e.g. on view change).
 // Clears the current highlight and resets focus to the first visible item.
 func (w *Window) swapFocusList(items []focusItem) {
-	if w.focusIdx < len(w.focusItems) {
-		gtk.BaseWidget(w.focusItems[w.focusIdx].widget).RemoveCSSClass("gamepad-focus")
-		gtk.BaseWidget(w.focusItems[w.focusIdx].widget).RemoveCSSClass("gamepad-editing")
+	if len(w.focusStack) > 0 {
+		// Every view switch and hide() closes popups before swapping, so a
+		// populated stack here means a closePopup call was missed somewhere.
+		slog.Debug("swapFocusList: discarding suspended focus frames", "depth", len(w.focusStack))
+		w.focusStack = nil
 	}
-	w.focusEditing = false
+	w.clearFocusHighlight()
 	w.focusItems = items
 	w.focusIdx = 0
 	if w.gamepadActive {
@@ -221,8 +280,13 @@ func (w *Window) swapFocusList(items []focusItem) {
 }
 
 // activeScroll returns the scroller of the view currently on screen, or nil
-// when that view does not scroll (the colour picker).
+// when that view does not scroll (the colour picker). An open popup's own
+// scroller wins: it is what gamepad navigation and ensureVisible must move
+// while the popup has focus, and the scrim keeps the view behind it still.
 func (w *Window) activeScroll() *gtk.ScrolledWindow {
+	if w.popupOpen() {
+		return w.popup.scroll
+	}
 	if w.viewStack == nil {
 		return nil
 	}

@@ -619,10 +619,13 @@ func (w *Window) buildCustomView() *gtk.Box {
 
 	w.resetFanBtn = gtk.NewButtonWithLabel("Reset Fans")
 	w.resetFanBtn.SetHExpand(true)
+	w.setHint(w.resetFanBtn, "Reset fan curves to firmware auto")
 	w.resetFanBtn.ConnectClicked(func() { w.resetFanCurve() })
 	resetRow.Append(w.resetFanBtn)
 
 	content.Append(resetRow)
+	w.resetNote = blockNote()
+	content.Append(w.resetNote)
 
 	// --- DELETE ---
 	// Lives in the editor rather than on the profile row: the editor knows its
@@ -632,8 +635,11 @@ func (w *Window) buildCustomView() *gtk.Box {
 	// refusals via profileui.DeleteBlockFor.
 	content.Append(separator())
 	w.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
+	w.setHint(w.deleteBtn, "Remove this saved profile")
 	w.deleteBtn.ConnectClicked(func() { w.deleteProfileClicked() })
 	content.Append(w.deleteBtn)
+	w.deleteNote = blockNote()
+	content.Append(w.deleteNote)
 
 	scroll := newDrawerScroll(content)
 	w.customScroll = scroll
@@ -705,6 +711,9 @@ func uvLabel(name string, val int) string {
 // own settings — is profileui.ForEditor's decision, driven by the edit plan.
 func (w *Window) syncCustomView() {
 	if w.state == nil {
+		return
+	}
+	if w.syncsSuppressed() {
 		return
 	}
 	prev := w.syncing
@@ -796,16 +805,17 @@ func (w *Window) syncCustomView() {
 		w.uvCpuLabel.SetLabel(uvLabel("CPU Curve Optimizer", es.CO))
 	}
 
-	// Delete affordance, mirroring the daemon's refusals.
+	// Delete affordance, mirroring the daemon's refusals. The reason goes to
+	// the block note beneath the button, where touch and controller users can
+	// read it; a tooltip would be invisible to both.
 	if w.deleteBtn != nil {
 		w.disarmDelete()
 		block := profileui.DeleteBlockFor(w.state, plan.Target)
 		w.deleteBtn.SetSensitive(block == "")
-		if block == "" {
-			w.deleteBtn.SetTooltipText("Remove this saved profile")
-		} else {
-			w.deleteBtn.SetTooltipText("Cannot delete: " + block)
+		if block != "" {
+			block = "Cannot delete: " + block
 		}
+		setBlockNote(w.deleteNote, block)
 	}
 
 	// Telemetry.
@@ -859,12 +869,12 @@ func (w *Window) syncFanResetSensitivity() {
 	floored := floorMin > 0
 	w.resetFanBtn.SetSensitive(!floored)
 	if floored {
-		w.resetFanBtn.SetTooltipText(fmt.Sprintf(
-			"Unavailable while sustained TDP is above %dW — fans must hold the floor curve shown in the editor (%d%% minimum). Use Reset TDP first.",
+		setBlockNote(w.resetNote, fmt.Sprintf(
+			"Reset Fans unavailable while sustained TDP is above %dW — fans must hold the floor curve shown in the editor (%d%% minimum). Use Reset TDP first.",
 			w.limits.TDPMaxSafe, pwmPct(floorMin)))
 		return
 	}
-	w.resetFanBtn.SetTooltipText("Reset fan curves to firmware auto")
+	setBlockNote(w.resetNote, "")
 }
 
 // tdpRequest is a snapshot of the TDP widgets, taken on the GTK thread so the
@@ -964,6 +974,13 @@ func (w *Window) refreshState() {
 		return
 	}
 	glib.IdleAdd(func() {
+		// While a popup is open the whole refresh is deferred, state
+		// assignment included: syncAutoswitch would relabel the very trigger
+		// the popup is anchored to, and syncAutoswitchVis could hide it.
+		// closePopup re-runs refreshState, which fetches fresh state anyway.
+		if w.syncsSuppressed() {
+			return
+		}
 		w.state = state
 		w.syncCustomView()
 		w.syncing = true
@@ -1225,11 +1242,9 @@ func (w *Window) startTelemetryPolling() {
 }
 
 // buildCustomFocusList builds the 2D focus grid for the custom profile view.
-//
-// Row numbers run off a counter rather than literals because the profile
-// selector contributes one row per custom profile when expanded, so
-// everything below it shifts as profiles are created and deleted.
-// syncProfileSelector rebuilds this list whenever that set changes.
+// Called exactly once, when the view is first built: the profile list lives
+// in the selector's popup (with its own focus frame), so nothing in this
+// grid shifts when profiles are created or deleted.
 func (w *Window) buildCustomFocusList() {
 	var items []focusItem
 
@@ -1241,27 +1256,13 @@ func (w *Window) buildCustomFocusList() {
 		onActivate: func() { w.showMainView() },
 	})
 
-	// Profile selector: the collapsed row, then one row per profile while it
-	// is expanded, then the actions and the inline name entry.
+	// Profile selector dropdown, then the actions and the inline name entry.
 	row++
 	items = append(items, focusItem{
-		widget: w.profileSelBtn, row: row, col: 0,
+		widget: w.profileSelDD.btn, row: row, col: 0,
 		section:    "profile",
-		onActivate: func() { w.profileSelBtn.Activate() },
+		onActivate: func() { w.profileSelDD.btn.Activate() },
 	})
-	listVis := func() bool { return w.profileSelBox != nil && w.profileSelBox.IsVisible() }
-	for _, r := range w.customRows {
-		btn := w.profileSelBtns[r.Name]
-		if btn == nil {
-			continue
-		}
-		row++
-		items = append(items, focusItem{
-			widget: btn, row: row, col: 0,
-			section: "profile", isVisible: listVis,
-			onActivate: func() { btn.Activate() },
-		})
-	}
 	row++
 	for col, btn := range []*gtk.Button{w.activateBtn, w.newProfileBtn, w.saveAsBtn} {
 		btn := btn

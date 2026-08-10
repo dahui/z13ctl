@@ -213,24 +213,3 @@ func TestLabel(t *testing.T) {
 		}
 	}
 }
-
-func TestSignature(t *testing.T) {
-	base := stateWith("balanced", api.CustomProfile{Name: "gaming", TDP: tdp(60)})
-	sig := profileui.Signature(profileui.CustomRows(base))
-
-	// Activation changes must NOT change the signature: the selector is only
-	// rebuilt when the row set changes, highlights move on existing widgets.
-	active := stateWith("gaming", api.CustomProfile{Name: "gaming", TDP: tdp(60)})
-	if got := profileui.Signature(profileui.CustomRows(active)); got != sig {
-		t.Error("signature changed on activation — would rebuild widgets under the pointer")
-	}
-
-	// Adding a profile must change it.
-	added := stateWith("balanced",
-		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
-		api.CustomProfile{Name: "quiet2", TDP: tdp(20)},
-	)
-	if got := profileui.Signature(profileui.CustomRows(added)); got == sig {
-		t.Error("signature unchanged after adding a profile")
-	}
-}

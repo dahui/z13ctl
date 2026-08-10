@@ -267,14 +267,20 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
 - [ ] The mouse wheel over any slider — battery, brightness, TDP, undervolt —
       scrolls the view and leaves the value alone (`batterylimit --get` and
       the PL readouts unchanged afterwards).
-- [ ] Custom view: the selector names the profile being edited; tapping it
-      expands the list in place (no popup), tapping a name re-targets the
-      editor and collapses it. Create a profile from the CLI
-      (`./voltaire profile --create smoke-gui`) while the view is open — it
-      appears in the list on the next state event.
+- [ ] Custom view: the selector dropdown names the profile being edited;
+      opening it dims the view behind a scrim, picking a name re-targets the
+      editor and closes the list, and the running profile carries a dot
+      marker distinct from the selected highlight. Tapping the scrim,
+      pressing Escape, and gamepad B each dismiss without selecting. Create a
+      profile from the CLI (`./voltaire profile --create smoke-gui`) while
+      the view is open — it appears the next time the list opens; with the
+      list **open**, the view behind it does not change until it closes.
+- [ ] Both autoswitch targets open as dropdowns the same way, by pointer,
+      touch, and gamepad; picking a target sends once after the debounce.
 - [ ] Selecting a profile does **not** activate it; Activate does. Activate is
-      insensitive for the running profile and for one with no settings
-      (tooltip says which).
+      insensitive for the running profile and for one with no settings — and
+      the reason appears as a note directly beneath the button row, readable
+      by touch and on a controller (no hover anywhere).
 - [ ] Editor on a profile that is **not** running shows the "Not active —
       changes are stored…" note, displays the profile's own stored values (not
       the live machine's), and Save TDP does not change `ppt_pl1_spl`.
@@ -289,10 +295,14 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       path). Save As is insensitive on a stock profile, works from a custom
       one.
 - [ ] Delete Profile needs two taps, is insensitive for the active profile
-      and for autoswitch targets (tooltip names the reason), and returns to
-      the main view on success.
+      and for autoswitch targets (the note beneath it names the reason), and
+      returns to the main view on success.
+- [ ] Hints: hovering the theme button (or any hinted control) for ~half a
+      second shows its help text anchored to it, on KDE **and** in Gaming
+      Mode; gamepad focus shows the same text immediately; it never appears
+      over an open dropdown.
 - [ ] AUTOSWITCH section: switch + both targets mirror
-      `./voltaire autoswitch --get`; cycling a target and toggling the switch
+      `./voltaire autoswitch --get`; picking a target and toggling the switch
       land in `autoswitch --get` after the debounce; targets offered exclude
       empty profiles and include "(don't change)".
 - [ ] The header shows `AC · <temp> · <rpm>` on mains and `Battery · …`
@@ -300,10 +310,13 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       event); on a daemon without `source_known` (pre-2.0) it shows no power
       label at all.
 - [ ] Gamepad: D-pad reaches the firmware buttons and Custom in the main view,
-      and in the custom view the selector, its expanded rows,
-      Activate/New/Save As, OK/Cancel, and Delete; the autoswitch cycle
-      buttons are reachable while enabled and skipped while not. Section jump
-      (L1/R1) includes "profile" and "autoswitch".
+      and in the custom view the selector, Activate/New/Save As, OK/Cancel,
+      and Delete; the autoswitch dropdowns are reachable while enabled and
+      skipped while not. Section jump (L1/R1) includes "profile" and
+      "autoswitch". Inside an open dropdown, D-pad walks the options, A
+      picks, B dismisses — and a long list scrolls with focus. After closing
+      a dropdown, focus is back on the drawer control that opened it (or its
+      nearest visible neighbour if a selection just desensitized it).
 - [ ] Gamepad cannot reach a control the pointer cannot use: with a custom
       profile **active**, its editor's Delete is skipped by D-pad navigation
       (focus wraps past it), as is an empty profile's activate button — the

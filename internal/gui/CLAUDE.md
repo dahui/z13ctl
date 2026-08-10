@@ -20,8 +20,8 @@
 > | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
 > | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
 > | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |
-> | the 2×2 profile grid | three firmware buttons + one `Custom` button in the main view; the custom profiles are an expanding selector inside the custom view (`profiles.go` + `internal/profileui`) |
-> | `GtkDropDown in gamescope` → "use buttons" | still true, and now also why the profile selector expands **in the flow of the view** rather than as a popup |
+> | the 2×2 profile grid | three firmware buttons + one `Custom` button in the main view; the custom profiles are a **dropdown** inside the custom view (`profiles.go` + `dropdown.go` + `internal/profileui`) |
+> | `GtkDropDown in gamescope` → "use buttons" | still true for GtkDropDown itself — but dropdowns now exist, drawn **inside our own surface** by the popup layer (`popup.go`, and "The in-surface popup layer" below) |
 > | bare `api.SendTdpSet`/`SendFanCurveSet`/`SendUndervoltSet` everywhere | the `...For` variants, addressed per operation by `profileui.PlanEdit` (live vs stored) with a `SendProfileList` probe before every stored send |
 >
 > The root `CLAUDE.md` is authoritative for layout, build and release.
@@ -249,8 +249,9 @@ contrib/
   curve point below 204 PWM (80%) and refuses a fan reset outright. `fanFloorPWM()`
   derives this from applied daemon state (not slider position); `enforceConstraints`
   clamps drags to it, `fanCurveEditor.draw` renders the floor line, and `resetFanBtn` is
-  desensitized with a tooltip pointing at Reset TDP. Both the threshold and the
-  floor come from `w.limits`, not from literals.
+  desensitized with a `.block-note` beneath the Reset row pointing at Reset TDP
+  (never a tooltip — see "Hints and block notes" below). Both the threshold and
+  the floor come from `w.limits`, not from literals.
 - **Basic vs advanced TDP view**: basic mode is one slider applying a single value to
   all three limits, capped at 70W. `power.NeedsAdvanced` decides whether a state can be
   shown there; `syncCustomView` force-checks the Advanced box when it cannot. Without
@@ -298,8 +299,10 @@ contrib/
     - `.scale-value` — slider value readouts ("50 W", "CPU CO: -20"): 10px, normal weight, bright
     - `.error-bar` / `.error-text` / `.error-dismiss` — error surface; colored via the
       `@z13-error` theme token, as is `.tdp-warning`
-- **Profile selector**: buttons (`gtk.Button`), stored in
-  `w.profileBtns map[string]*gtk.Button`. Not DropDown (popup broken in gamescope).
+- **Profile buttons (main view)**: buttons (`gtk.Button`), stored in
+  `w.profileBtns map[string]*gtk.Button`. The custom view's profile selector and
+  the autoswitch targets are `dropdown`s (`dropdown.go`) over the in-surface
+  popup layer — never GtkDropDown, whose popover is a separate surface.
 - **Focus-loss dismiss** (layer-shell): `EventControllerMotion` tracks `pointerInside`
   on the backend. On `notify::is-active` focus loss: if within 500ms of Show, ignored
   (compositor settle time for keyboard-mode transition). If pointer is inside, the drop
@@ -328,8 +331,10 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
   GDK_SCALE CANNOT be used — causes double scaling (GTK + gamescope scaler).
 - **Layout**: fullscreen window → horizontal box (backdrop + right-aligned panel).
   Panel has 5% top/bottom margins, scaled drawer width.
-- **Popups don't work**: GTK4 popovers/dropdowns create separate X11 windows that
-  gamescope doesn't composite. Solved via view switching (see below).
+- **GTK popups don't work**: GTK4 popovers/dropdowns create separate X11 windows
+  that gamescope doesn't composite as input-receiving windows. Solved via view
+  switching for the large pickers (see below) and the in-surface popup layer for
+  dropdowns and hints (see "The in-surface popup layer").
 
 ### View switching
 
@@ -342,11 +347,118 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
 Bottom bar stays visible across all views. `hide()` resets to "main".
 
 **There are no popovers left anywhere.** The stack replaced them in both modes
-(`e19f76f`, which added gamepad support) because one navigable widget tree is what
-makes gamepad focus work identically in both backends — not only because popovers
-are uncompositable under gamescope. `grep Popover internal/` returns nothing, and
-it should stay that way; reintroducing one would need a second focus-list mechanism
-and would be invisible in Gaming Mode.
+(`e19f76f`, which added gamepad support). `grep Popover internal/` returns nothing,
+and it should stay that way — but the *reasoning* has moved on: the drawer now has
+popups again, drawn inside its own surface by the popup layer, which reuses the
+one `focusgrid` mechanism (a suspended-frame stack, not a second system) and is
+visible in Gaming Mode precisely because it is not a separate window. What stays
+forbidden is any GTK-native transient — `GtkPopover`, `GtkDropDown`,
+`GtkMenuButton`, tooltips — because each owns a `GdkSurface`. See "The in-surface
+popup layer" below.
+
+### The in-surface popup layer (`popup.go`, `dropdown.go`, `hint.go`, `internal/popupgeom`)
+
+`buildContent` wraps the view stack + error bar + bottom bar in a `GtkOverlay`
+whose overlay children are the popup **scrim**, the popup **surface** (dropdown
+lists), and the anchored **hint** label. All placement decisions live in
+`internal/popupgeom` (pure, tested — the same split `panelgeom` has with the
+overlay backend); the `get-child-position` handler only measures widgets and
+applies the returned rect.
+
+Why OS-level popups are a dead end, so nobody re-chases it:
+
+- **GTK4 gives every transient its own `GdkSurface`.** `gtk_popover_realize()`
+  calls `gdk_surface_new_popup()` unconditionally; `GtkDropDown` wraps a popover;
+  `GtkTooltipWindow` implements `GtkNative` too. GTK3's
+  `gtk_popover_set_constrain_to` was removed — there is no in-window mode.
+- **gamescope's compositing slots are all closed to us.** Its override-redirect
+  plane (the one real dropdowns land in) is PID-matched to the focused *game*,
+  and `GetPossibleFocusWindows()` skips windows flagged `isOverlay`. Tagging a
+  popup `STEAM_OVERLAY` ourselves lands it in the notification slot: painted
+  upscaled to fullscreen, receiving no input.
+- **gamescope's layer-shell support (June 2024+) is not a way out either**: it
+  auto-tags layer surfaces `isExternalOverlay` — z-pos 2, display-only, no input
+  routing — which is exactly why this backend chose `STEAM_OVERLAY`.
+- Every shipping gamescope overlay (HHD, Decky, mangoapp) draws popups inside its
+  own surface. HHD is not immune "because it is web": its menus are DOM nodes
+  with a z-index in one Electron surface, and Chromium's native `<select>` — a
+  real separate window — would break there exactly as `GtkDropDown` breaks here.
+
+Load-bearing implementation facts:
+
+- **gotk4 v0.3.1's `get-child-position` marshaller dereferences the returned
+  rectangle before consulting `ok`** (`gtk/v4/gtk_export.go`), so returning
+  `(nil, false)` — the natural "use the default position" — segfaults inside a C
+  callback with a useless stack trace. Every return path produces a non-nil rect;
+  hidden children get a zero-size rect. Never "clean this up".
+- **No setters inside the position handler** (it runs during allocation; a setter
+  loops) and **never `SetMeasureOverlay(child, true)`** — overlay children not
+  contributing to measurement is what keeps a popup from widening the 320px panel.
+- The overlay's main child is a Box, never a `ScrolledWindow` (the GTK docs place
+  overlays relative to a scrolled main child's *contents*).
+- The popup surface and hint carry **`.drawer`**, so a user's verbatim
+  `theme.css` styles them with zero edits; option rows carry `.btn-group`, which
+  is already themed and already scaled under gamescope. Popup rules that override
+  `.drawer` properties must live in `theme-default.css` (PRIORITY_USER beats
+  layout.css's PRIORITY_APPLICATION at any specificity).
+- The scrim's capture-phase `GestureClick` dismisses; it also blocks scrolling
+  under the popup for free (it is a sibling of the view's scroller). Popups
+  contain only `gtk.Button`s — a `CheckButton`/`Switch` in a popup would need
+  `addTouchActivate` (bubble-phase gestures fail for touch under XWayland).
+- **Focus**: `openPopup` pushes the current focus list onto `w.focusStack`;
+  `closePopup` pops it and re-anchors via `focusgrid.Restore` (the item that
+  opened the popup may have been desensitized while it was open).
+  `activeScroll()` returns the popup's scroller while one is open, which is what
+  makes gamepad navigation of a long list scroll it. Every view switch and
+  `hide()` call `closePopup()`; `swapFocusList` clears the stack defensively and
+  logs if it was non-empty.
+- **Syncs are frozen while a popup is open** (`syncsSuppressed` in `syncState`,
+  `syncCustomView`, and `refreshState`'s idle closure): a state refresh would
+  relabel or hide the anchor and tear the list out from under the pointer.
+  `closePopup` runs the deferred refresh.
+- Arrow keys stay blocked (`gui.go` capture-phase key controller), so popups are
+  not keyboard-navigable — consistent with the rest of the drawer; do not "fix"
+  this, it would re-enable GTK's radio auto-activation. Escape lives in that
+  same capture controller (capture reliably precedes the backends' bubble-phase
+  Escape handlers; two same-phase controllers have no ordering contract).
+- **The window's motion controller ignores motion at an unchanged position, and
+  that guard is what keeps gamepad navigation alive.** GTK synthesizes a motion
+  event at the *current* pointer position whenever the widget under it changes,
+  and every D-pad press changes the layout (the anchored hint appears,
+  `ensureVisible` scrolls). Without the guard each press was followed by a
+  synthetic motion that `hideGamepadFocus` read as "the user reached for the
+  mouse", so the next press restarted at the first item and focus could never
+  move past it — D-pad navigation was dead on arrival, while the gamepad log
+  still showed a focus line per press. Real pointer motion always carries new
+  coordinates. Any future work that shows or hides a widget from the focus path
+  depends on this.
+
+### Hints and block notes (`hint.go`, `blockNote`)
+
+`SetTooltipText` is banned — `grep SetTooltipText internal/gui` must stay empty.
+Tooltips are separate surfaces (invisible in gamescope), hover-only (touch never
+sees them), and unreachable on a controller for insensitive widgets (the focus
+grid deliberately skips those). Two replacements, split by purpose:
+
+- **Hints** (`w.setHint(widget, text)`): descriptions of *usable* controls.
+  Shown as the popup layer's third overlay child after a 500ms pointer dwell, or
+  immediately on gamepad focus — one help path on all three backends, so KDE and
+  gamescope cannot diverge. Entries in `w.hints` are never removed; hint only
+  permanent widgets (a hinted transient would leave a stale map entry).
+  **A hint must never outlive the pointer being on its anchor**, and the
+  anchor's own `Leave` is not sufficient to guarantee that. Two ways it never
+  arrives, both found on hardware: a widget desensitized under a stationary
+  pointer (click Activate and it greys out beneath the cursor) stops receiving
+  events, and a crossing is swallowed while the popup scrim covers the anchor.
+  Either one left the hint sitting **over the `.block-note` explaining the
+  control it was anchored to** — the one moment that note matters. Hence both
+  `notify::sensitive`/`notify::visible` in `setHint` and the position-based
+  `pruneHintAt` backstop on the window's motion controller.
+- **Block notes** (`blockNote()`/`setBlockNote()`): refusal reasons for
+  *desensitized* controls, as in-flow labels beneath the control (the pattern
+  `editorNote` and `tdpWarningLabel` established). A focus-triggered hint can
+  never fire on an insensitive widget, so a refusal in a hint would be unreadable
+  by exactly the users staring at the dead button.
 
 That conversion left CSS behind, which is worth knowing about because it hid a real
 regression for months: `popover.z13-popover` rules (12 of them) and

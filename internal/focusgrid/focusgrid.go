@@ -182,6 +182,62 @@ func Sections(items []Item) []string {
 	return out
 }
 
+// Restore returns the index focus should land on when a suspended item list is
+// resumed — the drawer's own list after an in-surface popup closes. The item
+// want addressed may have been hidden or desensitized while the popup was open:
+// selecting a profile can make the very button that opened the dropdown
+// illegal.
+//
+// Preference order: want itself while visible; the nearest visible item in
+// want's row (ties to the lower column, as MoveVertical breaks them); the first
+// visible item in want's section; the first visible item overall; want
+// unchanged.
+//
+// Unlike the Move functions, an out-of-range want re-anchors to the first
+// visible item rather than being returned unchanged: this is not a move that
+// can be refused, it is where focus comes back to, and it must land on
+// something visible whenever anything is.
+func Restore(items []Item, want int) int {
+	if inRange(items, want) {
+		w := items[want]
+		if w.Visible {
+			return want
+		}
+
+		// Nearest visible item in the same row, ties to the lower column.
+		best, bestDist := -1, 0
+		for i := range items {
+			if items[i].Row != w.Row || !items[i].Visible {
+				continue
+			}
+			d := w.Col - items[i].Col
+			if d < 0 {
+				d = -d
+			}
+			switch {
+			case best == -1, d < bestDist:
+				best, bestDist = i, d
+			case d == bestDist && items[i].Col < items[best].Col:
+				best = i
+			}
+		}
+		if best != -1 {
+			return best
+		}
+
+		// First visible item in the same section.
+		for i := range items {
+			if items[i].Section == w.Section && items[i].Visible {
+				return i
+			}
+		}
+	}
+	if first := FirstVisible(items); first >= 0 {
+		return first
+	}
+	return want
+}
+
 // JumpSection moves focus to the first visible item of the next (dir=+1) or
 // previous (dir=-1) section, wrapping. Driven by the shoulder buttons.
 func JumpSection(items []Item, idx, dir int) int {

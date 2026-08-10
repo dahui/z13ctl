@@ -30,19 +30,13 @@
     min-height: 52px;
 }
 
-/* The custom view's profile selector. It reads as a dropdown but expands in
-   the flow of the view: GtkDropDown and popovers create their own windows,
-   which gamescope does not composite. The label is left-aligned and the
-   arrow trails it, so the collapsed row looks like the control it stands in
-   for. */
-.drawer .btn-group button.profile-select {
+/* Dropdown triggers (profile selector, autoswitch targets). The list opens
+   in the in-surface popup layer — see popup.go for why GtkDropDown cannot be
+   used. The trigger's label is left-aligned with the arrow trailing at the
+   far edge, so it reads as the control it is. */
+.drawer .btn-group button.dropdown-trigger {
     padding-left: 12px;
     padding-right: 12px;
-}
-.drawer .btn-group button.profile-select label {
-    /* The arrow is part of the label text, so pushing the label wide is what
-       separates the name from it. */
-    padding-right: 2px;
 }
 
 /* TDP warning text */
@@ -237,4 +231,29 @@
 }
 .gs-backdrop {
     background: rgba(0, 0, 0, 0.3);
+}
+
+/* In-surface popup layer (popup.go). The scrim's shade lives here rather than
+   in the theme so every user theme.css — written before popups existed —
+   still dims correctly. Provider priority note: theme sheets load at
+   PRIORITY_USER, which outranks this file's PRIORITY_APPLICATION regardless
+   of selector specificity, so any popup rule that must beat the theme's
+   .drawer styling has to live in theme-default.css as .drawer.popup-surface,
+   not here. */
+.popup-scrim {
+    background: rgba(0, 0, 0, 0.35);
+}
+.popup-surface {
+    padding: 4px;
+}
+.popup-hint {
+    font-size: 10px;
+    padding: 6px 8px;
+}
+
+/* Refusal reason under a desensitized control — replaces the tooltip, which
+   is a separate popup surface gamescope never shows. */
+.block-note {
+    font-size: 10px;
+    margin-top: 2px;
 }

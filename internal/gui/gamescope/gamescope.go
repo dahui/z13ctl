@@ -306,7 +306,10 @@ func (b *Backend) scaledCSS() string {
 .advanced-check { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .error-bar { padding: %.0fpx %.0fpx; margin: 0 %.0fpx %.0fpx %.0fpx; border-radius: %.0fpx; }
 .error-bar .error-text { font-size: %.0fpx; }
-.error-bar .error-dismiss { min-height: %.0fpx; min-width: %.0fpx; }`,
+.error-bar .error-dismiss { min-height: %.0fpx; min-width: %.0fpx; }
+.popup-surface { padding: %.0fpx; }
+.popup-hint { font-size: %.0fpx; padding: %.0fpx %.0fpx; }
+.block-note { font-size: %.0fpx; margin-top: %.0fpx; }`,
 		s,
 		14*s,                 // .drawer font-size
 		48*s, 4*s, 10*s, 6*s, // btn-group button
@@ -342,5 +345,8 @@ func (b *Backend) scaledCSS() string {
 		6*s, 8*s, 8*s, 4*s, 8*s, 6*s, // error-bar (padding-v, padding-h, margin r/b/l, border-radius)
 		10*s,       // error-text font-size
 		20*s, 20*s, // error-dismiss (min-height, min-width)
+		4*s,            // popup-surface padding
+		10*s, 6*s, 8*s, // popup-hint (font-size, padding-v, padding-h)
+		10*s, 2*s, // block-note (font-size, margin-top)
 	)
 }

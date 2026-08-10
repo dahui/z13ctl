@@ -138,13 +138,21 @@ func (w *Window) buildContent() gtk.Widgetter {
 	// Theme and color views are lazy-loaded on first navigation
 	// to keep the initial widget tree small for fast animation.
 	w.viewStack.SetVisibleChildName("main")
-	outer.Append(w.viewStack)
+
+	// The view stack, error bar and bottom bar go into one content box, which
+	// becomes the popup layer's main child: popups (dropdown lists, anchored
+	// hints) are overlay children placed over all of it, in panel-relative
+	// coordinates that are the same in every backend.
+	content := gtk.NewBox(gtk.OrientationVertical, 0)
+	content.Append(w.viewStack)
 
 	// Error bar sits outside the stack so a failure raised in any view stays
 	// visible, including after a view switch.
-	outer.Append(w.buildErrorBar())
+	content.Append(w.buildErrorBar())
 
-	outer.Append(w.buildBottomBar())
+	content.Append(w.buildBottomBar())
+
+	outer.Append(w.buildPopupLayer(content))
 
 	w.buildMainFocusList()
 	w.focusItems = w.mainFocusItems
@@ -164,7 +172,7 @@ func (w *Window) buildBottomBar() *gtk.Box {
 
 	w.paletteBtn = gtk.NewButton()
 	w.paletteBtn.SetIconName("preferences-desktop-color-symbolic")
-	w.paletteBtn.SetTooltipText("Choose theme")
+	w.setHint(w.paletteBtn, "Choose theme")
 	w.paletteBtn.ConnectClicked(func() { w.showThemeView() })
 	bar.Append(w.paletteBtn)
 
@@ -192,12 +200,15 @@ func (w *Window) buildBottomBar() *gtk.Box {
 }
 
 // buildToggle creates a compact label + switch pair for the bottom bar.
-func (w *Window) buildToggle(label, tooltip string, sw **gtk.Switch, onChange func(bool)) *gtk.Box {
+func (w *Window) buildToggle(label, hint string, sw **gtk.Switch, onChange func(bool)) *gtk.Box {
 	box := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	box.SetTooltipText(tooltip)
+	w.setHint(box, hint)
 	lbl := gtk.NewLabel(label)
 	lbl.AddCSSClass("toggle-label")
 	s := gtk.NewSwitch()
+	// Registered on the switch as well as the box: the gamepad focus item is
+	// the switch, and the focus path looks hints up by the focused widget.
+	w.setHint(s, hint)
 	s.ConnectStateSet(func(state bool) bool {
 		if !w.syncing {
 			onChange(state)
@@ -370,7 +381,7 @@ func (w *Window) appendAccentDots(box *gtk.Box, accents []theme.Accent, isActive
 		provider := gtk.NewCSSProvider()
 		provider.LoadFromString("button.color-preset { background: " + ac.Hex + "; }")
 		dot.StyleContext().AddProvider(provider, gtk.STYLE_PROVIDER_PRIORITY_USER+20) //nolint:staticcheck // per-widget dynamic color; no style-class alternative for unique hex backgrounds
-		dot.SetTooltipText(ac.Name)
+		w.setHint(dot, ac.Name)
 		dot.ConnectClicked(func() {
 			// onClick first: it may activate this theme's radio button, whose
 			// toggled handler clears every dot. Marking afterwards survives that.
@@ -476,7 +487,11 @@ func hslScaleBox(label string, sc *gtk.Scale) *gtk.Box {
 }
 
 // showMainView switches the view stack to the main drawer view.
+// Every show*View closes any open popup first: a popup is anchored to a
+// widget in the view it was opened from, and a view switch underneath it
+// would leave the scrim and list floating over the wrong view.
 func (w *Window) showMainView() {
+	w.closePopup()
 	if w.viewStack != nil {
 		w.viewStack.SetVisibleChildName("main")
 		w.swapFocusList(w.mainFocusItems)
@@ -490,6 +505,7 @@ func (w *Window) showCustomView() {
 	if w.viewStack == nil {
 		return
 	}
+	w.closePopup()
 	if w.viewStack.VisibleChildName() == "custom" {
 		w.showMainView()
 		return
@@ -500,12 +516,6 @@ func (w *Window) showCustomView() {
 		w.buildCustomFocusList()
 	}
 	w.disarmDelete()
-	// Collapse the selector each time the view opens, so it always presents
-	// the same one-row shape rather than however it was left.
-	w.profileExpanded = false
-	if w.profileSelBox != nil {
-		w.profileSelBox.SetVisible(false)
-	}
 	w.syncCustomView()
 	w.viewStack.SetVisibleChildName("custom")
 	w.swapFocusList(w.customFocusItems)
@@ -518,6 +528,7 @@ func (w *Window) showThemeView() {
 	if w.viewStack == nil {
 		return
 	}
+	w.closePopup()
 	if w.viewStack.VisibleChildName() == "theme" {
 		w.showMainView()
 		return
@@ -703,6 +714,37 @@ func colorSubBox(label string, content gtk.Widgetter) *gtk.Box {
 	return b
 }
 
+// blockNote creates a hidden label for the refusal reason beneath a control.
+//
+// Refusal reasons live in these notes, never in tooltips: a tooltip is a
+// separate popup surface gamescope never shows, touch has no hover to raise
+// one, and the gamepad focus grid skips insensitive widgets — so a tooltip on
+// a desensitized control is unreadable in exactly the situations where the
+// user is staring at a dead button. The note is in the flow of the view,
+// visible whenever the block reason is non-empty, the same pattern as
+// editorNote and tdpWarningLabel.
+func blockNote() *gtk.Label {
+	l := gtk.NewLabel("")
+	l.AddCSSClass("block-note")
+	l.SetWrap(true)
+	l.SetXAlign(0)
+	l.SetVisible(false)
+	return l
+}
+
+// setBlockNote shows reason in the note, or hides the note when reason is "".
+func setBlockNote(l *gtk.Label, reason string) {
+	if l == nil {
+		return
+	}
+	if reason == "" {
+		l.SetVisible(false)
+		return
+	}
+	l.SetText(reason)
+	l.SetVisible(true)
+}
+
 // sectionLabel creates a small-caps section label (e.g. "MODE", "SPEED").
 func sectionLabel(text string) *gtk.Label {
 	l := gtk.NewLabel(text)
@@ -756,9 +798,9 @@ func (w *Window) buildMainFocusList() {
 		onActivate: func() { w.customBtn.Activate() },
 	})
 
-	// Autoswitch: enable switch, then a cycle button per power source. The
-	// two target rows only exist while autoswitch is enabled, so they carry
-	// the container's visibility.
+	// Autoswitch: enable switch, then a dropdown per power source. The two
+	// target rows only exist while autoswitch is enabled, so they carry the
+	// container's visibility.
 	if w.autoswitchSwitch != nil {
 		sw := w.autoswitchSwitch
 		row++
@@ -770,15 +812,15 @@ func (w *Window) buildMainFocusList() {
 		targetsVis := boxVisible(w.autoswitchTargets)
 		row++
 		items = append(items, focusItem{
-			widget: w.autoswitchACBtn, row: row, col: 0,
+			widget: w.autoswitchACDD.btn, row: row, col: 0,
 			section: "autoswitch", isVisible: targetsVis,
-			onActivate: func() { w.autoswitchACBtn.Activate() },
+			onActivate: func() { w.autoswitchACDD.btn.Activate() },
 		})
 		row++
 		items = append(items, focusItem{
-			widget: w.autoswitchBattBtn, row: row, col: 0,
+			widget: w.autoswitchBattDD.btn, row: row, col: 0,
 			section: "autoswitch", isVisible: targetsVis,
-			onActivate: func() { w.autoswitchBattBtn.Activate() },
+			onActivate: func() { w.autoswitchBattDD.btn.Activate() },
 		})
 	}
 

@@ -74,6 +74,95 @@ func TestEveryFunctionToleratesAnEmptyGrid(t *testing.T) {
 	}
 }
 
+func TestRestore(t *testing.T) {
+	// Restore is the popup-close path: the drawer's suspended focus list comes
+	// back, and the item that opened the popup may have become invisible while
+	// it was open.
+	tests := []struct {
+		name string
+		mut  func([]Item) // hides items in the grid
+		want int
+		got  int
+	}{
+		{
+			name: "visible item is kept",
+			mut:  func([]Item) {},
+			want: 3, got: 3,
+		},
+		{
+			name: "hidden item falls to the nearest in its row",
+			mut:  func(g []Item) { g[4].Visible = false }, // row 2 col 1
+			want: 4, got: 3,                               // ties to the lower column
+		},
+		{
+			name: "hidden item with a nearer right neighbour goes right",
+			mut:  func(g []Item) { g[3].Visible = false; g[4].Visible = false }, // row 2 cols 0,1
+			want: 4, got: 5,                                                     // col 2 is nearer than nothing
+		},
+		{
+			name: "empty row falls to the first visible in its section",
+			mut: func(g []Item) { // all of row 2 ("mode", with row 1)
+				g[3].Visible = false
+				g[4].Visible = false
+				g[5].Visible = false
+			},
+			want: 4, got: 2, // row 1, same section
+		},
+		{
+			name: "empty section falls to the first visible overall",
+			mut: func(g []Item) { // all of "mode"
+				g[2].Visible = false
+				g[3].Visible = false
+				g[4].Visible = false
+				g[5].Visible = false
+			},
+			want: 4, got: 0,
+		},
+		{
+			name: "nothing visible returns want unchanged",
+			mut: func(g []Item) {
+				for i := range g {
+					g[i].Visible = false
+				}
+			},
+			want: 4, got: 4,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			items := grid()
+			tc.mut(items)
+			if got := Restore(items, tc.want); got != tc.got {
+				t.Errorf("Restore(want=%d) = %d, want %d", tc.want, got, tc.got)
+			}
+		})
+	}
+}
+
+func TestRestoreReanchorsAnOutOfRangeIndex(t *testing.T) {
+	// Unlike the Move functions, Restore is not a move that can be refused —
+	// it is where focus comes back to after a popup, and it must land on
+	// something visible whenever anything is. Only with nothing visible does
+	// it return want unchanged.
+	items := grid()
+	for _, want := range []int{-1, -100, len(items), len(items) + 50} {
+		if got := Restore(items, want); got != 0 {
+			t.Errorf("Restore(want=%d) = %d, want 0 (first visible)", want, got)
+		}
+	}
+
+	for i := range items {
+		items[i].Visible = false
+	}
+	if got := Restore(items, -1); got != -1 {
+		t.Errorf("Restore(want=-1) with nothing visible = %d, want -1", got)
+	}
+	if got := Restore(nil, 3); got != 3 {
+		t.Errorf("Restore(nil, 3) = %d, want 3", got)
+	}
+}
+
 func TestMoveVerticalWalksRows(t *testing.T) {
 	items := grid()
 	// From row 0 col 0, down through every row and wrapping back to the start.

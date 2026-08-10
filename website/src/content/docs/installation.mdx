@@ -229,15 +229,28 @@ Then clone and build:
 ```sh
 git clone https://github.com/dahui/voltaire
 cd voltaire
-make build          # the CLI/daemon (no CGO)
-make build-gui      # the GUI (CGO; the first build compiles GTK bindings, ~10 min)
+make build-all      # both binaries (CGO; the first GUI build compiles the GTK bindings, ~10 min)
 sudo make install
+sudo voltaire setup
 make install-service
 ```
 
-`make install` installs the binaries to `/usr/local/bin` and runs
-`sudo voltaire setup` automatically; `make install-service` installs and
-enables the systemd user units.
+`make install` copies both binaries to `/usr/local/bin` alongside the `z13ctl`
+and `z13gui` compatibility symlinks; `make install-service` installs and enables
+the three systemd user units — `voltaire.socket`, `voltaire.service` and
+`voltaire-gui.service` — and disables the pre-2.0 `z13ctl`/`z13gui` units.
+
+Build the CLI alone with `make build` if you don't want the drawer; `make
+install` then installs only what it finds and says so. Don't mix the two —
+installing a freshly built daemon beside a stale GUI binary is a pairing this
+project does not test, and `make install` warns when it sees one.
+
+If `make install-service` reports that a pre-2.0 unit is *still enabled
+system-wide*, an old `z13ctl`/`z13gui` package is still installed: it enabled
+its units with `systemctl --global`, which writes `/etc/systemd/user` and cannot
+be undone by a `--user` command. Uninstall the old package, or run the
+`systemctl --global disable` line the warning prints — otherwise the old units
+come back at every login.
 
 </TabItem>
 

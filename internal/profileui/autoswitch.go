@@ -52,28 +52,6 @@ func emptyProfile(s *api.State, name string) bool {
 	return !ok || p.Empty()
 }
 
-// CycleTarget returns the option after cur in direction dir (+1/-1), wrapping.
-// A cur that is not among the options — a target whose profile has been
-// emptied, or a hand-edited state file — lands on the first option rather
-// than being unreachable: clicking means "change it", and "leave alone" is
-// the safe landing.
-func CycleTarget(opts []string, cur string, dir int) string {
-	if len(opts) == 0 {
-		return cur
-	}
-	pos := -1
-	for i, o := range opts {
-		if o == cur {
-			pos = i
-			break
-		}
-	}
-	if pos == -1 {
-		return opts[0]
-	}
-	return opts[((pos+dir)%len(opts)+len(opts))%len(opts)]
-}
-
 // TargetLabel returns the display text for an autoswitch target.
 func TargetLabel(name string) string {
 	if name == LeaveAlone {

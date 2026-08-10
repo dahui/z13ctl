@@ -12,6 +12,7 @@ package gui
 import (
 	_ "embed"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"github.com/dahui/voltaire/v2/internal/gui/layershell"
 	"github.com/dahui/voltaire/v2/internal/gui/overlay"
 	"github.com/dahui/voltaire/v2/internal/limits"
-	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/dahui/voltaire/v2/internal/togglegate"
@@ -124,34 +124,29 @@ type Window struct {
 	profileBtns map[string]*gtk.Button // firmware profile buttons by name
 	customBtn   *gtk.Button            // opens the custom view; labelled with the running custom profile
 
-	// Custom-view profile selector (see profiles.go). Collapsed it is one
-	// row; expanding reveals one button per custom profile, in the flow of
-	// the view rather than in a popup — see buildProfileSelector.
-	customRows      []profileui.Row        // rows the selector is currently built from
-	customSig       string                 // profileui.Signature of customRows
-	profileSelBtn   *gtk.Button            // the collapsed selector itself
-	profileSelBox   *gtk.Box               // container the expanded rows are built into
-	profileSelBtns  map[string]*gtk.Button // one per custom profile, inside profileSelBox
-	profileExpanded bool
-	activateBtn     *gtk.Button
-	newProfileBtn   *gtk.Button
-	saveAsBtn       *gtk.Button
-	nameRow         *gtk.Box // inline create/save-as name entry row, hidden until needed
-	nameEntry       *gtk.Entry
-	nameOKBtn       *gtk.Button
-	nameCancelBtn   *gtk.Button
-	nameMode        string // nameModeCreate or nameModeSaveAs while nameRow is up
+	// Custom-view profile selector (see profiles.go): a dropdown over
+	// profileui.CustomRows, built fresh on every open — no rebuild machinery.
+	profileSelDD  *dropdown
+	activateBtn   *gtk.Button
+	newProfileBtn *gtk.Button
+	saveAsBtn     *gtk.Button
+	actionsNote   *gtk.Label // refusal reasons for Activate / Save As (.block-note)
+	nameRow       *gtk.Box   // inline create/save-as name entry row, hidden until needed
+	nameEntry     *gtk.Entry
+	nameOKBtn     *gtk.Button
+	nameCancelBtn *gtk.Button
+	nameMode      string // nameModeCreate or nameModeSaveAs while nameRow is up
 
 	// Autoswitch section. The three value fields mirror the widgets so a send
 	// can snapshot them on the GTK thread; they are synced from daemon state.
 	autoswitchSwitch  *gtk.Switch
 	autoswitchTargets *gtk.Box // the two target rows; shown only while enabled
-	autoswitchACBtn   *gtk.Button
-	autoswitchBattBtn *gtk.Button
+	autoswitchACDD    *dropdown
+	autoswitchBattDD  *dropdown
 	autoswitchEnabled bool
 	autoswitchAC      string
 	autoswitchBatt    string
-	autoswitchTimer   *time.Timer // debounce, so cycling a target sends once
+	autoswitchTimer   *time.Timer // debounce, so re-picking a target sends once
 
 	// Custom profile view.
 	//
@@ -169,7 +164,9 @@ type Window struct {
 	editorFloorPL1     int
 	editorNote         *gtk.Label // "stored only" note; hidden for live edits
 	deleteBtn          *gtk.Button
-	deleteArmed        bool // first tap of the two-tap delete confirmation
+	deleteNote         *gtk.Label // refusal reason under Delete Profile (.block-note)
+	resetNote          *gtk.Label // fan-floor refusal under the Reset row (.block-note)
+	deleteArmed        bool       // first tap of the two-tap delete confirmation
 	customScroll       *gtk.ScrolledWindow
 	customBackBtn      *gtk.Button
 	tdpBasicScale      *gtk.Scale
@@ -234,14 +231,20 @@ type Window struct {
 
 	// Gamepad focus navigation.
 	gamepadReader     *gamepad.Reader
-	focusItems        []focusItem // active view's navigable widgets (points to one of the lists below)
-	focusIdx          int         // current position in focusItems
-	gamepadActive     bool        // true when gamepad focus indicator is shown
-	focusEditing      bool        // true when a slider is in edit mode
-	editOriginalValue float64     // saved value for cancel on B
-	mainFocusItems    []focusItem // focus grid for main drawer view
-	themeFocusItems   []focusItem // focus grid for theme picker view
-	colorFocusItems   []focusItem // focus grid for HSL color picker view
+	focusItems        []focusItem  // active view's navigable widgets (points to one of the lists below)
+	focusIdx          int          // current position in focusItems
+	gamepadActive     bool         // true when gamepad focus indicator is shown
+	focusEditing      bool         // true when a slider is in edit mode
+	editOriginalValue float64      // saved value for cancel on B
+	mainFocusItems    []focusItem  // focus grid for main drawer view
+	themeFocusItems   []focusItem  // focus grid for theme picker view
+	colorFocusItems   []focusItem  // focus grid for HSL color picker view
+	focusStack        []focusFrame // suspended focus lists while a popup is open
+
+	// In-surface popup layer (popup.go) and anchored hints (hint.go).
+	popup   *popupLayer
+	hints   map[uintptr]string // hint text keyed by widget Native(); entries are never removed
+	hintGen int                // invalidates pending hint dwell timers
 }
 
 // layerShellUsable reports whether this session can actually use the layer-shell
@@ -344,23 +347,51 @@ func New(app *gtk.Application) *Window {
 	}
 
 	// Hide gamepad focus indicator on mouse movement.
+	// Hide the gamepad focus indicator when the user reaches for the mouse.
+	//
+	// The same-position guard is load-bearing: GTK synthesizes a motion event
+	// at the *current* pointer position whenever the widget under it changes,
+	// and gamepad navigation changes the layout on every press (the anchored
+	// hint appears, ensureVisible scrolls). Without the guard each press was
+	// immediately followed by a synthetic motion that cleared gamepad mode, so
+	// the next press started over at the first item and focus could never move
+	// past it — D-pad navigation stopped working entirely. Real pointer motion
+	// always carries new coordinates.
 	motion := gtk.NewEventControllerMotion()
-	motion.ConnectMotion(func(_, _ float64) {
+	lastX, lastY := math.NaN(), math.NaN()
+	motion.ConnectMotion(func(x, y float64) {
+		if x == lastX && y == lastY {
+			return
+		}
+		lastX, lastY = x, y
 		if w.gamepadActive {
 			w.hideGamepadFocus()
 		}
+		w.pruneHintAt(x, y)
 	})
 	w.gtkWin.AddController(motion)
 
 	// Block arrow keys from reaching child widgets. GTK4 uses arrow keys
 	// to navigate radio groups (auto-activating them) and adjust scales.
 	// The overlay uses mouse/touch/gamepad — not keyboard navigation.
+	//
+	// Escape-closes-popup lives in this same controller rather than a new
+	// one: all three backends attach their own Escape (drawer dismiss)
+	// handlers in the bubble phase on this window, and capture reliably
+	// precedes bubble, whereas two controllers in the same phase have no
+	// ordering contract. Returning false when no popup is open leaves the
+	// backends' dismiss behaviour exactly as it was.
 	keyBlock := gtk.NewEventControllerKey()
 	keyBlock.SetPropagationPhase(gtk.PhaseCapture)
 	keyBlock.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
 		switch keyval {
 		case gdk.KEY_Up, gdk.KEY_Down, gdk.KEY_Left, gdk.KEY_Right:
 			return true
+		case gdk.KEY_Escape:
+			if w.popupOpen() {
+				w.closePopup()
+				return true
+			}
 		}
 		return false
 	})
@@ -464,6 +495,11 @@ func (w *Window) hide() {
 		go w.gamepadReader.SetGrabbed(gen, false)
 	}
 	w.hideGamepadFocus()
+	// Close any popup before the view reset. In gamescope a backdrop tap with
+	// a popup open dismisses the whole drawer through this path, and leaving
+	// the popup "open" would greet the next show with a stale list over the
+	// main view.
+	w.closePopup()
 	w.clearError()   // don't greet the next open with a stale failure
 	w.telemetryGen++ // stop any running telemetry poll
 	if w.viewStack != nil {
@@ -514,6 +550,11 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 		switch {
 		case w.focusEditing:
 			w.exitEditMode(false)
+		// Above the view-stack case: B must close the popup, not the view
+		// underneath it — closing the view first would strand the popup's
+		// focus frame over a vanished list.
+		case w.popupOpen():
+			w.closePopup()
 		case w.viewStack != nil && w.viewStack.VisibleChildName() != "main":
 			w.showMainView()
 		default:

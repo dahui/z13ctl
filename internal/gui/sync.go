@@ -54,6 +54,9 @@ func (w *Window) syncState() {
 	if w.state == nil {
 		return
 	}
+	if w.syncsSuppressed() {
+		return
+	}
 	w.syncing = true
 	defer func() { w.syncing = false }()
 	w.syncLightingSection()

@@ -115,6 +115,7 @@ func (w *Window) showColorView(ci *colorInput) {
 	if w.viewStack == nil {
 		return
 	}
+	w.closePopup()
 	if w.colorHue == nil {
 		w.viewStack.AddNamed(w.buildColorPickerView(), "color")
 		w.buildColorFocusList()

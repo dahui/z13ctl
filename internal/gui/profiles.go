@@ -65,7 +65,7 @@ func (w *Window) buildProfileSection() *gtk.Box {
 	customRow.AddCSSClass("btn-group")
 	w.customBtn = gtk.NewButtonWithLabel(profileui.Custom(nil).Label)
 	w.customBtn.SetHExpand(true)
-	w.customBtn.SetTooltipText("Custom profiles: power limits, fan curve and undervolt")
+	w.setHint(w.customBtn, "Custom profiles: power limits, fan curve and undervolt")
 	w.customBtn.ConnectClicked(func() { w.showCustomView() })
 	customRow.Append(w.customBtn)
 	box.Append(customRow)
@@ -94,52 +94,67 @@ func (w *Window) syncProfiles() {
 	}
 }
 
-// buildProfileSelector creates the custom view's profile selector: a
-// collapsed row naming the profile being edited, an expandable list of the
-// custom profiles, and the create/copy/activate affordances.
+// buildProfileSelector creates the custom view's profile selector: a dropdown
+// naming the profile being edited, and the create/copy/activate affordances.
 //
-// It expands in the flow of the view rather than opening a popup. GtkDropDown
-// and popovers create their own windows, which gamescope does not composite —
-// the drawer would be selecting a profile from an invisible list in Steam
-// Gaming Mode. Expanding in place also means the rows are ordinary widgets
-// that the existing focus grid navigates, with no second mechanism for a
-// popup's contents.
+// The dropdown's list opens in the in-surface popup layer (popup.go) — never
+// a GtkDropDown, whose popover is a separate window gamescope does not
+// composite. The list is built from profileui.CustomRows on every open, so a
+// profile created or deleted by another client is simply present or absent
+// the next time the list opens, with no rebuild machinery in between.
 func (w *Window) buildProfileSelector() *gtk.Box {
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 	box.Append(sectionLabel("PROFILE"))
 
 	selRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	selRow.AddCSSClass("btn-group")
-	w.profileSelBtn = gtk.NewButtonWithLabel("")
-	w.profileSelBtn.AddCSSClass("profile-select")
-	w.profileSelBtn.SetHExpand(true)
-	w.profileSelBtn.SetTooltipText("Choose which custom profile to edit")
-	w.profileSelBtn.ConnectClicked(func() { w.toggleProfileList() })
-	selRow.Append(w.profileSelBtn)
+	w.profileSelDD = w.newDropdown(dropdownConfig{
+		options: func() []dropdownOption {
+			rows := profileui.CustomRows(w.state)
+			opts := make([]dropdownOption, len(rows))
+			for i, r := range rows {
+				opts[i] = dropdownOption{
+					value: r.Name,
+					label: r.Label,
+					// Two distinct marks: selected is the edit target, the
+					// running dot is the active profile. The old in-flow
+					// selector collapsed both onto one .active class.
+					selected: r.Name == w.editProfile,
+					running:  r.Active,
+				}
+			}
+			return opts
+		},
+		onSelect: func(name string) { w.setEditTarget(name) },
+	})
+	w.setHint(w.profileSelDD.btn, "Choose which custom profile to edit")
+	selRow.Append(w.profileSelDD.btn)
 	box.Append(selRow)
-
-	w.profileSelBox = gtk.NewBox(gtk.OrientationVertical, 4)
-	w.profileSelBox.AddCSSClass("btn-group")
-	w.profileSelBox.SetVisible(false)
-	box.Append(w.profileSelBox)
 
 	actions := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	actions.AddCSSClass("btn-group")
 	w.activateBtn = gtk.NewButtonWithLabel("Activate")
 	w.activateBtn.AddCSSClass("save-btn")
 	w.activateBtn.SetHExpand(true)
+	w.setHint(w.activateBtn, "Apply this profile to the machine")
 	w.activateBtn.ConnectClicked(func() { w.sendProfileSet(w.editProfile) })
 	actions.Append(w.activateBtn)
 	w.newProfileBtn = gtk.NewButtonWithLabel("+ New")
 	w.newProfileBtn.SetHExpand(true)
-	w.newProfileBtn.SetTooltipText("Create an empty named profile")
+	w.setHint(w.newProfileBtn, "Create an empty named profile")
 	w.newProfileBtn.ConnectClicked(func() { w.showNameEntry(nameModeCreate) })
 	actions.Append(w.newProfileBtn)
 	w.saveAsBtn = gtk.NewButtonWithLabel("Save As")
 	w.saveAsBtn.SetHExpand(true)
+	w.setHint(w.saveAsBtn, "Copy the active profile's settings under a new name")
 	w.saveAsBtn.ConnectClicked(func() { w.showNameEntry(nameModeSaveAs) })
 	actions.Append(w.saveAsBtn)
 	box.Append(actions)
+
+	// One note serves both refusals — they are almost always blocked together
+	// (a fresh profile blocks Activate and Save As at once).
+	w.actionsNote = blockNote()
+	box.Append(w.actionsNote)
 
 	// Inline name entry, in place of a dialog, for the same reason the
 	// selector expands in place: it appears only while a name is being chosen.
@@ -154,44 +169,14 @@ func (w *Window) buildProfileSelector() *gtk.Box {
 	w.nameRow.Append(w.nameOKBtn)
 	w.nameCancelBtn = gtk.NewButton()
 	w.nameCancelBtn.SetIconName("window-close-symbolic")
-	w.nameCancelBtn.SetTooltipText("Cancel")
+	w.setHint(w.nameCancelBtn, "Cancel")
 	w.nameCancelBtn.ConnectClicked(func() { w.nameRow.SetVisible(false) })
 	w.nameRow.Append(w.nameCancelBtn)
 	w.nameRow.SetVisible(false)
 	box.Append(w.nameRow)
 
-	w.rebuildProfileSelector(profileui.CustomRows(nil))
+	w.profileSelDD.setLabel(profileui.Label(w.editProfile))
 	return box
-}
-
-// toggleProfileList expands or collapses the selector's list of profiles.
-func (w *Window) toggleProfileList() {
-	w.profileExpanded = !w.profileExpanded
-	w.profileSelBox.SetVisible(w.profileExpanded)
-	w.syncProfileSelector()
-}
-
-// rebuildProfileSelector replaces the expandable list's buttons with one per
-// custom profile. Called only when the row set changes — see
-// syncProfileSelector.
-func (w *Window) rebuildProfileSelector(rows []profileui.Row) {
-	for c := w.profileSelBox.FirstChild(); c != nil; c = w.profileSelBox.FirstChild() {
-		w.profileSelBox.Remove(c)
-	}
-	w.profileSelBtns = make(map[string]*gtk.Button, len(rows))
-	for _, r := range rows {
-		r := r
-		btn := gtk.NewButtonWithLabel(r.Label)
-		btn.SetHExpand(true)
-		btn.ConnectClicked(func() {
-			w.setEditTarget(r.Name)
-			w.toggleProfileList() // selecting collapses the list again
-		})
-		w.profileSelBtns[r.Name] = btn
-		w.profileSelBox.Append(btn)
-	}
-	w.customRows = rows
-	w.customSig = profileui.Signature(rows)
 }
 
 // setEditTarget points the custom view at another profile and re-syncs every
@@ -202,59 +187,37 @@ func (w *Window) setEditTarget(name string) {
 	w.syncCustomView()
 }
 
-// syncProfileSelector updates the selector from daemon state: rebuilds the
-// list when the profile set changed (a profile created or deleted, possibly
-// by another client) and otherwise updates labels and sensitivity in place.
+// syncProfileSelector updates the selector's trigger label and the action
+// buttons' sensitivity from daemon state. There is nothing else to sync: the
+// dropdown list is built fresh on every open, so a profile created or deleted
+// by another client needs no rebuild here — and nothing below the selector
+// shifts when the profile set changes, which is why the custom focus list is
+// built exactly once.
 func (w *Window) syncProfileSelector() {
-	if w.profileSelBtn == nil {
+	if w.profileSelDD == nil {
 		return
 	}
-	rows := profileui.CustomRows(w.state)
-	if profileui.Signature(rows) != w.customSig {
-		w.rebuildProfileSelector(rows)
-		// The rows below the selector all shifted, so the whole custom focus
-		// grid is rebuilt; adopt it now only if it is the grid in use.
-		w.buildCustomFocusList()
-		if w.viewStack != nil && w.viewStack.VisibleChildName() == "custom" {
-			w.swapFocusList(w.customFocusItems)
-		}
-	} else {
-		w.customRows = rows
-	}
+	w.profileSelDD.setLabel(profileui.Label(w.editProfile))
 
-	arrow := "▾"
-	if w.profileExpanded {
-		arrow = "▴"
-	}
-	w.profileSelBtn.SetLabel(profileui.Label(w.editProfile) + "  " + arrow)
-	setActiveButton(w.profileSelBtns, w.editProfile)
-
-	for _, r := range rows {
-		if btn := w.profileSelBtns[r.Name]; btn != nil {
-			if r.Active {
-				btn.AddCSSClass("active")
-			}
-		}
-	}
-
+	// Refusal reasons go to the shared block note, in the flow of the view —
+	// never to tooltips, which are invisible in gamescope and unreachable on
+	// a controller (the focus grid skips insensitive widgets).
+	blocks := make([]string, 0, 2)
 	if w.activateBtn != nil {
 		block := profileui.ActivateBlock(w.state, w.editProfile)
 		w.activateBtn.SetSensitive(block == "")
-		if block == "" {
-			w.activateBtn.SetTooltipText("Apply this profile to the machine")
-		} else {
-			w.activateBtn.SetTooltipText("Unavailable: " + block)
+		if block != "" {
+			blocks = append(blocks, "Activate: "+block)
 		}
 	}
 	if w.saveAsBtn != nil {
 		block := profileui.SaveAsBlock(w.state)
 		w.saveAsBtn.SetSensitive(block == "")
-		if block == "" {
-			w.saveAsBtn.SetTooltipText("Copy the active profile's settings under a new name")
-		} else {
-			w.saveAsBtn.SetTooltipText("Unavailable: " + block)
+		if block != "" {
+			blocks = append(blocks, "Save As: "+block)
 		}
 	}
+	setBlockNote(w.actionsNote, strings.Join(blocks, " · "))
 }
 
 // showNameEntry opens the inline name row prefilled with a suggested name.
@@ -316,9 +279,9 @@ func nameOpLabel(mode string) string {
 }
 
 // buildAutoswitchSection creates the AUTOSWITCH section: the enable switch and
-// a cycle button per power source. Cycle buttons instead of a dropdown for the
-// usual reason — a dropdown's popup is a separate window gamescope does not
-// composite — and they read fine with a handful of profiles.
+// a dropdown per power source. The dropdowns open in the in-surface popup
+// layer (popup.go), so they work under gamescope where a GtkDropDown's popover
+// would be invisible.
 func (w *Window) buildAutoswitchSection() *gtk.Box {
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 
@@ -327,7 +290,7 @@ func (w *Window) buildAutoswitchSection() *gtk.Box {
 	sw := gtk.NewSwitch()
 	sw.SetHAlign(gtk.AlignEnd)
 	sw.SetHExpand(true)
-	sw.SetTooltipText("Switch profiles automatically when the charger is plugged or unplugged")
+	w.setHint(sw, "Switch profiles automatically when the charger is plugged or unplugged")
 	sw.ConnectStateSet(func(on bool) bool {
 		if !w.syncing {
 			w.autoswitchEnabled = on
@@ -348,38 +311,52 @@ func (w *Window) buildAutoswitchSection() *gtk.Box {
 	// permanent rows for a feature most users leave alone is exactly the
 	// crowding the profile list was moved out to avoid.
 	w.autoswitchTargets = gtk.NewBox(gtk.OrientationVertical, 4)
-	w.autoswitchTargets.Append(w.buildAutoswitchTargetRow("On AC", &w.autoswitchAC, &w.autoswitchACBtn))
-	w.autoswitchTargets.Append(w.buildAutoswitchTargetRow("On battery", &w.autoswitchBatt, &w.autoswitchBattBtn))
+	w.autoswitchTargets.Append(w.buildAutoswitchTargetRow("On AC", &w.autoswitchAC, &w.autoswitchACDD))
+	w.autoswitchTargets.Append(w.buildAutoswitchTargetRow("On battery", &w.autoswitchBatt, &w.autoswitchBattDD))
 	w.autoswitchTargets.SetVisible(false)
 	box.Append(w.autoswitchTargets)
 	return box
 }
 
-// buildAutoswitchTargetRow creates one "label + cycle button" row. target and
-// btnDst point at the Window fields for this side; both are only ever touched
+// buildAutoswitchTargetRow creates one "label + dropdown" row. target and
+// ddDst point at the Window fields for this side; both are only ever touched
 // on the GTK thread.
-func (w *Window) buildAutoswitchTargetRow(label string, target *string, btnDst **gtk.Button) *gtk.Box {
+func (w *Window) buildAutoswitchTargetRow(label string, target *string, ddDst **dropdown) *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	row.AddCSSClass("btn-group")
 	name := gtk.NewLabel(label)
 	name.AddCSSClass("scale-name")
 	name.SetHAlign(gtk.AlignStart)
-	// A size group keeps the two cycle buttons aligned: without it "On AC"
-	// and "On battery" are different widths and the buttons start at
+	// A size request keeps the two dropdowns aligned: without it "On AC"
+	// and "On battery" are different widths and the triggers start at
 	// different offsets.
 	name.SetSizeRequest(72, -1)
 	row.Append(name)
 
-	btn := gtk.NewButtonWithLabel(profileui.TargetLabel(*target))
-	btn.SetHExpand(true)
-	btn.SetTooltipText("Profile to apply when this power source becomes active — tap to cycle")
-	btn.ConnectClicked(func() {
-		opts := profileui.TargetOptions(w.state)
-		*target = profileui.CycleTarget(opts, *target, +1)
-		btn.SetLabel(profileui.TargetLabel(*target))
-		w.queueAutoswitchSend()
+	var d *dropdown
+	d = w.newDropdown(dropdownConfig{
+		options: func() []dropdownOption {
+			opts := profileui.TargetOptions(w.state)
+			rows := make([]dropdownOption, len(opts))
+			for i, o := range opts {
+				rows[i] = dropdownOption{
+					value:    o,
+					label:    profileui.TargetLabel(o),
+					selected: o == *target,
+				}
+			}
+			return rows
+		},
+		onSelect: func(v string) {
+			*target = v
+			d.setLabel(profileui.TargetLabel(v))
+			w.queueAutoswitchSend()
+		},
 	})
-	*btnDst = btn
-	row.Append(btn)
+	d.setLabel(profileui.TargetLabel(*target))
+	w.setHint(d.btn, "Profile to apply when this power source becomes active")
+	*ddDst = d
+	row.Append(d.btn)
 	return row
 }
 
@@ -426,7 +403,7 @@ func (w *Window) syncAutoswitch() {
 	a := profileui.Autoswitch(w.state)
 	w.autoswitchEnabled, w.autoswitchAC, w.autoswitchBatt = a.Enabled, a.AC, a.Battery
 	w.autoswitchSwitch.SetActive(a.Enabled)
-	w.autoswitchACBtn.SetLabel(profileui.TargetLabel(a.AC))
-	w.autoswitchBattBtn.SetLabel(profileui.TargetLabel(a.Battery))
+	w.autoswitchACDD.setLabel(profileui.TargetLabel(a.AC))
+	w.autoswitchBattDD.setLabel(profileui.TargetLabel(a.Battery))
 	w.syncAutoswitchVis()
 }

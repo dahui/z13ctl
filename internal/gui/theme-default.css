@@ -196,15 +196,34 @@ window.z13-drawer-window {
     border-color: @z13-text;
 }
 
-/* DropDown (profile selector) */
-.drawer dropdown > button {
-    background: @z13-surface;
-    color: @z13-text;
-    border: 1px solid @z13-border;
+/* In-surface popup layer (dropdown lists, anchored hints). The surface and
+   hint both carry .drawer, so background, text colour and border come from
+   the .drawer rule above; only the shape differs. These are declared here
+   rather than in layout.css because they override .drawer properties, and
+   this sheet's PRIORITY_USER outranks layout.css at any specificity. */
+.drawer.popup-surface {
+    border-radius: 6px;
 }
 
-.drawer dropdown > button:hover {
-    background: @z13-surface-alt;
+.drawer.popup-hint {
+    background: @z13-surface;
+    border-radius: 6px;
+}
+
+/* The running profile's marker in the profile dropdown. Accent on a normal
+   row; white on a selected (.active) row, whose background is the accent. */
+.drawer .popup-surface .running-dot {
+    color: @z13-accent;
+}
+
+.drawer .popup-surface button.active .running-dot {
+    color: #ffffff;
+}
+
+/* Refusal reason under a desensitized control. Dim rather than error-red:
+   it explains a greyed button, it is not reporting a failure. */
+.block-note {
+    color: @z13-text-dim;
 }
 
 /* Slider value label */

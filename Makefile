@@ -8,6 +8,15 @@ LDFLAGS  := -s -w -X github.com/dahui/voltaire/v2/internal/version.Version=$(VER
 SYSTEMD_USER_DIR  := $(HOME)/.config/systemd/user
 SYSTEMD_SYSTEM_DIR := /etc/systemd/system
 
+# The pre-2.0 user units, disabled and removed by every install-service run.
+# z13gui.service is in the list because voltaire-gui.service would otherwise
+# race it: both are WantedBy=graphical-session.target, and with the
+# compatibility symlinks installed ExecStart=z13gui resolves through
+# /usr/local/bin to voltaire-gui itself — so the same drawer is started twice
+# under two unit names, and the one a "systemctl --user restart voltaire-gui"
+# refreshes is not necessarily the one that is running.
+LEGACY_USER_UNITS := z13ctl.socket z13ctl.service z13gui.service
+
 HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
 
 # HERMETIC_PKGS is every package that compiles without CGO and GTK4 headers,
@@ -17,7 +26,7 @@ HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
 # widgets there, decisions in the pure packages.
 HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | grep -v -e '/internal/gui' -e '/voltaire-gui')
 
-.PHONY: build build-gui test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
+.PHONY: build build-gui build-all test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
 
 ## build: compile voltaire with version from git tags
 build:
@@ -28,6 +37,13 @@ build:
 ## share the name voltaire-gui, and the directory keeps the plan's layout.
 build-gui:
 	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o voltaire-gui/voltaire-gui ./voltaire-gui
+
+## build-all: compile both binaries — the pair that ships as one package
+# This is what "install" wants. "make build" alone leaves whatever voltaire-gui
+# binary is already in the tree, and installing that beside a freshly built
+# daemon is exactly the CLI/GUI version skew that shipping one package exists to
+# make impossible.
+build-all: build build-gui
 
 ## test: run all tests (both modules — api/ is separate, so ./... misses it).
 ## internal/gui is the cgo island and voltaire-gui is the main package that
@@ -75,34 +91,78 @@ snapshot:
 release:
 	goreleaser release --clean
 
-## install: install voltaire (and voltaire-gui if built) to /usr/local/bin (requires sudo, build first)
+## install: install voltaire (and voltaire-gui if built) to /usr/local/bin (requires sudo, build-all first)
 install:
 	install -Dm755 voltaire /usr/local/bin/voltaire
-	[ -f voltaire-gui/voltaire-gui ] && install -Dm755 voltaire-gui/voltaire-gui /usr/local/bin/voltaire-gui || true
 # Compatibility symlinks for the pre-2.0 command names, matching what the
 # distribution packages ship. Replace a stale 1.x *binary* at these paths as
 # well: /usr/local/bin precedes /usr/bin, so a leftover from a pre-rename
 # "make install" would shadow the packaged symlink and keep answering scripts
-# with 1.x behaviour forever.
+# with 1.x behaviour forever. That precedence also means these symlinks decide
+# what a *unit* named ExecStart=z13gui runs — see LEGACY_USER_UNITS.
 	ln -sfn voltaire /usr/local/bin/z13ctl
-	[ -f /usr/local/bin/voltaire-gui ] && ln -sfn voltaire-gui /usr/local/bin/z13gui || true
+# The GUI is optional here — a headless install legitimately wants the CLI
+# alone — but optional must not mean silently stale, and both halves of the old
+# "[ -f x ] && install ... || true" were wrong for that: it reported nothing
+# when the binary was absent, and the trailing "|| true" swallowed a genuine
+# install failure with it. The version is read out of the binary rather than by
+# running it, because this recipe runs as root and voltaire-gui's first
+# statement is theme.MigrateFromZ13gui(); grep needs -a since these are ELF.
+	@if [ ! -f voltaire-gui/voltaire-gui ]; then \
+		echo "NOTE: voltaire-gui is not built — installing the CLI only."; \
+		echo "      Run 'make build-all' to include the drawer."; \
+	else \
+		install -Dm755 voltaire-gui/voltaire-gui /usr/local/bin/voltaire-gui; \
+		ln -sfn voltaire-gui /usr/local/bin/z13gui; \
+		if [ "$(VERSION)" != "dev" ] && ! grep -aqF "$(VERSION)" voltaire-gui/voltaire-gui; then \
+			echo "WARNING: voltaire-gui was built from a different tree than voltaire ($(VERSION))."; \
+			echo "         Run 'make build-all' and install again — a skewed pair is not a"; \
+			echo "         configuration this project tests."; \
+		fi; \
+	fi
 
-## install-service: install and enable the voltaire systemd user service (disables pre-rename z13ctl units)
+## install-service: install and enable the voltaire systemd user units, daemon and GUI (disables the pre-2.0 z13ctl/z13gui units)
 install-service:
-	-systemctl --user disable --now z13ctl.socket z13ctl.service 2>/dev/null
-	rm -f $(SYSTEMD_USER_DIR)/z13ctl.socket $(SYSTEMD_USER_DIR)/z13ctl.service
+	-systemctl --user disable --now $(LEGACY_USER_UNITS) 2>/dev/null
+	rm -f $(addprefix $(SYSTEMD_USER_DIR)/,$(LEGACY_USER_UNITS))
 	install -Dm644 contrib/systemd/user/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.socket
 	install -Dm644 contrib/systemd/user/voltaire.service $(SYSTEMD_USER_DIR)/voltaire.service
+# voltaire-gui.service is packaged in contrib/ and enabled by every distribution
+# package, but no make target installed it — so a source install had no drawer
+# unit at all and "systemctl --user restart voltaire-gui" failed with "unit not
+# found" while the pre-2.0 z13gui.service quietly kept the drawer running.
+	install -Dm644 contrib/systemd/user/voltaire-gui.service $(SYSTEMD_USER_DIR)/voltaire-gui.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now voltaire.socket voltaire.service
-	@echo "Service installed. Run 'systemctl --user status voltaire.service' to verify."
+	systemctl --user enable voltaire-gui.service
+# "systemctl --user disable" removes symlinks under ~/.config/systemd/user and
+# nothing else. The pre-2.0 packages enable their units with --global, which
+# writes /etc/systemd/user/*.target.wants — root-owned, outside this target's
+# reach, and reinstated at every login. The disable above therefore *looks*
+# like it worked (the unit does stop) while is-enabled still reports enabled.
+# Saying so here is the difference between one command and a long evening.
+	@for u in $(LEGACY_USER_UNITS); do \
+		if [ "$$(systemctl --user is-enabled $$u 2>/dev/null)" = "enabled" ]; then \
+			echo "WARNING: $$u is still enabled system-wide and returns at next login."; \
+			echo "         Uninstall the pre-2.0 package, or: sudo systemctl --global disable $$u"; \
+		fi; \
+	done
+# Start the drawer only where it can run: voltaire-gui.service is
+# PartOf=graphical-session.target, so starting it from a TTY only fails.
+	@if systemctl --user --quiet is-active graphical-session.target 2>/dev/null; then \
+		systemctl --user restart voltaire-gui.service && echo "voltaire-gui restarted."; \
+	else \
+		echo "No graphical session — voltaire-gui.service starts at next login."; \
+	fi
+	@echo "Units installed. Verify with 'systemctl --user status voltaire.service voltaire-gui.service'."
 
-## uninstall-service: stop and remove the voltaire systemd user service
+## uninstall-service: stop and remove the voltaire systemd user units
 uninstall-service:
-	-systemctl --user disable --now voltaire.socket voltaire.service
-	rm -f $(SYSTEMD_USER_DIR)/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.service
+	-systemctl --user disable --now voltaire.socket voltaire.service voltaire-gui.service
+	rm -f $(SYSTEMD_USER_DIR)/voltaire.socket $(SYSTEMD_USER_DIR)/voltaire.service \
+	      $(SYSTEMD_USER_DIR)/voltaire-gui.service
 	systemctl --user daemon-reload
-	@echo "Service removed."
+	@echo "Units removed."
 
 ## install-perms-service: install system service to chmod battery + firmware-attributes sysfs on boot (requires sudo; disables pre-rename z13ctl unit)
 install-perms-service:
