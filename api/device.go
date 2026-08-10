@@ -50,6 +50,14 @@ type PowerInfo struct {
 	TDPMaxSafe   int             `json:"tdp_max_safe"`
 	TDPMaxForced int             `json:"tdp_max_forced"`
 	FloorCurve   []FanCurvePoint `json:"floor_curve,omitempty"`
+
+	// StockProfilePPT maps each firmware profile name to the PPT values the
+	// daemon writes when that profile is selected. A client needs these to tell
+	// "the firmware's numbers" from "numbers the user chose" — without them it
+	// cannot label a limit as stock, and any client deriving that from a
+	// hardcoded table is answering for the wrong machine the moment voltaire
+	// supports a second one. Empty means the device declares no stock table.
+	StockProfilePPT map[string]TDPState `json:"stock_profile_ppt,omitempty"`
 }
 
 // ProfileInfo lists the firmware performance profiles. These are also the

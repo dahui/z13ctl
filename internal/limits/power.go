@@ -16,12 +16,18 @@
 // limits and per-profile PPT defaults. DefaultLimits returns the 2025 Flow Z13's
 // values, which are correct for the only device supported today.
 //
-// The daemon does not yet serve its limits over the API — they live in voltaire's
-// internal/cli, which is not exported through the api module, so they have to be
-// duplicated here for now. When that API lands the only change is where the
-// Limits value comes from: fetch once at startup, Sanitized, falling back to
-// DefaultLimits. Nothing else in the drawer moves. See the design brief in
-// .claude/plans/device-limits-api.md.
+// The daemon serves its limits over the API as the device-get document, and
+// FromDevice (device.go) is how a Limits is built from one: fetched once at
+// startup, Sanitized, falling back to DefaultLimits on any failure. DefaultLimits
+// remains that fallback rather than dead weight — it is what a drawer talking to
+// no daemon, or to one too old to answer device-get, builds its widgets from.
+//
+// Because it is a fallback and not the source, it has to keep agreeing with the
+// device data the daemon serves: TestFromDeviceMatchesDefaultLimitsOnTheZ13 is
+// the guard, and it is the reason the swap is a no-op on the only device shipping
+// today. Before that guard existed the drawer clamped at an 80% fan floor for a
+// release after the daemon had dropped to a 50%-bottomed ramp — the same drift,
+// caught by nothing.
 //
 // If the two ever disagree the daemon wins: it validates against hardware, and
 // these rules only exist so the UI does not present an option that gets rejected.

@@ -273,12 +273,43 @@ func layerShellUsable() bool {
 	return gtk4layershell.IsSupported()
 }
 
+// deviceLimits asks the daemon what this machine's power and thermal envelope
+// actually is, so the drawer stops presenting one laptop's numbers on every
+// machine. Any failure falls back to the built-in Z13 values — a drawer with
+// slightly wrong bounds is worth having, and the daemon validates every write
+// regardless, so the worst case is an option that gets refused rather than a
+// setting that gets through.
+//
+// Fetched once, before any widget exists, because the TDP scales and the fan
+// curve editor bind their ranges at construction: applying new limits later
+// would mean rebuilding them, and there is no second device yet to prove such
+// a path works. The document is static for the daemon's lifetime anyway
+// (api/device.go), so the only case this misses is the drawer starting while
+// the daemon is down — rare, since voltaire.socket is socket-activated and up
+// before graphical-session.target, and harmless on the one device shipping
+// today, where FromDevice and DefaultLimits agree by test.
+func deviceLimits() limits.Limits {
+	handled, info, err := api.SendDeviceGet()
+	switch {
+	case err != nil:
+		slog.Warn("device-get failed, using built-in limits", "err", err)
+		return limits.DefaultLimits()
+	case !handled:
+		slog.Info("daemon not running, using built-in limits")
+		return limits.DefaultLimits()
+	}
+	l := limits.FromDevice(info)
+	slog.Info("device limits", "model", l.Model,
+		"tdpMax", l.TDPMaxForced, "tdpSafe", l.TDPMaxSafe, "fanFloor", l.HighTDPMinPWM)
+	return l
+}
+
 // New creates the overlay window and attaches it to app. Called from the
 // GTK Activate signal.
 func New(app *gtk.Application) *Window {
 	w := &Window{
 		tab:         "keyboard",
-		limits:      limits.DefaultLimits(),
+		limits:      deviceLimits(),
 		colors:      theme.DefaultColors,
 		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 		editProfile: api.DefaultCustomProfile,

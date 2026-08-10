@@ -1066,6 +1066,41 @@ website/                     the docs site (Astro Starlight; see Documentation)
   may grow a GUI-shaped shortcut. The two binaries share exactly two things:
   `internal/version.Version` and the `api` contract. That is what keeps the CLI
   free of cgo and lets the daemon be tested without GTK.
+- **The drawer's limits come from `device-get`, with `DefaultLimits` as the
+  fallback — and the two must stay interchangeable.** `internal/limits` was
+  built for this swap and then sat unused for a release: the daemon shipped the
+  capability document at M2 while `gui.go` still hardcoded
+  `limits.DefaultLimits()`, so a release whose whole point was device
+  abstraction had a drawer that believed every machine was a Z13. The tell was
+  the package doc still saying "the daemon does not yet serve its limits over
+  the API" long after it did. `limits.FromDevice` is the one entry point;
+  `deviceLimits()` in `gui.go` is the only caller, and *any* failure —
+  no daemon, a pre-M2 daemon answering `unknown command`, a malformed reply —
+  falls back rather than erroring, because a drawer with slightly wrong bounds
+  is worth having and the daemon validates every write anyway.
+  Fetched **once, before any widget exists**: the two TDP scales and the fan
+  curve editor bind their ranges at construction, so applying limits later
+  means a rebuild path no second device exists to prove. The document is static
+  for the daemon's lifetime, so the only case this misses is the drawer
+  starting while the daemon is down.
+  `TestDocumentMatchesTheDrawersFallback` (`internal/daemon`) is the guard that
+  makes the fallback safe: device TOML → driver envelope → wire → `FromDevice`
+  must land exactly on `DefaultLimits`, or the drawer behaves differently
+  depending on whether the daemon happened to answer. It lives in the daemon
+  package because that is the only place both halves are reachable —
+  `internal/limits` cannot import the daemon. It caught a real difference on
+  its first run: the envelope carries five PPT rails and the drawer compares
+  three, so `FromDevice` narrows the table to `PL1SPL`/`PL2SPPT`/`FPPT`.
+  Carrying the other two would cost twice — the fallback would stop being
+  interchangeable with the fetched value, and the guard would fire on a
+  difference that means nothing while saying nothing about the ones that do.
+  **Capability *absence* is still not handled.** A nil `Power` or `Fans`
+  section means the device lacks that capability and its controls should be
+  hidden; `FromDevice` fills in defaults instead, because `Limits` describes
+  bounds and cannot say "this control does not exist". Same reasoning defers
+  `Curve` becoming a slice (`Shape().Points`) and firmware profile names coming
+  from `ProfileInfo` rather than `api.StockProfiles`: all three need a device
+  that actually differs before they can be anything but untested generality.
 - **`internal/apiresult` exists because "the daemon is not running" is not an
   error.** Every `api.Send*` returns `(handled bool, err error)`, where
   `handled == false, err == nil` means the dial failed — a CLI caller falls back

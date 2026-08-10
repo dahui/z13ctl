@@ -44,6 +44,16 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 			TDPMaxForced: env.TDPMaxForced,
 			FloorCurve:   append([]api.FanCurvePoint(nil), env.FloorCurve...),
 		}
+		// Copied for the same reason as the floor curve: the wire document must
+		// not alias the envelope's own map, or a client that mutated what it was
+		// given would be editing the device definition every later caller reads.
+		if len(env.StockProfilePPT) > 0 {
+			ppt := make(map[string]api.TDPState, len(env.StockProfilePPT))
+			for name, t := range env.StockProfilePPT {
+				ppt[name] = t
+			}
+			info.Power.StockProfilePPT = ppt
+		}
 	}
 	if hw.Profiles != nil {
 		info.Profiles = &api.ProfileInfo{Names: hw.Profiles.Names()}

@@ -136,7 +136,8 @@ render controls against, instead of hardcoding one device's numbers:
   "id":"asus-rog-flow-z13-2025","model":"GZ302",
   "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255},
   "power":{"tdp_min":5,"tdp_max_safe":75,"tdp_max_forced":93,
-           "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."]},
+           "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."],
+           "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
   "profiles":{"names":["quiet","balanced","performance"]},
   "lighting":{"zones":["keyboard","lightbar"]},
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
@@ -155,6 +156,13 @@ display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].id` is the wire identifier the `feature` commands
 below take.
+
+`power.stock_profile_ppt` gives each firmware profile's PPT defaults, which is
+how a client tells "the firmware's numbers" from "numbers the user chose" —
+`tdp-get` on a stock profile reports that profile's own limits, and without
+this table they are indistinguishable from a custom setting. Compare on
+`pl1_spl`/`pl2_sppt`/`fppt`; the daemon also writes APU and Platform sPPT,
+mirrored from PL2, and they are not part of the comparison.
 
 ### Lighting
 

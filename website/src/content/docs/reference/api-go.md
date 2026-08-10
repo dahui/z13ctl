@@ -1816,7 +1816,7 @@ type FanInfo struct {
 ```
 
 <a name="LightingInfo"></a>
-## type [LightingInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L62-L64>)
+## type [LightingInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L70-L72>)
 
 LightingInfo lists the addressable lighting zone names.
 
@@ -1843,7 +1843,7 @@ type LightingState struct {
 ```
 
 <a name="PowerInfo"></a>
-## type [PowerInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L48-L53>)
+## type [PowerInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L48-L61>)
 
 PowerInfo is the device's power\-limit envelope. Sustained limits above TDPMaxSafe require the caller's explicit force flag and put the fans on FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means the device imposes no floor.
 
@@ -1853,11 +1853,19 @@ type PowerInfo struct {
     TDPMaxSafe   int             `json:"tdp_max_safe"`
     TDPMaxForced int             `json:"tdp_max_forced"`
     FloorCurve   []FanCurvePoint `json:"floor_curve,omitempty"`
+
+    // StockProfilePPT maps each firmware profile name to the PPT values the
+    // daemon writes when that profile is selected. A client needs these to tell
+    // "the firmware's numbers" from "numbers the user chose" — without them it
+    // cannot label a limit as stock, and any client deriving that from a
+    // hardcoded table is answering for the wrong machine the moment voltaire
+    // supports a second one. Empty means the device declares no stock table.
+    StockProfilePPT map[string]TDPState `json:"stock_profile_ppt,omitempty"`
 }
 ```
 
 <a name="ProfileInfo"></a>
-## type [ProfileInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L57-L59>)
+## type [ProfileInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L65-L67>)
 
 ProfileInfo lists the firmware performance profiles. These are also the reserved names: a custom profile can never take one of them.
 
@@ -1983,7 +1991,7 @@ type TDPState struct {
 ```
 
 <a name="ToggleInfo"></a>
-## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L70-L74>)
+## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L82>)
 
 ToggleInfo describes one firmware toggle the device offers. ID is the wire identifier for the feature/feature\-get commands; Label is a human\-readable fallback for clients with no nicer name of their own. Kind says how the value is shaped — "bool" toggles take 0 or 1.
 
@@ -1996,7 +2004,7 @@ type ToggleInfo struct {
 ```
 
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L81>)
+## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L86-L89>)
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 

@@ -10,10 +10,13 @@ package daemon
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/limits"
 )
 
 // TestDeviceGetProjectsTheAssembledDevice pins the document against the same
@@ -65,6 +68,27 @@ func TestDeviceGetProjectsTheAssembledDevice(t *testing.T) {
 		t.Error("mutating the document's floor curve reached the engine's envelope")
 	}
 
+	if len(info.Power.StockProfilePPT) != len(env.StockProfilePPT) {
+		t.Fatalf("stock_profile_ppt has %d entries, want %d — a client cannot tell "+
+			"a firmware limit from one the user chose without them",
+			len(info.Power.StockProfilePPT), len(env.StockProfilePPT))
+	}
+	for name, want := range env.StockProfilePPT {
+		if got := info.Power.StockProfilePPT[name]; got != want {
+			t.Errorf("stock_profile_ppt[%q] = %+v, want %+v", name, got, want)
+		}
+	}
+	// Copied for the same reason as the floor curve, and worth its own check:
+	// a map is shared by reference even when the struct around it is copied.
+	for name := range info.Power.StockProfilePPT {
+		info.Power.StockProfilePPT[name] = api.TDPState{PL1SPL: 1}
+	}
+	for name, v := range testDev.Power.Envelope().StockProfilePPT {
+		if v.PL1SPL == 1 {
+			t.Errorf("mutating the document's stock table reached the engine's envelope at %q", name)
+		}
+	}
+
 	if info.Profiles == nil || len(info.Profiles.Names) != len(c.Profiles.Names) {
 		t.Errorf("profiles = %+v, want the config's names %v", info.Profiles, c.Profiles.Names)
 	}
@@ -88,6 +112,30 @@ func TestDeviceGetProjectsTheAssembledDevice(t *testing.T) {
 	if !info.Battery || !info.Telemetry || !info.Buttons {
 		t.Errorf("presence flags = battery:%v telemetry:%v buttons:%v, want all true on the Z13",
 			info.Battery, info.Telemetry, info.Buttons)
+	}
+}
+
+// TestDocumentMatchesTheDrawersFallback closes the loop the drawer now depends
+// on: device TOML → registry → driver envelope → wire document → limits.Limits
+// must land exactly on limits.DefaultLimits, the value voltaire-gui builds its
+// widgets from when the daemon cannot be reached.
+//
+// The drawer fetches device-get at startup and falls back to DefaultLimits on
+// any failure, so the two are alternatives for the same job and a difference
+// between them is a drawer that behaves differently depending on whether the
+// daemon happened to answer. That drift is not hypothetical: the fan floor
+// dropped from a flat 80% to a 50%-bottomed ramp on the daemon side and the
+// drawer's copy clamped at 80% for a release, with nothing to catch it.
+//
+// This is the only place both halves are reachable at once — internal/limits
+// cannot import the daemon — so the assertion lives here despite limits being
+// a GUI-side package.
+func TestDocumentMatchesTheDrawersFallback(t *testing.T) {
+	got := limits.FromDevice(deviceInfoFor(testDev))
+	want := limits.DefaultLimits()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the Z13 device document does not convert to the drawer's fallback.\n"+
+			"One of them changed without the other:\n from device-get: %+v\n DefaultLimits: %+v", got, want)
 	}
 }
 
