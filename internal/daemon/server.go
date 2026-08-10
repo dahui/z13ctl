@@ -50,6 +50,9 @@ type request struct {
 	// ID names the firmware toggle a feature/feature-get command addresses,
 	// e.g. "boot_sound". The valid set is the device-get document's toggles.
 	ID string `json:"id,omitempty"`
+	// Seconds is telemetry-history's window. Absent means the whole retained
+	// history, which device-get's telemetry.history_seconds gives in advance.
+	Seconds int `json:"seconds,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -60,6 +63,12 @@ type response struct {
 	State  *api.State      `json:"state,omitempty"`
 	Device *api.DeviceInfo `json:"device,omitempty"`
 	Event  string          `json:"event,omitempty"`
+	// History is telemetry-history's payload. It is a typed field rather than
+	// JSON stuffed into Value, following device-get: Value's embedded-JSON
+	// convention exists for the commands that predate a structured reply, and
+	// double-encoding hurts most at exactly this size — a full window is 300
+	// samples, whose every quote would be escaped to be carried as a string.
+	History []api.TelemetrySample `json:"history,omitempty"`
 }
 
 // requestReadTimeout bounds how long a connection may stay open without
@@ -140,6 +149,8 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleBatteryLimitGet()
 	case "device-get":
 		return d.handleDeviceGet()
+	case "telemetry-history":
+		return d.handleTelemetryHistory(req)
 	case "feature":
 		return d.handleFeature(req)
 	case "feature-get":

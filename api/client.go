@@ -129,6 +129,9 @@ type request struct {
 	// ID names the firmware toggle a feature/feature-get command addresses,
 	// e.g. "boot_sound". The valid set is DeviceInfo.Toggles.
 	ID string `json:"id,omitempty"`
+	// Seconds is telemetry-history's window. Absent means the whole retained
+	// history, whose length DeviceInfo.Telemetry.HistorySeconds gives.
+	Seconds int `json:"seconds,omitempty"`
 }
 
 // response is the reply to a command or a streamed event notification.
@@ -139,6 +142,8 @@ type response struct {
 	State  *State      `json:"state,omitempty"`
 	Device *DeviceInfo `json:"device,omitempty"`
 	Event  string      `json:"event,omitempty"`
+
+	History []TelemetrySample `json:"history,omitempty"`
 }
 
 // dialTimeout bounds establishing the connection; commandTimeout bounds the
@@ -150,6 +155,13 @@ type response struct {
 var (
 	dialTimeout    = time.Second
 	commandTimeout = 10 * time.Second
+)
+
+// Response size bounds for the reader. initialResponseBuf is what almost every
+// command fits in; maxResponseBytes is the ceiling a bulk reply may reach.
+const (
+	initialResponseBuf = 64 * 1024
+	maxResponseBytes   = 4 * 1024 * 1024
 )
 
 // sendCommand connects to the daemon and sends req, returning the response.
@@ -175,6 +187,13 @@ func sendCommand(req request) (bool, *response, error) {
 
 	var resp response
 	scanner := bufio.NewScanner(conn)
+	// bufio.Scanner's default ceiling is 64 KiB, which every command fitted
+	// under until telemetry-history: a device declaring an hour of 1 Hz history
+	// answers with 3600 samples, and the response would be rejected as "token
+	// too long" — a failure that looks like a broken daemon and depends on
+	// device data. The ceiling is what stops a wedged or hostile daemon growing
+	// the client's memory without bound, so it is raised rather than removed.
+	scanner.Buffer(make([]byte, 0, initialResponseBuf), maxResponseBytes)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
 			return true, nil, fmt.Errorf("reading daemon response: %w", err)
@@ -634,6 +653,25 @@ func SendDeviceGet() (handled bool, info *DeviceInfo, err error) {
 		return true, nil, respErr(resp)
 	}
 	return true, resp.Device, nil
+}
+
+// SendTelemetryHistory fetches the samples the daemon recorded within the last
+// seconds, oldest first. A non-positive seconds asks for the whole retained
+// history, whose length DeviceInfo.Telemetry.HistorySeconds reports in advance.
+//
+// The result is empty, not an error, when the daemon has been up for less than
+// a sample interval or the device keeps no history. handled=false means the
+// daemon is not running; there is no fallback, since the history only exists in
+// the daemon's memory — nothing persists it, so a restart starts it over.
+func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample, err error) {
+	handled, resp, err := sendCommand(request{Cmd: "telemetry-history", Seconds: seconds})
+	if !handled || err != nil {
+		return handled, nil, err
+	}
+	if !resp.OK {
+		return true, nil, respErr(resp)
+	}
+	return true, resp.History, nil
 }
 
 // SendFeatureGet queries the daemon for a firmware toggle's current value by

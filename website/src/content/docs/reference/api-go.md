@@ -76,6 +76,8 @@ Package api provides the public client interface for the voltaire daemon. It con
   - [func \(s State\) IsCustomProfile\(name string\) bool](<#State.IsCustomProfile>)
 - [type TDPState](<#TDPState>)
 - [type TelemetryInfo](<#TelemetryInfo>)
+- [type TelemetrySample](<#TelemetrySample>)
+  - [func SendTelemetryHistory\(seconds int\) \(handled bool, samples \[\]TelemetrySample, err error\)](<#SendTelemetryHistory>)
 - [type ToggleInfo](<#ToggleInfo>)
 - [type UndervoltInfo](<#UndervoltInfo>)
 - [type UndervoltState](<#UndervoltState>)
@@ -145,7 +147,7 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
 <a name="IsStockProfileName"></a>
-## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L58>)
+## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L78>)
 
 ```go
 func IsStockProfileName(name string) bool
@@ -154,7 +156,7 @@ func IsStockProfileName(name string) bool
 IsStockProfileName reports whether name is one of the reserved firmware profile names.
 
 <a name="SendApply"></a>
-## func [SendApply](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L194>)
+## func [SendApply](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L213>)
 
 ```go
 func SendApply(device, color, color2, mode, speed string, brightness int) (bool, error)
@@ -195,7 +197,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchGet"></a>
-## func [SendAutoswitchGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L597>)
+## func [SendAutoswitchGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L616>)
 
 ```go
 func SendAutoswitchGet() (handled bool, value string, err error)
@@ -244,7 +246,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchSet"></a>
-## func [SendAutoswitchSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L578>)
+## func [SendAutoswitchSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L597>)
 
 ```go
 func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error)
@@ -286,7 +288,7 @@ func main() {
 </details>
 
 <a name="SendBatteryLimitGet"></a>
-## func [SendBatteryLimitGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L257>)
+## func [SendBatteryLimitGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L276>)
 
 ```go
 func SendBatteryLimitGet() (handled bool, limit int, err error)
@@ -327,7 +329,7 @@ func main() {
 </details>
 
 <a name="SendBatteryLimitSet"></a>
-## func [SendBatteryLimitSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L286>)
+## func [SendBatteryLimitSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L305>)
 
 ```go
 func SendBatteryLimitSet(limit int) (bool, error)
@@ -368,7 +370,7 @@ func main() {
 </details>
 
 <a name="SendBootSoundGet"></a>
-## func [SendBootSoundGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L323>)
+## func [SendBootSoundGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L342>)
 
 ```go
 func SendBootSoundGet() (handled bool, value int, err error)
@@ -409,7 +411,7 @@ func main() {
 </details>
 
 <a name="SendBootSoundSet"></a>
-## func [SendBootSoundSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L298>)
+## func [SendBootSoundSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L317>)
 
 ```go
 func SendBootSoundSet(value int) (bool, error)
@@ -450,7 +452,7 @@ func main() {
 </details>
 
 <a name="SendBrightness"></a>
-## func [SendBrightness](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L228>)
+## func [SendBrightness](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L247>)
 
 ```go
 func SendBrightness(device string, level int) (bool, error)
@@ -491,7 +493,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveGet"></a>
-## func [SendFanCurveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L359>)
+## func [SendFanCurveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L378>)
 
 ```go
 func SendFanCurveGet() (handled bool, value string, err error)
@@ -532,7 +534,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveReset"></a>
-## func [SendFanCurveReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L392>)
+## func [SendFanCurveReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L411>)
 
 ```go
 func SendFanCurveReset() (bool, error)
@@ -573,7 +575,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveResetFor"></a>
-## func [SendFanCurveResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L399>)
+## func [SendFanCurveResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L418>)
 
 ```go
 func SendFanCurveResetFor(profile string) (bool, error)
@@ -614,7 +616,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSet"></a>
-## func [SendFanCurveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L373>)
+## func [SendFanCurveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L392>)
 
 ```go
 func SendFanCurveSet(curve string) (bool, error)
@@ -655,7 +657,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSetFor"></a>
-## func [SendFanCurveSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L380>)
+## func [SendFanCurveSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L399>)
 
 ```go
 func SendFanCurveSetFor(profile, curve string) (bool, error)
@@ -697,7 +699,7 @@ func main() {
 </details>
 
 <a name="SendFeatureGet"></a>
-## func [SendFeatureGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L642>)
+## func [SendFeatureGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L680>)
 
 ```go
 func SendFeatureGet(id string) (handled bool, value int, err error)
@@ -738,7 +740,7 @@ func main() {
 </details>
 
 <a name="SendFeatureSet"></a>
-## func [SendFeatureSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L659>)
+## func [SendFeatureSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L697>)
 
 ```go
 func SendFeatureSet(id string, value int) (bool, error)
@@ -779,7 +781,7 @@ func main() {
 </details>
 
 <a name="SendOff"></a>
-## func [SendOff](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L215>)
+## func [SendOff](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L234>)
 
 ```go
 func SendOff(device string) (bool, error)
@@ -820,7 +822,7 @@ func main() {
 </details>
 
 <a name="SendPanelOverdriveGet"></a>
-## func [SendPanelOverdriveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L341>)
+## func [SendPanelOverdriveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L360>)
 
 ```go
 func SendPanelOverdriveGet() (handled bool, value int, err error)
@@ -861,7 +863,7 @@ func main() {
 </details>
 
 <a name="SendPanelOverdriveSet"></a>
-## func [SendPanelOverdriveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L310>)
+## func [SendPanelOverdriveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L329>)
 
 ```go
 func SendPanelOverdriveSet(value int) (bool, error)
@@ -902,7 +904,7 @@ func main() {
 </details>
 
 <a name="SendProfileCreate"></a>
-## func [SendProfileCreate](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L524>)
+## func [SendProfileCreate](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L543>)
 
 ```go
 func SendProfileCreate(name string) (bool, error)
@@ -944,7 +946,7 @@ func main() {
 </details>
 
 <a name="SendProfileDelete"></a>
-## func [SendProfileDelete](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L550>)
+## func [SendProfileDelete](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L569>)
 
 ```go
 func SendProfileDelete(name string) (bool, error)
@@ -986,7 +988,7 @@ func main() {
 </details>
 
 <a name="SendProfileGet"></a>
-## func [SendProfileGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L242>)
+## func [SendProfileGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L261>)
 
 ```go
 func SendProfileGet() (handled bool, profile string, err error)
@@ -1027,7 +1029,7 @@ func main() {
 </details>
 
 <a name="SendProfileList"></a>
-## func [SendProfileList](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L564>)
+## func [SendProfileList](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L583>)
 
 ```go
 func SendProfileList() (handled bool, value string, err error)
@@ -1078,7 +1080,7 @@ func main() {
 </details>
 
 <a name="SendProfileSave"></a>
-## func [SendProfileSave](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L537>)
+## func [SendProfileSave](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L556>)
 
 ```go
 func SendProfileSave(name string) (bool, error)
@@ -1120,7 +1122,7 @@ func main() {
 </details>
 
 <a name="SendProfileSet"></a>
-## func [SendProfileSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L274>)
+## func [SendProfileSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L293>)
 
 ```go
 func SendProfileSet(profile string) (bool, error)
@@ -1161,7 +1163,7 @@ func main() {
 </details>
 
 <a name="SendTdpGet"></a>
-## func [SendTdpGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L412>)
+## func [SendTdpGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L431>)
 
 ```go
 func SendTdpGet() (handled bool, value string, err error)
@@ -1202,7 +1204,7 @@ func main() {
 </details>
 
 <a name="SendTdpReset"></a>
-## func [SendTdpReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L453>)
+## func [SendTdpReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L472>)
 
 ```go
 func SendTdpReset() (bool, error)
@@ -1243,7 +1245,7 @@ func main() {
 </details>
 
 <a name="SendTdpResetFor"></a>
-## func [SendTdpResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L459>)
+## func [SendTdpResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L478>)
 
 ```go
 func SendTdpResetFor(profile string) (bool, error)
@@ -1283,7 +1285,7 @@ func main() {
 </details>
 
 <a name="SendTdpSet"></a>
-## func [SendTdpSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L426>)
+## func [SendTdpSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L445>)
 
 ```go
 func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error)
@@ -1324,7 +1326,7 @@ func main() {
 </details>
 
 <a name="SendTdpSetFor"></a>
-## func [SendTdpSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L433>)
+## func [SendTdpSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L452>)
 
 ```go
 func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error)
@@ -1367,7 +1369,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltGet"></a>
-## func [SendUndervoltGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L472>)
+## func [SendUndervoltGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L491>)
 
 ```go
 func SendUndervoltGet() (handled bool, value string, err error)
@@ -1408,7 +1410,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltReset"></a>
-## func [SendUndervoltReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L506>)
+## func [SendUndervoltReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L525>)
 
 ```go
 func SendUndervoltReset() (bool, error)
@@ -1449,7 +1451,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltResetFor"></a>
-## func [SendUndervoltResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L512>)
+## func [SendUndervoltResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L531>)
 
 ```go
 func SendUndervoltResetFor(profile string) (bool, error)
@@ -1489,7 +1491,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSet"></a>
-## func [SendUndervoltSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L487>)
+## func [SendUndervoltSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L506>)
 
 ```go
 func SendUndervoltSet(cpu string) (bool, error)
@@ -1530,7 +1532,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSetFor"></a>
-## func [SendUndervoltSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L494>)
+## func [SendUndervoltSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L513>)
 
 ```go
 func SendUndervoltSetFor(profile, cpu string) (bool, error)
@@ -1590,7 +1592,7 @@ SocketPaths returns every socket path the daemon serves, canonical first.
 The second entry is the pre\-rename z13ctl path. The daemon listens on both through the whole 2.x line so clients that hardcode the old path — the Decky plugin speaks it directly, and pre\-2.0 Go clients compiled it in — keep working across the rename; it is removed at 3.0. Clients dial in order and use the first that answers, which also covers the upgrade window where a pre\-2.0 daemon is still running on the old path only.
 
 <a name="Subscribe"></a>
-## func [Subscribe](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L692>)
+## func [Subscribe](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L730>)
 
 ```go
 func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error)
@@ -1662,7 +1664,7 @@ The firmware profile names are reserved so that selecting one always reaches the
 Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
 
 <a name="AutoswitchState"></a>
-## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L86-L90>)
+## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L106-L110>)
 
 AutoswitchState configures automatic profile selection by power source. An empty AC or Battery target means "leave the profile alone on that source", which is how a caller hands one side back to power\-profiles\-daemon.
 
@@ -1675,7 +1677,7 @@ type AutoswitchState struct {
 ```
 
 <a name="AutoswitchState.Target"></a>
-### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L94>)
+### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L114>)
 
 ```go
 func (a *AutoswitchState) Target(onAC bool) string
@@ -1696,7 +1698,7 @@ type BatteryInfo struct {
 ```
 
 <a name="CustomProfile"></a>
-## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L70-L75>)
+## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L90-L95>)
 
 CustomProfile is a named set of custom hardware settings. Each subsystem is a pointer so that nil means "this profile does not control that subsystem", which is what lets a profile stay loadable as new subsystems are added.
 
@@ -1710,7 +1712,7 @@ type CustomProfile struct {
 ```
 
 <a name="CustomProfile.Empty"></a>
-### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L79>)
+### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L99>)
 
 ```go
 func (p CustomProfile) Empty() bool
@@ -1744,7 +1746,7 @@ type DeviceInfo struct {
 ```
 
 <a name="SendDeviceGet"></a>
-### func [SendDeviceGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L628>)
+### func [SendDeviceGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L647>)
 
 ```go
 func SendDeviceGet() (handled bool, info *DeviceInfo, err error)
@@ -1792,7 +1794,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L152-L155>)
+## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L172-L175>)
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -1804,7 +1806,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L158-L161>)
+## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L178-L181>)
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -1841,7 +1843,7 @@ type LightingInfo struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L142-L149>)
+## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L162-L169>)
 
 LightingState captures all parameters needed to reproduce one lighting zone.
 
@@ -1928,7 +1930,7 @@ type State struct {
 ```
 
 <a name="SendGetState"></a>
-### func [SendGetState](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L611>)
+### func [SendGetState](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L630>)
 
 ```go
 func SendGetState() (bool, *State, error)
@@ -1969,7 +1971,7 @@ func main() {
 </details>
 
 <a name="State.ActiveCustomProfile"></a>
-### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L129>)
+### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L149>)
 
 ```go
 func (s State) ActiveCustomProfile() (CustomProfile, bool)
@@ -1978,7 +1980,7 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool)
 ActiveCustomProfile returns the active custom profile and true, or the zero value and false when a stock profile is active.
 
 <a name="State.InCustomProfile"></a>
-### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L125>)
+### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L145>)
 
 ```go
 func (s State) InCustomProfile() bool
@@ -1987,7 +1989,7 @@ func (s State) InCustomProfile() bool
 InCustomProfile reports whether the active profile is a custom one.
 
 <a name="State.IsCustomProfile"></a>
-### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L113>)
+### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L133>)
 
 ```go
 func (s State) IsCustomProfile(name string) bool
@@ -2000,7 +2002,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L172-L178>)
+## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L192-L198>)
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -2028,6 +2030,74 @@ type TelemetryInfo struct {
 }
 ```
 
+<a name="TelemetrySample"></a>
+## type [TelemetrySample](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L59-L64>)
+
+TelemetrySample is one reading from the daemon's sample history, as returned by SendTelemetryHistory. The daemon samples at 1 Hz.
+
+At is Unix seconds — compact enough to carry a few hundred of them, and unambiguous, which a relative offset would not be across the gap a suspend leaves. Samples are not evenly spaced: the sampler stands down while the machine is suspending and skips a failed read rather than recording a zero, so a client must plot against At and never against the slice index.
+
+A field that the device does not report is omitted rather than zeroed. PackagePowerW in particular is absent on any device whose DeviceInfo.Telemetry.PowerDraw is empty, which is the signal to hide the power graph instead of drawing it flat.
+
+```go
+type TelemetrySample struct {
+    At            int64   `json:"at"`
+    TempC         int     `json:"temp_c,omitempty"`
+    RPM           []int   `json:"rpm,omitempty"`
+    PackagePowerW float64 `json:"package_power_w,omitempty"`
+}
+```
+
+<a name="SendTelemetryHistory"></a>
+### func [SendTelemetryHistory](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L666>)
+
+```go
+func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample, err error)
+```
+
+SendTelemetryHistory fetches the samples the daemon recorded within the last seconds, oldest first. A non\-positive seconds asks for the whole retained history, whose length DeviceInfo.Telemetry.HistorySeconds reports in advance.
+
+The result is empty, not an error, when the daemon has been up for less than a sample interval or the device keeps no history. handled=false means the daemon is not running; there is no fallback, since the history only exists in the daemon's memory — nothing persists it, so a restart starts it over.
+
+<details><summary>Example</summary>
+<p>
+
+
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/dahui/voltaire/api/v2"
+)
+
+func main() {
+	// Plot the last minute of readings. Ask device-get first for how much
+	// history exists and whether a package-power graph is worth drawing at all.
+	handled, samples, err := api.SendTelemetryHistory(60)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, s := range samples {
+		// Plot against s.At, never the slice index: samples are not evenly
+		// spaced, because the sampler stands down across a suspend and skips a
+		// failed read rather than recording a zero.
+		fmt.Println(time.Unix(s.At, 0).Format(time.TimeOnly), s.TempC, "°C")
+	}
+}
+```
+
+</p>
+</details>
+
 <a name="ToggleInfo"></a>
 ## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L82>)
 
@@ -2054,7 +2124,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L166-L169>)
+## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L186-L189>)
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

@@ -33,6 +33,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/telemetryring"
 )
 
 // Daemon holds the runtime state for the long-running voltaire process.
@@ -74,6 +75,12 @@ type Daemon struct {
 	// idle tick to reset on. Without this the budget accumulated across suspends
 	// and eventually expired *inside* a real pre-freeze window.
 	suspendGen int
+
+	// telemetry is the sampler's history ring, sized by Run from the device's
+	// declared window. It carries its own lock and is never read directly —
+	// history() substitutes an empty ring for the Daemons tests build as struct
+	// literals.
+	telemetry *telemetryring.Ring
 
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
@@ -148,6 +155,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("assembling device drivers: %w", err)
 	}
 	d.hw = hw
+	d.telemetry = newTelemetryRing(hw)
 	slog.Info("device assembled", "id", hw.ID, "model", hw.Model)
 
 	d.state = loadState()
@@ -303,6 +311,10 @@ func Run(ctx context.Context, opts Options) error {
 
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)
+
+	// Inert on a device with no telemetry source or no declared history; the
+	// tick decides, so there is one place to read the rule.
+	go d.watchTelemetry(ctx)
 
 	lns, err := d.getListeners()
 	if err != nil {

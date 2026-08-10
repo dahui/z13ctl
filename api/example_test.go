@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 )
@@ -524,6 +525,26 @@ func ExampleSendDeviceGet() {
 	}
 	for _, t := range info.Toggles {
 		fmt.Println("toggle:", t.ID, "-", t.Label)
+	}
+}
+
+func ExampleSendTelemetryHistory() {
+	// Plot the last minute of readings. Ask device-get first for how much
+	// history exists and whether a package-power graph is worth drawing at all.
+	handled, samples, err := api.SendTelemetryHistory(60)
+	if !handled {
+		fmt.Println("daemon not running")
+		return
+	}
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, s := range samples {
+		// Plot against s.At, never the slice index: samples are not evenly
+		// spaced, because the sampler stands down across a suspend and skips a
+		// failed read rather than recording a zero.
+		fmt.Println(time.Unix(s.At, 0).Format(time.TimeOnly), s.TempC, "°C")
 	}
 }
 

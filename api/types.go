@@ -43,6 +43,26 @@ type State struct {
 	BatteryHealth int `json:"battery_health,omitempty"`
 }
 
+// TelemetrySample is one reading from the daemon's sample history, as returned
+// by SendTelemetryHistory. The daemon samples at 1 Hz.
+//
+// At is Unix seconds — compact enough to carry a few hundred of them, and
+// unambiguous, which a relative offset would not be across the gap a suspend
+// leaves. Samples are not evenly spaced: the sampler stands down while the
+// machine is suspending and skips a failed read rather than recording a zero,
+// so a client must plot against At and never against the slice index.
+//
+// A field that the device does not report is omitted rather than zeroed.
+// PackagePowerW in particular is absent on any device whose
+// DeviceInfo.Telemetry.PowerDraw is empty, which is the signal to hide the
+// power graph instead of drawing it flat.
+type TelemetrySample struct {
+	At            int64   `json:"at"`
+	TempC         int     `json:"temp_c,omitempty"`
+	RPM           []int   `json:"rpm,omitempty"`
+	PackagePowerW float64 `json:"package_power_w,omitempty"`
+}
+
 // StockProfiles are the firmware performance profiles that can be written to
 // platform_profile. They are reserved: a custom profile can never take one of
 // these names, so selecting one always reaches the firmware profile.

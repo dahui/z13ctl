@@ -80,6 +80,11 @@ internal/
                              the suspend gate and its ceiling
     server.go                JSON request handler; handleConn(), dispatch(), command handlers, restoreStockPPT(), effectiveProfile()
     deviceinfo.go            device-get capability document (pure deviceInfoFor) + feature/feature-get handlers
+    telemetry.go             1 Hz sampler → telemetryring; pure telemetryTick seam (stands down while
+                             suspending, for a different reason than the other watchers — see below);
+                             telemetry-history handler; history() substitutes an empty ring
+    telemetry_test.go        telemetryTick decision table + the stand-down through sampleOnce +
+                             the history handler's window and defaults
     server_test.go           request validation + dispatch routing (no hardware access)
     state_test.go            state persistence: round-trip, corrupt-file preservation, temp cleanup,
                              legacy migration, reserved-name sanitisation
@@ -392,6 +397,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | boot sound set | `{"cmd":"bootsound","set":"1"}` | `ok` |
   | boot sound get | `{"cmd":"bootsound-get"}` | `ok`, `value` |
   | device document | `{"cmd":"device-get"}` | `ok`, `device` (capabilities/limits; static, cacheable) |
+  | telemetry history | `{"cmd":"telemetry-history","seconds":60}` | `ok`, `history` (typed array; absent `seconds` = the whole window) |
   | feature set | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
   | feature get | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
   | panel overdrive set | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
@@ -1196,6 +1202,48 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   that produced the `saveState` race. Every value crossing the boundary is
   deep-copied in both directions, because `driver.Sample` carries an RPM slice
   a driver is free to reuse.
+- **The telemetry sampler stands down while suspending for a *different reason*
+  than the other watchers, and the difference is load-bearing.** `reconcileTick`
+  and `powerTick` stand down because they **write hardware**, and a write landing
+  between `PrepareForSleep(true)` and the freeze undoes the fan release that lets
+  the EC stop the fans overnight — the `powerSourceOnce` bug. The sampler writes
+  nothing, so it cannot do that harm; it stands down because the samples would be
+  *misleading*. The pre-sleep release has already lowered the PPT and handed the
+  fans to firmware auto, so a sample taken there records the released machine and
+  the graph shows a thermal cliff seconds before a suspend that explains nothing.
+  Cosmetic, not a safety property — but the graph is the whole feature. Stating
+  it as "same lesson as powersource" would be wrong in a way that matters if
+  anyone relaxes it.
+  It needs **no staleness ceiling** for the same reason: `reconcileTick` counts
+  awake ticks against `reconcileSuspendMaxTicks` because a lost
+  `PrepareForSleep(false)` would leave the fans undefended forever, whereas here
+  a lost resume costs a gap in a graph until the next suspend clears the flag,
+  and re-arming on a guess would put samples back exactly where they are least
+  trustworthy. `sampleOnce` also takes neither `hwMu` nor `d.mu` for the read
+  itself, on the same grounds `*-get` handlers do not: blocking the dashboard's
+  data behind a fan write sequence is the regression, not the protection.
+- **A failed sample is a gap, not a zero, and the wire carries timestamps so a
+  client can see it.** `api.TelemetrySample.At` is Unix seconds and samples are
+  **not evenly spaced** — the sampler stands down across a suspend and skips a
+  failed read — so a client that plots against the array index draws a suspend
+  as if no time passed. Recording a zero instead would be worse than the gap: 0°C
+  reads as a measurement.
+- **`telemetry-history` is a typed `history` field, not JSON stuffed into
+  `value`.** `Value`'s embedded-JSON convention exists for the commands that
+  predate a structured reply; `device-get` established the typed field, and
+  double-encoding hurts most at exactly this size — a full window is 300 samples
+  whose every quote would be escaped to travel as a string. Sending it also
+  raised `api.sendCommand`'s reader ceiling: `bufio.Scanner` defaults to 64 KiB,
+  which every command fitted under until this one, and a device declaring an hour
+  of history would answer with 3600 samples and fail as "token too long" — a
+  failure that looks like a broken daemon and depends on device data. The ceiling
+  is raised to 4 MiB rather than removed, since it is what stops a wedged daemon
+  growing the client's memory without bound.
+  The **wire default differs from the ring's on purpose**: absent `seconds` means
+  the whole retained window, while `telemetryring.Since` refuses a non-positive
+  duration. The ring cannot tell a caller that meant "everything" from one that
+  failed to parse its own field; the protocol can, and every other read command
+  here answers with all it has when given no argument.
 - **`internal/apiresult` exists because "the daemon is not running" is not an
   error.** Every `api.Send*` returns `(handled bool, err error)`, where
   `handled == false, err == nil` means the dial failed — a CLI caller falls back

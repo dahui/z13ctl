@@ -126,6 +126,7 @@ Connections are single-shot — the daemon replies once and closes — except
 | Command | Request | Response |
 |---|---|---|
 | Device document | `{"cmd":"device-get"}` | `ok`, `device` |
+| Telemetry history | `{"cmd":"telemetry-history","seconds":60}` | `ok`, `history` |
 
 `device-get` returns the capability/limits document for the device the daemon
 was assembled with — what the machine can do, and the bounds to validate and
@@ -170,6 +171,21 @@ requesting, and `telemetry.power_draw` names the package-power source
 package power is always zero and the graph should be hidden rather than drawn
 flat. The Z13 currently declares no power source: its `energy_uj` is root-only
 under the Platypus mitigation, so nothing reads it yet.
+
+`telemetry-history` returns what the daemon sampled at 1 Hz, oldest first:
+
+```json
+{"ok":true,"history":[{"at":1786000000,"temp_c":44,"rpm":[2100,2050]},
+                      {"at":1786000001,"temp_c":45,"rpm":[2150,2100]}, "..."]}
+```
+
+Omit `seconds` for the whole retained window (`telemetry.history_seconds`).
+**Plot against `at` — Unix seconds — never against the array index.** Samples
+are not evenly spaced: the sampler stands down while the machine is suspending
+and skips a failed read rather than recording a zero, so gaps are real and
+meaningful. The history lives only in the daemon's memory, so a daemon restart
+starts it over; an empty `history` is a daemon that has been up for less than a
+sample interval, not an error.
 
 `power.stock_profile_ppt` gives each firmware profile's PPT defaults, which is
 how a client tells "the firmware's numbers" from "numbers the user chose" —
