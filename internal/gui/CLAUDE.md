@@ -469,6 +469,33 @@ to stock GTK colours and stopped following the theme. Both are now removed, with
 changes, grep the CSS for its element selector**: a rule that no longer matches
 fails silently and looks like a theming gap rather than dead code.
 
+### Focus coordinates: `focusgrid.Builder` exists; the views are not converted yet
+
+`internal/focusgrid/builder.go` (M4 groundwork, landed pure and tested ahead of
+any widget change — that ordering is the mitigation for the plan's risk #4)
+declares a layout and computes the coordinates, instead of the views
+incrementing a `row` variable between appends. `buildMainFocusList` and
+`buildCustomFocusList` still hand-number, and
+`TestReproducesTheMainViewLayout` pins the Builder against the main view's
+current coordinates so the conversion has a parity proof to convert *to*.
+
+Two things the hand-numbered form gets wrong that the Builder cannot:
+
+- A grid's height is written twice — `modeBase + i/3` in the loop and
+  `row = modeBase + 1` after it. Those agree only while `modeOrder` holds
+  exactly six entries. A seventh mode puts a button on the row the next section
+  claims, so D-pad down from the grid reaches the wrong control and nothing
+  looks wrong on screen. `Grid` advances by the ceiling.
+- Every coordinate assumes the panel stacks downward, so a top- or bottom-edge
+  quickbar needs all of them transposed. `Orientation` applies that once, at
+  the end; `Horizontal` is *defined* as the transpose of `Vertical` rather than
+  as a second set of rules, and a property test asserts it over a non-trivial
+  layout.
+
+Until the conversion lands, a new row still has to be hand-numbered — but add
+it to the Builder's parity test in the same commit, or the test stops
+describing the view it is meant to guard.
+
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 
 Every tappable control in the drawer is `min-height: 48px` — `.btn-group
