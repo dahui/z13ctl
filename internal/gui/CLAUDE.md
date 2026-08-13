@@ -77,7 +77,10 @@ internal/gui/overlay/
   overlay.go                    Fullscreen transparent click-through backend
                                 (GNOME/Mutter and anything without layer-shell)
 internal/gui/gamepad/
-  gamepad.go                    evdev gamepad reader; device classification + EVIOCGRAB
+  gamepad.go                    evdev gamepad reader; two-pass scan + EVIOCGRAB.
+                                classify() is a PURE function over identity and
+                                capabilities, and gamepad_test.go drives it — this
+                                package IS in HERMETIC_PKGS (see below)
   steam.go                      Steam PID discovery; drives the hidraw blocker
 internal/gui/gamepad/hidblocker/
   hidblocker.go                 BPF LSM blocker: blocks hidraw reads for specific PIDs
@@ -201,9 +204,19 @@ contrib/
   `uiscale`, `startup`, `togglegate`); the GTK files are thin adaptors that read
   widgets, call out, and apply the answer. Extracting logic this way has caught
   seven real bugs so far, none of which were found by reading the code.
-  - `make test` derives its package list with
-    `go list ./internal/... | grep -v /internal/gui`, so a new pure package is
-    picked up automatically — nothing to remember.
+  - `make test` derives its package list (`HERMETIC_PKGS`) rather than
+    hand-listing it, so a new pure package is picked up automatically — nothing
+    to remember.
+  - **The boundary is cgo/GTK, not the directory name, and the two must not be
+    confused.** `internal/gui/gamepad` and `internal/gui/gamepad/hidblocker` are
+    an evdev reader and a cilium/ebpf loader that merely *live* under
+    `internal/gui`; both compile with `CGO_ENABLED=0` and both are in
+    `HERMETIC_PKGS`. The exclusion was a substring match on the path, so it had
+    been swallowing them by location rather than by rule — which is how
+    `hidblocker_test.go` went unexecuted from the day it was written, and how a
+    device-classification fix ported from z13gui arrived carrying 280 lines of
+    tests that would never have run. Keep the list derived from the rule; if a
+    package here compiles cgo-free, it belongs in the run.
   - **Never read or write a GTK widget from a goroutine.** GTK is not thread-safe;
     this is undefined behaviour, not a stale read. Snapshot widget values on the
     main thread into plain data, then do the socket call in the goroutine — see
@@ -771,9 +784,10 @@ make release    # goreleaser build + publish
 
 Requires at build time: `gtk4-layer-shell` C library (`pkg-config gtk4-layer-shell-0`).
 
-`make test` derives its package list from `go list ./internal/...` minus
-`internal/gui`, because `internal/gui` needs CGO and GTK4 headers while `go list`
-only reads source. A new pure package is therefore tested automatically. `make race`
+`make test` derives its package list (`HERMETIC_PKGS`) rather than hand-listing
+it, excluding `internal/gui` because it needs CGO and GTK4 headers while
+`go list` only reads source — but adding back `internal/gui/gamepad/...`, which
+is cgo-free. A new pure package is therefore tested automatically. `make race`
 runs the same set under the race detector; `make cover` reports per-function
 coverage.
 

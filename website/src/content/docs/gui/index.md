@@ -202,6 +202,26 @@ Run with debug logging to see GTK and initialization output:
 voltaire-gui --debug
 ```
 
+**Touchscreen or touchpad stops responding while the drawer is open**
+
+This was a bug in z13gui, fixed before the voltaire rename — no voltaire release
+has it. On z13gui 1.4.0 and earlier, the drawer could mistake the machine's own
+touchpad and touchscreen for a game controller's touchpad and take exclusive
+access (`EVIOCGRAB`) to them for as long as it was open, which stopped touch
+input reaching the desktop entirely. A stylus was unaffected, and pressing `Esc`
+to dismiss the drawer gave the devices back.
+
+Only users whose account can open those device nodes were affected — normally
+that means membership of the `input` group, since stock udev rules grant the
+session user access to joysticks but not to touch devices. Neither
+`99-voltaire.rules` nor `99-voltaire-gamepad.rules` grants access to touch
+devices.
+
+If you are seeing this, you are running z13gui rather than voltaire-gui. Note
+that `/usr/bin/z13gui` is a compatibility symlink to `voltaire-gui`, so the
+command name alone does not tell you which binary is running — check
+`voltaire-gui --version`.
+
 **Gamescope: controller input not suppressed while drawer is open**
 
 Grant BPF capabilities so voltaire-gui can block controller input at the

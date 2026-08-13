@@ -22,9 +22,20 @@ HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
 # HERMETIC_PKGS is every package that compiles without CGO and GTK4 headers,
 # derived rather than hand-listed so a newly added package is tested
 # automatically. internal/gui (the cgo island) and voltaire-gui (the main
-# package importing it) are excluded by construction — that is the boundary:
-# widgets there, decisions in the pure packages.
-HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | grep -v -e '/internal/gui' -e '/voltaire-gui')
+# package importing it) are excluded — that is the boundary: widgets there,
+# decisions in the pure packages.
+#
+# internal/gui/gamepad and its hidblocker are then added back, because the
+# criterion above is "compiles without CGO and GTK4 headers" and both do: they
+# are an evdev reader and a cilium/ebpf loader that happen to live under
+# internal/gui. The grep is a substring match, so it had been swallowing them by
+# path rather than by rule — which is how a fix for a device-classification bug
+# arrived from z13gui carrying 280 lines of tests that would never have run, and
+# how hidblocker_test.go went unexecuted since it was written. Keep this list
+# derived from the rule, not from where a file happens to sit.
+HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | \
+	grep -v -e '/internal/gui' -e '/voltaire-gui'; \
+	go list ./internal/gui/gamepad/... 2>/dev/null)
 
 .PHONY: build build-gui build-all test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
 
@@ -47,8 +58,8 @@ build-all: build build-gui
 
 ## test: run all tests (both modules — api/ is separate, so ./... misses it).
 ## internal/gui is the cgo island and voltaire-gui is the main package that
-## imports it: neither has tests, but ./... would still compile both, dragging
-## GTK4 headers into what must stay a hermetic run.
+## imports it; ./... would compile both, dragging GTK4 headers into what must
+## stay a hermetic run. See HERMETIC_PKGS for the two subpackages that are in.
 test:
 	go test $(HERMETIC_PKGS)
 	cd api && go test ./...

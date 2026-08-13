@@ -9,10 +9,12 @@
 // Device classification:
 //   - gamepad: full controllers (Xbox, PS, Switch, virtual Steam devices) →
 //     read events + EVIOCGRAB to suppress background game input
-//   - grab-only: related input devices (PS touchpad) → EVIOCGRAB only,
-//     events discarded (prevents touchpad acting as mouse in background)
+//   - grab-only: a controller's *own* secondary devices (the PS touchpad) →
+//     EVIOCGRAB only, events discarded (prevents touchpad acting as mouse in
+//     background). A multitouch device only qualifies when a gamepad from the
+//     same physical controller is already tracked; see classify.
 //   - ignored: accelerometers/gyro (INPUT_PROP_ACCELEROMETER), keyboards,
-//     mice, and other non-gamepad devices
+//     mice, the machine's own touchpad and touchscreen, and everything else
 //
 // Permissions: on modern systemd (Arch, Fedora, Ubuntu 22.04+), the uaccess
 // udev tag in 70-uaccess.rules grants the active session user ACL access to
@@ -24,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,7 +134,7 @@ func (r *Reader) Stop() {
 // SetGrabbed acquires (grab=true) or releases (grab=false) exclusive access
 // (EVIOCGRAB) on every tracked device, so events either reach only the drawer or
 // go back to the desktop and any running game. New devices discovered while
-// grabbed are auto-grabbed in tryOpen.
+// grabbed are auto-grabbed in adopt.
 //
 // seq orders requests that overlap. Both callers run on their own goroutine —
 // the socket work must not block the GTK thread — and the gamescope hide path
@@ -179,12 +182,29 @@ func (r *Reader) SetGrabbed(seq uint64, grab bool) {
 }
 
 // scan enumerates /dev/input/event* and starts readers for new devices.
+//
+// It opens and inspects everything before classifying anything, because a
+// controller's touchpad can only be recognised once its gamepad node is known and
+// /dev/input/event* enumerates in node order rather than device order — the
+// touchpad routinely comes first. Devices that stay unmatched are simply ignored
+// and left untracked, so if the controller is plugged in later the 5s rescan
+// picks its touchpad up then.
 func (r *Reader) scan() {
 	paths, err := evdev.ListDevicePaths()
 	if err != nil {
 		slog.Debug("gamepad: scan failed", "err", err)
 		return
 	}
+
+	type candidate struct {
+		path string
+		dev  *evdev.InputDevice
+		info deviceInfo
+	}
+	var (
+		candidates []candidate
+		gamepads   []deviceInfo
+	)
 	for _, p := range paths {
 		r.mu.Lock()
 		_, inDevices := r.devices[p.Path]
@@ -193,29 +213,50 @@ func (r *Reader) scan() {
 		if inDevices || inGrabOnly {
 			continue
 		}
-		r.tryOpen(p.Path)
+		dev, err := evdev.OpenWithFlags(p.Path, os.O_RDONLY)
+		if err != nil {
+			continue
+		}
+		info := inspect(dev)
+		candidates = append(candidates, candidate{path: p.Path, dev: dev, info: info})
+		// The gamepad verdict never depends on the sibling list, so this pass can
+		// settle it and build the list the touchpad verdict needs.
+		if classify(info, nil) == deviceGamepad {
+			gamepads = append(gamepads, info)
+		}
+	}
+	// Controllers found by an earlier scan count too: the touchpad may be the only
+	// new node this time round, after a reconnect.
+	gamepads = append(gamepads, r.trackedGamepads()...)
+
+	for _, c := range candidates {
+		r.adopt(c.path, c.dev, c.info, classify(c.info, gamepads))
 	}
 }
 
-// tryOpen opens a device, classifies it, and starts the appropriate handler.
-func (r *Reader) tryOpen(path string) {
-	dev, err := evdev.OpenWithFlags(path, os.O_RDONLY)
-	if err != nil {
-		return
+// trackedGamepads returns the identity of every gamepad currently tracked.
+func (r *Reader) trackedGamepads() []deviceInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]deviceInfo, 0, len(r.devices))
+	for _, dev := range r.devices {
+		out = append(out, inspect(dev))
 	}
+	return out
+}
 
-	class := classifyDevice(dev)
+// adopt starts the handler for a classified device, or closes it if it is not one
+// we care about.
+func (r *Reader) adopt(path string, dev *evdev.InputDevice, info deviceInfo, class deviceClass) {
 	if class == deviceIgnore {
 		_ = dev.Close()
 		return
 	}
 
-	name, _ := dev.Name()
-	id, _ := dev.InputID()
 	attrs := []any{
 		"path", path,
-		"name", name,
-		"id", fmt.Sprintf("%04x:%04x", id.Vendor, id.Product),
+		"name", info.name,
+		"id", fmt.Sprintf("%04x:%04x", info.id.Vendor, info.id.Product),
 	}
 
 	r.mu.Lock()
@@ -244,50 +285,154 @@ func (r *Reader) tryOpen(path string) {
 	}
 }
 
-// classifyDevice determines how to handle an evdev device.
-func classifyDevice(dev *evdev.InputDevice) deviceClass {
+// Steam's virtual gamepad, the controller Steam Input presents to games.
+const (
+	steamVendor         = 0x28DE
+	steamVirtualProduct = 0x11FF
+)
+
+// deviceInfo is the identity and capability set classification reads. Keeping it
+// separate from the open device is what lets classify be a pure function, and so
+// the only way to test classification without the hardware in hand.
+type deviceInfo struct {
+	name  string
+	id    evdev.InputID
+	props []evdev.EvProp
+	keys  []evdev.EvCode
+	abs   []evdev.EvCode
+	uniq  string // EVIOCGUNIQ: serial or MAC; most devices report nothing
+	phys  string // EVIOCGPHYS: physical port path
+}
+
+// inspect reads what classify needs. Not every driver implements the EVIOCG*
+// ioctls behind uniq and phys, and an error there means only that this device
+// does not report one — classify treats an empty string as "unknown" rather than
+// as a mismatch.
+func inspect(dev *evdev.InputDevice) deviceInfo {
+	name, _ := dev.Name()
+	id, _ := dev.InputID()
+	uniq, _ := dev.UniqueID()
+	phys, _ := dev.PhysicalLocation()
+	return deviceInfo{
+		name:  name,
+		id:    id,
+		props: dev.Properties(),
+		keys:  dev.CapableEvents(evdev.EV_KEY),
+		abs:   dev.CapableEvents(evdev.EV_ABS),
+		uniq:  uniq,
+		phys:  phys,
+	}
+}
+
+// classify determines how to handle a device. gamepads carries the devices
+// already classified as deviceGamepad, which is what tells a controller's own
+// touchpad apart from the machine's; callers that have not enumerated the
+// gamepads yet may pass nil, and get deviceIgnore for touchpads.
+func classify(d deviceInfo, gamepads []deviceInfo) deviceClass {
 	// Skip accelerometers/gyro (PS motion sensors). High-frequency events,
 	// not routable to game input — grabbing is wasteful.
-	for _, p := range dev.Properties() {
-		if p == evdev.INPUT_PROP_ACCELEROMETER {
-			return deviceIgnore
-		}
+	if hasProp(d, evdev.INPUT_PROP_ACCELEROMETER) {
+		return deviceIgnore
 	}
 
-	// Check for gamepad button capabilities (Xbox, PS, Switch, virtual).
-	keys := dev.CapableEvents(evdev.EV_KEY)
-	hasGamepadBtn := false
-	for _, k := range keys {
-		for _, gb := range gamepadButtons {
-			if k == gb {
-				hasGamepadBtn = true
-				break
-			}
-		}
-		if hasGamepadBtn {
-			break
-		}
-	}
-	if hasGamepadBtn {
-		// Steam virtual gamepad (VID 28de, PID 11ff) — grab to block game's
-		// evdev reader, but don't read events (we read the physical device).
-		id, err := dev.InputID()
-		if err == nil && id.Vendor == 0x28DE && id.Product == 0x11FF {
+	if hasGamepadButton(d) {
+		// Steam virtual gamepad — grab to block game's evdev reader, but don't
+		// read events (we read the physical device).
+		if d.id.Vendor == steamVendor && d.id.Product == steamVirtualProduct {
 			return deviceGrabOnly
 		}
 		return deviceGamepad
 	}
 
-	// Check for touchpad (PS controller touchpad): has multitouch but no
-	// gamepad buttons. Must be grabbed to prevent it acting as a mouse.
-	abs := dev.CapableEvents(evdev.EV_ABS)
-	for _, a := range abs {
-		if a == evdev.ABS_MT_POSITION_X {
+	// A controller's own touchpad: multitouch, but no gamepad buttons of its own
+	// because they live on the sibling node. Grab it so it stops acting as a
+	// mouse while the drawer is open.
+	//
+	// Multitouch alone does not identify one. The machine's own touchpad and
+	// touchscreen answer that test just as well, and grabbing those takes them
+	// from the compositor for as long as the drawer is open — touch input dies
+	// system-wide, leaving the keyboard as the only way to dismiss the drawer and
+	// get it back (issue #18). So the device has to be shown to belong to a
+	// controller before it is grabbed.
+	if !hasCode(d.abs, evdev.ABS_MT_POSITION_X) {
+		return deviceIgnore
+	}
+	// A touchscreen reports coordinates in screen space. No controller touchpad
+	// does, so this rules the built-in panel out ahead of any matching.
+	if hasProp(d, evdev.INPUT_PROP_DIRECT) {
+		return deviceIgnore
+	}
+	for _, g := range gamepads {
+		if sameController(d, g) {
 			return deviceGrabOnly
 		}
 	}
-
 	return deviceIgnore
+}
+
+// sameController reports whether two device nodes belong to one physical
+// controller.
+//
+// Every input node a HID driver creates inherits bus, vendor and product from the
+// parent hid_device, so a controller's touchpad always carries the same
+// vendor:product as its gamepad node (DualSense 054c:0ce6, DualShock 4 054c:09cc).
+// That is what carries the decision: the machine's own touchpad and touchscreen
+// have their own vendor IDs and cannot match a controller's.
+//
+// uniq (the controller's MAC) and phys then separate two controllers of the same
+// model. They only refine the answer — mistaking one attached DualSense's
+// touchpad for another's still grabs a controller touchpad, which is the intended
+// outcome either way — so a device reporting neither still matches on
+// vendor:product alone.
+func sameController(a, b deviceInfo) bool {
+	if a.id.Vendor != b.id.Vendor || a.id.Product != b.id.Product {
+		return false
+	}
+	if a.uniq != "" && b.uniq != "" {
+		return a.uniq == b.uniq
+	}
+	if a.phys != "" && b.phys != "" {
+		return physRoot(a.phys) == physRoot(b.phys)
+	}
+	return true
+}
+
+// physRoot drops the per-node suffix from an EVIOCGPHYS path, leaving the part
+// every node of one device shares: "usb-0000:0a:00.3-2/input0" → "usb-0000:0a:00.3-2".
+func physRoot(phys string) string {
+	if i := strings.IndexByte(phys, '/'); i >= 0 {
+		return phys[:i]
+	}
+	return phys
+}
+
+// hasGamepadButton reports whether d carries any button that marks it a gamepad
+// (Xbox, PS, Switch, virtual).
+func hasGamepadButton(d deviceInfo) bool {
+	for _, gb := range gamepadButtons {
+		if hasCode(d.keys, gb) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasProp(d deviceInfo, want evdev.EvProp) bool {
+	for _, p := range d.props {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCode(codes []evdev.EvCode, want evdev.EvCode) bool {
+	for _, c := range codes {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }
 
 // repeat timing constants.
