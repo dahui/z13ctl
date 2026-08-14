@@ -106,6 +106,12 @@ window.voltaire-main-window {
     border: 1px solid alpha(@voltaire-border, 0.7);
 }
 
+/* The Profiles page's commit bar: a top border separates it from the scroll
+   area, the same weight as the tab strip's bottom border above. */
+.drawer.main-window .commit-bar {
+    border-top: 1px solid alpha(@voltaire-border, 0.7);
+}
+
 /* Desktop checkbox: the drawer's filled touch row reads as a button in a
    window; strip the fill in every state so it is a plain labelled checkbox
    (the check indicator itself still colours normally). border: none matters
@@ -345,6 +351,15 @@ window.voltaire-main-window {
 
 .drawer .save-btn:hover {
     background: shade(@voltaire-accent, 1.2);
+}
+
+/* A disabled save-btn must read as disabled. The drawer never desensitizes
+   its save buttons so this never showed there; the window's commit button is
+   insensitive whenever nothing is unsaved — most of the time — and the
+   unconditional accent fill above made it look clickable. */
+.drawer .save-btn:disabled {
+    background: alpha(@voltaire-accent, 0.3);
+    color: alpha(#ffffff, 0.45);
 }
 
 /* Advanced checkbox in custom view */

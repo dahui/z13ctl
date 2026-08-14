@@ -65,6 +65,15 @@ type State struct {
 	// absent and zero must be distinguishable.
 	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
 
+	// Telemetry is the full live edge of the series telemetry-history plots:
+	// the most recent sample, every expanded quantity included. The named
+	// fields above remain forever as the vocabulary pre-2.0 clients read;
+	// this carries what a client showing the expanded readouts (GPU, load,
+	// clocks, memory, NPU) needs without a field-per-quantity forever. Absent
+	// rather than stale, on PackagePowerW's terms — a reading labelled "now"
+	// that describes ten hours ago is worse than no reading.
+	Telemetry *TelemetrySample `json:"telemetry,omitempty"`
+
 	// Features is every firmware toggle the device offers, keyed by the same id
 	// DeviceInfo.Toggles and the feature commands use.
 	//
@@ -144,6 +153,28 @@ type TelemetrySample struct {
 	// machine that has no pack. nil means the device reported none. Same
 	// reasoning as BatteryInfo.ChargeLimit being a *bool.
 	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
+
+	// The expanded quantities, present only on devices whose
+	// DeviceInfo.Telemetry declares the matching source (gpu, cpu_stats,
+	// npu). Pointer fields are the ones whose zero is a real reading — an
+	// idle CPU is genuinely at 0%, a GFXOFF'd GPU and a runtime-suspended NPU
+	// genuinely draw ~0 W — exactly BatteryPowerW's reasoning. Plain fields
+	// omit their zero because it is never a measurement (a 0°C die, a 0 MHz
+	// clock, an empty memory gauge).
+	GPUTempC    int      `json:"gpu_temp_c,omitempty"`
+	CPUUtilPct  *int     `json:"cpu_util_pct,omitempty"`
+	GPUUtilPct  *int     `json:"gpu_util_pct,omitempty"`
+	NPUUtilPct  *int     `json:"npu_util_pct,omitempty"`
+	GPUPowerW   *float64 `json:"gpu_power_w,omitempty"`
+	NPUPowerW   *float64 `json:"npu_power_w,omitempty"`
+	CPUClockMHz int      `json:"cpu_clock_mhz,omitempty"`
+	GPUClockMHz int      `json:"gpu_clock_mhz,omitempty"`
+	MemClockMHz int      `json:"mem_clock_mhz,omitempty"`
+	NPUClockMHz int      `json:"npu_clock_mhz,omitempty"`
+	VRAMUsedMB  int      `json:"vram_used_mb,omitempty"`
+	VRAMTotalMB int      `json:"vram_total_mb,omitempty"`
+	MemUsedMB   int      `json:"mem_used_mb,omitempty"`
+	MemTotalMB  int      `json:"mem_total_mb,omitempty"`
 }
 
 // StockProfiles are the firmware performance profiles that can be written to

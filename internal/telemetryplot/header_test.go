@@ -46,17 +46,17 @@ func TestHeaderTitleAndValue(t *testing.T) {
 		{
 			name: "single-series temperature",
 			group: telemetryplot.Group{Kind: telemetryplot.KindTemp, Unit: "°C", Series: []telemetryplot.Series{
-				{Kind: telemetryplot.KindTemp, Label: "APU", Unit: "°C", Latest: 52},
+				{Kind: telemetryplot.KindTemp, Label: "CPU", Unit: "°C", Latest: 52},
 			}},
-			wantTitle: "APU",
+			wantTitle: "Temp",
 			wantValue: "52°C",
 		},
 		{
 			name: "single-series power keeps its decimal",
 			group: telemetryplot.Group{Kind: telemetryplot.KindPower, Unit: "W", Series: []telemetryplot.Series{
-				{Kind: telemetryplot.KindPower, Label: "Package", Unit: "W", Latest: 27.4},
+				{Kind: telemetryplot.KindPower, Label: "Pkg", Unit: "W", Latest: 27.4},
 			}},
-			wantTitle: "Package",
+			wantTitle: "Power",
 			wantValue: "27.4W",
 		},
 		{
@@ -82,7 +82,7 @@ func TestHeaderTitleAndValue(t *testing.T) {
 		{
 			name:      "an empty group claims nothing",
 			group:     telemetryplot.Group{Kind: telemetryplot.KindTemp},
-			wantTitle: "APU",
+			wantTitle: "Temp",
 			wantValue: "",
 		},
 	}

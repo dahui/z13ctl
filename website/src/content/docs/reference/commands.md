@@ -131,9 +131,19 @@ A custom profile is voltaire's own: a named set of fan curve, TDP, and Curve
 Optimizer settings that voltaire applies itself. It is **never** written to
 `platform_profile`, so profile ownership stays with your desktop.
 
-`custom` is the profile created automatically by the first `fancurve --set`,
-`tdp --set`, or `undervolt --set` made while a firmware profile is active —
-the behaviour this tool has always had. `--create` makes more.
+`custom` is the profile created automatically by a `fancurve --set`,
+`tdp --set`, or `undervolt --set` made while a firmware profile is active.
+`--create` makes more.
+
+Such a bare edit gives `custom` **only the setting you just set** — a TDP set
+from `balanced` leaves the fans on firmware auto, and a fan curve set there
+leaves the power limits at stock. Anything `custom` stored before is replaced;
+save settings you want to keep under a name of their own (`profile --save-as`).
+Editing `custom` while it is the active profile, or explicitly via
+`--profile custom`, edits the stored bundle in place as before. (Through 2.0
+development builds the bare edit re-applied everything `custom` stored, so
+setting a TDP could silently bring back an old fan curve — or an old 93W power
+limit — you had long since stopped using.)
 
 :::note[`--reset` while a firmware profile is active does not touch your profiles]
 Only `--set` creates and activates `custom`. `fancurve --reset`, `tdp --reset`

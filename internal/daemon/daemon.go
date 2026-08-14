@@ -89,6 +89,12 @@ type Daemon struct {
 	// read the counter must take its own baseline rather than sharing this one.
 	prevEnergy energyReading
 
+	// prevJiffies is the last CPU jiffie-counter reading, for deriving the
+	// utilisation percentage. Owned by the sampler goroutine on exactly
+	// prevEnergy's terms: unguarded because that goroutine is the only
+	// toucher, so no handler may read or re-baseline it.
+	prevJiffies jiffieReading
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 

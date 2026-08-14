@@ -55,16 +55,19 @@ type customView struct {
 	editorNote     *gtk.Label // "stored only" note; hidden for live edits
 
 	// Profile selector and inline name entry (profiles.go).
-	selDD         *dropdown
-	activateBtn   *gtk.Button
-	newProfileBtn *gtk.Button
-	saveAsBtn     *gtk.Button
-	actionsNote   *gtk.Label // refusal reasons for Activate / Save As (.block-note)
-	nameRow       *gtk.Box   // inline create/save-as name entry row, hidden until needed
-	nameEntry     *gtk.Entry
-	nameOKBtn     *gtk.Button
-	nameCancelBtn *gtk.Button
-	nameMode      string // nameModeCreate or nameModeSaveAs while nameRow is up
+	selDD *dropdown
+	// profileActions is the selector's action row (Activate / + New /
+	// Save As), kept so the window can seat Delete beside them.
+	profileActions *gtk.Box
+	activateBtn    *gtk.Button
+	newProfileBtn  *gtk.Button
+	saveAsBtn      *gtk.Button
+	actionsNote    *gtk.Label // refusal reasons for Activate / Save As (.block-note)
+	nameRow        *gtk.Box   // inline create/save-as name entry row, hidden until needed
+	nameEntry      *gtk.Entry
+	nameOKBtn      *gtk.Button
+	nameCancelBtn  *gtk.Button
+	nameMode       string // nameModeCreate or nameModeSaveAs while nameRow is up
 
 	// TDP.
 	tdpBasicScale    *gtk.Scale
@@ -79,6 +82,10 @@ type customView struct {
 	tdpPL3Label      *gtk.Label
 
 	fanCurve *fanCurveEditor
+
+	// autos is the window's own AUTOSWITCH block (nil in the drawer, whose
+	// section lives on the main view as w.autoswitch).
+	autos *autoswitchSection
 
 	// Undervolt; the box is hidden when the daemon reports no CO support.
 	uvBox      *gtk.Box
@@ -100,6 +107,17 @@ type customView struct {
 	deleteBtn   *gtk.Button
 	deleteNote  *gtk.Label // refusal reason under Delete Profile (.block-note)
 	deleteArmed bool       // first tap of the two-tap delete confirmation
+
+	// One-commit model (customcommit.go) — window only; all nil/zero in the
+	// drawer. The commit bar's button and indicator, and the widget baseline
+	// each sync captures so commitDirty can tell an edit from a re-display.
+	commitBtn    *gtk.Button
+	commitNote   *gtk.Label
+	baseBasic    int    // basic TDP slider at last sync
+	baseAdv      [3]int // PL1/PL2/PL3 sliders at last sync
+	baseCurve    string // fan curve wire string at last sync
+	baseUv       int    // undervolt slider at last sync
+	baseCaptured bool
 }
 
 // hosted reports whether this instance is the full window's — host.back ==
@@ -108,16 +126,14 @@ type customView struct {
 // checkboxes) where the drawer's take touch ones.
 func (c *customView) hosted() bool { return c.host.back == nil }
 
-// compactRow reshapes an action row for the hosted surface: natural-width
-// buttons aligned start, instead of the drawer's full-width touch slabs. A
-// no-op in the drawer.
-func (c *customView) compactRow(row *gtk.Box, btns ...*gtk.Button) {
-	if !c.hosted() {
-		return
-	}
-	row.SetHAlign(gtk.AlignStart)
-	for _, b := range btns {
-		b.SetHExpand(false)
+// symmetricRow equalises an action row on the hosted surface: every button
+// the same width, filling the card — the dialog button-group shape, at
+// desktop height, matching the full-width fields above it. (Natural-width
+// start-aligned buttons were tried first and read as ragged.) A no-op in
+// the drawer, whose rows keep the split they have always had.
+func (c *customView) symmetricRow(row *gtk.Box) {
+	if c.hosted() {
+		row.SetHomogeneous(true)
 	}
 }
 
@@ -211,6 +227,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// The custom profiles live here rather than in the main view; everything
 	// below edits whichever one this selects.
 	sec := newSection(leftCol)
+	profileSec := sec
 	sec.Append(c.buildProfileSelector())
 	if !hosted {
 		content.Append(separator())
@@ -238,9 +255,18 @@ func newCustomView(w *Window, host viewHost) *customView {
 		sec.Append(telRow)
 	}
 
-	// --- TDP ---
+	// --- TDP / POWER ---
 	sec = newSection(leftCol)
-	sec.Append(sectionLabel("TDP"))
+	powerSec := sec
+	if hosted {
+		// The card holds the TDP limits and, in advanced mode, the
+		// undervolt — every power-domain control, with its own actions at
+		// the bottom. "TDP" undersells that; the drawer keeps its historical
+		// heading because its column has no domain grouping to name.
+		sec.Append(sectionLabel("POWER"))
+	} else {
+		sec.Append(sectionLabel("TDP"))
+	}
 
 	// Advanced checkbox — placed above sliders so toggle swaps content in-place.
 	c.tdpAdvancedCheck = gtk.NewCheckButtonWithLabel("Advanced")
@@ -262,6 +288,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.tdpBasicLabel.AddCSSClass("scale-value")
 	c.tdpBasicScale.ConnectValueChanged(func() {
 		c.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
+		c.refreshCommitDirty()
 	})
 	if hosted {
 		// Value beside the slider, not centred beneath it: the desktop eye
@@ -308,21 +335,27 @@ func newCustomView(w *Window, host viewHost) *customView {
 
 	c.uvCpuScale, c.uvCpuLabel = c.buildUvScale("CPU Curve Optimizer", -40, 0)
 
-	// UV buttons: Save UV | Reset UV
+	// UV buttons. The drawer pairs Save UV | Reset UV; the window has no
+	// per-domain saves — the page's one commit button carries the offset
+	// (customcommit.go) — so only the reset remains, as a right-aligned
+	// secondary action like the other cards' resets.
 	uvBtnRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	uvBtnRow.AddCSSClass("custom-actions")
 
-	c.saveUvBtn = gtk.NewButtonWithLabel("Save UV")
-	c.saveUvBtn.AddCSSClass("save-btn")
-	c.saveUvBtn.SetHExpand(true)
-	c.saveUvBtn.ConnectClicked(func() { c.saveUndervolt() })
-	uvBtnRow.Append(c.saveUvBtn)
-
 	c.resetUvBtn = gtk.NewButtonWithLabel("Reset UV")
-	c.resetUvBtn.SetHExpand(true)
 	c.resetUvBtn.ConnectClicked(func() { c.resetUndervolt() })
-	uvBtnRow.Append(c.resetUvBtn)
-	c.compactRow(uvBtnRow, c.saveUvBtn, c.resetUvBtn)
+	if hosted {
+		uvBtnRow.SetHAlign(gtk.AlignEnd)
+		uvBtnRow.Append(c.resetUvBtn)
+	} else {
+		c.saveUvBtn = gtk.NewButtonWithLabel("Save UV")
+		c.saveUvBtn.AddCSSClass("save-btn")
+		c.saveUvBtn.SetHExpand(true)
+		c.saveUvBtn.ConnectClicked(func() { c.saveUndervolt() })
+		uvBtnRow.Append(c.saveUvBtn)
+		c.resetUvBtn.SetHExpand(true)
+		uvBtnRow.Append(c.resetUvBtn)
+	}
 
 	c.uvBox.Append(uvBtnRow)
 	c.tdpAdvancedBox.Append(c.uvBox)
@@ -333,6 +366,10 @@ func newCustomView(w *Window, host viewHost) *customView {
 		adv := c.tdpAdvancedCheck.Active()
 		c.tdpAdvancedBox.SetVisible(adv)
 		tdpBasicBox.SetVisible(!adv)
+		// The toggle swaps which widgets a commit reads (and whether the
+		// undervolt is reachable), so the dirty set can change without any
+		// value moving.
+		c.refreshCommitDirty()
 	})
 
 	if !hosted {
@@ -341,6 +378,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 
 	// --- FAN CURVE ---
 	sec = newSection(rightCol)
+	fanSec := sec
 	sec.Append(sectionLabel("FAN CURVE"))
 	c.fanCurve = c.newFanCurveEditor()
 	sec.Append(c.fanCurve.area)
@@ -349,55 +387,89 @@ func newCustomView(w *Window, host viewHost) *customView {
 		content.Append(separator())
 	}
 
-	// --- BUTTONS ---
-	// In the right column, under the curve: save and reset act on what both
-	// columns show, but they sit with the editor's big visual so committing
-	// is where the eye already is.
-	sec = newSection(rightCol)
-	// Save row: Save TDP | Save Fans | Save Both
-	saveRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	saveRow.AddCSSClass("custom-actions")
+	// --- AUTOSWITCH (window only) ---
+	// A second instance of the drawer's block, in its own card under the fan
+	// editor: autoswitch selects profiles, so it belongs on the page that
+	// manages them (Jeff, 2026-08-14). The drawer's stays on its main view.
+	// Gated on w.autoswitch rather than re-deriving the capability check: the
+	// drawer's control registry has already resolved it by the time the
+	// window builds (buildContent runs at startup, this view lazily on first
+	// open), so a device without the capability drops this card too.
+	if hosted && w.autoswitch != nil {
+		sec = newSection(rightCol)
+		var autoBox *gtk.Box
+		c.autos, autoBox = w.newAutoswitchSection()
+		sec.Append(autoBox)
+	}
 
-	c.saveTdpBtn = gtk.NewButtonWithLabel("Save TDP")
-	c.saveTdpBtn.AddCSSClass("save-btn")
-	c.saveTdpBtn.SetHExpand(true)
-	c.saveTdpBtn.ConnectClicked(func() { c.saveCustomTdp() })
-	saveRow.Append(c.saveTdpBtn)
-
-	c.saveFanBtn = gtk.NewButtonWithLabel("Save Fans")
-	c.saveFanBtn.AddCSSClass("save-btn")
-	c.saveFanBtn.SetHExpand(true)
-	c.saveFanBtn.ConnectClicked(func() { c.saveCustomFanCurve() })
-	saveRow.Append(c.saveFanBtn)
-
-	c.saveBothBtn = gtk.NewButtonWithLabel("Save Both")
-	c.saveBothBtn.AddCSSClass("save-btn")
-	c.saveBothBtn.SetHExpand(true)
-	c.saveBothBtn.ConnectClicked(func() { c.saveCustomBoth() })
-	saveRow.Append(c.saveBothBtn)
-	c.compactRow(saveRow, c.saveTdpBtn, c.saveFanBtn, c.saveBothBtn)
-
-	sec.Append(saveRow)
-
-	// Reset row: Reset TDP | Reset Fans
-	resetRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	resetRow.AddCSSClass("custom-actions")
-
+	// --- ACTIONS ---
+	// The two surfaces commit differently. The drawer keeps its historical
+	// per-domain saves (Save TDP | Save Fans | Save Both, then the resets):
+	// a 320px touch column shows one domain at a time and each needs its
+	// commit within thumb's reach. The window has exactly one commit button
+	// — the bar under the scroll area, built after the scroller below —
+	// because per-domain saves beside the profile operations read as "save
+	// the settings, then save them again in the profile", a second step that
+	// does not exist (Jeff, 2026-08-14; customcommit.go). Resets are not
+	// saves — they remove a subsystem from the profile — so each card keeps
+	// its own, as a right-aligned secondary action.
 	c.resetTdpBtn = gtk.NewButtonWithLabel("Reset TDP")
-	c.resetTdpBtn.SetHExpand(true)
 	c.resetTdpBtn.ConnectClicked(func() { c.resetTdp() })
-	resetRow.Append(c.resetTdpBtn)
 
 	c.resetFanBtn = gtk.NewButtonWithLabel("Reset Fans")
-	c.resetFanBtn.SetHExpand(true)
 	w.setHint(c.resetFanBtn, "Reset fan curves to firmware auto")
 	c.resetFanBtn.ConnectClicked(func() { c.resetFanCurve() })
-	resetRow.Append(c.resetFanBtn)
-	c.compactRow(resetRow, c.resetTdpBtn, c.resetFanBtn)
 
-	sec.Append(resetRow)
 	c.resetNote = blockNote()
-	sec.Append(c.resetNote)
+
+	if hosted {
+		powerRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		powerRow.AddCSSClass("custom-actions")
+		powerRow.SetHAlign(gtk.AlignEnd)
+		powerRow.Append(c.resetTdpBtn)
+		powerSec.Append(powerRow)
+
+		fanRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		fanRow.AddCSSClass("custom-actions")
+		fanRow.SetHAlign(gtk.AlignEnd)
+		fanRow.Append(c.resetFanBtn)
+		fanSec.Append(fanRow)
+		fanSec.Append(c.resetNote)
+	} else {
+		c.saveTdpBtn = gtk.NewButtonWithLabel("Save TDP")
+		c.saveTdpBtn.AddCSSClass("save-btn")
+		c.saveTdpBtn.SetHExpand(true)
+		c.saveTdpBtn.ConnectClicked(func() { c.saveCustomTdp() })
+
+		c.saveFanBtn = gtk.NewButtonWithLabel("Save Fans")
+		c.saveFanBtn.AddCSSClass("save-btn")
+		c.saveFanBtn.SetHExpand(true)
+		c.saveFanBtn.ConnectClicked(func() { c.saveCustomFanCurve() })
+
+		c.saveBothBtn = gtk.NewButtonWithLabel("Save Both")
+		c.saveBothBtn.AddCSSClass("save-btn")
+		c.saveBothBtn.SetHExpand(true)
+		c.saveBothBtn.ConnectClicked(func() { c.saveCustomBoth() })
+
+		c.resetTdpBtn.SetHExpand(true)
+		c.resetFanBtn.SetHExpand(true)
+
+		// Save row: Save TDP | Save Fans | Save Both
+		saveRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		saveRow.AddCSSClass("custom-actions")
+		saveRow.Append(c.saveTdpBtn)
+		saveRow.Append(c.saveFanBtn)
+		saveRow.Append(c.saveBothBtn)
+		content.Append(saveRow)
+
+		// Reset row: Reset TDP | Reset Fans
+		resetRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		resetRow.AddCSSClass("custom-actions")
+		resetRow.Append(c.resetTdpBtn)
+		resetRow.Append(c.resetFanBtn)
+		content.Append(resetRow)
+		content.Append(c.resetNote)
+	}
 
 	// --- DELETE ---
 	// Lives in the editor rather than on the profile row: the editor knows its
@@ -405,26 +477,28 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// from data loss. Two taps stand in for a confirm dialog (no popovers —
 	// they do not composite under gamescope); sensitivity mirrors the daemon's
 	// refusals via profileui.DeleteBlockFor.
-	if !hosted {
-		content.Append(separator())
-	}
-	// Bottom of the left column, away from the save actions: destructive and
-	// constructive should not be neighbours.
-	sec = newSection(leftCol)
 	c.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
 	w.setHint(c.deleteBtn, "Remove this saved profile")
 	c.deleteBtn.ConnectClicked(func() { c.deleteProfileClicked() })
-	if hosted {
-		// A destructive action is a small deliberate target on a desktop, not
-		// a full-width bar inviting the tap it exists to survive.
-		c.deleteBtn.SetHAlign(gtk.AlignStart)
-	}
-	sec.Append(c.deleteBtn)
 	c.deleteNote = blockNote()
-	sec.Append(c.deleteNote)
+	if hosted {
+		// Delete joins the profile card's action row: it is a profile
+		// operation exactly like the three beside it, its two-tap arm and
+		// sensitivity guards carry the danger, and a lone card holding one
+		// button unbalances the column.
+		c.profileActions.Append(c.deleteBtn)
+		profileSec.Append(c.deleteNote)
+	} else {
+		content.Append(separator())
+		content.Append(c.deleteBtn)
+		content.Append(c.deleteNote)
+	}
 
 	c.scroll = newDrawerScroll(content)
 	view.Append(c.scroll)
+	if hosted {
+		view.Append(c.buildCommitBar())
+	}
 
 	c.buildFocusList()
 	return c
@@ -451,6 +525,7 @@ func (c *customView) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) 
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
 		valLabel.SetLabel(fmt.Sprintf("%d W", int(sc.Value())))
+		c.refreshCommitDirty()
 	})
 	if c.hosted() {
 		// Desktop form row: name and value share a header line, description
@@ -488,6 +563,7 @@ func (c *customView) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gt
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
 		valLabel.SetLabel(c.uvText(label, int(sc.Value())))
+		c.refreshCommitDirty()
 	})
 	if c.hosted() {
 		// Same desktop form row as buildTdpScale.
@@ -692,6 +768,16 @@ func (c *customView) sync() {
 		setBlockNote(c.deleteNote, block)
 	}
 
+	// The window's autoswitch card (nil in the drawer). Safe here because sync
+	// holds w.syncing, which its switch handler checks before echoing a send.
+	if c.autos != nil {
+		c.autos.sync()
+	}
+
+	// One-commit model (window only): the widgets now show the target's own
+	// values, which is the baseline the commit button measures edits against.
+	c.syncCommitBar(plan)
+
 	// Telemetry.
 	c.syncTelemetry(w.state)
 }
@@ -796,6 +882,18 @@ func (c *customView) buildFocusList() {
 			})
 		}
 	}
+	// visibleButtonLine is buttonLine with a shared visibility guard, for rows
+	// that come and go (the inline name entry, the undervolt actions).
+	visibleButtonLine := func(vis func() bool, btns ...*gtk.Button) {
+		for i, fc := range b.Line(len(btns)) {
+			btn := btns[i]
+			items = append(items, focusItem{
+				widget: btn, row: fc.Row, col: fc.Col, section: fc.Section,
+				isVisible:  vis,
+				onActivate: func() { btn.Activate() },
+			})
+		}
+	}
 	// sliderLine appends one editable slider on its own line.
 	sliderLine := func(sc *gtk.Scale, step float64, vis func() bool) {
 		oL, oR, gV, sV := scaleAdjust(sc, step)
@@ -808,8 +906,62 @@ func (c *customView) buildFocusList() {
 		})
 	}
 
-	// Back button.
+	nameVis := func() bool { return c.nameRow != nil && c.nameRow.IsVisible() }
+	advVis := func() bool { return c.tdpAdvancedBox.IsVisible() }
+	uvVis := func() bool { return c.tdpAdvancedBox.IsVisible() && c.uvBox != nil && c.uvBox.IsVisible() }
 	var fc focusgrid.Coord
+
+	// The window's list follows its two-column page in reading order — the
+	// PROFILE card (Delete sits with the profile operations there), the POWER
+	// card with its own reset, the FAN CURVE card with its own, then the
+	// commit bar. It diverges from the drawer's list because the page does:
+	// this is the surface whose save buttons collapsed into one commit
+	// button, so the "actions" section the drawer navigates does not exist.
+	if c.hosted() {
+		b.Section("profile")
+		fc = b.One()
+		items = append(items, focusItem{
+			widget: c.selDD.btn, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: func() { c.selDD.btn.Activate() },
+		})
+		buttonLine(c.activateBtn, c.newProfileBtn, c.saveAsBtn, c.deleteBtn)
+		visibleButtonLine(nameVis, c.nameOKBtn, c.nameCancelBtn)
+
+		b.Section("power")
+		fc = b.One()
+		items = append(items, focusItem{
+			widget: c.tdpAdvancedCheck, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) },
+		})
+		sliderLine(c.tdpBasicScale, 5, func() bool { return c.tdpBasicScale.IsVisible() })
+		for _, sc := range []*gtk.Scale{c.tdpPL1Scale, c.tdpPL2Scale, c.tdpPL3Scale} {
+			sliderLine(sc, 1, advVis)
+		}
+		sliderLine(c.uvCpuScale, 1, uvVis)
+		visibleButtonLine(uvVis, c.resetUvBtn)
+		buttonLine(c.resetTdpBtn)
+
+		b.Section("fan")
+		fc = b.One()
+		items = append(items, focusItem{
+			widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
+		})
+		buttonLine(c.resetFanBtn)
+
+		if c.autos != nil {
+			c.autos.appendFocus(b, &items)
+		}
+
+		b.Section("commit")
+		buttonLine(c.commitBtn)
+
+		items = append(items, c.host.errBar.focusItem())
+		logFocusList(c.host.focusName("custom"), items)
+		c.focusItems = items
+		return
+	}
+
+	// Back button.
 	if c.backBtn != nil {
 		fc = b.Section("nav").One()
 		items = append(items, focusItem{
@@ -826,17 +978,7 @@ func (c *customView) buildFocusList() {
 		onActivate: func() { c.selDD.btn.Activate() },
 	})
 	buttonLine(c.activateBtn, c.newProfileBtn, c.saveAsBtn)
-
-	nameVis := func() bool { return c.nameRow != nil && c.nameRow.IsVisible() }
-	nameBtns := []*gtk.Button{c.nameOKBtn, c.nameCancelBtn}
-	for i, nc := range b.Line(len(nameBtns)) {
-		btn := nameBtns[i]
-		items = append(items, focusItem{
-			widget: btn, row: nc.Row, col: nc.Col, section: nc.Section,
-			isVisible:  nameVis,
-			onActivate: func() { btn.Activate() },
-		})
-	}
+	visibleButtonLine(nameVis, c.nameOKBtn, c.nameCancelBtn)
 
 	// Basic TDP slider.
 	b.Section("tdp")
@@ -854,7 +996,6 @@ func (c *customView) buildFocusList() {
 	}
 
 	// PL1/PL2/PL3 sliders.
-	advVis := func() bool { return c.tdpAdvancedBox.IsVisible() }
 	for _, sc := range []*gtk.Scale{c.tdpPL1Scale, c.tdpPL2Scale, c.tdpPL3Scale} {
 		sliderLine(sc, 1, advVis)
 	}
@@ -868,20 +1009,11 @@ func (c *customView) buildFocusList() {
 	}
 
 	// Undervolt (visible only when available).
-	uvVis := func() bool { return c.tdpAdvancedBox.IsVisible() && c.uvBox != nil && c.uvBox.IsVisible() }
 	b.Section("undervolt")
 	if c.uvCpuScale != nil {
 		sliderLine(c.uvCpuScale, 1, uvVis)
 	}
-	uvBtns := []*gtk.Button{c.saveUvBtn, c.resetUvBtn}
-	for i, uc := range b.Line(len(uvBtns)) {
-		btn := uvBtns[i]
-		items = append(items, focusItem{
-			widget: btn, row: uc.Row, col: uc.Col, section: uc.Section,
-			isVisible:  uvVis,
-			onActivate: func() { btn.Activate() },
-		})
-	}
+	visibleButtonLine(uvVis, c.saveUvBtn, c.resetUvBtn)
 
 	// Save, reset, and delete. Delete's two-tap arm makes it safe to reach by
 	// D-pad.

@@ -234,7 +234,7 @@ func (t telemetry) Info() driver.TelemetryInfo { return t.info }
 // run setup for, or a battery that reports no power must not make the
 // temperature unreadable — a sample that fails is a *gap* in the history,
 // which costs every series and not just the one that could not be read.
-func (telemetry) Sample() (driver.Sample, error) {
+func (t telemetry) Sample() (driver.Sample, error) {
 	var s driver.Sample
 	temp, err := ReadAPUTemperature()
 	if err != nil {
@@ -251,6 +251,46 @@ func (telemetry) Sample() (driver.Sample, error) {
 	}
 	if watts, err := ReadBatteryPowerW(); err == nil {
 		s.BatteryPowerW, s.BatteryPowerKnown = watts, true
+	}
+
+	// The expanded sources, each gated on its declaration: a capability the
+	// document does not claim must not be read, or the guard that keeps
+	// declared-and-read in lockstep loses one of its directions.
+	if t.info.GPU != "" {
+		if v, err := ReadGPUTempC(); err == nil {
+			s.GPUTempC = v
+		}
+		if v, err := ReadGPUBusyPct(); err == nil {
+			s.GPUBusyPct, s.GPUBusyKnown = v, true
+		}
+		if v, err := ReadGPUClockMHz(); err == nil {
+			s.GPUClockMHz = v
+		}
+		if w, uclk, err := ReadGPUMetrics(); err == nil {
+			s.GPUPowerW, s.GPUPowerKnown = w, true
+			s.MemClockMHz = uclk
+		}
+		if used, total, err := ReadVRAMMB(); err == nil {
+			s.VRAMUsedMB, s.VRAMTotalMB = used, total
+		}
+	}
+	if t.info.CPUStats != "" {
+		// Counters, not a percentage — the sampler derives CPUUtilPct, on the
+		// energy-counter pattern.
+		if busy, total, err := ReadCPUJiffies(); err == nil {
+			s.CPUBusyJiffies, s.CPUTotalJiffies = busy, total
+		}
+		if v, err := ReadCPUClockMHz(); err == nil {
+			s.CPUClockMHz = v
+		}
+		if used, total, err := ReadMemoryMB(); err == nil {
+			s.MemUsedMB, s.MemTotalMB = used, total
+		}
+	}
+	if t.info.NPU != "" {
+		if w, util, clock, known := ReadNPUTelemetry(); known {
+			s.NPUPowerW, s.NPUBusyPct, s.NPUClockMHz, s.NPUKnown = w, util, clock, true
+		}
 	}
 	return s, nil
 }

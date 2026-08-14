@@ -85,6 +85,15 @@ Package api provides the public client interface for the voltaire daemon. It con
 
 ## Constants
 
+<a name="ToggleSourceCore"></a>Toggle sources. A toggle provided by a compiled\-in driver is ToggleSourceCore; one contributed by an external plugin is ToggleSourcePluginPrefix \+ its plugin id. A client that does not care about provenance can ignore the field entirely; one that groups rows by it should treat any unrecognized value as its own group rather than hiding the row.
+
+```go
+const (
+    ToggleSourceCore         = "core"
+    ToggleSourcePluginPrefix = "plugin:"
+)
+```
+
 <a name="EventGUIToggle"></a>
 
 ```go
@@ -158,7 +167,7 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
 <a name="IsStockProfileName"></a>
-## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L78>)
+## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L192>)
 
 ```go
 func IsStockProfileName(name string) bool
@@ -1675,7 +1684,7 @@ The firmware profile names are reserved so that selecting one always reaches the
 Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
 
 <a name="AutoswitchState"></a>
-## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L106-L110>)
+## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L220-L224>)
 
 AutoswitchState configures automatic profile selection by power source. An empty AC or Battery target means "leave the profile alone on that source", which is how a caller hands one side back to power\-profiles\-daemon.
 
@@ -1688,7 +1697,7 @@ type AutoswitchState struct {
 ```
 
 <a name="AutoswitchState.Target"></a>
-### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L114>)
+### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L228>)
 
 ```go
 func (a *AutoswitchState) Target(onAC bool) string
@@ -1697,7 +1706,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="BatteryInfo"></a>
-## type [BatteryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L95-L98>)
+## type [BatteryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L121-L124>)
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
@@ -1709,7 +1718,7 @@ type BatteryInfo struct {
 ```
 
 <a name="CustomProfile"></a>
-## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L90-L95>)
+## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L204-L209>)
 
 CustomProfile is a named set of custom hardware settings. Each subsystem is a pointer so that nil means "this profile does not control that subsystem", which is what lets a profile stay loadable as new subsystems are added.
 
@@ -1723,7 +1732,7 @@ type CustomProfile struct {
 ```
 
 <a name="CustomProfile.Empty"></a>
-### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L99>)
+### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L213>)
 
 ```go
 func (p CustomProfile) Empty() bool
@@ -1805,7 +1814,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L172-L175>)
+## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L286-L289>)
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -1817,7 +1826,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L178-L181>)
+## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L292-L295>)
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -1854,7 +1863,7 @@ type LightingInfo struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L162-L169>)
+## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L276-L283>)
 
 LightingState captures all parameters needed to reproduce one lighting zone.
 
@@ -1903,7 +1912,7 @@ type ProfileInfo struct {
 ```
 
 <a name="State"></a>
-## type [State](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L17-L44>)
+## type [State](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L17-L124>)
 
 State holds the last\-applied settings for all controllable subsystems. It is returned by SendGetState and broadcast as part of daemon responses.
 
@@ -1927,6 +1936,86 @@ type State struct {
     SourceKnown        bool                     `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
     Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
     FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+
+    // RPM is every fan the device reports, in the driver's order; FanRPM is
+    // RPM[0]. Both are carried because they answer different questions and one
+    // of them is a compatibility surface: FanRPM predates multi-fan support and
+    // every pre-2.0 client reads it, so it is served forever, while a machine
+    // with two fans cooling the same die is misdescribed by either one of them
+    // alone — the Z13's fans routinely differ by several hundred RPM, and a
+    // header quoting only the quieter one reads as a stopped fan.
+    //
+    // The same values a TelemetrySample carries, from the same driver call; this
+    // is the live edge of the series the dashboard plots.
+    RPM []int `json:"rpm,omitempty"`
+
+    // PackagePowerW is the current CPU package draw in watts, absent on a
+    // device that reports none. See TelemetrySample.PackagePowerW — the value
+    // here is the same quantity and, on a device whose hardware offers a
+    // cumulative energy counter rather than instantaneous power, literally the
+    // same number: the conversion needs two readings taken a known interval
+    // apart, so the daemon serves its sampler's most recent figure rather than
+    // deriving a second one from a different baseline. Two derivations would
+    // disagree, and a header disagreeing with the right-hand edge of the chart
+    // beside it is indistinguishable from a bug.
+    //
+    // Absent rather than stale: a figure the sampler has not refreshed recently
+    // (it stands down across a suspend) is omitted, because a reading labelled
+    // "now" that describes ten hours ago is worse than no reading.
+    PackagePowerW float64 `json:"package_power_w,omitempty"`
+
+    // BatteryPowerW is battery flow in watts: positive while discharging,
+    // negative while charging. A pointer for the same reason
+    // TelemetrySample.BatteryPowerW is one — zero is a real reading here, so
+    // absent and zero must be distinguishable.
+    BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
+
+    // Telemetry is the full live edge of the series telemetry-history plots:
+    // the most recent sample, every expanded quantity included. The named
+    // fields above remain forever as the vocabulary pre-2.0 clients read;
+    // this carries what a client showing the expanded readouts (GPU, load,
+    // clocks, memory, NPU) needs without a field-per-quantity forever. Absent
+    // rather than stale, on PackagePowerW's terms — a reading labelled "now"
+    // that describes ten hours ago is worse than no reading.
+    Telemetry *TelemetrySample `json:"telemetry,omitempty"`
+
+    // Features is every firmware toggle the device offers, keyed by the same id
+    // DeviceInfo.Toggles and the feature commands use.
+    //
+    // It exists so a client can render toggle rows generically from the device
+    // document. BootSound and PanelOverdrive above are the same two values
+    // under fixed names: they are the whole vocabulary a pre-2.0 client knows,
+    // so they are served forever, but a device with a different set of toggles
+    // cannot be described by them and a generic row had no way to learn its own
+    // state without one socket round trip per toggle per refresh.
+    //
+    // A toggle whose current value cannot be read is omitted rather than
+    // reported as zero — zero is "off", which is a claim about the hardware.
+    Features map[string]int `json:"features,omitempty"`
+
+    // BatteryLevel is the pack's current charge as a percentage, zero when the
+    // device has no battery.
+    //
+    // Note the neighbour it is easily confused with: `Battery` above is the
+    // charge *limit* (the end threshold voltaire writes), which is a setting,
+    // while this is the reading. They are routinely different numbers and the
+    // interesting case is when the level sits above the limit — see
+    // BatteryState.
+    BatteryLevel int `json:"battery_level,omitempty"`
+
+    // BatteryState is what the pack is doing: "charging", "discharging",
+    // "full", "not-charging", or absent when the device does not say.
+    //
+    // It exists because BatteryPowerW is not self-explaining, and on a machine
+    // with a charge limit the commonest reading is the confusing one: a pack
+    // resting above its threshold on mains reports exactly 0 W, correctly,
+    // because nothing is moving. Without a state beside it that is
+    // indistinguishable from a dead sensor — which is how it was first
+    // reported. "not-charging" is deliberately distinct from "full": it means
+    // the pack could charge and is being held back, which together with
+    // BatteryLevel and Battery lets a client say "81%, holding at your 75%
+    // limit" instead of showing a bare zero.
+    BatteryState string `json:"battery_state,omitempty"`
 
     // BatteryHealth is full-charge capacity as a percentage of design
     // capacity, or zero when the device does not report it — which is what
@@ -1982,7 +2071,7 @@ func main() {
 </details>
 
 <a name="State.ActiveCustomProfile"></a>
-### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L149>)
+### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L263>)
 
 ```go
 func (s State) ActiveCustomProfile() (CustomProfile, bool)
@@ -1991,7 +2080,7 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool)
 ActiveCustomProfile returns the active custom profile and true, or the zero value and false when a stock profile is active.
 
 <a name="State.InCustomProfile"></a>
-### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L145>)
+### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L259>)
 
 ```go
 func (s State) InCustomProfile() bool
@@ -2000,7 +2089,7 @@ func (s State) InCustomProfile() bool
 InCustomProfile reports whether the active profile is a custom one.
 
 <a name="State.IsCustomProfile"></a>
-### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L133>)
+### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L247>)
 
 ```go
 func (s State) IsCustomProfile(name string) bool
@@ -2013,7 +2102,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L192-L198>)
+## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L306-L312>)
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -2028,21 +2117,24 @@ type TDPState struct {
 ```
 
 <a name="TelemetryInfo"></a>
-## type [TelemetryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L110-L113>)
+## type [TelemetryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L139-L145>)
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
-PowerDraw names the package\-power source \("rapl", "pm\-table"\) and is empty when the device reads none — in which case Sample's package power is always zero and the graph should be hidden rather than drawn flat. HistorySeconds is the largest window a telemetry\-history request can usefully ask for; zero means the daemon keeps no history for this device and only live readings are available.
+PowerDraw names the package\-power source \("rapl", "pm\-table"\) and is empty when the device reads none — in which case Sample's package power is always zero and the graph should be hidden rather than drawn flat. GPU \("amdgpu"\), CPUStats \("procfs"\) and NPU \("amdxdna"\) name the expanded sources on the same terms: a name for provenance, absence meaning the matching sample fields are never filled and their graphs should not exist. HistorySeconds is the largest window a telemetry\-history request can usefully ask for; zero means the daemon keeps no history for this device and only live readings are available.
 
 ```go
 type TelemetryInfo struct {
     PowerDraw      string `json:"power_draw,omitempty"`
+    GPU            string `json:"gpu,omitempty"`
+    CPUStats       string `json:"cpu_stats,omitempty"`
+    NPU            string `json:"npu,omitempty"`
     HistorySeconds int    `json:"history_seconds,omitempty"`
 }
 ```
 
 <a name="TelemetrySample"></a>
-## type [TelemetrySample](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L59-L64>)
+## type [TelemetrySample](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L139-L178>)
 
 TelemetrySample is one reading from the daemon's sample history, as returned by SendTelemetryHistory. The daemon samples at 1 Hz.
 
@@ -2056,6 +2148,40 @@ type TelemetrySample struct {
     TempC         int     `json:"temp_c,omitempty"`
     RPM           []int   `json:"rpm,omitempty"`
     PackagePowerW float64 `json:"package_power_w,omitempty"`
+
+    // BatteryPowerW is battery flow in watts: positive while discharging,
+    // negative while charging.
+    //
+    // It is a pointer because zero is a real reading here and every other
+    // field in this struct is omitempty — a full pack on mains moves no
+    // energy, so a plain float64 would make a laptop at 100% indistinguishable
+    // from a desktop with no battery, and a client would have to choose
+    // between hiding a true reading and drawing a chart flat at zero for a
+    // machine that has no pack. nil means the device reported none. Same
+    // reasoning as BatteryInfo.ChargeLimit being a *bool.
+    BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
+
+    // The expanded quantities, present only on devices whose
+    // DeviceInfo.Telemetry declares the matching source (gpu, cpu_stats,
+    // npu). Pointer fields are the ones whose zero is a real reading — an
+    // idle CPU is genuinely at 0%, a GFXOFF'd GPU and a runtime-suspended NPU
+    // genuinely draw ~0 W — exactly BatteryPowerW's reasoning. Plain fields
+    // omit their zero because it is never a measurement (a 0°C die, a 0 MHz
+    // clock, an empty memory gauge).
+    GPUTempC    int      `json:"gpu_temp_c,omitempty"`
+    CPUUtilPct  *int     `json:"cpu_util_pct,omitempty"`
+    GPUUtilPct  *int     `json:"gpu_util_pct,omitempty"`
+    NPUUtilPct  *int     `json:"npu_util_pct,omitempty"`
+    GPUPowerW   *float64 `json:"gpu_power_w,omitempty"`
+    NPUPowerW   *float64 `json:"npu_power_w,omitempty"`
+    CPUClockMHz int      `json:"cpu_clock_mhz,omitempty"`
+    GPUClockMHz int      `json:"gpu_clock_mhz,omitempty"`
+    MemClockMHz int      `json:"mem_clock_mhz,omitempty"`
+    NPUClockMHz int      `json:"npu_clock_mhz,omitempty"`
+    VRAMUsedMB  int      `json:"vram_used_mb,omitempty"`
+    VRAMTotalMB int      `json:"vram_total_mb,omitempty"`
+    MemUsedMB   int      `json:"mem_used_mb,omitempty"`
+    MemTotalMB  int      `json:"mem_total_mb,omitempty"`
 }
 ```
 
@@ -2110,7 +2236,7 @@ func main() {
 </details>
 
 <a name="ToggleInfo"></a>
-## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L82>)
+## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L98>)
 
 ToggleInfo describes one firmware toggle the device offers. ID is the wire identifier for the feature/feature\-get commands; Label is a human\-readable fallback for clients with no nicer name of their own. Kind says how the value is shaped — "bool" toggles take 0 or 1.
 
@@ -2119,11 +2245,27 @@ type ToggleInfo struct {
     ID    string `json:"id"`
     Label string `json:"label"`
     Kind  string `json:"kind"`
+
+    // Description is prose to show beside the control: what the toggle does,
+    // and any consequence worth warning about. Empty when the device data
+    // offers none, in which case a client shows the Label alone.
+    //
+    // It is served rather than left to the client because it is device
+    // knowledge — whether panel overdrive causes ghosting is a fact about the
+    // panel — and a client rendering these rows generically cannot know it.
+    Description string `json:"description,omitempty"`
+
+    // Source is where the toggle comes from: ToggleSourceCore for one a
+    // compiled-in driver provides, "plugin:<id>" for one an external plugin
+    // contributes. Always populated — the daemon substitutes "core" — so a
+    // client grouping rows by provenance never has to treat absence as a third
+    // case.
+    Source string `json:"source"`
 }
 ```
 
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L86-L89>)
+## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L112-L115>)
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 
@@ -2135,7 +2277,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L186-L189>)
+## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L300-L303>)
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

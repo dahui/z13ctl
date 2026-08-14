@@ -370,6 +370,9 @@ func (c *customView) newFanCurveEditor() *fanCurveEditor {
 	drag.ConnectDragEnd(func(_, _ float64) {
 		fc.dragging = -1
 		fc.area.QueueDraw()
+		// The completed drag is the curve's edit boundary for the window's
+		// commit button (customcommit.go); a no-op in the drawer.
+		c.refreshCommitDirty()
 	})
 
 	fc.area.AddController(drag)

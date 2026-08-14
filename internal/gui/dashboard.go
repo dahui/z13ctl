@@ -72,12 +72,12 @@ type dashboardView struct {
 	spans    []time.Duration
 	span     time.Duration
 
-	// charts mirrors plot.Groups(); rebuilt only when the plot's Shape changes.
+	// charts mirrors the installed group set — a real plot's Groups(), or the
+	// loading placeholder — rebuilt only when the shape key changes.
 	// Repainting is a QueueDraw on the existing areas, so a 1 Hz refresh does
 	// not tear widgets down under the pointer.
 	charts []*dashboardChart
 	shape  string
-	plot   telemetryplot.Plot
 
 	// batteryStatus is the battery card's header text, from the get-state poll
 	// rather than the history reply — see pollTick. Stored so a shape rebuild
@@ -152,9 +152,12 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 	d.grid.SetColumnSpacing(12)
 	inner.Append(d.grid)
 
-	// Shown while there is nothing to draw. Deliberately not empty axes: a
-	// chart frame with no line in it reads as "this machine measured nothing",
-	// which is a different and wrong claim.
+	// Shown in place of the grid for the two *actionable* kinds of nothing —
+	// daemon not running, daemon too old. Plain "no readings yet" is not shown
+	// as text any more: the placeholder frames below are that state's display
+	// (Jeff, 2026-08-14 — a bare page for the first second read as the app
+	// failing), and an empty framed chart with a "—" readout reads as waiting,
+	// not as a measurement of nothing.
 	d.emptyLbl = gtk.NewLabel("")
 	d.emptyLbl.AddCSSClass("scale-name")
 	d.emptyLbl.SetWrap(true)
@@ -165,6 +168,10 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 	scroll := newDrawerScroll(inner)
 	d.root.Append(scroll)
 	d.scroll = scroll
+
+	// The full card set exists before the first byte of history arrives, so
+	// the page never opens onto a blank grid.
+	d.showPlaceholder()
 
 	d.buildFocusList()
 	return d
@@ -240,6 +247,10 @@ func (d *dashboardView) syncSpanButtons() {
 func (d *dashboardView) startPolling() {
 	d.gen++
 	gen := d.gen
+	// The first fetch fires now, not a second from now: with only the timeout,
+	// opening the page cost a full second of placeholder frames that the data
+	// was already available to fill.
+	d.refresh()
 	glib.TimeoutAdd(1000, func() bool {
 		if gen != d.gen || !d.host.current() {
 			return false
@@ -289,27 +300,69 @@ func (d *dashboardView) refresh() {
 }
 
 // apply installs a new plot, rebuilding the charts only if the shape changed.
+//
+// A reply with nothing to draw keeps (or restores) the placeholder frames —
+// the empty page is drawn as the full card set waiting for data, not as a
+// blank grid. Only the two actionable kinds of nothing replace the frames
+// with prose, because "start the daemon" is something the user can do and an
+// empty frame would hide it.
 func (d *dashboardView) apply(p telemetryplot.Plot, handled bool, err error) {
-	d.plot = p
-	if shape := p.Shape(); shape != d.shape {
-		d.shape = shape
-		d.rebuildCharts()
+	if p.Empty() {
+		if !handled || err != nil {
+			d.grid.SetVisible(false)
+			d.emptyLbl.SetLabel(emptyDashboardText(handled, err, d.span))
+			d.emptyLbl.SetVisible(true)
+			return
+		}
+		// No readings in the window. Reinstall the frames rather than leaving
+		// whatever was on screen: switching spans away from data would
+		// otherwise keep the previous window's traces under a header claiming
+		// this one.
+		d.showPlaceholder()
+		d.grid.SetVisible(true)
+		d.emptyLbl.SetVisible(false)
+		return
 	}
+
+	d.installGroups(p.Shape(), p.Groups())
 	for _, c := range d.charts {
 		c.sync(p)
 	}
-
-	empty := p.Empty()
-	d.grid.SetVisible(!empty)
-	d.emptyLbl.SetVisible(empty)
-	if empty {
-		d.emptyLbl.SetLabel(emptyDashboardText(handled, err, d.span))
-	}
+	d.grid.SetVisible(true)
+	d.emptyLbl.SetVisible(false)
 }
 
-// emptyDashboardText says which kind of nothing this is. "No data" would cover
-// all three and explain none of them, and two of the three are things the user
-// can act on.
+// placeholderShape is the sentinel installGroups keys the loading frames on.
+// Never a real plot's shape: those are built from series labels and always
+// carry a ':' (TestPlaceholderIsNotAPlotShape pins it from the other side).
+const placeholderShape = "placeholder"
+
+// showPlaceholder installs the framed, empty card set — the full set of
+// quantities this device is expected to measure, from the capability document
+// where there is one; everything when the daemon never answered.
+func (d *dashboardView) showPlaceholder() {
+	doc := d.w.device
+	caps := telemetryplot.PlaceholderCaps{
+		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true,
+	}
+	if doc != nil {
+		caps.Battery = doc.Battery != nil
+		caps.Power, caps.GPU, caps.CPUStats, caps.NPU = false, false, false, false
+		if t := doc.Telemetry; t != nil {
+			caps.Power = t.PowerDraw != ""
+			caps.GPU = t.GPU != ""
+			caps.CPUStats = t.CPUStats != ""
+			caps.NPU = t.NPU != ""
+		}
+	}
+	kinds := telemetryplot.PlaceholderKinds(caps)
+	d.installGroups(placeholderShape, telemetryplot.Placeholder(kinds))
+}
+
+// emptyDashboardText says which kind of nothing this is. Only the two
+// actionable kinds reach the screen since the loading frames took over the
+// third — the default case remains as the fallback for a caller that routes
+// here anyway.
 //
 // Any error is read as a daemon that predates telemetry-history — which answers
 // unknown-command — rather than string-matched, on the same grounds as
@@ -336,14 +389,21 @@ func shortSpan(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
-// rebuildCharts replaces the card widgets to match the plot's current shape.
-func (d *dashboardView) rebuildCharts() {
+// installGroups replaces the card widgets when the shape key changes — a real
+// plot's Shape(), or placeholderShape for the loading frames — and is a no-op
+// otherwise, so a 1 Hz refresh never tears widgets down under the pointer.
+func (d *dashboardView) installGroups(shape string, groups []telemetryplot.Group) {
+	if shape == d.shape {
+		return
+	}
+	d.shape = shape
+
 	for _, c := range d.charts {
 		d.grid.Remove(c.container())
 	}
 	d.charts = nil
 
-	for _, g := range d.plot.Groups() {
+	for _, g := range groups {
 		c := d.newChart(g)
 		d.charts = append(d.charts, c)
 		d.grid.Insert(c.container(), -1)
@@ -362,15 +422,18 @@ func (d *dashboardView) newChart(g telemetryplot.Group) *dashboardChart {
 	c.titleLbl.SetHAlign(gtk.AlignStart)
 	c.titleLbl.AddCSSClass("dash-card-title")
 
-	c.valueLbl = gtk.NewLabel("")
+	// "—" until a reading arrives: the placeholder card must say "waiting",
+	// and a blank label beside a framed empty chart says "broken".
+	c.valueLbl = gtk.NewLabel("—")
 	c.valueLbl.SetHAlign(gtk.AlignEnd)
 	c.valueLbl.SetHExpand(true)
-	// Bounded, not free-width: the tile's size must win over its text, or the
-	// battery card's longest reading ("Discharging · 12.3 W", exactly 20
-	// chars) would widen its card's natural size past a one-row share and
-	// wrap the at-a-glance row to two.
+	// Bounded, not free-width: the tile's size must win over its text, so a
+	// long readout ellipsizes instead of widening its card and reflowing the
+	// grid. 34 chars covers the widest three-series header the expanded set
+	// produces ("Pkg: 12.8 · GPU: 3.2 · NPU: 0.1 W") at the ~285px a card
+	// gets when seven of them share the 1200px window four to a row.
 	c.valueLbl.SetEllipsize(pango.EllipsizeEnd)
-	c.valueLbl.SetMaxWidthChars(20)
+	c.valueLbl.SetMaxWidthChars(34)
 	c.valueLbl.AddCSSClass("dash-card-value")
 
 	header := gtk.NewBox(gtk.OrientationHorizontal, 8)
@@ -527,15 +590,20 @@ func (c *dashboardChart) draw(cr *cairo.Context, width, height int) {
 }
 
 // seriesColor picks a trace colour. The first series of a chart takes the
-// theme's accent; a second takes the dim text colour rather than a hardcoded
-// second hue, so a light palette does not get a trace it cannot see. Charts
-// never carry more than two series on any device shipping today, and the
-// modulo keeps a third from being invisible if one ever does.
+// theme's accent, the second the text colour, the third the dim text colour —
+// theme-derived rather than hardcoded hues, so a light palette never gets a
+// trace it cannot see. Three covers every chart the expanded set draws
+// (power, load and clocks each carry three); the modulo keeps a fourth from
+// being invisible if a device ever ships one.
 func (c *dashboardChart) seriesColor(i int, th theme.Colors) (r, g, b float64) {
-	if i%2 == 0 {
+	switch i % 3 {
+	case 0:
 		return rgbOr(th.Accent, theme.DefaultColors.Accent)
+	case 1:
+		return rgbOr(th.Text, theme.DefaultColors.Text)
+	default:
+		return rgbOr(th.TextDim, theme.DefaultColors.TextDim)
 	}
-	return rgbOr(th.Text, theme.DefaultColors.Text)
 }
 
 // scale is the backend's CSS scale factor. Cairo is painted rather than styled,

@@ -853,29 +853,99 @@ is achieved is load-bearing:
   gamescope page), or the shared flat column — separators, rhythm and all,
   byte-for-byte the historical layout — in the drawer, where `col` is
   ignored. The columns are homogeneous halves (letting the wider side win
-  would reflow the page every time Advanced toggles): editing on the left
-  (profile, TDP, delete — destructive kept away from the save cluster), the
-  fan curve and its save/reset actions on the right, because a single centred
-  column was tried first and read as "the drawer again, only wider" (Jeff,
-  2026-08-13). Focus lists are untouched by any of this — items reference
-  widgets, not containers — which is why the dump stayed byte-identical
-  through it; the cost is that D-pad order still follows the drawer's logical
-  sequence, not the two-column visual layout.
+  would reflow the page every time Advanced toggles), because a single
+  centred column was tried first and read as "the drawer again, only wider"
+  (Jeff, 2026-08-13). **Grouping is by domain**: the PROFILE card holds the
+  selector plus every profile operation — Activate / + New / Save As /
+  *Delete*, one symmetric row (`symmetricRow`: homogeneous equal-width
+  buttons filling the card; natural-width start-aligned buttons were tried
+  and read as ragged), the two-tap arm and sensitivity guards carrying
+  Delete's danger — the POWER card is headed "POWER", not the drawer's
+  "TDP", because it also holds the undervolt, and the FAN CURVE card holds
+  the editor. Each card ends in its own *reset*, right-aligned at natural
+  width — a secondary action, deliberately not a full-width primary.
+- **The window has exactly one save: the commit bar (`customcommit.go`).**
+  The drawer's per-domain saves (Save TDP / Save Fans / Save Both / Save UV)
+  are not built on the hosted surface at all — beside Activate and Save As
+  they read as "save the settings, then save them again in the profile", a
+  second step that does not exist, since the daemon has no working slot and
+  a send *is* the save into the profile (Jeff, 2026-08-14). Instead a bar
+  fixed **below the scroller** (so it cannot scroll out of reach with
+  Advanced open) carries one accent button plus an "Unsaved: …" indicator.
+  Mechanics: every sync ends by recapturing a widget **baseline**
+  (`syncCommitBar`), dirty = differs from it, and the button sends only the
+  dirty domains in `saveCustomBoth`'s established order (TDP, fans, UV).
+  Three rules are load-bearing. (1) **TDP dirtiness is judged in the active
+  mode only** — basic slider vs `baseBasic`, or the PL trio vs `baseAdv` —
+  so toggling Advanced with no value moved is not an edit, and edits made in
+  the abandoned mode do not send. (2) `refreshCommitDirty` (wired into every
+  value-changed handler, the Advanced toggle, and the curve's drag-end)
+  no-ops on `w.syncing`, because sync's programmatic `SetValue` fires the
+  same handlers before the baseline is recaptured; it also nil-guards on
+  `commitBtn`, which is the entire drawer-untouched guarantee. (3) The
+  undervolt counts only while reachable (`uvEditable`: uvBox visible and
+  Advanced open) — a hidden slider's value is not an edit. Label rules
+  (`CommitLabel`: "Apply Changes" live / "Save Changes" stored;
+  `UnsavedSummary`) live in `internal/profileui` where `make test` reaches
+  them. The button is pinned right by its **own** HExpand+AlignEnd — the
+  indicator's expand cannot do it, a hidden widget expands nothing — and
+  `.drawer .save-btn:disabled` exists in theme-default because the commit
+  button is the first save-btn that is routinely insensitive; the
+  unconditional accent fill read as clickable. **This is the change that
+  legitimately re-baselined the `full:custom` dump line** (n=22 → n=19,
+  sections profile/power/fan/commit in the page's reading order, Delete with
+  the profile row — and back to n=22 the same day when the AUTOSWITCH card
+  added its three items between fan and commit); the five other lines stayed
+  byte-identical through both, and the drawer's D-pad caveat now applies only
+  to the drawer.
+- **The window's Profiles page carries its own AUTOSWITCH card** — a second
+  instance of the drawer's block (`newAutoswitchSection`, split from
+  `buildAutoswitchSection` which still registers the drawer's as
+  `w.autoswitch`), in a card under the fan editor: autoswitch selects
+  profiles, so it belongs on the page that manages them (Jeff, 2026-08-14).
+  Each instance carries its own debounce timer and mirror fields, so the two
+  cannot interleave a send; the dropdowns open in whichever surface's popup
+  layer is active, which `activePopup()` already decides. The window instance
+  syncs from `customView.sync()` (safe: sync holds `w.syncing`, which the
+  switch's state-set handler checks before echoing a send) and its focus items
+  come from the shared `appendFocus`. The card is gated on `w.autoswitch !=
+  nil` rather than re-deriving the capability check — the drawer's control
+  registry has resolved it by the time the window builds lazily, so a device
+  without the capability drops the card here too. The target dropdowns list
+  **empty profiles greyed out** with an "(empty)" label (`profileui.
+  TargetRows` → `dropdownOption.disabled`) instead of hiding them — hiding
+  read as a broken list on a machine whose profiles all happened to be empty.
+  Disabled rows need nothing on the controller path: the popup's focus items
+  go through `focusItem.visible()`, which already skips insensitive widgets.
+- **The dashboard shows its full card set before any history arrives.**
+  `telemetryplot.Placeholder`/`PlaceholderKinds` (pure, tested) frame one
+  series-less group per expected quantity — from the device document's
+  declarations, everything when there is no document — and the view installs
+  them at construction, so the page never opens onto a blank grid (Jeff,
+  2026-08-14: the first second of nothing read as the app failing).
+  `startPolling` also fires its first fetch immediately instead of a tick
+  later. This deliberately bends the "no empty axes" honesty rule for the
+  loading phase only: a framed chart with a "—" readout says *waiting*, and
+  the two actionable kinds of nothing (daemon not running / too old) still
+  replace the frames with prose, because "start the daemon" is something the
+  user can act on. Chart teardown keys on a shape string, and the placeholder
+  sentinel can never collide with a real plot's shape
+  (`TestPlaceholderIsNotAPlotShape` holds the other side of that bargain).
 - **The hosted instance's widgets take desktop shapes, not just desktop
   sizes** (same review: "the design is still very much a touch focused
-  design"). `c.compactRow` turns full-width touch slabs into natural-width
-  start-aligned buttons; slider values sit beside/above their slider on a
-  form row (`buildTdpScale`/`buildUvScale` branch on `c.hosted()`, and
-  `c.uvText` drops the name from the value because the header row already
-  shows it — the drawer's stacked label keeps it); the Advanced checkbutton
-  is a plain checkbox (theme-default strips the fill **and sets
-  `border: none`, which no voltaire sheet needs but Breeze-gtk does** — the
-  GTK theme's checkbutton border shows through the moment the fill goes
-  transparent); Delete is a small start-aligned target. The hosted TELEMETRY
-  section is not built at all: the dashboard is one tab away with the same
-  numbers plus history, and the curve editor already draws live temperature
-  as its dashed marker — `syncTelemetry` nil-guards the labels, so the drawer
-  keeps its section untouched.
+  design"). Slider values sit beside/above their slider on a form row
+  (`buildTdpScale`/`buildUvScale` branch on `c.hosted()`, and `c.uvText`
+  drops the name from the value because the header row already shows it —
+  the drawer's stacked label keeps it); the Advanced checkbutton is a plain
+  checkbox (theme-default strips the fill **and sets `border: none`, which
+  no voltaire sheet needs but Breeze-gtk does** — the GTK theme's
+  checkbutton border shows through the moment the fill goes transparent).
+  The hosted TELEMETRY section is not built at all: the dashboard is one tab
+  away with the same numbers plus history, and the curve editor already
+  draws live temperature as its dashed marker — `syncTelemetry` nil-guards
+  the labels, so the drawer keeps its section untouched. The window's
+  default size was raised twice alongside this (900×640 → 1000×700 →
+  1200×800, `internal/mainwin`) as the layout earned the room.
 - **Never `SetVExpand(true)` on anything inside a FlowBox tile.** GTK4
   propagates expand upward, so one expanding chart made the cell, the FlowBox
   and the page all expand — the single tile row stretched to the full page
@@ -893,6 +963,20 @@ is achieved is load-bearing:
   serve the drawer.
 
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
+
+- **The expanded set (2026-08-14) is seven cards** — Temp (CPU+GPU), Fan,
+  Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem in
+  GHz), Memory (RAM+VRAM in GB) — matching the z13ctl-plus data set, all
+  daemon-served (root CLAUDE.md has the driver/wire story). GUI-side that
+  cost exactly three things: `seriesColor` gained a third theme-derived
+  colour (accent, text, text-dim — never a hardcoded hue, so light palettes
+  keep every trace visible); the header readout's ellipsize bound rose from
+  20 to 34 chars, sized for "Pkg: 12.8 · GPU: 3.2 · NPU: 0.1 W" at the
+  ~285px a card gets when seven share the window four to a row; and
+  `showPlaceholder` derives `telemetryplot.PlaceholderCaps` from the device
+  document's four telemetry declarations. Cards and headers otherwise flow
+  entirely from `Groups()` — no per-quantity GUI code exists, which is what
+  made adding ten quantities a plot-package change.
 
 The full window's Telemetry tab draws the daemon's sample history as a **row
 of compact cards** — a `GtkFlowBox` of `.dash-card` tiles, one per measured

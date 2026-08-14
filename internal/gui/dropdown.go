@@ -27,6 +27,12 @@ type dropdownOption struct {
 	// profile are different facts, and the old in-flow selector marked both
 	// with one CSS class.
 	running bool
+	// disabled shows the row greyed out and unselectable. Shown-but-dead is
+	// deliberate where it is used: hiding a row read as a broken list, and the
+	// label carries the reason. The controller path needs nothing extra — the
+	// popup's focus items go through focusItem.visible(), which already skips
+	// insensitive widgets.
+	disabled bool
 }
 
 // dropdownConfig configures one dropdown.
@@ -110,6 +116,9 @@ func (d *dropdown) openList() {
 
 		if opt.selected {
 			btn.AddCSSClass("active")
+		}
+		if opt.disabled {
+			btn.SetSensitive(false)
 		}
 		// Ordinary click is enough: GtkButton's own gesture runs in the
 		// capture phase, so touch works under gamescope's XWayland with no

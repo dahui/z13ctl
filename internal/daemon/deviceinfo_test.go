@@ -171,6 +171,31 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 		t.Error("the document names a power source but Sample reads nothing for it; " +
 			"a client would draw a chart flat at zero, which reads as a measurement")
 	}
+
+	// The expanded sources, on the same both-directions terms. Each case
+	// checks one field that source alone fills, and each declared-but-unread
+	// arm distinguishes a missing reader from hardware this machine simply
+	// does not offer (a VM with no amdgpu card, a kernel without amdxdna) —
+	// absence of the *device* is a skip, absence of the *reader* a failure.
+	if gpuReads := s.GPUTempC != 0 || s.GPUBusyKnown || s.GPUClockMHz != 0; gpuReads != (info.Telemetry.GPU != "") {
+		if info.Telemetry.GPU != "" {
+			if _, err := asusz13.ReadGPUBusyPct(); err != nil {
+				t.Skipf("gpu declared but no readable amdgpu here: %v", err)
+			}
+		}
+		t.Errorf("gpu declaration %q does not match what Sample reads (%v)", info.Telemetry.GPU, gpuReads)
+	}
+	if cpuReads := s.CPUTotalJiffies != 0; cpuReads != (info.Telemetry.CPUStats != "") {
+		t.Errorf("cpu_stats declaration %q does not match what Sample reads (%v)", info.Telemetry.CPUStats, cpuReads)
+	}
+	if npuReads := s.NPUKnown; npuReads != (info.Telemetry.NPU != "") {
+		if info.Telemetry.NPU != "" {
+			if _, err := asusz13.ReadNPURuntimeActive(); err != nil {
+				t.Skipf("npu declared but no amdxdna device here: %v", err)
+			}
+		}
+		t.Errorf("npu declaration %q does not match what Sample reads (%v)", info.Telemetry.NPU, npuReads)
+	}
 }
 
 // TestDocumentMatchesTheDrawersFallback closes the loop the drawer now depends
@@ -228,7 +253,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"battery":{"charge_limit":true,"health":true}`,
-		`"telemetry":{"power_draw":"rapl","history_seconds":300}`,
+		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","history_seconds":300}`,
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true`,
 	} {

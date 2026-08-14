@@ -449,3 +449,67 @@ func TestFreshEnoughBound(t *testing.T) {
 		})
 	}
 }
+
+// TestCPUUtilPct pins the jiffie-delta conversion: percentage of busy over
+// total delta, no first-reading figure, no wrap arithmetic on a counter that
+// went backwards, and a hard 100 ceiling.
+func TestCPUUtilPct(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		prev, cur jiffieReading
+		want      int
+		ok        bool
+	}{
+		{"half busy", jiffieReading{busy: 100, total: 1000}, jiffieReading{busy: 150, total: 1100}, 50, true},
+		{"idle", jiffieReading{busy: 100, total: 1000}, jiffieReading{busy: 100, total: 1100}, 0, true},
+		{"first reading", jiffieReading{}, jiffieReading{busy: 100, total: 1000}, 0, false},
+		{"no time passed", jiffieReading{busy: 100, total: 1000}, jiffieReading{busy: 100, total: 1000}, 0, false},
+		{"total went backwards", jiffieReading{busy: 100, total: 1000}, jiffieReading{busy: 10, total: 100}, 0, false},
+		{"busy went backwards", jiffieReading{busy: 100, total: 1000}, jiffieReading{busy: 50, total: 1100}, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := cpuUtilPct(tc.prev, tc.cur)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("cpuUtilPct(%+v, %+v) = %d, %v; want %d, %v",
+					tc.prev, tc.cur, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestAPITelemetrySampleBoxesFreshPointers guards the projection: Known flags
+// become pointers, absent quantities stay nil, and the RPM slice is a copy —
+// the live-edge caller hands a sample the driver still owns.
+func TestAPITelemetrySampleBoxesFreshPointers(t *testing.T) {
+	t.Parallel()
+	rpm := []int{2400, 2600}
+	s := driver.Sample{
+		TempC: 52, RPM: rpm,
+		GPUTempC: 46, GPUBusyPct: 0, GPUBusyKnown: true,
+		GPUPowerW: 3.2, GPUPowerKnown: true,
+		CPUUtilPct: 12, CPUUtilKnown: true,
+		NPUPowerW: 0, NPUBusyPct: 0, NPUKnown: true,
+		CPUClockMHz: 3200, MemUsedMB: 12000, MemTotalMB: 64000,
+	}
+	got := apiTelemetrySample(99, s)
+
+	if got.GPUUtilPct == nil || *got.GPUUtilPct != 0 {
+		t.Error("a known 0% GPU utilisation must survive as a pointer to 0, not vanish")
+	}
+	if got.NPUPowerW == nil || *got.NPUPowerW != 0 {
+		t.Error("a known 0 W NPU (runtime-suspended) must survive as a pointer to 0")
+	}
+	if got.BatteryPowerW != nil {
+		t.Error("an unknown battery flow must stay nil")
+	}
+	if got.CPUUtilPct == nil || *got.CPUUtilPct != 12 {
+		t.Errorf("CPUUtilPct = %v, want 12", got.CPUUtilPct)
+	}
+	got.RPM[0] = 1
+	if rpm[0] != 2400 {
+		t.Error("the wire sample aliases the driver's RPM slice")
+	}
+}

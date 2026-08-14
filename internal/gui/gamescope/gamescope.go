@@ -388,6 +388,8 @@ func (b *Backend) scaledCSS() string {
 .main-window .dash-card-title { font-size: %.0fpx; letter-spacing: %.0fpx; }
 .main-window .dash-card-value { font-size: %.0fpx; }
 .main-window .section-card { padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
+.main-window .commit-bar { padding: %.0fpx %.0fpx; }
+.main-window .commit-bar button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .custom-actions button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .advanced-check { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .error-bar { padding: %.0fpx %.0fpx; margin: 0 %.0fpx %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -439,6 +441,8 @@ func (b *Backend) scaledCSS() string {
 		10*s, 1*s, // dash-card-title (font-size, letter-spacing)
 		11*s,            // dash-card-value font-size
 		10*s, 12*s, 8*s, // section-card (padding-v, padding-h, border-radius)
+		8*s, 12*s, // commit-bar (padding-v, padding-h)
+		48*s, 4*s, 16*s, 6*s, // commit-bar button — touch height, like every button here
 		36*s, 4*s, 8*s, 6*s, // custom-actions button (min-height, padding-v, padding-h, border-radius)
 		36*s, 4*s, 10*s, 6*s, // advanced-check (min-height, padding-v, padding-h, border-radius)
 		// Error bar. Omitting it left the drawer's only failure report at 1x while

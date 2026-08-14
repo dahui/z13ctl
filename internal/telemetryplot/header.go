@@ -45,12 +45,15 @@ func (g Group) HeaderValue() string {
 	return b.String()
 }
 
-// FormatValue renders a reading. Temperature and RPM are whole numbers on
-// this hardware; power is not, and truncating 27.4 W to 27 loses the only
-// digit that moves while a load ramps.
+// FormatValue renders a reading. Temperature, RPM and percentages are whole
+// numbers on this hardware; power, the GHz-denominated clocks and the GB
+// memory gauges are not — truncating 27.4 W to 27, or 3.2 GHz to 3, loses the
+// only digit that moves.
 func FormatValue(kind Kind, v float64) string {
-	if kind == KindPower {
+	switch kind {
+	case KindPower, KindClock, KindMemory:
 		return fmt.Sprintf("%.1f", v)
+	default:
+		return fmt.Sprintf("%.0f", v)
 	}
-	return fmt.Sprintf("%.0f", v)
 }

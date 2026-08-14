@@ -171,6 +171,12 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 - [ ] `./voltaire tdp --set 40` while on a firmware profile — creates and
       activates `custom`; `./voltaire profile --get` says `custom`, sysfs PPT
       reads 40.
+- [ ] **Promotion starts fresh**: give `custom` a fan curve, return to
+      `balanced`, then `./voltaire tdp --set 40` — `custom` now holds only the
+      TDP: `$CURVE/pwm1_enable` stays `2` (fans on firmware auto, the stored
+      curve did **not** come back), and it stays `2` through at least two
+      reconcile ticks (~5 s). `./voltaire fancurve --get` shows no stored
+      curve for it.
 - [ ] `./voltaire profile --create gaming`, `./voltaire tdp --set 35 --profile
       gaming` — prints "stored… not applied", and sysfs PPT is **unchanged**
       (still 40).
@@ -335,6 +341,34 @@ and keep it inside the drawer while screenshotting, since the backend
 deliberately ignores focus loss with the pointer inside and dismisses with it
 outside.
 :::
+
+### The full window (double press)
+
+- [ ] Double-press the Armoury Crate button — the drawer flashes and the full
+      window replaces it. The **Telemetry** tab shows all seven cards
+      *immediately* (framed charts, "—" readouts at worst for the first
+      second), never a blank grid.
+- [ ] The expanded cards read sensibly: Temp shows CPU and GPU, Power shows
+      Pkg/GPU/NPU (NPU 0.0 W while nothing uses it — a reading, not a gap),
+      Load shows all three utilisations, Clocks in GHz, Memory RAM+VRAM in
+      GB. Run something GPU-heavy and the GPU load/clock/power traces move
+      together; `voltaire status` and the Temp card's CPU figure agree.
+- [ ] Profiles tab: move only the TDP slider — the bottom bar reads
+      "Unsaved: TDP" and **Apply Changes** enables. Apply: only the TDP
+      changes (fans stay as they were); the bar clears and the button disables.
+- [ ] Drag the fan curve, touch nothing else — bar reads "Unsaved: fan curve";
+      Apply sends only the curve.
+- [ ] Retarget the selector at a profile that is **not** running — the button
+      reads **Save Changes** and an applied edit changes no sysfs.
+- [ ] Toggling Advanced with no value moved does **not** enable the commit
+      button; moving PL2 in advanced then unchecking Advanced sends basic
+      semantics (the PL2 edit is not applied).
+- [ ] The AUTOSWITCH card on the Profiles tab mirrors the drawer's section:
+      flip it in one place, the other follows on the next sync; its dropdowns
+      open inside the window, not on the hidden drawer.
+- [ ] Reset TDP / Reset Fans sit right-aligned in their cards and still gate:
+      Reset Fans is refused above the safe sustained limit with the note under
+      the fan card.
 
 ## 14. Cleanup
 

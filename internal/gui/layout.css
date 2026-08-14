@@ -47,6 +47,21 @@
     min-height: 18px;
 }
 
+/* The Profiles page's commit bar — the one Apply/Save button for every
+   unsaved edit, fixed under the scroll area so it cannot scroll out of reach
+   while the advanced controls are open. The separating border is in
+   theme-default.css, which owns colors. Gamescope's scaledCSS restates the
+   sizes at touch scale. */
+.drawer.main-window .commit-bar {
+    padding: 8px 12px;
+}
+
+.drawer.main-window .commit-bar button {
+    min-height: 30px;
+    padding: 3px 16px;
+    border-radius: 5px;
+}
+
 /* Full window tab bar. Padding rather than the panel's 4px gap: the tabs read
    as a strip along the top of the window, not as a group of buttons in it.
    The underline styling itself is in theme-default.css, where PRIORITY_USER

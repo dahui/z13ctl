@@ -37,7 +37,7 @@ tabs and B closes it.
 | Section | What it does |
 |---------|-------------|
 | **Profile** | The three firmware profiles (quiet, balanced, performance) and a **Custom** button. The Custom button is labelled with whichever custom profile is running, and opens the custom profile view. |
-| **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. |
+| **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. A custom profile with no settings shows greyed out as "(empty)" — give it something to apply and it becomes selectable. |
 | **Custom profile view** | Every custom profile lives here. The dropdown at the top names the one you are editing — open it and pick a name to switch to it; a dot marks the profile that is currently running. **Activate** applies it to the machine, **+ New** creates an empty named profile, **Save As** copies the active profile under a new name, and **Delete Profile** (tap twice) removes one that is not active or referenced by autoswitch. When a button is greyed out, the reason appears right beneath it. |
 | **Live vs stored edits** | Editing the *active* profile applies changes to the hardware immediately. Editing any other profile stores them, to apply when it is activated — the view says "Not active — changes are stored" when that is what is happening. |
 | **Custom TDP** | Configurable power limits with basic (single slider) and advanced (PL1 sustained / PL2 short boost / PL3 fast boost) modes |
@@ -66,11 +66,25 @@ one chart per quantity, each with the live reading in its header. The daemon
 samples the machine once a second and keeps the last five minutes, so the
 charts are drawn from readings taken whether or not anything was open.
 
-There is one card per quantity the machine actually measures — on the Z13 that
-is APU temperature, the two fan speeds, CPU package power, and battery flow.
-Both fans share one chart and one scale, so you can compare them directly. A
+There is one card per *kind* of quantity the machine actually measures — on
+the Z13 that is seven:
+
+- **Temp** — CPU die and GPU edge temperature, one shared scale
+- **Fan** — both fan speeds
+- **Power** — CPU package, GPU (GFX domain), and NPU draw in watts
+- **Battery** — battery flow (see below)
+- **Load** — CPU, GPU, and NPU utilisation
+- **Clocks** — average CPU core clock, GPU clock, and memory clock, in GHz
+- **Memory** — unified memory in use, and the iGPU's VRAM carveout, in GB
+
+Series on one card share one scale, so their heights compare directly. A
 quantity your hardware does not report gets no card at all rather than a line
 sitting at zero, which would look like a measurement.
+
+The **NPU** reads 0 W and 0% whenever it is suspended — which is most of the
+time on a machine not running local inference, and is a true reading, not a
+gap. voltaire deliberately never wakes it to ask: the reading is taken only
+while something else already has the NPU powered up.
 
 The **battery card's header names what the pack is doing** — Charging,
 Discharging (each with the live wattage), or *AC · not charging*. That last one
@@ -88,6 +102,10 @@ from a version before this existed, re-run setup once.
 negative while charging, so the line crosses zero when you plug in. Sitting at
 exactly zero is a real reading — a full battery on mains moves no energy — and
 is drawn as such; a machine with no battery gets no chart instead.
+
+The full card set appears the moment the tab opens, with each chart framed and
+"—" beside its name, and the data fills in as it arrives — usually within a
+second.
 
 The buttons above the charts pick how far back to look. Only spans the daemon
 can fill are offered.
@@ -107,6 +125,24 @@ older than the GUI — restart it after upgrading:
 ```sh
 systemctl --user restart voltaire
 ```
+
+## The Profiles tab
+
+The full window's **Profiles** tab is the same profile editor as the drawer's
+custom view, laid out for a desktop: the profile operations (Activate, + New,
+Save As, Delete Profile) in one card, the power limits and undervolt in a
+**POWER** card, the fan curve editor beside them, and the **autoswitch**
+controls beneath it — the same controls as the drawer's Autoswitch section,
+here because autoswitch picks between the profiles this page manages.
+
+Instead of the drawer's per-domain save buttons there is **one commit button**
+in the bar along the bottom. Move any slider or drag the curve and the bar
+shows what is unsaved; the button sends exactly those changes — **Apply
+Changes** when the target profile is running (applied to hardware
+immediately), **Save Changes** when it is not (stored, applied on
+activation). Each card keeps its own *reset*, which is a different operation:
+it removes that subsystem from the profile and hands the hardware back to the
+firmware.
 
 ## Custom color picker
 

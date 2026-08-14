@@ -50,12 +50,18 @@ const DefaultMaxGap = 5 * time.Second
 // stacking order off this rather than off the label, which is prose.
 type Kind int
 
-// The quantities the daemon's telemetry sample can carry.
+// The quantities the daemon's telemetry sample can carry. One Kind is one
+// chart: series of a kind share its axis, so a kind groups quantities whose
+// magnitudes are meant to be compared (two dies' temperatures, three
+// utilisations) — and splits ones that share a unit but not a scale.
 const (
 	KindTemp Kind = iota
 	KindFan
 	KindPower
 	KindBattery
+	KindLoad
+	KindClock
+	KindMemory
 )
 
 // Point is one reading placed in the plot.
@@ -125,15 +131,26 @@ type axis struct {
 }
 
 var axes = map[Kind]axis{
-	KindTemp:  {label: "APU", unit: "°C", nomMin: 30, nomMax: 100, step: 10},
+	KindTemp:  {label: "Temp", unit: "°C", nomMin: 30, nomMax: 100, step: 10},
 	KindFan:   {label: "Fan", unit: "RPM", nomMin: 0, nomMax: 6000, step: 1000},
-	KindPower: {label: "Package", unit: "W", nomMin: 0, nomMax: 60, step: 10},
+	KindPower: {label: "Power", unit: "W", nomMin: 0, nomMax: 60, step: 10},
 	// Battery flow is signed: discharging is positive, charging negative, so
 	// the nominal frame straddles zero. It is a chart of its own rather than a
-	// second series on the package chart, because the two answer different
-	// questions — how hard the APU is working, and which way the pack is
+	// third series on the power chart, because the two answer different
+	// questions — how hard the SoC is working, and which way the pack is
 	// moving — and sharing an axis would squash both.
 	KindBattery: {label: "Battery", unit: "W", nomMin: -30, nomMax: 30, step: 10},
+	// Load is a hard 0–100 scale by definition; the frame never needs to grow
+	// but bounds() would let it if a driver ever misreported.
+	KindLoad: {label: "Load", unit: "%", nomMin: 0, nomMax: 100, step: 25},
+	// Clocks travel in GHz rather than MHz so the axis labels stay short and
+	// the header readout is legible; the CPU/GPU/memory clocks genuinely
+	// share a 0–4 GHz band on the hardware shipping today.
+	KindClock: {label: "Clocks", unit: "GHz", nomMin: 0, nomMax: 4, step: 1},
+	// Memory gauges in GB. The frame grows to the machine's actual capacity
+	// from the data — nominal 32 covers the smaller configurations without
+	// wasting half the axis on a 32 GB machine.
+	KindMemory: {label: "Memory", unit: "GB", nomMin: 0, nomMax: 32, step: 8},
 }
 
 // bounds frames v's observed range: the nominal window, expanded outward to a
@@ -201,15 +218,44 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 		}
 	}
 
+	// Presence helpers. nonZeroInt is the rule for every quantity whose zero
+	// is never a measurement (a 0°C die, a 0 MHz clock); ptrInt/ptrFloat is
+	// the rule for the ones whose zero is — those travel as pointers and
+	// presence is the pointer, BatteryPowerW's reasoning throughout.
+	nonZeroInt := func(read func(api.TelemetrySample) int) func(api.TelemetrySample) (float64, bool) {
+		return func(s api.TelemetrySample) (float64, bool) {
+			v := read(s)
+			return float64(v), v != 0
+		}
+	}
+	ptrInt := func(read func(api.TelemetrySample) *int) func(api.TelemetrySample) (float64, bool) {
+		return func(s api.TelemetrySample) (float64, bool) {
+			if p := read(s); p != nil {
+				return float64(*p), true
+			}
+			return 0, false
+		}
+	}
+	ptrFloat := func(read func(api.TelemetrySample) *float64) func(api.TelemetrySample) (float64, bool) {
+		return func(s api.TelemetrySample) (float64, bool) {
+			if p := read(s); p != nil {
+				return *p, true
+			}
+			return 0, false
+		}
+	}
+
 	// Specs in drawing order. Every series of a kind is emitted consecutively,
 	// which is what lets Groups() find a chart's members by walking runs.
-	specs := []spec{{kind: KindTemp, value: func(s api.TelemetrySample) (float64, bool) {
-		// TempC is omitempty, so an absent reading and a zero one are the same
-		// on the wire. 0°C is not a plausible APU temperature, so it reads as
-		// absent — which is the honest way round: a missing point leaves a gap,
-		// a zeroed one draws a cliff to the floor.
-		return float64(s.TempC), s.TempC != 0
-	}}}
+	//
+	// TempC is omitempty, so an absent reading and a zero one are the same on
+	// the wire. 0°C is not a plausible die temperature, so it reads as absent
+	// — which is the honest way round: a missing point leaves a gap, a zeroed
+	// one draws a cliff to the floor. The GPU edge temp follows the same rule.
+	specs := []spec{
+		{kind: KindTemp, label: "CPU", value: nonZeroInt(func(s api.TelemetrySample) int { return s.TempC })},
+		{kind: KindTemp, label: "GPU", value: nonZeroInt(func(s api.TelemetrySample) int { return s.GPUTempC })},
+	}
 
 	for i := range fans {
 		label := ""
@@ -228,14 +274,21 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 			}})
 	}
 
-	specs = append(specs, spec{kind: KindPower, value: func(s api.TelemetrySample) (float64, bool) {
-		// As with temperature: a device that cannot read package power omits the
-		// field, and a machine drawing exactly 0 W is not a real state.
-		return s.PackagePowerW, s.PackagePowerW != 0
-	}})
+	// Power. The package figure keeps the value-presence rule (a machine
+	// drawing exactly 0 W is not a real state); the GPU and NPU domains are
+	// pointers because their zero is one — a GFXOFF'd GPU and a
+	// runtime-suspended NPU genuinely draw nothing, most of every idle
+	// session.
+	specs = append(specs,
+		spec{kind: KindPower, label: "Pkg", value: func(s api.TelemetrySample) (float64, bool) {
+			return s.PackagePowerW, s.PackagePowerW != 0
+		}},
+		spec{kind: KindPower, label: "GPU", value: ptrFloat(func(s api.TelemetrySample) *float64 { return s.GPUPowerW })},
+		spec{kind: KindPower, label: "NPU", value: ptrFloat(func(s api.TelemetrySample) *float64 { return s.NPUPowerW })},
+	)
 
 	specs = append(specs, spec{kind: KindBattery, value: func(s api.TelemetrySample) (float64, bool) {
-		// The one quantity whose zero is a reading — a full pack on mains moves
+		// The original zero-is-a-reading pointer — a full pack on mains moves
 		// no energy — which is why the wire field is a pointer and presence is
 		// the pointer, not the value. Testing the value instead would drop the
 		// chart on every laptop sitting at 100%, and testing nothing would draw
@@ -245,6 +298,47 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 		}
 		return *s.BatteryPowerW, true
 	}})
+
+	// Utilisation: all pointers — an idle anything is genuinely at 0%.
+	specs = append(specs,
+		spec{kind: KindLoad, label: "CPU", value: ptrInt(func(s api.TelemetrySample) *int { return s.CPUUtilPct })},
+		spec{kind: KindLoad, label: "GPU", value: ptrInt(func(s api.TelemetrySample) *int { return s.GPUUtilPct })},
+		spec{kind: KindLoad, label: "NPU", value: ptrInt(func(s api.TelemetrySample) *int { return s.NPUUtilPct })},
+	)
+
+	// Clocks, converted to GHz for the axis and header (see axes). A zero
+	// clock is never a reading.
+	ghz := func(read func(api.TelemetrySample) int) func(api.TelemetrySample) (float64, bool) {
+		return func(s api.TelemetrySample) (float64, bool) {
+			v := read(s)
+			return float64(v) / 1000, v != 0
+		}
+	}
+	specs = append(specs,
+		spec{kind: KindClock, label: "CPU", value: ghz(func(s api.TelemetrySample) int { return s.CPUClockMHz })},
+		spec{kind: KindClock, label: "GPU", value: ghz(func(s api.TelemetrySample) int { return s.GPUClockMHz })},
+		spec{kind: KindClock, label: "Mem", value: ghz(func(s api.TelemetrySample) int { return s.MemClockMHz })},
+	)
+
+	// Memory gauges in GB. Presence requires the total alongside the used
+	// figure — a used reading with no capacity behind it has no gauge to sit
+	// on — and a zero used is treated as absent, which loses nothing real: a
+	// running kernel never uses zero memory, and a VRAM carveout with a
+	// compositor up never does either.
+	gb := func(readUsed, readTotal func(api.TelemetrySample) int) func(api.TelemetrySample) (float64, bool) {
+		return func(s api.TelemetrySample) (float64, bool) {
+			used, total := readUsed(s), readTotal(s)
+			return float64(used) / 1024, used != 0 && total != 0
+		}
+	}
+	specs = append(specs,
+		spec{kind: KindMemory, label: "RAM", value: gb(
+			func(s api.TelemetrySample) int { return s.MemUsedMB },
+			func(s api.TelemetrySample) int { return s.MemTotalMB })},
+		spec{kind: KindMemory, label: "VRAM", value: gb(
+			func(s api.TelemetrySample) int { return s.VRAMUsedMB },
+			func(s api.TelemetrySample) int { return s.VRAMTotalMB })},
+	)
 
 	// Gather first, frame second. The axis is computed per *kind*, over every
 	// series of that kind at once, because a chart draws them together: two fans

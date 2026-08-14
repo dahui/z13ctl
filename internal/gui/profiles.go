@@ -86,7 +86,10 @@ func (c *customView) buildProfileSelector() *gtk.Box {
 	w.setHint(c.saveAsBtn, "Copy the active profile's settings under a new name")
 	c.saveAsBtn.ConnectClicked(func() { c.showNameEntry(nameModeSaveAs) })
 	actions.Append(c.saveAsBtn)
-	c.compactRow(actions, c.activateBtn, c.newProfileBtn, c.saveAsBtn)
+	c.symmetricRow(actions)
+	// Kept on the struct so the window can add Delete to this row — a
+	// profile operation belongs with the profile operations.
+	c.profileActions = actions
 	box.Append(actions)
 
 	// One note serves both refusals — they are almost always blocked together

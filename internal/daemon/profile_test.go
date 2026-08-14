@@ -503,3 +503,74 @@ func TestResetOnFirmwareProfilePreservesSavedProfile(t *testing.T) {
 			"or the handlers will commit a cleared profile over the user's saved settings", target)
 	}
 }
+
+// TestImplicitEditStartsFresh pins the "start fresh" promotion rule (Jeff,
+// 2026-08-14): a bare edit made while a firmware profile is active commits a
+// custom profile containing only that edit. Resurrecting custom's stored
+// contents let a tdp set drag a stale fan curve into hardware, and a fan-curve
+// set hand the reconcile watcher a stored 93W TDP to restore — the watcher
+// re-applies the active custom profile's TDP on any drift. An edit whose
+// target was already selected, and an explicit --profile target, keep the
+// profile's other settings: those are the user editing a bundle in place.
+func TestImplicitEditStartsFresh(t *testing.T) {
+	t.Parallel()
+
+	full := api.CustomProfile{
+		Name:      "custom",
+		FanCurve:  &api.FanCurveState{Mode: 1, Points: make([]api.FanCurvePoint, 8)},
+		TDP:       &api.TDPState{PL1SPL: 93},
+		Undervolt: &api.UndervoltState{CPUCO: -15},
+	}
+
+	cases := []struct {
+		name      string
+		active    string
+		request   string
+		wantFresh bool
+	}{
+		{"bare edit on a firmware profile starts fresh", "balanced", "", true},
+		{"bare edit on custom keeps the bundle", "custom", "", false},
+		{"explicit target keeps the bundle", "balanced", "custom", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := &Daemon{state: api.State{
+				Profile:        tc.active,
+				CustomProfiles: map[string]api.CustomProfile{"custom": cloneCustomProfile(full)},
+			}}
+			target, err := d.resolveEditTargetLocked(tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target = target.freshImplicit()
+
+			// The edit handlers all commit target.Profile plus their one field;
+			// stand in for handleTDP here.
+			p := target.Profile
+			p.TDP = &api.TDPState{PL1SPL: 60}
+			d.mu.Lock()
+			d.commitEditLocked(target, p)
+			d.mu.Unlock()
+
+			got := d.state.CustomProfiles["custom"]
+			if got.TDP == nil || got.TDP.PL1SPL != 60 {
+				t.Fatalf("TDP = %+v, want the edit (PL1 60)", got.TDP)
+			}
+			if tc.wantFresh {
+				if got.FanCurve != nil || got.Undervolt != nil {
+					t.Errorf("implicit edit kept stored settings (curve %v, uv %v); "+
+						"the reconcile watcher would re-apply them within two seconds",
+						got.FanCurve != nil, got.Undervolt != nil)
+				}
+			} else {
+				if got.FanCurve == nil || got.Undervolt == nil {
+					t.Errorf("non-implicit edit dropped stored settings (curve %v, uv %v); "+
+						"that is the silent data loss the reset guard exists to prevent",
+						got.FanCurve != nil, got.Undervolt != nil)
+				}
+			}
+		})
+	}
+}

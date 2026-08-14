@@ -33,4 +33,20 @@ var (
 
 	// smuDriverPath holds the ryzen_smu kernel module's mailbox files.
 	smuDriverPath = "/sys/kernel/ryzen_smu_drv"
+
+	// sysDrmDir holds the DRM class devices; GPU telemetry lives on the
+	// amdgpu card's device node.
+	sysDrmDir = "/sys/class/drm"
+
+	// procStatPath and memInfoPath are the procfs sources for the CPU
+	// utilisation counters and system memory gauges.
+	procStatPath = "/proc/stat"
+	memInfoPath  = "/proc/meminfo"
+
+	// sysCPUDir holds the per-core cpufreq nodes.
+	sysCPUDir = "/sys/devices/system/cpu"
+
+	// sysAccelDir and devAccelDir locate the amdxdna NPU accel device.
+	sysAccelDir = "/sys/class/accel"
+	devAccelDir = "/dev/accel"
 )

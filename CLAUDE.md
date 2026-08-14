@@ -791,14 +791,30 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   copy of its own (three pointers and a slice), not just a new map header.
 - **The active profile is the default edit target; `--profile` overrides it.**
   `fancurve|tdp|undervolt --set` with no `--profile` edits the profile you are
-  running, creating and activating `custom` when a firmware profile is active —
-  exactly the pre-existing behaviour, so no existing invocation changes meaning.
+  running, creating and activating `custom` when a firmware profile is active.
   There is no working slot and no save step: the edit lands in the profile and
   persists immediately. `--profile <name>` edits a profile that is *not* running,
   stores only, and writes no hardware. That is not a convenience — autoswitch is
   unusable without it, since configuring the battery profile would otherwise mean
   applying it first. `resolveEditTargetLocked` + `commitEditLocked`
   (`internal/daemon/profile.go`) are the single place that resolves and commits.
+- **Promotion starts fresh: a bare edit from a firmware profile commits
+  `custom` containing only that edit** (`editTarget.freshImplicit()`; Jeff,
+  2026-08-14). The pre-existing behaviour adopted whatever `custom` already
+  stored, and both directions of that bit on the same day: a `tdp --set` from
+  `balanced` dragged a months-old fan curve into hardware through `handleTDP`'s
+  restore-what-the-profile-describes step, and a `fancurve --set` would have
+  handed the reconcile watcher a stored 93W TDP to restore within two seconds —
+  the watcher re-applies the active custom profile's TDP on *any* drift, not
+  just above the safe max. The discarded settings are the accepted cost:
+  keeping bundles is what named profiles and Save As are for, and an explicit
+  `--profile custom` edit still edits the bundle in place, as does a bare edit
+  while `custom` is already active. The *reset* handlers deliberately do not
+  call `freshImplicit` — they key on `implicit()` to skip the commit entirely,
+  because an edit overwriting the profile is the user establishing new
+  contents, while a reset touching it would be the daemon discarding old ones
+  (the silent-data-loss guard below). `TestImplicitEditStartsFresh` pins all
+  three target shapes.
 - **"Create and activate `custom`" is right for `--set` and wrong for `--reset`;
   `editTarget.implicit()` is the distinction.** `editTarget` carries both `Live`
   ("this edit writes hardware") and `Active` ("this profile was already
@@ -1216,6 +1232,32 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   ReadOnly` checks all four artifacts (both generated, both packaged) and
   fails on a `g+w` line mentioning `energy_uj`, because nothing else in the
   grant table expresses the distinction.
+- **The expanded telemetry (2026-08-14) matches the z13ctl-plus/z13gui-plus
+  data set, through the daemon.** GPU edge temp, busy %, sclk, GFX power and
+  UCLK (amdgpu sysfs + a pure gpu_metrics v3.0 parser at offsets 124/186), CPU
+  utilisation counters + average core clock + system memory (procfs/cpufreq),
+  VRAM carveout, and NPU power/util/clock (amdxdna DRM ioctls, layouts ported
+  from the -plus fork, decoded at explicit offsets because 168-byte records
+  misalign struct casts). The forks read sensors live inside get-state with no
+  history; ours flow driver `Sample()` → 1 Hz sampler → ring → wire, so every
+  quantity charts. Three rules earned their comments: (1) **the NPU is queried
+  only while `runtime_status` reads active** — opening the accel node resumes
+  a suspended NPU, so an unconditional 1 Hz query would pin it awake forever, a
+  power cost imposed by the power graph; a suspended NPU reports *zeros with
+  Known=true*, since suspended genuinely means drawing nothing and a chart
+  that gapped whenever the NPU slept would look broken on every machine not
+  running inference. (2) CPU utilisation crosses the boundary as **cumulative
+  jiffie counters** on the energy-counter pattern (`cpuUtilPct` in the sampler,
+  `prevJiffies` owned by its goroutine); unlike energy it needs no gap ceiling
+  — jiffies only advance awake. (3) Presence per field by what zero means:
+  utils and GPU/NPU power are wire *pointers* (idle is genuinely 0), temps and
+  clocks omit zero (never a reading). `telemetry.{gpu,cpu_stats,npu}` are
+  declared in the device TOML and the declaration guard now holds all four
+  sources both directions. `State.Telemetry` is the full live edge as one
+  nested sample (freshness-bounded; derived rates grafted from the ring) so
+  the every-quantity-live rule holds without a top-level field per quantity —
+  the pre-2.0 named fields stay forever. New State pointer ⇒ `cloneState` got
+  `cloneTelemetrySample`.
 - **Package power crosses the driver boundary as an energy *counter*, not as
   watts.** RAPL publishes cumulative microjoules, so power is a difference over
   an interval — arithmetic that needs the *previous* reading, which a driver
@@ -1729,11 +1771,15 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   controller cannot read a tooltip, so a focusable-but-dead item says nothing.
 - **The autoswitch UI uses cycle buttons and a debounced single send.**
   Cycle-on-tap instead of a dropdown for the standing gamescope reason;
-  `profileui.TargetOptions` deliberately excludes empty custom profiles even
-  though the daemon accepts them (a target that fails at every transition is a
-  trap); and the 300ms debounce is about ordering, not chattiness — per-click
-  goroutines can land on the daemon out of order and store an intermediate
-  choice.
+  empty custom profiles are unusable targets even though the daemon accepts
+  them (a target that fails at every transition is a trap) — shown **greyed
+  with an "(empty)" label** rather than hidden, because silently omitting them
+  read as "my profiles aren't offered", a broken list rather than a rule
+  (`profileui.TargetRows`; `TargetOptions` remains the selectable subset, and
+  the two are derived from one function so they cannot disagree; Jeff,
+  2026-08-14); and the 300ms debounce is about ordering, not chattiness —
+  per-click goroutines can land on the daemon out of order and store an
+  intermediate choice.
 - **`BuildThemeCSS` defines every token twice — `@z13-*` and `@voltaire-*` —
   which is what let the token rename be *staged*.** The generated
   `@define-color` block is prepended to the bundled `theme-default.css`.
@@ -1975,7 +2021,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. The full window has had its **desktop design pass** (Jeff, 2026-08-13): underline tabs winning by CSS specificity, `.drawer.main-window`-scoped desktop density (gamescope keeps touch density by scaledCSS *omission*), a `GtkFlowBox` card-grid dashboard whose battery card header renders `profileui.BatteryStatus` from get-state (never a bare 0 W on a charge-limited pack), a per-surface popup layer (the window's dropdowns previously rendered on the hidden drawer), LB/RB tab switching, B closing the window, and `activeScroll` learning the window's pages — all with the six-line focus dump byte-identical throughout. Details in `internal/gui/CLAUDE.md` ("The desktop design pass"). |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. The full window has had its **desktop design pass** (Jeff, 2026-08-13): underline tabs winning by CSS specificity, `.drawer.main-window`-scoped desktop density (gamescope keeps touch density by scaledCSS *omission*), a `GtkFlowBox` card-grid dashboard whose battery card header renders `profileui.BatteryStatus` from get-state (never a bare 0 W on a charge-limited pack), a per-surface popup layer (the window's dropdowns previously rendered on the hidden drawer), LB/RB tab switching, B closing the window, and `activeScroll` learning the window's pages — all with the six-line focus dump byte-identical throughout. Details in `internal/gui/CLAUDE.md` ("The desktop design pass"). A second pass (Jeff, 2026-08-14) reshaped the Profiles page around **one commit button** — dirty-tracked Apply/Save Changes in a bar under the scroller, per-domain saves gone from the window (the drawer keeps its), resets right-aligned per card, `profileui.CommitLabel`/`UnsavedSummary` carrying the label rules — added an **AUTOSWITCH card** to that page (second `autoswitchSection` instance), and made the dashboard show its **full placeholder card set immediately** (`telemetryplot.Placeholder`) with the first history fetch fired on show; the daemon side of the same day is the fresh-promotion rule above. The `full:custom` dump line was re-baselined twice, deliberately, and the other five lines held. The dashboard then grew to the **expanded telemetry set** (see the dedicated entry above): seven cards — Temp (CPU+GPU), Fan, Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem, GHz), Memory (RAM+VRAM, GB) — with a third theme-derived trace colour and a 34-char header bound; the placeholder set derives from the four telemetry declarations. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

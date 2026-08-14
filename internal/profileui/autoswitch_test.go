@@ -74,3 +74,36 @@ func TestPowerLabel(t *testing.T) {
 		t.Errorf("PowerLabel(battery) = %q", got)
 	}
 }
+
+func TestTargetRowsShowEmptyProfilesGreyed(t *testing.T) {
+	s := stateWith("balanced",
+		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
+		api.CustomProfile{Name: "hollow"}, // empty: shown, marked, not selectable
+	)
+	rows := profileui.TargetRows(s)
+
+	want := []profileui.TargetRow{
+		{Name: profileui.LeaveAlone, Label: "(don't change)"},
+		{Name: "quiet", Label: "Quiet"},
+		{Name: "balanced", Label: "Balanced"},
+		{Name: "performance", Label: "Performance"},
+		// The default profile is always addressable, so it is always listed —
+		// greyed here, since this state gives it no settings.
+		{Name: "custom", Label: "Custom (empty)", Empty: true},
+		// User-typed names display as stored; only the built-ins capitalize.
+		{Name: "gaming", Label: "gaming"},
+		{Name: "hollow", Label: "hollow (empty)", Empty: true},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Errorf("TargetRows = %v, want %v (empty profiles are shown greyed, not hidden)", rows, want)
+	}
+
+	// TargetOptions is TargetRows minus the unusable rows; the two must agree
+	// or the widget could offer a name the daemon refuses at every transition.
+	opts := profileui.TargetOptions(s)
+	for _, o := range opts {
+		if o == "hollow" {
+			t.Errorf("TargetOptions offers the empty profile: %v", opts)
+		}
+	}
+}

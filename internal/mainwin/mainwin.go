@@ -145,11 +145,13 @@ func IDs() []string {
 // screen is something the compositor can deal with; a window shrunk to 200px
 // is not something the user can.
 const (
-	// 1000×700, up from the original 900×640 at Jeff's request once the
-	// desktop design landed — the denser layout left the smaller window
-	// feeling cramped rather than compact.
-	PrefWidth  = 1000
-	PrefHeight = 700
+	// Raised twice at Jeff's request as the desktop design landed (900×640 →
+	// 1000×700 → here): the denser layout left the smaller sizes feeling
+	// cramped, and the two-column Profiles page places better when it is not
+	// space-constrained. Still comfortably inside Fit's 90% margin on the
+	// Z13's own panel.
+	PrefWidth  = 1200
+	PrefHeight = 800
 	MinWidth   = 560
 	MinHeight  = 420
 

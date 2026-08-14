@@ -250,6 +250,28 @@ type editTarget struct {
 // setting. That is the whole point of --profile: edit a profile you are not on.
 func (t editTarget) implicit() bool { return t.Live && !t.Active }
 
+// freshImplicit strips the stored contents from an implicit target, so a bare
+// edit made while a firmware profile is active establishes exactly the setting
+// being edited and nothing else. Resurrecting whatever "custom" stored last
+// let a tdp set drag a months-old fan curve into hardware, and a fan-curve set
+// hand the reconcile watcher a stored 93W TDP to restore two seconds later
+// (Jeff, 2026-08-14: "start fresh"). Keeping bundles is what named profiles
+// and Save As are for; an explicit --profile custom edit still edits in place,
+// and `profile --set custom` still recalls whatever the profile holds — though
+// after a bare edit that is only the edit itself.
+//
+// The reset handlers deliberately do not call this: they key on implicit() to
+// skip the commit entirely, because clearing a profile the user never selected
+// is silent data loss (see handleTDPReset). An *edit* overwriting the profile
+// is the user establishing new contents; a reset touching it would be the
+// daemon discarding old ones.
+func (t editTarget) freshImplicit() editTarget {
+	if t.implicit() {
+		t.Profile = api.CustomProfile{Name: t.Name}
+	}
+	return t
+}
+
 // resolveEditTarget works out which profile a setting command edits.
 //
 // An empty name means the active profile, creating and activating the default

@@ -593,6 +593,11 @@ func (d *Daemon) handleFanCurve(req request) response {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
 	d.mu.Unlock()
+	// A bare edit from a firmware profile establishes only this curve: without
+	// this, a TDP stored in "custom" long ago comes back with it — not through
+	// this handler, but through the reconcile watcher, which restores the
+	// active custom profile's TDP on any drift within two seconds.
+	target = target.freshImplicit()
 
 	// Enforce the minimum PWM floor when the sustained TDP that will accompany
 	// this curve exceeds the safe max. For the live profile that limit comes
@@ -757,6 +762,10 @@ func (d *Daemon) handleTDP(req request) response {
 		return response{OK: false, Error: "tdp: " + err.Error()}
 	}
 	d.mu.Unlock()
+	// A bare edit from a firmware profile establishes only this TDP. Emptying
+	// the target here is also what keeps wantCurve below nil, so the fans stay
+	// on firmware auto instead of adopting whatever curve "custom" stored last.
+	target = target.freshImplicit()
 
 	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
 
@@ -968,6 +977,9 @@ func (d *Daemon) handleUndervolt(req request) response {
 		return response{OK: false, Error: "undervolt: " + err.Error()}
 	}
 	d.mu.Unlock()
+	// A bare edit from a firmware profile establishes only this offset; the
+	// stored TDP and curve would otherwise return via the reconcile watcher.
+	target = target.freshImplicit()
 
 	active := false
 	if target.Live {

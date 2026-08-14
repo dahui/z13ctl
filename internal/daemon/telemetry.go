@@ -190,8 +190,43 @@ func (d *Daemon) sampleOnce() {
 		// interval costs one sample instead of every sample after it.
 		d.prevEnergy = cur
 	}
+	// Jiffie counters to utilisation — the same rate-needs-two-readings shape
+	// as the energy counter, owned by this goroutine for the same reason.
+	if s.CPUTotalJiffies != 0 {
+		cur := jiffieReading{busy: s.CPUBusyJiffies, total: s.CPUTotalJiffies}
+		if pct, ok := cpuUtilPct(d.prevJiffies, cur); ok {
+			s.CPUUtilPct, s.CPUUtilKnown = pct, true
+		}
+		d.prevJiffies = cur
+	}
 
 	d.history().Add(now, s)
+}
+
+// jiffieReading is one CPU jiffie-counter sample: cumulative busy and total
+// jiffies since boot.
+type jiffieReading struct {
+	busy, total uint64
+}
+
+// cpuUtilPct converts two consecutive jiffie readings into the utilisation
+// percentage over the interval between them.
+//
+// Unlike packagePowerW it needs no wall-clock interval — the ratio of the two
+// deltas is the percentage whatever the elapsed time — and no gap ceiling: the
+// counters only advance while the machine is awake, so a delta spanning a
+// suspend still averages only awake time. ok is false with no previous
+// reading, on a counter that went backwards (a reboot mid-daemon is the only
+// cause, but the arithmetic must not wrap), and on a zero total delta.
+func cpuUtilPct(prev, cur jiffieReading) (pct int, ok bool) {
+	if prev.total == 0 || cur.total <= prev.total || cur.busy < prev.busy {
+		return 0, false
+	}
+	pct = int((cur.busy - prev.busy) * 100 / (cur.total - prev.total))
+	if pct > 100 {
+		pct = 100
+	}
+	return pct, true
 }
 
 // liveTelemetryMaxAge bounds how stale the sampler's most recent derived figure
@@ -229,16 +264,34 @@ func (d *Daemon) applyLiveTelemetry(s *api.State, sample driver.Sample) {
 		s.BatteryPowerW = &watts
 	}
 
+	now := time.Now()
+	latest, haveLatest := d.history().Latest()
+	haveLatest = haveLatest && freshEnough(now, latest.At, liveTelemetryMaxAge)
+
 	switch {
 	case sample.PackagePowerW != 0:
 		// A device reporting instantaneous power (OXP's pm-table) needs none
 		// of the above.
 		s.PackagePowerW = sample.PackagePowerW
 	case sample.PackageEnergyUJ != 0:
-		if e, ok := d.history().Latest(); ok && freshEnough(time.Now(), e.At, liveTelemetryMaxAge) {
-			s.PackagePowerW = e.Sample.PackagePowerW
+		if haveLatest {
+			s.PackagePowerW = latest.Sample.PackagePowerW
 		}
 	}
+
+	// The full live edge, expanded quantities included. Built from the fresh
+	// sample this handler just took; the two *derived* rates — package power
+	// and CPU utilisation — are grafted from the sampler's own most recent
+	// figure, because a single reading cannot become a rate and re-baselining
+	// the sampler's counters from a socket handler is the data race the
+	// paragraph above exists to forbid.
+	t := apiTelemetrySample(now.Unix(), sample)
+	t.PackagePowerW = s.PackagePowerW
+	if haveLatest && latest.Sample.CPUUtilKnown {
+		v := latest.Sample.CPUUtilPct
+		t.CPUUtilPct = &v
+	}
+	s.Telemetry = &t
 }
 
 // freshEnough reports whether a sample taken at `at` is recent enough, as of
@@ -300,24 +353,63 @@ func (d *Daemon) handleTelemetryHistory(req request) response {
 	entries := d.history().Since(time.Now(), window)
 	out := make([]api.TelemetrySample, 0, len(entries))
 	for _, e := range entries {
-		s := api.TelemetrySample{
-			At:            e.At.Unix(),
-			TempC:         e.Sample.TempC,
-			RPM:           e.Sample.RPM,
-			PackagePowerW: e.Sample.PackagePowerW,
-		}
-		if e.Sample.BatteryPowerKnown {
-			// A fresh variable per sample: taking the address of the loop's
-			// own copy would give every entry the same pointer.
-			watts := e.Sample.BatteryPowerW
-			s.BatteryPowerW = &watts
-		}
-		out = append(out, s)
+		out = append(out, apiTelemetrySample(e.At.Unix(), e.Sample))
 	}
 	// Non-nil so the wire carries [] rather than null for an empty history: a
 	// daemon that has been up for less than a second has no samples yet, and
 	// that is an empty list, not an absent field.
 	return response{OK: true, History: out}
+}
+
+// apiTelemetrySample projects one driver sample onto the wire. The single
+// place the Known-flag → pointer and copy rules live, shared by the history
+// handler and the get-state live edge so the two cannot express the same
+// sample differently.
+//
+// Every pointer boxes a fresh variable — taking the address of a loop's own
+// copy would hand every entry the same pointer — and the RPM slice is copied
+// because the live-edge caller passes a sample the driver still owns.
+func apiTelemetrySample(at int64, s driver.Sample) api.TelemetrySample {
+	out := api.TelemetrySample{
+		At:            at,
+		TempC:         s.TempC,
+		PackagePowerW: s.PackagePowerW,
+		GPUTempC:      s.GPUTempC,
+		CPUClockMHz:   s.CPUClockMHz,
+		GPUClockMHz:   s.GPUClockMHz,
+		MemClockMHz:   s.MemClockMHz,
+		NPUClockMHz:   s.NPUClockMHz,
+		VRAMUsedMB:    s.VRAMUsedMB,
+		VRAMTotalMB:   s.VRAMTotalMB,
+		MemUsedMB:     s.MemUsedMB,
+		MemTotalMB:    s.MemTotalMB,
+	}
+	if s.RPM != nil {
+		out.RPM = append([]int(nil), s.RPM...)
+	}
+	if s.BatteryPowerKnown {
+		w := s.BatteryPowerW
+		out.BatteryPowerW = &w
+	}
+	if s.CPUUtilKnown {
+		v := s.CPUUtilPct
+		out.CPUUtilPct = &v
+	}
+	if s.GPUBusyKnown {
+		v := s.GPUBusyPct
+		out.GPUUtilPct = &v
+	}
+	if s.GPUPowerKnown {
+		w := s.GPUPowerW
+		out.GPUPowerW = &w
+	}
+	if s.NPUKnown {
+		w := s.NPUPowerW
+		out.NPUPowerW = &w
+		v := s.NPUBusyPct
+		out.NPUUtilPct = &v
+	}
+	return out
 }
 
 // newTelemetryRing sizes the history ring from the device's declared window.

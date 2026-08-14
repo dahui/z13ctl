@@ -125,13 +125,25 @@ type autoswitchSection struct {
 	timer *time.Timer // debounce, so re-picking a target sends once
 }
 
-// buildAutoswitchSection creates the AUTOSWITCH section: the enable switch and
-// a dropdown per power source. The dropdowns open in the in-surface popup
-// layer (popup.go), so they work under gamescope where a GtkDropDown's popover
-// would be invisible.
+// buildAutoswitchSection creates the drawer main view's AUTOSWITCH section and
+// registers it as w.autoswitch, which syncAutoswitch and the main view's focus
+// list read.
 func (w *Window) buildAutoswitchSection() *gtk.Box {
-	a := &autoswitchSection{w: w}
+	a, box := w.newAutoswitchSection()
 	w.autoswitch = a
+	return box
+}
+
+// newAutoswitchSection creates an AUTOSWITCH block: the enable switch and a
+// dropdown per power source. The dropdowns open in the in-surface popup layer
+// (popup.go), so they work under gamescope where a GtkDropDown's popover would
+// be invisible — and on whichever surface hosts the instance, since openPopup
+// targets activePopup(). Two instances exist: the drawer main view's
+// (buildAutoswitchSection) and the full window's Profiles page (Jeff,
+// 2026-08-14: autoswitch belongs with the profile controls). Each carries its
+// own debounce timer and mirror fields, so the two cannot interleave a send.
+func (w *Window) newAutoswitchSection() (*autoswitchSection, *gtk.Box) {
+	a := &autoswitchSection{w: w}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 
@@ -165,7 +177,7 @@ func (w *Window) buildAutoswitchSection() *gtk.Box {
 	a.targets.Append(a.buildTargetRow("On battery", &a.batt, &a.battDD))
 	a.targets.SetVisible(false)
 	box.Append(a.targets)
-	return box
+	return a, box
 }
 
 // buildTargetRow creates one "label + dropdown" row. target and ddDst point at
@@ -187,13 +199,17 @@ func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst *
 	var d *dropdown
 	d = w.newDropdown(dropdownConfig{
 		options: func() []dropdownOption {
-			opts := profileui.TargetOptions(w.state)
+			opts := profileui.TargetRows(w.state)
 			rows := make([]dropdownOption, len(opts))
 			for i, o := range opts {
 				rows[i] = dropdownOption{
-					value:    o,
-					label:    profileui.TargetLabel(o),
-					selected: o == *target,
+					value: o.Name,
+					label: o.Label,
+					// An empty profile is shown greyed with its label saying
+					// why, not hidden: a list silently missing the user's
+					// profiles reads as broken (Jeff, 2026-08-14).
+					disabled: o.Empty,
+					selected: o.Name == *target,
 				}
 			}
 			return rows
@@ -284,12 +300,22 @@ func (w *Window) focusProfileSection(b *focusgrid.Builder, items *[]focusItem) {
 	}
 }
 
-// focusAutoswitchSection appends the AUTOSWITCH block's focus items. The two
-// target rows are only navigable while the feature is enabled, matching what
-// the pointer can reach.
+// focusAutoswitchSection appends the drawer main view's AUTOSWITCH focus
+// items; the window's Profiles page appends its own instance's in the custom
+// view's focus list.
 func (w *Window) focusAutoswitchSection(b *focusgrid.Builder, items *[]focusItem) {
 	a := w.autoswitch
-	if a == nil || a.sw == nil {
+	if a == nil {
+		return
+	}
+	a.appendFocus(b, items)
+}
+
+// appendFocus appends this instance's focus items: the switch, then the two
+// target rows, navigable only while the feature is enabled — matching what
+// the pointer can reach.
+func (a *autoswitchSection) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
+	if a.sw == nil {
 		return
 	}
 	c := b.Section("autoswitch").One()

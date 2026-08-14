@@ -261,7 +261,52 @@ func cloneState(s api.State) api.State {
 	c.TDP = cloneTDP(s.TDP)
 	c.Undervolt = cloneUndervolt(s.Undervolt)
 	c.FanCurve = cloneFanCurve(s.FanCurve)
+	c.Telemetry = cloneTelemetrySample(s.Telemetry)
+	if s.RPM != nil {
+		c.RPM = append([]int(nil), s.RPM...)
+	}
+	if s.BatteryPowerW != nil {
+		w := *s.BatteryPowerW
+		c.BatteryPowerW = &w
+	}
 	return c
+}
+
+// cloneTelemetrySample deep-copies the live-edge sample: one slice and six
+// pointer fields. The daemon's persisted state never carries one — it is
+// filled per get-state reply on the cloned snapshot — but cloneState's
+// contract is that no pointer on api.State survives it shallow, because the
+// next handler to set one earlier than expected turns an alias into the
+// concurrent-map-crash class of bug this function exists to prevent.
+func cloneTelemetrySample(t *api.TelemetrySample) *api.TelemetrySample {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	if t.RPM != nil {
+		c.RPM = append([]int(nil), t.RPM...)
+	}
+	cloneFloat := func(p *float64) *float64 {
+		if p == nil {
+			return nil
+		}
+		v := *p
+		return &v
+	}
+	cloneInt := func(p *int) *int {
+		if p == nil {
+			return nil
+		}
+		v := *p
+		return &v
+	}
+	c.BatteryPowerW = cloneFloat(t.BatteryPowerW)
+	c.GPUPowerW = cloneFloat(t.GPUPowerW)
+	c.NPUPowerW = cloneFloat(t.NPUPowerW)
+	c.CPUUtilPct = cloneInt(t.CPUUtilPct)
+	c.GPUUtilPct = cloneInt(t.GPUUtilPct)
+	c.NPUUtilPct = cloneInt(t.NPUUtilPct)
+	return &c
 }
 
 // cloneCustomProfile deep-copies one profile, including the fan curve's points.

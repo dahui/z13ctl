@@ -86,7 +86,13 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 	}
 	if hw.Telemetry != nil {
 		t := hw.Telemetry.Info()
-		info.Telemetry = &api.TelemetryInfo{PowerDraw: t.PowerDraw, HistorySeconds: t.HistorySeconds}
+		info.Telemetry = &api.TelemetryInfo{
+			PowerDraw:      t.PowerDraw,
+			GPU:            t.GPU,
+			CPUStats:       t.CPUStats,
+			NPU:            t.NPU,
+			HistorySeconds: t.HistorySeconds,
+		}
 	}
 	info.Buttons = hw.Buttons != nil
 	return info

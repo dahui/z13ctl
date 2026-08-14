@@ -367,6 +367,52 @@ type Sample struct {
 	// to copy, for no gain over a flag.
 	BatteryPowerW     float64
 	BatteryPowerKnown bool
+
+	// GPU quantities, read only when TelemetryInfo.GPU names a source. All
+	// value+flag pairs follow the BatteryPowerW convention above; plain zero
+	// fields mean "not read" because their zero is never a real reading
+	// (a 0°C die, a 0 MHz clock).
+	GPUTempC    int
+	GPUClockMHz int
+	MemClockMHz int
+	// GPUBusyPct's zero is a measurement — an idle GPU is genuinely at 0%.
+	GPUBusyPct   int
+	GPUBusyKnown bool
+	// GPUPowerW's zero is a measurement too: the GFX domain reads ~0 under
+	// GFXOFF, which is most of an idle desktop session.
+	GPUPowerW     float64
+	GPUPowerKnown bool
+	// VRAM is the iGPU carveout of unified memory; both zero when unread.
+	VRAMUsedMB  int
+	VRAMTotalMB int
+
+	// CPU-side counters and gauges, read only when TelemetryInfo.CPUStats
+	// names a source. The jiffie counters are cumulative, like the energy
+	// counter above and for the same reason: utilisation is a delta between
+	// readings, which needs the previous one, and a driver holds no state.
+	// The daemon's sampler derives CPUUtilPct/CPUUtilKnown from them —
+	// drivers leave those zero, exactly as PackagePowerW works on counter
+	// hardware.
+	CPUBusyJiffies  uint64
+	CPUTotalJiffies uint64
+	CPUUtilPct      int
+	CPUUtilKnown    bool
+	CPUClockMHz     int
+	// System memory from meminfo; both zero when unread.
+	MemUsedMB  int
+	MemTotalMB int
+
+	// NPU quantities, read only when TelemetryInfo.NPU names a source.
+	// One flag for the set: the amdxdna query answers power and utilisation
+	// together. A runtime-suspended NPU reports Known with zeros — suspended
+	// genuinely means drawing nothing, and the sampler must not wake it to
+	// ask (opening the accel node resumes it, and a 1 Hz sampler would pin
+	// it awake forever). The clock is zero when the device is suspended or
+	// the query unsupported.
+	NPUPowerW   float64
+	NPUBusyPct  int
+	NPUKnown    bool
+	NPUClockMHz int
 }
 
 // TelemetryInfo describes a telemetry source without reading it, so the device
@@ -384,8 +430,18 @@ type Sample struct {
 // HistorySeconds is how much history the daemon retains for this device, and
 // so the largest window a telemetry-history request can usefully ask for. Zero
 // means no history is kept; live readings still work.
+//
+// GPU, CPUStats and NPU name further sources on the same terms as PowerDraw —
+// a name for provenance, empty for absence, and never declared unless the
+// driver actually reads it. GPU ("amdgpu") covers the iGPU's temperature,
+// utilisation, clock, power, VRAM and memory clock; CPUStats ("procfs") the
+// CPU utilisation counters, average core clock and system memory; NPU
+// ("amdxdna") the XDNA accelerator's power, utilisation and clock.
 type TelemetryInfo struct {
 	PowerDraw      string
+	GPU            string
+	CPUStats       string
+	NPU            string
 	HistorySeconds int
 }
 
