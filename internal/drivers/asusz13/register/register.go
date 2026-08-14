@@ -30,7 +30,9 @@ func init() {
 	device.RegisterToggles("asus-armoury", func(c device.TogglesConfig) (driver.Toggles, error) {
 		specs := make([]driver.ToggleSpec, len(c.Entries))
 		for i, e := range c.Entries {
-			specs[i] = driver.ToggleSpec{ID: e.ID, Label: e.Label, Kind: driver.ToggleBool}
+			specs[i] = driver.ToggleSpec{
+				ID: e.ID, Label: e.Label, Description: e.Description, Kind: driver.ToggleBool,
+			}
 		}
 		return asusz13.NewToggles(specs)
 	})

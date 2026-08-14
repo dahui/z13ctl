@@ -182,6 +182,18 @@ type ToggleSpec struct {
 	ID    string // wire identifier: "boot_sound", "panel_overdrive"
 	Label string // human-readable: "POST boot sound"
 	Kind  ToggleKind
+
+	// Description is the prose a UI shows beside the control — what the toggle
+	// does, and any consequence worth warning about ("may cause ghosting").
+	//
+	// It is here rather than left to each client because it is device
+	// knowledge, not presentation: whether panel overdrive ghosts is a fact
+	// about the panel, and a client rendering rows generically from this list
+	// has no way to know it. Without the field the only options were to drop
+	// the warnings or to hardcode per-id prose in every UI, which is the same
+	// duplication api.ValidateProfileName exists to prevent. Optional — a
+	// toggle whose label says everything leaves it empty.
+	Description string
 }
 
 // Toggles reads and writes a device's firmware toggles (BIOS switches exposed

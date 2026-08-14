@@ -120,9 +120,15 @@ type LightingConfig struct {
 }
 
 // ToggleEntry is one firmware toggle the device offers.
+//
+// Description is optional prose shown beside the control, carrying anything the
+// label cannot — most usefully a consequence ("may cause ghosting"). It lives in
+// device data because it is a fact about the hardware, so every client gets the
+// same warning without restating it.
 type ToggleEntry struct {
-	ID    string `toml:"id"`
-	Label string `toml:"label"`
+	ID          string `toml:"id"`
+	Label       string `toml:"label"`
+	Description string `toml:"description"`
 }
 
 // TogglesConfig selects the firmware-toggles driver and lists its toggles.

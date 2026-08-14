@@ -63,7 +63,9 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 	}
 	if hw.Toggles != nil {
 		for _, t := range hw.Toggles.List() {
-			info.Toggles = append(info.Toggles, api.ToggleInfo{ID: t.ID, Label: t.Label, Kind: string(t.Kind)})
+			info.Toggles = append(info.Toggles, api.ToggleInfo{
+				ID: t.ID, Label: t.Label, Description: t.Description, Kind: string(t.Kind),
+			})
 		}
 	}
 	if hw.Undervolt != nil {
@@ -80,6 +82,37 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 	}
 	info.Buttons = hw.Buttons != nil
 	return info
+}
+
+// readFeatures reads the current value of every firmware toggle the device
+// declares, keyed by id. It is what lets a client render toggle rows from the
+// device document without a socket round trip per toggle per refresh.
+//
+// A toggle whose value cannot be read is left out of the map rather than
+// recorded as zero, because zero is "off" — a claim about the hardware, and the
+// wrong one to make about an attribute that could not be read at all. Callers
+// that want the old always-a-number behaviour index the map and take Go's zero
+// value, which is exactly what the named BootSound/PanelOverdrive fields do.
+//
+// Returns nil for a device with no toggles, which omitempty drops from the wire.
+func (d *Daemon) readFeatures() map[string]int {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return nil
+	}
+	specs := d.hw.Toggles.List()
+	if len(specs) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(specs))
+	for _, t := range specs {
+		if v, err := d.hw.Toggles.Get(t.ID); err == nil {
+			out[t.ID] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // featureSpec resolves a request's toggle ID against the device's declared

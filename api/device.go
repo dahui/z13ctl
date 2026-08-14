@@ -79,6 +79,15 @@ type ToggleInfo struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"`
+
+	// Description is prose to show beside the control: what the toggle does,
+	// and any consequence worth warning about. Empty when the device data
+	// offers none, in which case a client shows the Label alone.
+	//
+	// It is served rather than left to the client because it is device
+	// knowledge — whether panel overdrive causes ghosting is a fact about the
+	// panel — and a client rendering these rows generically cannot know it.
+	Description string `json:"description,omitempty"`
 }
 
 // UndervoltInfo is the legal Curve Optimizer offset range (Min ≤ value ≤ Max;

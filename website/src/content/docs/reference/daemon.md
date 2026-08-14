@@ -160,6 +160,14 @@ enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].id` is the wire identifier the `feature` commands
 below take.
 
+Each toggle also carries `label` and an optional `description` — prose to show
+beside the control, including any consequence worth warning about ("may cause
+ghosting"). The description is served rather than left to the client because it
+is device knowledge: whether panel overdrive ghosts is a fact about that panel,
+and a client rendering rows generically has no way to derive it. Pair each entry
+with its current value from `get-state`'s `features` map and a full toggle row
+needs nothing else.
+
 `battery` and `telemetry` are sections rather than plain `true` because their
 contents are independently absent. `battery.charge_limit` says the
 `batterylimit` commands work; `battery.health` says `get-state` reports
@@ -472,6 +480,7 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `fan_rpm` | `rpm[0]`, kept for clients written before multi-fan support |
 | `package_power_w` | current CPU package draw in watts; absent when unavailable |
 | `battery_power_w` | battery flow in watts, **positive discharging**, negative charging |
+| `features` | every firmware toggle's current value, keyed by id |
 | `battery_level` | the pack's current charge, percent |
 | `battery_state` | `charging`, `discharging`, `full`, `not-charging` |
 | `on_ac` | whether the charger is plugged in |
@@ -509,6 +518,14 @@ Four of them need care:
   there — deliberately distinct from `full`, since the pack is not full, it is
   being held back — and with `battery_level` (the reading) beside `battery_limit`
   (the setting) a client can say "81%, holding at your 75% limit".
+- **`features` is how you render toggle rows generically.** It carries every id
+  `device-get`'s `toggles[]` declares, so a client pairs each `ToggleInfo`
+  (`label`, `description`, `kind`) with its current value from one `get-state`
+  rather than a `feature-get` per toggle per refresh. `boot_sound` and
+  `panel_overdrive` remain as top-level fields forever — they are the fixed
+  vocabulary older clients read — and hold the same values. **A toggle that
+  could not be read is absent from the map**, not zero: zero means "off", and a
+  switch has to be able to show that it does not know.
 - **`battery_level` and `battery_limit` are different things.** The first is the
   charge now; the second is the end threshold voltaire writes. They are
   routinely different numbers, and the level sitting above the limit is the

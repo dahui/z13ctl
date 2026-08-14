@@ -62,12 +62,17 @@ zones  = ["keyboard", "lightbar"]
 method = "asus-armoury"
 
 [[toggles.entries]]
-id    = "boot_sound"
-label = "POST boot sound"
+id          = "boot_sound"
+label       = "POST boot sound"
+description = "Play startup sound when the laptop powers on"
 
+# The ghosting note is the reason descriptions are device data rather than UI
+# prose: whether overdrive ghosts is a fact about this panel, and a client
+# rendering toggle rows generically cannot know it.
 [[toggles.entries]]
-id    = "panel_overdrive"
-label = "Panel overdrive"
+id          = "panel_overdrive"
+label       = "Panel overdrive"
+description = "Faster pixel response for the display (may cause ghosting)"
 
 # The ACPI battery reports energy_full / energy_full_design (µWh), not the
 # charge_* (µAh) pair — hence state of health is served as a ratio.

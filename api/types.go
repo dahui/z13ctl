@@ -65,6 +65,20 @@ type State struct {
 	// absent and zero must be distinguishable.
 	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
 
+	// Features is every firmware toggle the device offers, keyed by the same id
+	// DeviceInfo.Toggles and the feature commands use.
+	//
+	// It exists so a client can render toggle rows generically from the device
+	// document. BootSound and PanelOverdrive above are the same two values
+	// under fixed names: they are the whole vocabulary a pre-2.0 client knows,
+	// so they are served forever, but a device with a different set of toggles
+	// cannot be described by them and a generic row had no way to learn its own
+	// state without one socket round trip per toggle per refresh.
+	//
+	// A toggle whose current value cannot be read is omitted rather than
+	// reported as zero — zero is "off", which is a claim about the hardware.
+	Features map[string]int `json:"features,omitempty"`
+
 	// BatteryLevel is the pack's current charge as a percentage, zero when the
 	// device has no battery.
 	//

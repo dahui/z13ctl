@@ -35,11 +35,11 @@
 // an empty page is worse than an absent tab — it is the same trap as a device
 // document declaring a capability nothing reads.
 //
-//   - settings is blocked on the same two api additions internal/controls
-//     records for generic toggle rows: a description field on api.ToggleInfo,
-//     and a per-feature value in get-state. Rendering the device's toggles is
-//     the entire content of that page, so there is nothing to put on it until
-//     both land.
+//   - settings now has everything it needs from the api — api.ToggleInfo.
+//     Description and api.State.Features both landed — so what is missing is
+//     the page itself, not a protocol gap. It stays off this list until the
+//     view exists, on the same rule: a tab that opens onto an empty page is the
+//     trap, not an absent tab.
 //   - quickbar customization needs a writer for gui.toml and a reorder
 //     affordance that works on a controller. internal/controls already holds
 //     the list as data, which was the prerequisite; the UI is its own piece of

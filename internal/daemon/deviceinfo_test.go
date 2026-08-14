@@ -16,6 +16,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
 	"github.com/dahui/voltaire/v2/internal/limits"
 )
@@ -227,7 +228,8 @@ func TestDeviceGetWireKeys(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"battery":{"charge_limit":true,"health":true}`,
-		`"telemetry":{"power_draw":"rapl","history_seconds":300}`, // power_draw omitted: no source declared
+		`"telemetry":{"power_draw":"rapl","history_seconds":300}`,
+		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true`,
 	} {
 		if !strings.Contains(string(data), want) {
@@ -284,4 +286,112 @@ func z13TestConfig(t *testing.T) device.Config {
 	}
 	t.Fatal("Z13 device file not found")
 	return device.Config{}
+}
+
+// TestToggleDescriptionsReachTheWire is the guard for the prose half of a
+// generic toggle row.
+//
+// The drawer's two bespoke switches carried their descriptions as literals in
+// GTK code, so a settings view rendering rows from the device document would
+// have shown bare labels and silently dropped the warnings — the same class of
+// loss as a capability declared with nothing reading it. The path under test is
+// device TOML → registry → driver spec → wire; a description dropped at any of
+// those four hops fails here, and nothing else in the suite would notice.
+func TestToggleDescriptionsReachTheWire(t *testing.T) {
+	info := deviceInfoFor(testDev)
+	if len(info.Toggles) == 0 {
+		t.Fatal("no toggles in the document")
+	}
+	for _, tg := range info.Toggles {
+		if tg.Description == "" {
+			t.Errorf("toggle %q has no description; a client rendering rows generically "+
+				"can only show the label, so anything the label omits is lost", tg.ID)
+		}
+	}
+}
+
+// TestPanelOverdriveKeepsItsGhostingWarning pins the specific consequence that
+// motivated the field. It is a fact about this panel, not UI copy: a client has
+// no way to derive it, so if device data stops carrying it every client stops
+// warning about it.
+func TestPanelOverdriveKeepsItsGhostingWarning(t *testing.T) {
+	for _, tg := range deviceInfoFor(testDev).Toggles {
+		if tg.ID != "panel_overdrive" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(tg.Description), "ghost") {
+			t.Errorf("panel_overdrive description = %q, want the ghosting warning", tg.Description)
+		}
+		return
+	}
+	t.Fatal("panel_overdrive toggle missing from the document")
+}
+
+// fakeToggles is a driver.Toggles that answers from a map, so the get-state
+// feature path can be exercised without touching real firmware attributes.
+// Reading an id absent from values reports an error, which is how an
+// unreadable attribute behaves.
+type fakeToggles struct {
+	specs  []driver.ToggleSpec
+	values map[string]int
+}
+
+func (f fakeToggles) List() []driver.ToggleSpec { return f.specs }
+
+func (f fakeToggles) Get(id string) (int, error) {
+	v, ok := f.values[id]
+	if !ok {
+		return 0, driver.ErrUnsupported
+	}
+	return v, nil
+}
+
+func (f fakeToggles) Set(string, int) error { return nil }
+
+// TestReadFeaturesOmitsWhatItCannotRead is the honesty rule one level down from
+// the telemetry series: zero means "off", which is a claim about the hardware,
+// and an attribute that could not be read supports no claim at all. A client
+// showing a switch has to be able to tell "this is off" from "I do not know".
+func TestReadFeaturesOmitsWhatItCannotRead(t *testing.T) {
+	d := &Daemon{hw: &device.Device{Toggles: fakeToggles{
+		specs: []driver.ToggleSpec{
+			{ID: "boot_sound", Kind: driver.ToggleBool},
+			{ID: "panel_overdrive", Kind: driver.ToggleBool},
+			{ID: "unreadable", Kind: driver.ToggleBool},
+		},
+		values: map[string]int{"boot_sound": 1, "panel_overdrive": 0},
+	}}}
+
+	got := d.readFeatures()
+	want := map[string]int{"boot_sound": 1, "panel_overdrive": 0}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("readFeatures() = %v, want %v", got, want)
+	}
+	if _, present := got["unreadable"]; present {
+		t.Error("an unreadable toggle appeared in Features; absent and off must stay distinguishable")
+	}
+	// A toggle that reads 0 is present with the value 0 — that is a reading.
+	if v, present := got["panel_overdrive"]; !present || v != 0 {
+		t.Error("a toggle that reads off was dropped; 0 here is a measurement, not an absence")
+	}
+}
+
+// TestReadFeaturesOnADeviceWithNoToggles returns nil rather than an empty map,
+// so omitempty keeps the key off the wire entirely for such a device.
+func TestReadFeaturesOnADeviceWithNoToggles(t *testing.T) {
+	for name, d := range map[string]*Daemon{
+		"no device":  {},
+		"no toggles": {hw: &device.Device{}},
+		"none declared": {hw: &device.Device{Toggles: fakeToggles{
+			values: map[string]int{},
+		}}},
+		"none readable": {hw: &device.Device{Toggles: fakeToggles{
+			specs:  []driver.ToggleSpec{{ID: "boot_sound", Kind: driver.ToggleBool}},
+			values: map[string]int{},
+		}}},
+	} {
+		if got := d.readFeatures(); got != nil {
+			t.Errorf("%s: readFeatures() = %v, want nil so the key is omitted", name, got)
+		}
+	}
 }

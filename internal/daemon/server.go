@@ -208,17 +208,17 @@ func (d *Daemon) dispatch(req request) response {
 			s.BatteryLevel = bat.Capacity
 			s.BatteryState = string(bat.State)
 		}
-		// Populate firmware-managed fields from hardware (not cached in daemon
-		// state); a failed read reports zero, as it always has.
+		// Populate firmware toggles from hardware (not cached in daemon state).
+		// Read once, generically, over whatever the device declares — a device
+		// with a different set of toggles is described by Features, while the
+		// two named fields are the fixed vocabulary older clients know and are
+		// filled from the same reads. A failed read reports zero in the named
+		// fields, as it always has, but is *absent* from Features: zero there
+		// would be a claim the toggle is off.
 		s.BootSound, s.PanelOverdrive = 0, 0
-		if d.hw != nil && d.hw.Toggles != nil {
-			if v, err := d.hw.Toggles.Get("boot_sound"); err == nil {
-				s.BootSound = v
-			}
-			if v, err := d.hw.Toggles.Get("panel_overdrive"); err == nil {
-				s.PanelOverdrive = v
-			}
-		}
+		s.Features = d.readFeatures()
+		s.BootSound = s.Features["boot_sound"]
+		s.PanelOverdrive = s.Features["panel_overdrive"]
 		// Populate fan curve from hardware for ground truth.
 		s.FanCurve = d.readFanCurveHW()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.

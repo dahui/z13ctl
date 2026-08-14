@@ -31,17 +31,17 @@
 // the same trap as a device document declaring a capability nothing reads: it
 // looks like a feature and produces an empty space.
 //
-// Generic toggle rows specifically need two things that do not exist:
+// The two api gaps that used to block generic toggle rows are **closed**:
+// api.ToggleInfo carries a Description (the prose the drawer's two bespoke
+// switches held as GTK literals, now device data — "may cause ghosting" is a
+// fact about the panel), and api.State.Features carries every declared toggle's
+// current value, so a row learns its own state from the get-state a client
+// already makes rather than one socket round trip per toggle per sync.
 //
-//   - a description on api.ToggleInfo. The drawer's two switches carry prose
-//     hints ("may cause ghosting") that the document has no field for, and
-//     rendering from labels alone would silently drop them.
-//   - a per-feature value in get-state. It carries named boot_sound and
-//     panel_overdrive fields today, so a generic row has no way to learn its
-//     own state without a socket round trip per toggle per sync.
-//
-// Until both land, the bottom bar keeps its two bespoke switches and this
-// package describes the scrolling sections only.
+// What remains is a renderer. Until a settings view exists to hold them, the
+// bottom bar keeps its two bespoke switches and this package describes the
+// scrolling sections only — adding Kind now would be the empty-space trap
+// above, not progress.
 package controls
 
 import "github.com/dahui/voltaire/api/v2"

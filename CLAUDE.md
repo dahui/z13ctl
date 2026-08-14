@@ -1341,16 +1341,34 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   reason instead of answering "unknown edge", and every parse failure still
   returns a usable edge so a bad config costs a warning and not a drawer that
   will not open.
-- **Generic toggle rows are deliberately still absent, and need two things
-  first.** The roadmap has this registry rendering the firmware toggles (and
-  later plugin features) from the device document instead of the bottom bar's two
-  bespoke switches. That is blocked on (1) a description field on
-  `api.ToggleInfo` — the switches carry prose hints ("may cause ghosting") the
-  document cannot express, and rendering from labels alone would silently drop
-  them — and (2) a per-feature value in `get-state`, which today carries named
-  `boot_sound`/`panel_overdrive` fields, so a generic row has no way to learn its
-  own state without a socket round trip per toggle per sync. Shipping a `Kind`
-  field before either exists would be the same trap as a device document
+- **Generic toggle rows needed two api additions; both have landed, and what
+  is left is a renderer.** The roadmap has `internal/controls` rendering the
+  firmware toggles (and later plugin features) from the device document instead
+  of the bottom bar's two bespoke switches.
+  (1) **`api.ToggleInfo.Description`** carries the prose those switches held as
+  GTK literals. It is *device data*, in the TOML beside the label, because
+  whether panel overdrive ghosts is a fact about the panel — a client rendering
+  rows generically cannot derive it, and the alternatives were to drop the
+  warnings or restate them per-id in every UI, the duplication
+  `api.ValidateProfileName` exists to prevent. It crosses four hops (TOML →
+  registry → `driver.ToggleSpec` → wire) and a drop at any one is silent, so
+  `TestToggleDescriptionsReachTheWire` guards the path and
+  `TestPanelOverdriveKeepsItsGhostingWarning` pins the consequence that
+  motivated the field. The negative control was run: removing the registry hop
+  fails both.
+  (2) **`api.State.Features`** is every declared toggle's current value, keyed
+  by the id `device-get` and the `feature` commands use, so a row learns its
+  state from the `get-state` a client already makes rather than one round trip
+  per toggle per sync. `BootSound`/`PanelOverdrive` remain forever as the fixed
+  vocabulary pre-2.0 clients know, and are now filled *from the same reads*
+  rather than by two hardcoded `Get` calls — a device with different toggles was
+  previously undescribable. A toggle whose value cannot be read is **omitted
+  rather than zero**: zero is "off", a claim about hardware, and a switch has to
+  be able to show "I do not know" — the same rule as a failed telemetry sample
+  being a gap. `readFeatures` returns nil (not an empty map) so `omitempty`
+  keeps the key off the wire for a device with no toggles.
+  A `Kind` field on `controls.Control` is still deliberately absent: with no
+  view to render it, adding it would be the same trap as a device document
   declaring a capability nothing reads.
 - **A double press emits `gui-open-full` *in addition to* `gui-toggle`, and
   never instead of it.** The first press opens the quickbar immediately; a
