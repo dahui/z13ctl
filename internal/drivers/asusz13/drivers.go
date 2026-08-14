@@ -213,10 +213,9 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 	return st, nil
 }
 
-// NewTelemetry returns the hwmon-based telemetry source described by device
-// data. Package power (RAPL / pm-table) is not read yet and reports zero,
-// which is why the Z13's data names no power_draw source; it lands with the
-// dashboard work, which is what consumes it.
+// NewTelemetry returns the telemetry source described by device data: APU
+// temperature and both fan speeds from hwmon, the package energy counter from
+// powercap RAPL, and battery flow from power_supply.
 func NewTelemetry(info driver.TelemetryInfo) driver.Telemetry {
 	return telemetry{info: info}
 }
@@ -225,6 +224,13 @@ type telemetry struct{ info driver.TelemetryInfo }
 
 func (t telemetry) Info() driver.TelemetryInfo { return t.info }
 
+// Sample reads every quantity this device measures.
+//
+// Only the temperature is required. Everything else is best-effort, for the
+// reason RPM already was: a missing hwmon, a powercap grant the user has not
+// run setup for, or a battery that reports no power must not make the
+// temperature unreadable — a sample that fails is a *gap* in the history,
+// which costs every series and not just the one that could not be read.
 func (telemetry) Sample() (driver.Sample, error) {
 	var s driver.Sample
 	temp, err := ReadAPUTemperature()
@@ -232,10 +238,16 @@ func (telemetry) Sample() (driver.Sample, error) {
 		return s, err
 	}
 	s.TempC = temp
-	// RPM is best-effort: a missing hwmon must not make temperature
-	// unavailable, mirroring how status treats the two today.
 	if rpms, err := ReadBothFanRPM(); err == nil {
 		s.RPM = rpms[:]
+	}
+	// The counter, not a power figure: converting needs the previous reading,
+	// and this driver holds no state (see driver.Sample).
+	if energy, maxUJ, err := ReadPackageEnergy(); err == nil {
+		s.PackageEnergyUJ, s.PackageEnergyMaxUJ = energy, maxUJ
+	}
+	if watts, err := ReadBatteryPowerW(); err == nil {
+		s.BatteryPowerW, s.BatteryPowerKnown = watts, true
 	}
 	return s, nil
 }

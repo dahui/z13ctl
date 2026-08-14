@@ -82,6 +82,13 @@ type Daemon struct {
 	// literals.
 	telemetry *telemetryring.Ring
 
+	// prevEnergy is the last package-energy counter reading, for converting
+	// the next one into power. Owned by the sampler goroutine alone and so
+	// deliberately unguarded: it is written and read only in sampleOnce, which
+	// runs on the single watchTelemetry timer. Anything else that wants to
+	// read the counter must take its own baseline rather than sharing this one.
+	prevEnergy energyReading
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 

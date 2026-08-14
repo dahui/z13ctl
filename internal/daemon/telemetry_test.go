@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/telemetryplot"
 	"github.com/dahui/voltaire/v2/internal/telemetryring"
 )
 
@@ -165,5 +166,135 @@ func TestNewTelemetryRingSizesFromDeviceData(t *testing.T) {
 	}
 	if got := newTelemetryRing(nil).Cap(); got != 0 {
 		t.Errorf("a nil device got a ring of %d, want 0", got)
+	}
+}
+
+// packagePowerW's table. RAPL publishes a cumulative energy counter, so every
+// power figure is a difference — and the failure modes are all about the cases
+// where a difference is meaningless: no baseline, a clock that moved backwards,
+// a gap across a suspend, and the two ways a counter can go down.
+func TestPackagePowerFromTheEnergyCounter(t *testing.T) {
+	t.Parallel()
+
+	base := time.Unix(1_700_000_000, 0)
+	const maxUJ = 262_143_328_850
+
+	cases := []struct {
+		name  string
+		prev  energyReading
+		cur   energyReading
+		want  float64
+		wantK bool
+	}{
+		{
+			name:  "one second at 20 W",
+			prev:  energyReading{at: base, uj: 1_000_000, maxUJ: maxUJ},
+			cur:   energyReading{at: base.Add(time.Second), uj: 21_000_000, maxUJ: maxUJ},
+			want:  20,
+			wantK: true,
+		},
+		{
+			name:  "half a second doubles the rate",
+			prev:  energyReading{at: base, uj: 0, maxUJ: maxUJ},
+			cur:   energyReading{at: base.Add(500 * time.Millisecond), uj: 10_000_000, maxUJ: maxUJ},
+			want:  20,
+			wantK: true,
+		},
+		{
+			// The counter wrapped: 262 kJ is ~73 minutes at 60 W, so this is
+			// rare but real, and reading it as a reset would lose a sample
+			// every hour or so.
+			name:  "wrap is arithmetic, not a reset",
+			prev:  energyReading{at: base, uj: maxUJ - 5_000_000, maxUJ: maxUJ},
+			cur:   energyReading{at: base.Add(time.Second), uj: 5_000_000, maxUJ: maxUJ},
+			want:  10,
+			wantK: true,
+		},
+		{
+			// Indistinguishable from a wrap by the values alone, which is why
+			// the sanity ceiling exists: read as a wrap this is ~262 kW.
+			name: "a reset is refused, not reported as 262 kW",
+			prev: energyReading{at: base, uj: 200_000_000_000, maxUJ: maxUJ},
+			cur:  energyReading{at: base.Add(time.Second), uj: 5, maxUJ: maxUJ},
+		},
+		{
+			name: "backwards with no declared range is unknowable",
+			prev: energyReading{at: base, uj: 9_000_000},
+			cur:  energyReading{at: base.Add(time.Second), uj: 1_000_000},
+		},
+		{
+			name: "no baseline yet",
+			cur:  energyReading{at: base, uj: 1_000_000, maxUJ: maxUJ},
+		},
+		{
+			// The ring timestamps with wall clock deliberately (it must survive
+			// a suspend), and wall clock can step backwards.
+			name: "clock stepped backwards",
+			prev: energyReading{at: base.Add(time.Second), uj: 1_000_000, maxUJ: maxUJ},
+			cur:  energyReading{at: base, uj: 21_000_000, maxUJ: maxUJ},
+		},
+		{
+			name: "same instant",
+			prev: energyReading{at: base, uj: 1_000_000, maxUJ: maxUJ},
+			cur:  energyReading{at: base, uj: 21_000_000, maxUJ: maxUJ},
+		},
+		{
+			// Across a suspend the average says nothing about any moment in it,
+			// and firmware may have reset the counter as well.
+			name: "gap longer than maxEnergyGap",
+			prev: energyReading{at: base, uj: 1_000_000, maxUJ: maxUJ},
+			cur:  energyReading{at: base.Add(time.Hour), uj: 500_000_000, maxUJ: maxUJ},
+		},
+		{
+			name: "an unreadable counter is not a reading",
+			prev: energyReading{at: base, uj: 1_000_000, maxUJ: maxUJ},
+			cur:  energyReading{at: base.Add(time.Second), uj: 0, maxUJ: maxUJ},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := packagePowerW(tc.prev, tc.cur)
+			if ok != tc.wantK {
+				t.Fatalf("ok = %v, want %v (got %v W)", ok, tc.wantK, got)
+			}
+			if ok && got != tc.want {
+				t.Errorf("= %v W, want %v W", got, tc.want)
+			}
+			if !ok && got != 0 {
+				t.Errorf("= %v W with ok=false; a refused conversion must report nothing, "+
+					"and 0 W is a claim the package drew nothing", got)
+			}
+		})
+	}
+}
+
+// TestRefusedConversionIsNotZeroWatts states the rule the table's !ok cases
+// depend on, because it is the one a future caller is most likely to get wrong:
+// zero is a measurement, and a running machine never draws it. The sampler must
+// leave PackagePowerW unset rather than record the refusal as a reading.
+func TestRefusedConversionIsNotZeroWatts(t *testing.T) {
+	t.Parallel()
+
+	// A first sample has no baseline, which is the commonest refusal.
+	watts, ok := packagePowerW(energyReading{}, energyReading{
+		at: time.Unix(1_700_000_000, 0), uj: 1_000_000, maxUJ: 262_143_328_850,
+	})
+	if ok {
+		t.Fatalf("a first sample yielded %v W; there is nothing to difference it against", watts)
+	}
+}
+
+// TestEnergyGapMatchesThePlotsGapThreshold ties the two constants together.
+// A conversion that produced a figure across an interval the dashboard already
+// draws as a break would put a line segment where the chart says there is no
+// data.
+func TestEnergyGapMatchesThePlotsGapThreshold(t *testing.T) {
+	t.Parallel()
+	if maxEnergyGap != telemetryplot.DefaultMaxGap {
+		t.Errorf("maxEnergyGap = %v but telemetryplot.DefaultMaxGap = %v; "+
+			"a power figure would span an interval the chart breaks the line across",
+			maxEnergyGap, telemetryplot.DefaultMaxGap)
 	}
 }

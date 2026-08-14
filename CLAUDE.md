@@ -124,6 +124,8 @@ internal/
       sysfs.go               FindProfilePath, SetProfile, battery threshold, boot sound,
                              panel overdrive, APU temperature, battery capacity
       power.go               FindACOnlinePath, OnACPower (Mains-only discovery)
+      rapl.go                powercap package-energy counter (read-only grant) + battery
+                             flow from power_supply (power_now, or current x voltage)
       tdp.go                 PPT read/write: SetTDP, SetTDPState, ReadAllPPT
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
       undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues
@@ -1192,18 +1194,60 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Capability discovery is by absence, so a declared-but-unread source does not
   degrade to "nothing shown" — it degrades to a dashboard drawing a graph that
   is flat at zero, which is worse than no graph because it looks like a
-  measurement. This bit at `telemetry.power_draw`: the Z13 *does* expose
-  powercap RAPL (`intel-rapl:0`, name `package-0`), but `energy_uj` is
-  `0400 root:root` under the Platypus mitigation, so reading it needs a udev
-  grant through `voltaire setup` and the packaged rules — work nobody has done.
-  `asusz13`'s `Sample()` therefore reports zero package power and the device
-  TOML names no source.
-  `TestTelemetryDeclaresNoPowerSourceYet` (`internal/daemon`) pins both
-  directions: it fails if the document names a source while `Sample()` reports
-  zero, and it fails if `Sample()` starts reporting power while the document
-  names nothing. The fix in either direction is to make the two agree and
-  delete the test. Any new capability field with a reading behind it wants the
-  same guard.
+  measurement. This bit at `telemetry.power_draw`, which was declared-and-unread
+  for a release: the Z13 exposes powercap RAPL (`intel-rapl:0`, name
+  `package-0`), but `energy_uj` is `0400 root:root` under the Platypus
+  mitigation, so it needs a udev grant — and rather than do the grant, the
+  device TOML simply named no source. **Both halves now exist**: `voltaire
+  setup` grants group *read* on `energy_uj`, `Sample()` reads the counter, and
+  the TOML declares `power_draw = "rapl"`.
+  `TestTelemetryDeclarationMatchesWhatIsRead` (`internal/daemon`) replaced the
+  test that pinned the absence, and still fails in both directions — a source
+  declared with no reader, or a readable counter with no declaration. It
+  *skips* when the counter exists but is unreadable, because that is a machine
+  that has not run setup rather than a defect, and the skip message says which.
+  Any new capability field with a reading behind it wants the same guard.
+- **The powercap grant is the only read-only one, and that is not an
+  accident.** Every other target `voltaire setup` touches is `chmod g+w`
+  because voltaire writes it. `/sys/class/powercap` holds the package power
+  *caps* alongside the energy counter, so a `g+w` grant there would hand every
+  member of the group control of the CPU's power limits — through a rule whose
+  entire purpose is to draw a graph. `cmd/setup_test.go:TestPowercapIsGranted
+  ReadOnly` checks all four artifacts (both generated, both packaged) and
+  fails on a `g+w` line mentioning `energy_uj`, because nothing else in the
+  grant table expresses the distinction.
+- **Package power crosses the driver boundary as an energy *counter*, not as
+  watts.** RAPL publishes cumulative microjoules, so power is a difference over
+  an interval — arithmetic that needs the *previous* reading, which a driver
+  cannot hold: `Telemetry.Sample()` is called by the 1 Hz sampler *and* by every
+  `get-state` handler, and drivers are passive by design (no locking, no
+  goroutines). The counter therefore goes out as `Sample.PackageEnergyUJ` and
+  the daemon's sampler — the one sequential caller — converts it in
+  `packagePowerW`, a pure function with a table (`internal/daemon`). A device
+  whose hardware reports instantaneous power instead (OXP's pm-table) fills
+  `PackagePowerW` directly and the sampler leaves it alone.
+  Three of that table's cases are the ones worth knowing: a **wrap** is real
+  (262 kJ is ~73 minutes at 60 W) and must be added back rather than dropped; a
+  **reset** is indistinguishable from a wrap by the values alone and would
+  otherwise be reported as ~262 kW, which is what `implausiblePackageW` exists
+  to catch; and a gap longer than `maxEnergyGap` yields nothing, because the
+  average across a suspend describes no moment inside it. Every refusal records
+  **no** power rather than zero — 0 W is a claim the package drew nothing, and
+  a running machine never does.
+- **Battery flow is the one telemetry quantity whose zero is a reading**, which
+  is why `api.TelemetrySample.BatteryPowerW` is a `*float64` while every other
+  field is a plain value with `omitempty`. A full pack on mains genuinely moves
+  no energy — the commonest state a laptop is in — so testing the value would
+  drop the chart from every plugged-in machine, and testing nothing at all
+  would draw one flat at zero on a desktop with no pack. That is the same
+  `*bool` reasoning `BatteryInfo.ChargeLimit` already carries. Inside the
+  daemon it is a value plus `Sample.BatteryPowerKnown` rather than a pointer,
+  because `driver.Sample` is stored in the history ring, which deep-copies in
+  both directions precisely so a driver cannot alias what it handed over.
+  The sign convention is positive = discharging, and `power_supply` does not
+  carry it: the magnitude is in `power_now` (or `current_now` × `voltage_now`
+  on a charge-reporting pack — the same both-forms split as battery health, and
+  the Z13 has only the energy form) while the direction is in `status`.
 - **`battery` and `telemetry` are document *sections*, not presence bools,
   because their contents are independently absent.** A machine can report state
   of health while exposing no charge-limit attribute, and the reverse — a
@@ -1408,20 +1452,25 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   suspend while a single failed sysfs read is noise, and a threshold tight enough
   to catch one would fragment the chart on any machine with a flaky sensor.
   (3) A quantity **no sample carries produces no series at all**: the same
-  honesty rule as `TestTelemetryDeclaresNoPowerSourceYet`, one layer up. This is
-  live on the Z13 — `Sample()` reports no package power, so the dashboard draws
-  two charts and not three, where a flat line at 0 W would read as a measurement.
-  The wire cannot distinguish absent from zero (every field is `omitempty`), so
-  presence is decided per field on what a zero would *mean*: 0°C is not a
-  plausible APU temperature and reads as absent, while 0 RPM is a stopped fan and
-  is a reading — hence the RPM **slice's** presence is the test there, not its
-  value. That asymmetry looks like an inconsistency until you know why, so
-  `TestZeroMeansAbsentForTemperatureButNotForFans` pins it.
+  honesty rule as `TestTelemetryDeclarationMatchesWhatIsRead`, one layer up.
+  For most fields the wire cannot distinguish absent from zero (they are
+  `omitempty`), so presence is decided per field on what a zero would *mean*:
+  0°C is not a plausible APU temperature and reads as absent, while 0 RPM is a
+  stopped fan and is a reading — hence the RPM **slice's** presence is the test
+  there, not its value. That asymmetry looks like an inconsistency until you
+  know why, so `TestZeroMeansAbsentForTemperatureButNotForFans` pins it.
+  Battery flow is the case where per-field cleverness ran out and the *wire*
+  had to change: its zero is both plausible and common, so it is a pointer and
+  presence is the pointer. The first attempt made it unconditional and the
+  suite caught it immediately — that draws a flat-zero chart on a machine with
+  no battery, the exact false measurement rule (3) exists to prevent
+  (`TestBatteryZeroIsAReadingButAbsenceIsNot`).
 - **The axis is framed per *kind*, not per series, and the nominal frame is a
   starting point that expands rather than a clamp.** Two fans are drawn on one
   chart, so separate axes would make their line heights incomparable — which is
   the one thing a viewer will use them for. The nominal ranges (30–100 °C,
-  0–6000 RPM, 0–60 W) keep the axis steady while values wander, because a chart
+  0–6000 RPM, 0–60 W package, ±30 W battery) keep the axis steady while values
+  wander, because a chart
   that rescales every second at a 1 Hz refresh is unreadable; anything outside
   expands the frame to a step boundary, so no reading is ever cut off. That
   invariant is what makes it safe to carry one laptop's numbers in a package
@@ -1821,7 +1870,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

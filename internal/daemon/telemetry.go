@@ -87,6 +87,66 @@ func (d *Daemon) watchTelemetry(ctx context.Context) {
 
 // sampleOnce performs one observe-decide-apply cycle.
 //
+// energyReading is one package-energy counter sample: the value, when it was
+// taken, and what it wraps at.
+type energyReading struct {
+	at    time.Time
+	uj    uint64
+	maxUJ uint64
+}
+
+// maxEnergyGap is the longest interval two readings may span and still yield a
+// power figure. Beyond it the average says nothing useful about any moment in
+// between, and the likely cause is a suspend — during which the sampler stands
+// down and the counter may also have been reset by firmware. It matches
+// telemetryplot.DefaultMaxGap for the same reason that value was chosen: four
+// consecutive misses is a stall worth noticing, one is noise.
+const maxEnergyGap = 5 * time.Second
+
+// implausiblePackageW discriminates a counter *wrap* from a counter *reset*.
+// It is not a measurement bound — no judgement is made about whether a laptop
+// can really draw 900 W — it exists because the two are indistinguishable from
+// the values alone: both present as cur < prev. Read as a wrap, a reset
+// produces (max - prev + cur), which on this hardware is ~262 kJ over one
+// second, or 262 kW. Anything in that territory is arithmetic, not power.
+const implausiblePackageW = 1000
+
+// packagePowerW converts two consecutive energy-counter readings into the
+// average power over the interval between them.
+//
+// ok is false whenever no trustworthy figure can be derived, and the caller
+// must then record *no* power rather than zero — 0 W is a claim the package
+// drew nothing, which is never true of a running machine. The cases: no
+// previous reading (the first sample after start or after a re-baseline), a
+// non-positive interval (the ring timestamps with wall clock, which can step
+// backwards), an interval longer than maxEnergyGap, and a counter that went
+// backwards in a way no wrap explains.
+func packagePowerW(prev, cur energyReading) (watts float64, ok bool) {
+	if prev.at.IsZero() || cur.uj == 0 {
+		return 0, false
+	}
+	dt := cur.at.Sub(prev.at)
+	if dt <= 0 || dt > maxEnergyGap {
+		return 0, false
+	}
+
+	delta := cur.uj - prev.uj
+	if cur.uj < prev.uj {
+		// Wrap or reset. Without a declared range there is nothing to add, so
+		// it can only be treated as a reset.
+		if cur.maxUJ == 0 || prev.uj > cur.maxUJ {
+			return 0, false
+		}
+		delta = cur.maxUJ - prev.uj + cur.uj
+	}
+
+	watts = float64(delta) / 1e6 / dt.Seconds()
+	if watts > implausiblePackageW {
+		return 0, false
+	}
+	return watts, true
+}
+
 // It deliberately takes neither hwMu nor d.mu for the read itself: sampling is
 // the same class of hardware access as a *-get handler, and blocking the
 // dashboard's data behind a fan write sequence would be the regression those
@@ -113,7 +173,24 @@ func (d *Daemon) sampleOnce() {
 		slog.Debug("telemetry sample failed", "err", err)
 		return
 	}
-	d.history().Add(time.Now(), s)
+
+	now := time.Now()
+	// Energy counter to power. This is the sampler's job rather than the
+	// driver's because it needs the previous reading, and Sample is also
+	// called by every get-state handler — a driver remembering one would be
+	// mutable state shared across concurrent callers. Here there is exactly
+	// one goroutine, so prevEnergy needs no lock.
+	if s.PackageEnergyUJ != 0 {
+		cur := energyReading{at: now, uj: s.PackageEnergyUJ, maxUJ: s.PackageEnergyMaxUJ}
+		if watts, ok := packagePowerW(d.prevEnergy, cur); ok {
+			s.PackagePowerW = watts
+		}
+		// Re-baselined even when the conversion was refused, so one bad
+		// interval costs one sample instead of every sample after it.
+		d.prevEnergy = cur
+	}
+
+	d.history().Add(now, s)
 }
 
 // handleTelemetryHistory answers with the samples taken within the requested
@@ -139,12 +216,19 @@ func (d *Daemon) handleTelemetryHistory(req request) response {
 	entries := d.history().Since(time.Now(), window)
 	out := make([]api.TelemetrySample, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, api.TelemetrySample{
+		s := api.TelemetrySample{
 			At:            e.At.Unix(),
 			TempC:         e.Sample.TempC,
 			RPM:           e.Sample.RPM,
 			PackagePowerW: e.Sample.PackagePowerW,
-		})
+		}
+		if e.Sample.BatteryPowerKnown {
+			// A fresh variable per sample: taking the address of the loop's
+			// own copy would give every entry the same pointer.
+			watts := e.Sample.BatteryPowerW
+			s.BatteryPowerW = &watts
+		}
+		out = append(out, s)
 	}
 	// Non-nil so the wire carries [] rather than null for an empty history: a
 	// daemon that has been up for less than a second has no samples yet, and

@@ -24,6 +24,7 @@ type fakeSysfs struct {
 	battery    string
 	ac         string // the Mains power supply device
 	firmware   string
+	powercap   string
 	ppdCalls   *[]string // powerprofilesctl profiles the stub recorded
 }
 
@@ -53,9 +54,11 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 		smu:        root + "/ryzen_smu_drv",
 		battery:    root + "/power_supply/BAT0",
 		firmware:   root + "/firmware-attributes",
+		powercap:   root + "/powercap/intel-rapl:0",
 	}
 	for _, d := range []string{f.hwmon, f.hwmonRead, f.hwmonTemp, f.profileDir, f.ppt, f.smu, f.battery,
-		f.firmware + "/boot_sound", f.firmware + "/panel_overdrive"} {
+		f.firmware + "/boot_sound", f.firmware + "/panel_overdrive", f.powercap,
+		root + "/powercap/intel-rapl:0:0"} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%s) = %v", d, err)
 		}
@@ -78,6 +81,21 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/type", "USB")
 	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/online", "1")
 
+	// The Z13's pack is the *energy* kind: power_now in microwatts, no
+	// current_now at all. A reader written only for the charge form finds
+	// nothing here, which is the point of building it this way.
+	f.writeFile(t, f.battery+"/power_now", "12500000")
+	f.writeFile(t, f.battery+"/voltage_now", "16124000")
+	f.writeFile(t, f.battery+"/status", "Discharging")
+
+	// powercap: the package domain plus a sub-domain, whose energy is a *part*
+	// of the package's — a reader that summed them would double-count.
+	f.writeFile(t, f.powercap+"/name", "package-0")
+	f.writeFile(t, f.powercap+"/energy_uj", "1000000")
+	f.writeFile(t, f.powercap+"/max_energy_range_uj", "262143328850")
+	f.writeFile(t, root+"/powercap/intel-rapl:0:0/name", "core")
+	f.writeFile(t, root+"/powercap/intel-rapl:0:0/energy_uj", "400000")
+
 	// Never shell out to the live power-profiles-daemon from a test.
 	origPPD := ppdRunner
 	ppdCalls := []string{}
@@ -90,6 +108,7 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	swap(t, &sysProfileACPI, root+"/acpi_platform_profile")
 	swap(t, &sysPowerSupplyDir, root+"/power_supply")
 	swap(t, &sysFirmwareAttrDir, f.firmware)
+	swap(t, &sysPowercapDir, root+"/powercap")
 	swap(t, &pptBasePath, f.ppt)
 	swap(t, &smuDriverPath, f.smu)
 	return f

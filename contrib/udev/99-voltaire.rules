@@ -8,6 +8,7 @@
 #   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
 #   - asus-nb-wmi PPT power limit attributes for TDP control
+#   - powercap RAPL energy_uj for package-power telemetry (read only)
 #
 # Keep this in sync with buildRulesContent() in cmd/setup.go, which generates the
 # equivalent rules for "voltaire setup"; cmd/setup_test.go asserts they do not drift.
@@ -23,3 +24,4 @@ ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", RUN+="/bin/sh -c 'chgrp users /sys%p/pwm*; chmod g+w /sys%p/pwm*'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f in /sys%p/pwm*_enable; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
+ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%p/energy_uj; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+r \"$$f\"; done'"

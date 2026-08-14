@@ -16,6 +16,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
 	"github.com/dahui/voltaire/v2/internal/limits"
 )
 
@@ -122,32 +123,52 @@ func TestDeviceGetProjectsTheAssembledDevice(t *testing.T) {
 	}
 }
 
-// TestTelemetryDeclaresNoPowerSourceYet is an honesty guard, not a statement
-// about what the Z13 can do. The machine does expose powercap RAPL, but
-// energy_uj is root-only (the Platypus mitigation) and asusz13's Sample()
-// reads nothing for it, so PackagePowerW is always zero. Naming a source in
-// the document while that is true tells a dashboard to draw a graph that is
-// flat at zero, where an absent source tells it to hide the graph — capability
-// absence is the whole contract clients render against.
+// TestTelemetryDeclarationMatchesWhatIsRead is the honesty guard the device
+// document's whole contract rests on: capability absence is what tells a client
+// to hide a control, so a declared-but-unread source does not degrade to
+// "nothing shown" — it degrades to a chart drawn flat at zero, which reads as a
+// measurement.
 //
-// So this fails the day someone implements the read without declaring it, and
-// it fails just as loudly the day someone declares it without implementing the
-// read. Either way the fix is to make the two agree and delete this test.
-func TestTelemetryDeclaresNoPowerSourceYet(t *testing.T) {
+// It replaced TestTelemetryDeclaresNoPowerSourceYet, which pinned the *absence*
+// of power_draw while asusz13 read nothing for it. Both directions still fail
+// loudly; only the expected answer changed, because Sample now reads the
+// powercap energy counter.
+//
+// The counter, not a wattage: converting needs two readings, so a single Sample
+// legitimately reports PackageEnergyUJ and no PackagePowerW. This checks the
+// counter, which is what the declaration is actually about.
+//
+// Sample only reads sysfs, so this is safe here in the way a write would not
+// be. It tolerates an unreadable counter: energy_uj is 0400 root:root until
+// "voltaire setup" grants group read, and a developer machine without that
+// grant must not fail the suite — the case it exists to catch is a *readable*
+// counter with no declaration, or a declaration with no reader at all.
+func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 	info := deviceInfoFor(testDev)
 	if info.Telemetry == nil {
 		t.Fatal("telemetry section missing")
 	}
-	if info.Telemetry.PowerDraw != "" {
-		t.Errorf("telemetry.power_draw = %q; if Sample() now reads package power, "+
-			"delete this test — if it does not, the document is claiming a graph "+
-			"that would be flat at zero", info.Telemetry.PowerDraw)
+	declared := info.Telemetry.PowerDraw != ""
+
+	s, err := testDev.Telemetry.Sample()
+	if err != nil {
+		t.Skipf("no telemetry on this machine: %v", err)
 	}
-	// Sample() only reads sysfs, so this is safe here in the way a write would
-	// not be; it fails on a machine that is not a Z13 and that is fine to skip.
-	if s, err := testDev.Telemetry.Sample(); err == nil && s.PackagePowerW != 0 {
-		t.Errorf("Sample reports %.1fW of package power but the document names no "+
-			"source; declare it in the device data", s.PackagePowerW)
+	reads := s.PackageEnergyUJ != 0 || s.PackagePowerW != 0
+
+	switch {
+	case reads && !declared:
+		t.Error("Sample reads package power but the document names no source; " +
+			"declare it in the device data or a client will hide a graph it could draw")
+	case declared && !reads:
+		// Distinguish "not implemented" from "not permitted". Only the first
+		// is a defect; the second is a machine that has not run setup.
+		if _, _, rErr := asusz13.ReadPackageEnergy(); rErr != nil {
+			t.Skipf("the counter is declared but unreadable here (%v); "+
+				"run 'sudo voltaire setup' to grant it", rErr)
+		}
+		t.Error("the document names a power source but Sample reads nothing for it; " +
+			"a client would draw a chart flat at zero, which reads as a measurement")
 	}
 }
 
@@ -206,7 +227,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"battery":{"charge_limit":true,"health":true}`,
-		`"telemetry":{"history_seconds":300}`, // power_draw omitted: no source declared
+		`"telemetry":{"power_draw":"rapl","history_seconds":300}`, // power_draw omitted: no source declared
 		`"buttons":true`,
 	} {
 		if !strings.Contains(string(data), want) {

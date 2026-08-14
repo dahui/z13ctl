@@ -38,6 +38,11 @@ var sysfsGrants = []struct {
 	{name: "panel overdrive", match: "attributes/panel_overdrive/current_value", rules: true, service: true},
 	{name: "PPT power limits", match: "/sys/devices/platform/asus-nb-wmi/ppt_*", rules: true, service: true},
 	{name: "ryzen_smu", match: "/sys/kernel/ryzen_smu_drv/", service: true},
+	// The one read-only grant. energy_uj is 0400 root:root under the Platypus
+	// mitigation, so package power is unreadable without it; the rule matches
+	// the package-0 domain and the unit globs, because the counter can exist
+	// before any udev event this rule could hang off.
+	{name: "powercap energy counter", match: "energy_uj", rules: true, service: true},
 }
 
 func readPackaged(t *testing.T, path string) string {
@@ -47,6 +52,43 @@ func readPackaged(t *testing.T, path string) string {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// TestPowercapIsGrantedReadOnly pins the one asymmetry in the grant table.
+//
+// Every other target here is chmod g+w because voltaire writes it. The powercap
+// directory holds the package power *caps* alongside the energy counter, so a
+// g+w grant there would hand every member of the group control of the CPU's
+// power limits — through a rule whose only purpose is to draw a graph. The
+// counter is read, so the grant is read.
+func TestPowercapIsGrantedReadOnly(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{
+		"buildRulesContent":   buildRulesContent("users"),
+		"buildServiceContent": buildServiceContent("users"),
+		packagedRulesPath:     readPackaged(t, packagedRulesPath),
+		packagedServicePath:   readPackaged(t, packagedServicePath),
+	} {
+		for _, line := range strings.Split(content, "\n") {
+			// Comments name the file to explain the grant; only the grant
+			// itself is under test.
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if !strings.Contains(line, "energy_uj") {
+				continue
+			}
+			if strings.Contains(line, "g+w") {
+				t.Errorf("%s grants write on the powercap energy counter:\n  %s\n"+
+					"That directory also holds the power caps; the counter only needs g+r.",
+					name, strings.TrimSpace(line))
+			}
+			if !strings.Contains(line, "g+r") {
+				t.Errorf("%s touches energy_uj without granting read:\n  %s", name, strings.TrimSpace(line))
+			}
+		}
+	}
 }
 
 func TestGeneratedAndPackagedArtifactsGrantSameTargets(t *testing.T) {

@@ -496,3 +496,87 @@ func TestBuildDoesNotMutateItsInput(t *testing.T) {
 		t.Fatalf("Build reordered the caller's slice:\n got %+v\nwant %+v", in, before)
 	}
 }
+
+// batteryW is the pointer the wire carries, so a test can say "reported zero"
+// as distinct from "reported nothing".
+func batteryW(v float64) *float64 { return &v }
+
+// TestBatteryZeroIsAReadingButAbsenceIsNot is the asymmetry battery flow adds,
+// and the reason api.TelemetrySample.BatteryPowerW is a pointer.
+//
+// Every other quantity here can use its value as its presence test, because
+// their zeros are implausible (0°C is not an APU temperature, 0 W is not a
+// running package). Battery flow's zero is the *commonest* real state there
+// is — a full pack on mains — so testing the value would drop the chart from
+// every plugged-in laptop, and testing nothing at all would draw one flat at
+// zero on a desktop with no pack.
+func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0)
+	at := func(off int) int64 { return now.Add(time.Duration(off) * time.Second).Unix() }
+
+	t.Run("a reported zero is drawn", func(t *testing.T) {
+		t.Parallel()
+		p := telemetryplot.Build([]api.TelemetrySample{
+			{At: at(-2), TempC: 50, BatteryPowerW: batteryW(0)},
+			{At: at(-1), TempC: 51, BatteryPowerW: batteryW(0)},
+		}, now, time.Minute, 0)
+
+		if !hasKind(p, telemetryplot.KindBattery) {
+			t.Fatal("a pack reporting 0 W lost its series; that is a real reading")
+		}
+	})
+
+	t.Run("no report draws nothing", func(t *testing.T) {
+		t.Parallel()
+		p := telemetryplot.Build([]api.TelemetrySample{
+			{At: at(-2), TempC: 50},
+			{At: at(-1), TempC: 51},
+		}, now, time.Minute, 0)
+
+		if hasKind(p, telemetryplot.KindBattery) {
+			t.Error("a device reporting no battery got a series, which would draw " +
+				"a chart flat at zero — the same false measurement an undeclared " +
+				"power source would draw")
+		}
+	})
+}
+
+// TestBatteryFlowIsSigned pins the direction convention end to end: the axis
+// has to frame negatives, or a charging machine's line is clipped to the floor.
+func TestBatteryFlowIsSigned(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0)
+	p := telemetryplot.Build([]api.TelemetrySample{
+		{At: now.Add(-2 * time.Second).Unix(), BatteryPowerW: batteryW(-45)}, // charging hard
+		{At: now.Add(-time.Second).Unix(), BatteryPowerW: batteryW(18)},      // then discharging
+	}, now, time.Minute, 0)
+
+	var s *telemetryplot.Series
+	for i := range p.Series {
+		if p.Series[i].Kind == telemetryplot.KindBattery {
+			s = &p.Series[i]
+		}
+	}
+	if s == nil {
+		t.Fatal("no battery series")
+	}
+	if s.Bounds.Min > -45 {
+		t.Errorf("bounds %v..%v clip a -45 W charge", s.Bounds.Min, s.Bounds.Max)
+	}
+	if s.Bounds.Max < 18 {
+		t.Errorf("bounds %v..%v clip an 18 W draw", s.Bounds.Min, s.Bounds.Max)
+	}
+}
+
+// hasKind reports whether the plot carries a series of the given kind.
+func hasKind(p telemetryplot.Plot, k telemetryplot.Kind) bool {
+	for _, s := range p.Series {
+		if s.Kind == k {
+			return true
+		}
+	}
+	return false
+}

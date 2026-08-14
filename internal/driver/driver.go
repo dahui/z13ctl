@@ -265,13 +265,51 @@ type Undervolter interface {
 	Reset() error
 }
 
-// Sample is one telemetry reading. RPM is per fan; PackagePowerW is measured
-// package power (RAPL or pm-table) and zero when the device has no source.
+// Sample is one telemetry reading.
+//
+// Package power arrives in one of two shapes, because the hardware offers one
+// of two and converting in the driver would be wrong. A device with an
+// instantaneous reading (OXP's pm-table) fills PackagePowerW. A device with a
+// cumulative *energy counter* (powercap RAPL, which is what x86 offers) fills
+// PackageEnergyUJ, and the caller divides the difference between two readings
+// by the time between them.
+//
+// The conversion is the caller's because it needs the previous reading, and a
+// driver that remembered one would be holding mutable state across concurrent
+// calls: Sample is called by the daemon's 1 Hz sampler *and* by every get-state
+// handler. Drivers are passive by design — no locking, no goroutines — so the
+// counter goes out as a counter and the daemon's sampler, which is the one
+// sequential caller, does the arithmetic.
 type Sample struct {
-	TempC         int
-	RPM           []int
+	TempC int
+	RPM   []int
+
+	// PackagePowerW is an instantaneous package-power reading, zero when the
+	// device reports none or reports energy instead.
 	PackagePowerW float64
-	Battery       BatteryStatus
+
+	// PackageEnergyUJ is a cumulative package-energy counter in microjoules,
+	// zero when the device has no such counter. PackageEnergyMaxUJ is the value
+	// it wraps at, so a consumer can tell a wrap from a counter reset.
+	PackageEnergyUJ    uint64
+	PackageEnergyMaxUJ uint64
+
+	// BatteryPowerW is battery flow in watts: positive while the pack is
+	// discharging (the machine is drawing from it), negative while charging.
+	//
+	// BatteryPowerKnown is what says a reading was taken at all, because unlike
+	// every other quantity here zero is a *measurement*: a full pack on mains
+	// genuinely moves no energy. Without the flag, a machine with no battery
+	// and a laptop sitting at 100% are the same value, and a client can only
+	// choose between hiding a real reading and drawing a chart flat at zero for
+	// a desktop that has no pack at all.
+	//
+	// A bool rather than a *float64 because Sample is stored in the history
+	// ring, which deep-copies in both directions precisely so a driver cannot
+	// alias what it handed over; a pointer would be one more thing to remember
+	// to copy, for no gain over a flag.
+	BatteryPowerW     float64
+	BatteryPowerKnown bool
 }
 
 // TelemetryInfo describes a telemetry source without reading it, so the device

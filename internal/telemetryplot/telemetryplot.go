@@ -55,6 +55,7 @@ const (
 	KindTemp Kind = iota
 	KindFan
 	KindPower
+	KindBattery
 )
 
 // Point is one reading placed in the plot.
@@ -127,6 +128,12 @@ var axes = map[Kind]axis{
 	KindTemp:  {label: "APU", unit: "°C", nomMin: 30, nomMax: 100, step: 10},
 	KindFan:   {label: "Fan", unit: "RPM", nomMin: 0, nomMax: 6000, step: 1000},
 	KindPower: {label: "Package", unit: "W", nomMin: 0, nomMax: 60, step: 10},
+	// Battery flow is signed: discharging is positive, charging negative, so
+	// the nominal frame straddles zero. It is a chart of its own rather than a
+	// second series on the package chart, because the two answer different
+	// questions — how hard the APU is working, and which way the pack is
+	// moving — and sharing an axis would squash both.
+	KindBattery: {label: "Battery", unit: "W", nomMin: -30, nomMax: 30, step: 10},
 }
 
 // bounds frames v's observed range: the nominal window, expanded outward to a
@@ -225,6 +232,18 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 		// As with temperature: a device that cannot read package power omits the
 		// field, and a machine drawing exactly 0 W is not a real state.
 		return s.PackagePowerW, s.PackagePowerW != 0
+	}})
+
+	specs = append(specs, spec{kind: KindBattery, value: func(s api.TelemetrySample) (float64, bool) {
+		// The one quantity whose zero is a reading — a full pack on mains moves
+		// no energy — which is why the wire field is a pointer and presence is
+		// the pointer, not the value. Testing the value instead would drop the
+		// chart on every laptop sitting at 100%, and testing nothing would draw
+		// one flat at zero on a desktop with no pack.
+		if s.BatteryPowerW == nil {
+			return 0, false
+		}
+		return *s.BatteryPowerW, true
 	}})
 
 	// Gather first, frame second. The axis is computed per *kind*, over every

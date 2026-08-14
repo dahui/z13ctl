@@ -65,10 +65,21 @@ machine once a second and keeps the last five minutes, so the charts are drawn
 from readings taken whether or not the drawer was open.
 
 There is one chart per quantity the machine actually measures — on the Z13 that
-is APU temperature and the two fan speeds. Both fans share one chart and one
-scale, so you can compare them directly. A quantity your hardware does not
-report gets no chart at all rather than a line sitting at zero, which would look
-like a measurement.
+is APU temperature, the two fan speeds, CPU package power, and battery flow.
+Both fans share one chart and one scale, so you can compare them directly. A
+quantity your hardware does not report gets no chart at all rather than a line
+sitting at zero, which would look like a measurement.
+
+**Package power** is read from the kernel's RAPL energy counter. That file is
+root-only by default (a side-channel mitigation), so the chart appears only
+after `sudo voltaire setup` has granted read access — it is a **read-only**
+grant, since the same directory holds the CPU's power caps. If you upgraded
+from a version before this existed, re-run setup once.
+
+**Battery flow** is positive while the machine is drawing from the pack and
+negative while charging, so the line crosses zero when you plug in. Sitting at
+exactly zero is a real reading — a full battery on mains moves no energy — and
+is drawn as such; a machine with no battery gets no chart instead.
 
 The buttons above the charts pick how far back to look. Only spans the daemon
 can fill are offered.

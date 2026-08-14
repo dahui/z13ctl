@@ -20,6 +20,11 @@ var (
 	// sysPowerSupplyDir holds the battery devices (BAT0/BAT1).
 	sysPowerSupplyDir = "/sys/class/power_supply"
 
+	// sysPowercapDir is the RAPL energy-counter interface. Its energy_uj files
+	// are 0400 root:root by default (the Platypus mitigation); voltaire setup
+	// grants group read, as it does for the PPT attributes.
+	sysPowercapDir = "/sys/class/powercap"
+
 	// sysFirmwareAttrDir holds the asus-armoury BIOS attributes.
 	sysFirmwareAttrDir = "/sys/class/firmware-attributes/asus-armoury/attributes"
 

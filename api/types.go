@@ -61,6 +61,18 @@ type TelemetrySample struct {
 	TempC         int     `json:"temp_c,omitempty"`
 	RPM           []int   `json:"rpm,omitempty"`
 	PackagePowerW float64 `json:"package_power_w,omitempty"`
+
+	// BatteryPowerW is battery flow in watts: positive while discharging,
+	// negative while charging.
+	//
+	// It is a pointer because zero is a real reading here and every other
+	// field in this struct is omitempty — a full pack on mains moves no
+	// energy, so a plain float64 would make a laptop at 100% indistinguishable
+	// from a desktop with no battery, and a client would have to choose
+	// between hiding a true reading and drawing a chart flat at zero for a
+	// machine that has no pack. nil means the device reported none. Same
+	// reasoning as BatteryInfo.ChargeLimit being a *bool.
+	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
 }
 
 // StockProfiles are the firmware performance profiles that can be written to
