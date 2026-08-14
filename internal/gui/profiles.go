@@ -3,12 +3,15 @@
 
 package gui
 
-// profiles.go — the main view's profile buttons, the custom view's profile
-// selector (with its create/save-as/activate affordances), and the autoswitch
-// section. Every rule here (which rows exist, which affordances each carries,
-// which autoswitch targets are offered, how a name is validated) lives in
-// internal/profileui where it is unit tested; this file only builds widgets
-// and applies the answers.
+// profiles.go — the custom view's profile selector: which profile the editor
+// is pointed at, the create/copy/activate affordances, and the inline name
+// entry. It is part of customView (customview.go), split out because it is a
+// self-contained block with its own rules.
+//
+// Every rule here — which rows exist, which affordances each carries, how a
+// name is validated — lives in internal/profileui where it is unit tested;
+// this file only builds widgets and applies the answers. The main view's own
+// profile buttons are a different thing and live in mainprofile.go.
 
 import (
 	"errors"
@@ -35,13 +38,14 @@ const (
 // composite. The list is built from profileui.CustomRows on every open, so a
 // profile created or deleted by another client is simply present or absent
 // the next time the list opens, with no rebuild machinery in between.
-func (w *Window) buildProfileSelector() *gtk.Box {
+func (c *customView) buildProfileSelector() *gtk.Box {
+	w := c.w
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 	box.Append(sectionLabel("PROFILE"))
 
 	selRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	selRow.AddCSSClass("btn-group")
-	w.profileSelDD = w.newDropdown(dropdownConfig{
+	c.selDD = w.newDropdown(dropdownConfig{
 		options: func() []dropdownOption {
 			rows := profileui.CustomRows(w.state)
 			opts := make([]dropdownOption, len(rows))
@@ -52,72 +56,72 @@ func (w *Window) buildProfileSelector() *gtk.Box {
 					// Two distinct marks: selected is the edit target, the
 					// running dot is the active profile. The old in-flow
 					// selector collapsed both onto one .active class.
-					selected: r.Name == w.editProfile,
+					selected: r.Name == c.editProfile,
 					running:  r.Active,
 				}
 			}
 			return opts
 		},
-		onSelect: func(name string) { w.setEditTarget(name) },
+		onSelect: func(name string) { c.setEditTarget(name) },
 	})
-	w.setHint(w.profileSelDD.btn, "Choose which custom profile to edit")
-	selRow.Append(w.profileSelDD.btn)
+	w.setHint(c.selDD.btn, "Choose which custom profile to edit")
+	selRow.Append(c.selDD.btn)
 	box.Append(selRow)
 
 	actions := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	actions.AddCSSClass("btn-group")
-	w.activateBtn = gtk.NewButtonWithLabel("Activate")
-	w.activateBtn.AddCSSClass("save-btn")
-	w.activateBtn.SetHExpand(true)
-	w.setHint(w.activateBtn, "Apply this profile to the machine")
-	w.activateBtn.ConnectClicked(func() { w.sendProfileSet(w.editProfile) })
-	actions.Append(w.activateBtn)
-	w.newProfileBtn = gtk.NewButtonWithLabel("+ New")
-	w.newProfileBtn.SetHExpand(true)
-	w.setHint(w.newProfileBtn, "Create an empty named profile")
-	w.newProfileBtn.ConnectClicked(func() { w.showNameEntry(nameModeCreate) })
-	actions.Append(w.newProfileBtn)
-	w.saveAsBtn = gtk.NewButtonWithLabel("Save As")
-	w.saveAsBtn.SetHExpand(true)
-	w.setHint(w.saveAsBtn, "Copy the active profile's settings under a new name")
-	w.saveAsBtn.ConnectClicked(func() { w.showNameEntry(nameModeSaveAs) })
-	actions.Append(w.saveAsBtn)
+	c.activateBtn = gtk.NewButtonWithLabel("Activate")
+	c.activateBtn.AddCSSClass("save-btn")
+	c.activateBtn.SetHExpand(true)
+	w.setHint(c.activateBtn, "Apply this profile to the machine")
+	c.activateBtn.ConnectClicked(func() { w.sendProfileSet(c.editProfile) })
+	actions.Append(c.activateBtn)
+	c.newProfileBtn = gtk.NewButtonWithLabel("+ New")
+	c.newProfileBtn.SetHExpand(true)
+	w.setHint(c.newProfileBtn, "Create an empty named profile")
+	c.newProfileBtn.ConnectClicked(func() { c.showNameEntry(nameModeCreate) })
+	actions.Append(c.newProfileBtn)
+	c.saveAsBtn = gtk.NewButtonWithLabel("Save As")
+	c.saveAsBtn.SetHExpand(true)
+	w.setHint(c.saveAsBtn, "Copy the active profile's settings under a new name")
+	c.saveAsBtn.ConnectClicked(func() { c.showNameEntry(nameModeSaveAs) })
+	actions.Append(c.saveAsBtn)
 	box.Append(actions)
 
 	// One note serves both refusals — they are almost always blocked together
 	// (a fresh profile blocks Activate and Save As at once).
-	w.actionsNote = blockNote()
-	box.Append(w.actionsNote)
+	c.actionsNote = blockNote()
+	box.Append(c.actionsNote)
 
 	// Inline name entry, in place of a dialog, for the same reason the
 	// selector expands in place: it appears only while a name is being chosen.
-	w.nameRow = gtk.NewBox(gtk.OrientationHorizontal, 4)
-	w.nameEntry = gtk.NewEntry()
-	w.nameEntry.SetHExpand(true)
-	w.nameEntry.SetMaxLength(api.MaxProfileNameLen)
-	w.nameEntry.ConnectActivate(func() { w.confirmNameEntry() })
-	w.nameRow.Append(w.nameEntry)
-	w.nameOKBtn = gtk.NewButtonWithLabel("OK")
-	w.nameOKBtn.ConnectClicked(func() { w.confirmNameEntry() })
-	w.nameRow.Append(w.nameOKBtn)
-	w.nameCancelBtn = gtk.NewButton()
-	w.nameCancelBtn.SetIconName("window-close-symbolic")
-	w.setHint(w.nameCancelBtn, "Cancel")
-	w.nameCancelBtn.ConnectClicked(func() { w.nameRow.SetVisible(false) })
-	w.nameRow.Append(w.nameCancelBtn)
-	w.nameRow.SetVisible(false)
-	box.Append(w.nameRow)
+	c.nameRow = gtk.NewBox(gtk.OrientationHorizontal, 4)
+	c.nameEntry = gtk.NewEntry()
+	c.nameEntry.SetHExpand(true)
+	c.nameEntry.SetMaxLength(api.MaxProfileNameLen)
+	c.nameEntry.ConnectActivate(func() { c.confirmNameEntry() })
+	c.nameRow.Append(c.nameEntry)
+	c.nameOKBtn = gtk.NewButtonWithLabel("OK")
+	c.nameOKBtn.ConnectClicked(func() { c.confirmNameEntry() })
+	c.nameRow.Append(c.nameOKBtn)
+	c.nameCancelBtn = gtk.NewButton()
+	c.nameCancelBtn.SetIconName("window-close-symbolic")
+	w.setHint(c.nameCancelBtn, "Cancel")
+	c.nameCancelBtn.ConnectClicked(func() { c.nameRow.SetVisible(false) })
+	c.nameRow.Append(c.nameCancelBtn)
+	c.nameRow.SetVisible(false)
+	box.Append(c.nameRow)
 
-	w.profileSelDD.setLabel(profileui.Label(w.editProfile))
+	c.selDD.setLabel(profileui.Label(c.editProfile))
 	return box
 }
 
 // setEditTarget points the custom view at another profile and re-syncs every
 // widget to it.
-func (w *Window) setEditTarget(name string) {
-	w.editProfile = name
-	w.disarmDelete()
-	w.syncCustomView()
+func (c *customView) setEditTarget(name string) {
+	c.editProfile = name
+	c.disarmDelete()
+	c.sync()
 }
 
 // syncProfileSelector updates the selector's trigger label and the action
@@ -126,49 +130,50 @@ func (w *Window) setEditTarget(name string) {
 // by another client needs no rebuild here — and nothing below the selector
 // shifts when the profile set changes, which is why the custom focus list is
 // built exactly once.
-func (w *Window) syncProfileSelector() {
-	if w.profileSelDD == nil {
+func (c *customView) syncProfileSelector() {
+	if c.selDD == nil {
 		return
 	}
-	w.profileSelDD.setLabel(profileui.Label(w.editProfile))
+	c.selDD.setLabel(profileui.Label(c.editProfile))
 
 	// Refusal reasons go to the shared block note, in the flow of the view —
 	// never to tooltips, which are invisible in gamescope and unreachable on
 	// a controller (the focus grid skips insensitive widgets).
 	blocks := make([]string, 0, 2)
-	if w.activateBtn != nil {
-		block := profileui.ActivateBlock(w.state, w.editProfile)
-		w.activateBtn.SetSensitive(block == "")
+	if c.activateBtn != nil {
+		block := profileui.ActivateBlock(c.w.state, c.editProfile)
+		c.activateBtn.SetSensitive(block == "")
 		if block != "" {
 			blocks = append(blocks, "Activate: "+block)
 		}
 	}
-	if w.saveAsBtn != nil {
-		block := profileui.SaveAsBlock(w.state)
-		w.saveAsBtn.SetSensitive(block == "")
+	if c.saveAsBtn != nil {
+		block := profileui.SaveAsBlock(c.w.state)
+		c.saveAsBtn.SetSensitive(block == "")
 		if block != "" {
 			blocks = append(blocks, "Save As: "+block)
 		}
 	}
-	setBlockNote(w.actionsNote, strings.Join(blocks, " · "))
+	setBlockNote(c.actionsNote, strings.Join(blocks, " · "))
 }
 
 // showNameEntry opens the inline name row prefilled with a suggested name.
 // The prefill is not a convenience: a gamepad user cannot type into the entry
 // at all, so the suggestion (always valid and free) is the name they get.
-func (w *Window) showNameEntry(mode string) {
-	w.nameMode = mode
-	w.nameEntry.SetText(profileui.SuggestName(w.state))
-	w.nameRow.SetVisible(true)
-	w.nameEntry.GrabFocus()
+func (c *customView) showNameEntry(mode string) {
+	c.nameMode = mode
+	c.nameEntry.SetText(profileui.SuggestName(c.w.state))
+	c.nameRow.SetVisible(true)
+	c.nameEntry.GrabFocus()
 }
 
 // confirmNameEntry validates the typed name and sends the create or save-as.
 // A bad name keeps the row open for correction; the daemon's own refusal is
 // still the final word and lands in the error bar like any other failure.
-func (w *Window) confirmNameEntry() {
-	name := strings.TrimSpace(w.nameEntry.Text())
-	mode := w.nameMode
+func (c *customView) confirmNameEntry() {
+	w := c.w
+	name := strings.TrimSpace(c.nameEntry.Text())
+	mode := c.nameMode
 	var problem string
 	if mode == nameModeSaveAs {
 		problem = profileui.SaveAsNameProblem(name)
@@ -179,7 +184,7 @@ func (w *Window) confirmNameEntry() {
 		w.reportError(nameOpLabel(mode), errors.New(problem))
 		return
 	}
-	w.nameRow.SetVisible(false)
+	c.nameRow.SetVisible(false)
 	go func() {
 		var handled bool
 		var err error
@@ -197,7 +202,7 @@ func (w *Window) confirmNameEntry() {
 		// Edit what was just created: creating a profile and then having to
 		// find it in the selector is a step with no purpose.
 		glib.IdleAdd(func() bool {
-			w.setEditTarget(name)
+			c.setEditTarget(name)
 			return false
 		})
 		w.refreshState()

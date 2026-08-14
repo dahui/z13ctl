@@ -149,7 +149,8 @@ internal/
                              that carries its own lock, and says why.
                              (— voltaire-gui, merged from z13gui at 2.0 —)
   gui/                       GTK4 overlay drawer: Window, state sync, widgets, theming.
-                             The cgo island — excluded from make test/race/cover (see Testing)
+                             The cgo island — excluded from make test/race/cover, except
+                             gamepad/ and its hidblocker/, which are cgo-free (see Testing)
     layershell/              Wayland layer-shell backend (KDE, Hyprland, Sway)
     overlay/                 fullscreen click-through backend for compositors without
                              layer-shell — GNOME/Mutter above all
@@ -163,7 +164,8 @@ internal/
                              @voltaire-*) through 2.x
   apiresult/                 turns api's (handled, err) pair into one error; ErrNotRunning
   limits/                    TDP + fan-curve rules the drawer needs so it never offers a
-                             state the daemon would refuse (the testable half of gui/tdp.go)
+                             state the daemon would refuse (the testable half of the
+                             custom view — gui/customview.go and gui/fancurve.go)
   lighting/                  the drawer's RGB rules: mode from state, controls per mode
   profileui/                 the drawer's profile rules: list rows + affordances, live-vs-stored
                              edit planning (PlanEdit/ForEditor), name pre-checks, autoswitch
@@ -1582,14 +1584,24 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
   sysfs tree (see below).
 - **`make test`/`race`/`cover` run `HERMETIC_PKGS`, not `./...`.** That is
-  `go list ./...` minus `internal/gui` (and its subpackages) and `voltaire-gui`.
-  Neither has tests, but `./...` still *compiles* them, which drags GTK4 headers
-  and cgo into a run that must work on any machine and in CI without them. The
-  boundary is why every rule worth testing on the GUI side lives in a pure-Go
-  package (`limits`, `lighting`, `profileui`, `theme`, `colorconv`, `focusgrid`,
-  `keyrepeat`, `panelgeom`, `uiscale`, `togglegate`, `startup`, `apiresult`)
-  rather than in `internal/gui` — adding logic to the cgo island puts it beyond
-  every test.
+  `go list ./...` minus `internal/gui` and `voltaire-gui`, **plus
+  `internal/gui/gamepad/...` added back**. `./...` *compiles* everything it
+  lists, which would drag GTK4 headers and cgo into a run that must work on any
+  machine and in CI without them. The boundary is why every rule worth testing
+  on the GUI side lives in a pure-Go package (`limits`, `lighting`,
+  `profileui`, `theme`, `colorconv`, `focusgrid`, `keyrepeat`, `panelgeom`,
+  `telemetryplot`, `popupgeom`, `uiscale`, `togglegate`, `startup`,
+  `apiresult`) rather than in `internal/gui` — adding logic to the cgo island
+  puts it beyond every test.
+  **The boundary is cgo/GTK, not the path**, and writing it as a path cost a
+  real test. The exclusion is a substring grep, so it swallowed the whole
+  subtree — including `gamepad` and `hidblocker`, which are evdev and ebpf and
+  compile fine under `CGO_ENABLED=0`. `hidblocker_test.go` existed all along and
+  had never once run, and the gamepad classification tests ported from z13gui
+  would have been skipped the same way. That is the exact failure mode the
+  upstream fix was written about: an untestable classifier is how an unqualified
+  multitouch rule reached a release. If a package under `internal/gui` compiles
+  cgo-free, it belongs in the run.
   `make lint` deliberately runs the **full** tree, GTK island included; it is a
   local/dev gate where the headers are present.
 - Current coverage: ~87% cli, ~78% aura, ~40% hid, ~38% daemon, ~29% api, ~9% cmd.
@@ -1751,7 +1763,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **6 of 7 done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection` and `dashboardView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. Remaining: the custom profile view (~40 fields across `tdp.go` and `profiles.go`); the full window (`gui-open-full` has no consumer until it exists); bundled CSS to `@voltaire-*` |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. Remaining: the full window (`gui-open-full` has no consumer until it exists); bundled CSS to `@voltaire-*` |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

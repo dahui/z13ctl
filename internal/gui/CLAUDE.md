@@ -61,8 +61,14 @@ internal/gui/
   gui.go                        Window struct, backend selection, show/hide, subscribeLoop, theming
   backend.go                    Backend interface (Configure, WrapContent, Show, Hide)
   controls.go                   All GTK widget construction (drawer, views, bottom bar)
-  tdp.go                        Custom profile view: TDP sliders, fan curve editor, undervolt, telemetry
-  sync.go                       Daemon state sync and API send functions
+  customview.go                 Custom profile view: the customView struct, TDP + undervolt
+                                widgets, sync, and its focus list
+  customsend.go                 How that view addresses its target: editPlan, the GTK-thread
+                                snapshots (tdpRequest), probeStoredTarget, every save/reset
+  profiles.go                   Its profile selector and inline name entry (on customView)
+  fancurve.go                   The 8-point fan curve chart: mapping, hit test, Cairo drawing
+  sync.go                       Daemon state sync, refreshState, the get-state telemetry poll,
+                                and API send functions
   color.go                      colorInput widget + color picker view (math in internal/colorconv)
   errbar.go                     Error bar: reportError/clearError, the only user-facing error surface
   focus.go                      Focus widget adaptor (navigation logic in internal/focusgrid)
@@ -220,7 +226,8 @@ contrib/
   - **Never read or write a GTK widget from a goroutine.** GTK is not thread-safe;
     this is undefined behaviour, not a stale read. Snapshot widget values on the
     main thread into plain data, then do the socket call in the goroutine — see
-    `readTdpRequest`/`tdpRequest.send` in `tdp.go` and `sendApply` in `sync.go`.
+    `readTdpRequest`/`tdpRequest.send` in `customsend.go` and `sendApply` in
+    `sync.go`.
     Come back to the main thread with `glib.IdleAdd`.
   - **`Window.visible` is an `atomic.Bool`, and it is the only `Window` field any
     goroutine may touch.** The gamepad reader gates every event on it, so a plain
@@ -566,15 +573,15 @@ tested for the day that content work happens; until then a user who writes
 moves them into per-view structs, each with its own build, sync and focus list,
 so the full window can host a view without a second implementation of it.
 
-Done so far — `errBarView` (`errbar.go`), `colorView` (`colorview.go`),
-`themeView` (`themeview.go`), `lightingView` (`lightingview.go`),
-`profileSection` and `autoswitchSection` (`mainprofile.go`), and
-`dashboardView` (`dashboard.go`, built in this shape from the start). Still on
-`Window`: the **custom profile view** — ~40 fields across `tdp.go` and
-`profiles.go`, much the largest and worth its own pass — plus the battery
-slider and the two footer toggles.
+All seven are done — `errBarView` (`errbar.go`), `colorView`
+(`colorview.go`), `themeView` (`themeview.go`), `lightingView`
+(`lightingview.go`), `profileSection` and `autoswitchSection`
+(`mainprofile.go`), `dashboardView` (`dashboard.go`, built in this shape from
+the start), and `customView` (`customview.go`). What remains on `Window` is
+process-level: the battery slider, the two footer toggles, the header label,
+the palette, and the poll generation counters.
 
-Four rules the moves follow:
+Five rules the moves follow:
 
 - **A nil view pointer is the built-yet test.** `showThemeView` checks
   `w.themeView == nil` where it used to check `w.themeScroll == nil`. One field
@@ -588,6 +595,15 @@ Four rules the moves follow:
 - **The call surface does not churn.** `w.reportError(...)` still exists at ~50
   sites and delegates to `errView`; only the *state* moved. A refactor whose
   point is to shrink one struct should not also rewrite every caller.
+- **A field that serves every view stays on `Window`, even when it looks like
+  it belongs to one.** `headerTelemetry` was grouped under the custom view's
+  fields and is the *header's* label, shown on all five; `telemetryGen` and
+  `telemetryBusy` drive the get-state poll, which runs for as long as the
+  drawer is visible whichever view is showing (the dashboard's own loop is
+  separate because it reads `telemetry-history`). Moving either into
+  `customView` would have made the header stop updating the moment that view
+  was not built. The tell is the caller: `show()` starts the poll, and
+  `showCustomView` only restarts it.
 - **A `Window`-level entry point nil-guards its section, and that guard is
   load-bearing, not defensive.** `controls.Resolve` genuinely drops a section on
   a device without the capability, so `w.lighting` can be nil on a real machine
@@ -615,6 +631,40 @@ The linter earns its keep too, catching what a mechanical move strands:
 `colorView`, and `Window.applyTimer` and `Window.tab` the moment `lightingView`
 took them. Run `make lint` after every view, not just at the end — an unused
 field is the signal that something was copied rather than moved.
+
+**The custom view is the one view that is four files, and the seams are
+subjects rather than size.** It is twice the next largest, so a single file was
+1000+ lines; but "split it in half" would have put the cut somewhere arbitrary.
+The cuts follow what the code is *about*:
+
+- `customview.go` — the struct, the widget tree, `sync`, the focus list.
+- `customsend.go` — how the view addresses its **target**: `editPlan`, the
+  GTK-thread snapshots (`tdpRequest`, `readFanCurve`), `probeStoredTarget`, and
+  every save/reset/delete. Every function in it obeys the same two rules, which
+  is what makes it a file rather than a pile: snapshot on the main thread, and
+  gate a stored send on the probe.
+- `profiles.go` — the selector and inline name entry, already a self-contained
+  block with its own rules in `internal/profileui`.
+- `fancurve.go` — the chart. A widget, not a view: it holds no daemon state and
+  its constraint rules are all in `internal/limits`. Renamed from `tdp.go`,
+  which stopped describing what was left in it.
+
+`fanCurveEditor` now points at `*customView` rather than `*Window`, which is
+what it always wanted: it reads the target's `editorFloorPL1` on every draw,
+and the floor is a property of the profile being edited, not of the drawer.
+
+Two things the move surfaced, both worth stating because they are the kind of
+thing a move is good at finding and nothing else is:
+
+- `tdpWarningLabel` was a `Window` field written once at construction and never
+  read again — the identical warning label two blocks below it (`uvWarn`) was
+  already a local. It is a local now. A field that outlives its only use is a
+  claim that something will read it later, and nothing did.
+- `editProfile` was seeded in the `Window` literal, which the lazily-built view
+  cannot inherit. `buildCustomView` seeds it instead, and `showCustomView`
+  resolves the running target *after* the build rather than before it — the end
+  state before the view is ever shown is identical, because `sync` runs ahead of
+  `SetVisibleChildName`.
 
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 

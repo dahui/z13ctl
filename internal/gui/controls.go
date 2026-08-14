@@ -13,7 +13,6 @@ import (
 
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
-	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -294,31 +293,6 @@ func (w *Window) stopDashboardPolling() {
 	if w.dashboard != nil {
 		w.dashboard.stopPolling()
 	}
-}
-
-// showCustomView switches the view stack to the custom profile view, opening
-// on the running custom profile when there is one and "custom" otherwise.
-// Lazy-builds the view on first access; a second tap returns to the main view.
-func (w *Window) showCustomView() {
-	if w.viewStack == nil {
-		return
-	}
-	w.closePopup()
-	w.stopDashboardPolling()
-	if w.viewStack.VisibleChildName() == "custom" {
-		w.showMainView()
-		return
-	}
-	w.editProfile = profileui.DefaultEditTarget(w.state)
-	if w.customScroll == nil {
-		w.viewStack.AddNamed(w.buildCustomView(), "custom")
-		w.buildCustomFocusList()
-	}
-	w.disarmDelete()
-	w.syncCustomView()
-	w.viewStack.SetVisibleChildName("custom")
-	w.swapFocusList(w.customFocusItems)
-	w.startTelemetryPolling()
 }
 
 // setActiveButton removes .active from all buttons in the map and adds it

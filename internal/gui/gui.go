@@ -127,74 +127,19 @@ type Window struct {
 	battScale       *gtk.Scale
 	overdriveSwitch *gtk.Switch
 	bootSoundSwitch *gtk.Switch
+	headerTelemetry *gtk.Label // "45°C · 3200 RPM" in the header, on every view
 
 	// Main-view sections the control registry can drop independently.
 	// See mainprofile.go.
 	profiles   *profileSection
 	autoswitch *autoswitchSection
 
-	// Custom-view profile selector (see profiles.go): a dropdown over
-	// profileui.CustomRows, built fresh on every open — no rebuild machinery.
-	profileSelDD  *dropdown
-	activateBtn   *gtk.Button
-	newProfileBtn *gtk.Button
-	saveAsBtn     *gtk.Button
-	actionsNote   *gtk.Label // refusal reasons for Activate / Save As (.block-note)
-	nameRow       *gtk.Box   // inline create/save-as name entry row, hidden until needed
-	nameEntry     *gtk.Entry
-	nameOKBtn     *gtk.Button
-	nameCancelBtn *gtk.Button
-	nameMode      string // nameModeCreate or nameModeSaveAs while nameRow is up
-
-	// Custom profile view.
-	//
-	// editProfile is the profile the view is editing; the edit affordance on
-	// each profile row sets it before showing the view. Whether edits are live
-	// (bare sends, applied to hardware) or stored (the ...For variants) is
-	// resolved per operation by editPlan() — the answer can change underneath
-	// an open editor when the active profile moves.
-	//
-	// editorFloorPL1 is the sustained limit the fan floor is evaluated
-	// against for the current target: the applied hardware limit for a live
-	// edit, the profile's own saved TDP for a stored one. The chart's floor
-	// line, drag clamping, and the Reset Fans gate all read it.
-	editProfile        string
-	editorFloorPL1     int
-	editorNote         *gtk.Label // "stored only" note; hidden for live edits
-	deleteBtn          *gtk.Button
-	deleteNote         *gtk.Label // refusal reason under Delete Profile (.block-note)
-	resetNote          *gtk.Label // fan-floor refusal under the Reset row (.block-note)
-	deleteArmed        bool       // first tap of the two-tap delete confirmation
-	customScroll       *gtk.ScrolledWindow
-	customBackBtn      *gtk.Button
-	tdpBasicScale      *gtk.Scale
-	tdpBasicLabel      *gtk.Label
-	tdpAdvancedCheck   *gtk.CheckButton
-	tdpAdvancedBox     *gtk.Box
-	tdpPL1Scale        *gtk.Scale
-	tdpPL2Scale        *gtk.Scale
-	tdpPL3Scale        *gtk.Scale
-	tdpPL1Label        *gtk.Label
-	tdpPL2Label        *gtk.Label
-	tdpPL3Label        *gtk.Label
-	tdpWarningLabel    *gtk.Label
-	fanCurve           *fanCurveEditor
-	saveTdpBtn         *gtk.Button
-	saveFanBtn         *gtk.Button
-	saveBothBtn        *gtk.Button
-	resetTdpBtn        *gtk.Button
-	resetFanBtn        *gtk.Button
-	uvBox              *gtk.Box // undervolt container, hidden when unavailable
-	uvCpuScale         *gtk.Scale
-	uvCpuLabel         *gtk.Label
-	saveUvBtn          *gtk.Button
-	resetUvBtn         *gtk.Button
-	headerTelemetry    *gtk.Label // "45°C · 3200 RPM" in main header
-	telemetryTempLabel *gtk.Label
-	telemetryFanLabel  *gtk.Label
-	telemetryGen       int
-	telemetryBusy      bool // a poll request is in flight; skip ticks until it lands
-	customFocusItems   []focusItem
+	// telemetryGen and telemetryBusy drive the get-state poll that keeps the
+	// header live. Window-level rather than per-view: it runs for as long as
+	// the drawer is visible, whichever view is showing. See
+	// startTelemetryPolling.
+	telemetryGen  int
+	telemetryBusy bool // a poll request is in flight; skip ticks until it lands
 
 	syncing bool // true while syncState is updating widgets; suppresses sendApply
 
@@ -204,10 +149,11 @@ type Window struct {
 	paletteBtn   *gtk.Button         // theme button in bottom bar
 	dashboardBtn *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
 
-	// Lazily-built stack views. Each owns its widgets and its focus list, and a
-	// nil pointer is also the built-yet test every show*View uses.
-	colorView *colorView // HSL picker (colorview.go)
-	themeView *themeView // theme picker (themeview.go)
+	// Lazily-built stack views. Each owns its widgets, and a nil pointer is
+	// also the built-yet test every show*View uses.
+	custom    *customView // custom profile editor (customview.go, profiles.go, fancurve.go)
+	colorView *colorView  // HSL picker (colorview.go)
+	themeView *themeView  // theme picker (themeview.go)
 
 	// Custom theme state (set when theme.toml exists).
 	isCustomTheme bool
@@ -226,6 +172,7 @@ type Window struct {
 	focusEditing        bool         // true when a slider is in edit mode
 	editOriginalValue   float64      // saved value for cancel on B
 	mainFocusItems      []focusItem  // focus grid for main drawer view
+	customFocusItems    []focusItem  // focus grid for the custom profile view
 	dashboardFocusItems []focusItem  // focus grid for the telemetry dashboard
 	focusStack          []focusFrame // suspended focus lists while a popup is open
 
@@ -355,13 +302,12 @@ func New(app *gtk.Application) *Window {
 	doc := deviceDocument()
 	cfg := guiConfig()
 	w := &Window{
-		device:      doc,
-		limits:      deviceLimits(doc),
-		controls:    resolveControls(cfg, doc),
-		edge:        resolveEdge(cfg),
-		colors:      theme.DefaultColors,
-		gamescope:   os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
-		editProfile: api.DefaultCustomProfile,
+		device:    doc,
+		limits:    deviceLimits(doc),
+		controls:  resolveControls(cfg, doc),
+		edge:      resolveEdge(cfg),
+		colors:    theme.DefaultColors,
+		gamescope: os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 	}
 
 	w.win = gtk.NewApplicationWindow(app)
@@ -498,7 +444,7 @@ func (w *Window) dumpAllFocusLists() {
 	if w.viewStack == nil {
 		return
 	}
-	if w.customScroll == nil {
+	if w.custom == nil {
 		w.viewStack.AddNamed(w.buildCustomView(), "custom")
 		w.buildCustomFocusList()
 	}
@@ -884,15 +830,6 @@ func (w *Window) applyCustomAccent(accentID string) {
 	cfg.Accent = accentID
 	theme.SaveAppConfig(cfg)
 	w.redrawFanCurve()
-}
-
-// redrawFanCurve repaints the fan curve chart after a theme change. It is drawn
-// with Cairo from w.colors rather than styled by CSS, so swapping the CSS
-// provider alone leaves it in the previous theme's colours.
-func (w *Window) redrawFanCurve() {
-	if w.fanCurve != nil {
-		w.fanCurve.area.QueueDraw()
-	}
 }
 
 // fileExists returns true if a file exists at the given path.
