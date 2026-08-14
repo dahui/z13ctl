@@ -56,7 +56,19 @@ import (
 type mainWindow struct {
 	w *Window
 
-	win     *gtk.Window
+	// win is the toplevel, and is nil when the backend hosts the full window
+	// inside its own surface instead (gamescope — see fullSurfaceHost). Every
+	// use is guarded; host() is what the rest of this file branches on, so the
+	// nil is confined to a handful of places rather than being a condition the
+	// whole file has to remember.
+	win *gtk.Window
+
+	// content is the widget tree, independent of which surface holds it. It is
+	// what made hosting in the backend possible at all: the tree used to be
+	// built straight into m.win.SetChild, so "the full window" and "a toplevel"
+	// were the same object.
+	content *gtk.Box
+
 	stack   *gtk.Stack
 	tabs    []mainwin.Tab
 	tabBtns map[string]*gtk.Button
@@ -77,33 +89,42 @@ type mainWindow struct {
 func newMainWindow(w *Window) *mainWindow {
 	m := &mainWindow{w: w, tabs: mainwin.Resolve(w.device), tabBtns: map[string]*gtk.Button{}}
 
-	m.win = gtk.NewWindow()
-	m.win.SetTitle("Voltaire")
-	m.win.AddCSSClass("voltaire-main-window")
-	mw, mh := mainwin.Fit(w.screenSize())
-	m.win.SetDefaultSize(mw, mh)
-	m.win.SetSizeRequest(mainwin.MinWidth, mainwin.MinHeight)
+	// A toplevel only where one composites. Under gamescope the backend hosts
+	// the same content inside the surface it already owns, so building a window
+	// here would create one nothing ever draws — and its Escape controller
+	// would be attached to it rather than to anything on screen.
+	if m.w.fullHost() == nil {
+		m.win = gtk.NewWindow()
+		m.win.SetTitle("Voltaire")
+		m.win.AddCSSClass("voltaire-main-window")
+		mw, mh := mainwin.Fit(w.screenSize())
+		m.win.SetDefaultSize(mw, mh)
+		m.win.SetSizeRequest(mainwin.MinWidth, mainwin.MinHeight)
 
-	// Closing the window hides it rather than destroying it: the views hold
-	// daemon state and their own refresh loops, and rebuilding all of it on
-	// every open would also lose the tab the user was last on. Returning true
-	// stops GTK's default handler, which would dispose the toplevel.
-	m.win.ConnectCloseRequest(func() bool {
-		m.hide()
-		return true
-	})
-
-	// Escape closes, matching the drawer. A window with no titlebar affordance
-	// under some compositors would otherwise need the mouse.
-	esc := gtk.NewEventControllerKey()
-	esc.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
-		if keyval == gdk.KEY_Escape {
+		// Closing the window hides it rather than destroying it: the views hold
+		// daemon state and their own refresh loops, and rebuilding all of it on
+		// every open would also lose the tab the user was last on. Returning
+		// true stops GTK's default handler, which would dispose the toplevel.
+		m.win.ConnectCloseRequest(func() bool {
 			m.hide()
 			return true
-		}
-		return false
-	})
-	m.win.AddController(esc)
+		})
+
+		// Escape closes, matching the drawer. A window with no titlebar
+		// affordance under some compositors would otherwise need the mouse.
+		// The hosted case needs no equivalent: the drawer's own capture-phase
+		// Escape handler is on the surface holding this content, and it calls
+		// hide() through the same path.
+		esc := gtk.NewEventControllerKey()
+		esc.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
+			if keyval == gdk.KEY_Escape {
+				m.hide()
+				return true
+			}
+			return false
+		})
+		m.win.AddController(esc)
+	}
 
 	outer := gtk.NewBox(gtk.OrientationVertical, 0)
 	// .drawer carries every widget rule in the theme; .main-window flattens the
@@ -122,7 +143,15 @@ func newMainWindow(w *Window) *mainWindow {
 	outer.Append(m.errView.bar)
 
 	m.buildPages()
-	m.win.SetChild(outer)
+	m.content = outer
+	if m.win != nil {
+		m.win.SetChild(m.content)
+	} else {
+		// Hosted in the backend's surface. Installed now rather than on show so
+		// the first open is a page switch and not a widget build — the same
+		// reason the tab bar builds both pages up front.
+		m.w.fullHost().SetFullChild(m.content)
+	}
 
 	if len(m.tabs) > 0 {
 		// Selected, not synced. syncPage starts the dashboard's poll and asks
@@ -234,8 +263,15 @@ func (m *mainWindow) syncPage(id string) {
 func (m *mainWindow) show() {
 	m.w.fullVisible.Store(true)
 	m.w.setGamepadGrabbed(true)
-	m.win.SetVisible(true)
-	m.win.Present()
+	if m.win != nil {
+		m.win.SetVisible(true)
+		m.win.Present()
+	} else {
+		// Hosted: the surface is already up and already fullscreen, so this is
+		// a page switch. The caller has *not* hidden the drawer in this case —
+		// hiding it would take the whole surface down, the content included.
+		m.w.fullHost().ShowFull(true)
+	}
 	m.errView.clear() // never greet an open with the last session's failure
 	if id := m.stack.VisibleChildName(); id != "" {
 		m.syncPage(id)
@@ -255,8 +291,21 @@ func (m *mainWindow) hide() {
 	}
 	m.w.setGamepadGrabbed(false)
 	m.w.hideGamepadFocus()
-	m.win.SetVisible(false)
-	m.w.telemetryGen++ // stop the get-state poll; nothing is looking at it
+	if m.win != nil {
+		m.win.SetVisible(false)
+		m.w.telemetryGen++ // stop the get-state poll; nothing is looking at it
+		return
+	}
+	// Hosted: swap back to the quickbar layout, then dismiss the surface
+	// itself. Leaving the quickbar on screen would make the button's dismiss
+	// gesture reveal a drawer instead of putting things away, which is the
+	// behaviour the toplevel path deliberately does not have.
+	m.w.fullHost().ShowFull(false)
+	if m.w.visible.Load() {
+		m.w.hide() // clears the poll and the focus list on its own path
+		return
+	}
+	m.w.telemetryGen++
 }
 
 // openFull is the consumer for api.EventGUIOpenFull: the daemon saw a double
@@ -266,23 +315,20 @@ func (m *mainWindow) hide() {
 //
 // Must be called from the GTK main thread.
 func (w *Window) openFull() {
-	if w.gamescope {
-		// No second toplevel here; see the file comment. The double press still
-		// reaches the charts, on the surface this session has.
-		slog.Debug("gui-open-full: gamescope, showing the drawer's dashboard instead")
-		if !w.visible.Load() {
-			w.show()
-		}
-		w.showDashboardView()
-		return
+	hosted := w.fullHost() != nil
+	if hosted && !w.visible.Load() {
+		// The surface itself has to be up before a page inside it can be shown.
+		// On the toplevel path this is the opposite of what happens — there the
+		// drawer is hidden precisely because a separate window replaces it.
+		w.show()
 	}
 	if w.mainWin == nil {
 		w.mainWin = newMainWindow(w)
 	}
-	if w.visible.Load() {
+	if !hosted && w.visible.Load() {
 		w.hide()
 	}
-	slog.Info("gui-open-full", "action", "show full window")
+	slog.Info("gui-open-full", "action", "show full window", "hosted", hosted)
 	w.mainWin.show()
 }
 

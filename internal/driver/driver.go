@@ -194,7 +194,22 @@ type ToggleSpec struct {
 	// duplication api.ValidateProfileName exists to prevent. Optional — a
 	// toggle whose label says everything leaves it empty.
 	Description string
+
+	// Source is where this toggle comes from: "core" for one a compiled-in
+	// driver provides, "plugin:<id>" for one contributed by an external plugin.
+	//
+	// Empty means "core" — the daemon fills it in on the way to the wire, so a
+	// driver that predates plugins needs no change and a client never has to
+	// treat absence as a third case. Every toggle is core today; the field is
+	// carried now because a client that groups rows by provenance has to be
+	// able to, and unlike a Kind with no renderer this value is always true and
+	// complete, so it misleads nobody in the meantime.
+	Source string
 }
+
+// ToggleSourceCore is the Source of a toggle provided by a compiled-in driver.
+// Plugin-provided toggles use "plugin:<id>".
+const ToggleSourceCore = "core"
 
 // Toggles reads and writes a device's firmware toggles (BIOS switches exposed
 // through firmware-attributes or equivalent). The set is discovered per

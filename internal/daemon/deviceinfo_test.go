@@ -395,3 +395,35 @@ func TestReadFeaturesOnADeviceWithNoToggles(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryToggleDeclaresASource pins the "always populated" half of the wire
+// contract. Source is substituted in deviceInfoFor rather than set by each
+// driver, so a driver written before plugins existed still produces a document
+// a client can group by without treating absence as a third case.
+func TestEveryToggleDeclaresASource(t *testing.T) {
+	for _, tg := range deviceInfoFor(testDev).Toggles {
+		if tg.Source != api.ToggleSourceCore {
+			t.Errorf("toggle %q source = %q, want %q — every toggle on this device "+
+				"comes from a compiled-in driver", tg.ID, tg.Source, api.ToggleSourceCore)
+		}
+	}
+}
+
+// TestToggleSourceSurvivesADriverThatSetsIt: the substitution must fill a gap,
+// never overwrite. A plugin-provided toggle names itself, and a daemon that
+// stamped "core" over it would erase exactly the distinction the field exists
+// for — the failure would be invisible until plugins shipped.
+func TestToggleSourceSurvivesADriverThatSetsIt(t *testing.T) {
+	const want = api.ToggleSourcePluginPrefix + "oxpec"
+	d := &device.Device{Toggles: fakeToggles{
+		specs: []driver.ToggleSpec{{ID: "fan_boost", Kind: driver.ToggleBool, Source: want}},
+	}}
+	got := deviceInfoFor(d).Toggles
+	if len(got) != 1 {
+		t.Fatalf("got %d toggles, want 1", len(got))
+	}
+	if got[0].Source != want {
+		t.Errorf("source = %q, want %q — the core substitution overwrote a declared source",
+			got[0].Source, want)
+	}
+}

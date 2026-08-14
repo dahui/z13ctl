@@ -274,20 +274,9 @@ func (w *Window) buildToggle(label, hint string, sw **gtk.Switch, onChange func(
 // would leave the scrim and list floating over the wrong view.
 func (w *Window) showMainView() {
 	w.closePopup()
-	w.stopDashboardPolling()
 	if w.viewStack != nil {
 		w.viewStack.SetVisibleChildName("main")
 		w.swapFocusList(w.mainFocusItems)
-	}
-}
-
-// stopDashboardPolling ends the dashboard's history refresh. Every path that
-// leaves the dashboard calls it: the tick's own visible-child guard would stop
-// it within a second anyway, but that is a second of a few-hundred-sample round
-// trip nobody is looking at, and hide() has no view switch to be caught by.
-func (w *Window) stopDashboardPolling() {
-	if w.dashboard != nil {
-		w.dashboard.stopPolling()
 	}
 }
 

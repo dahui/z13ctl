@@ -88,7 +88,24 @@ type ToggleInfo struct {
 	// knowledge — whether panel overdrive causes ghosting is a fact about the
 	// panel — and a client rendering these rows generically cannot know it.
 	Description string `json:"description,omitempty"`
+
+	// Source is where the toggle comes from: ToggleSourceCore for one a
+	// compiled-in driver provides, "plugin:<id>" for one an external plugin
+	// contributes. Always populated — the daemon substitutes "core" — so a
+	// client grouping rows by provenance never has to treat absence as a third
+	// case.
+	Source string `json:"source"`
 }
+
+// Toggle sources. A toggle provided by a compiled-in driver is ToggleSourceCore;
+// one contributed by an external plugin is ToggleSourcePluginPrefix + its plugin
+// id. A client that does not care about provenance can ignore the field
+// entirely; one that groups rows by it should treat any unrecognized value as
+// its own group rather than hiding the row.
+const (
+	ToggleSourceCore         = "core"
+	ToggleSourcePluginPrefix = "plugin:"
+)
 
 // UndervoltInfo is the legal Curve Optimizer offset range (Min ≤ value ≤ Max;
 // on the Z13, -40 to 0).

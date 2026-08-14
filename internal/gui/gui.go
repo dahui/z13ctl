@@ -184,11 +184,6 @@ type Window struct {
 	mainFocusItems    []focusItem  // focus grid for main drawer view
 	focusStack        []focusFrame // suspended focus lists while a popup is open
 
-	// dashboard is the telemetry view; nil until first navigation. It owns its
-	// own refresh loop because it reads telemetry-history rather than
-	// get-state, and nothing else in the drawer wants that reply.
-	dashboard *dashboardView
-
 	// In-surface popup layer (popup.go) and anchored hints (hint.go).
 	popup   *popupLayer
 	hints   map[uintptr]string // hint text keyed by widget Native(); entries are never removed
@@ -467,10 +462,6 @@ func (w *Window) dumpAllFocusLists() {
 		w.custom = newCustomView(w, w.drawerHost("custom"))
 		w.viewStack.AddNamed(w.custom.root, "custom")
 	}
-	if w.dashboard == nil {
-		w.dashboard = newDashboardView(w, w.drawerHost("dashboard"))
-		w.viewStack.AddNamed(w.dashboard.root, "dashboard")
-	}
 	if w.themeView == nil {
 		w.viewStack.AddNamed(w.buildThemeView(), "theme")
 		w.buildThemeFocusList()
@@ -493,7 +484,24 @@ func (w *Window) dumpAllFocusLists() {
 
 // Toggle shows or hides the drawer. Must be called from the GTK main thread.
 func (w *Window) Toggle() {
-	slog.Debug("toggle entered", "visible", w.visible.Load())
+	slog.Debug("toggle entered", "visible", w.visible.Load(), "full", w.fullVisible.Load())
+	// The full window wins, and dismissing it is all this press does.
+	//
+	// Without this the button reads w.visible — which openFull set to false on
+	// its way to showing the window — and so *opens the quickbar behind a window
+	// the user was looking at*, leaving the only way out the title bar's close
+	// button. The press has to mean the same thing on both surfaces: put away
+	// what is in front of me. It deliberately does not fall through to showing
+	// the drawer, matching Escape, which the window has always handled this way.
+	//
+	// Gamescope reaches none of this: openFull there shows the drawer's own
+	// dashboard, so fullVisible stays false and the ordinary drawer toggle below
+	// is already the right behaviour.
+	if w.fullVisible.Load() && w.mainWin != nil {
+		slog.Info("toggle", "action", "hide full window")
+		w.mainWin.hide()
+		return
+	}
 	if w.visible.Load() {
 		slog.Info("toggle", "action", "hide")
 		w.hide()
@@ -592,7 +600,6 @@ func (w *Window) hide() {
 	w.closePopup()
 	w.clearError()   // don't greet the next open with a stale failure
 	w.telemetryGen++ // stop any running telemetry poll
-	w.stopDashboardPolling()
 	if w.viewStack != nil {
 		w.viewStack.SetVisibleChildName("main")
 		w.swapFocusList(w.mainFocusItems)

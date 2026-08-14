@@ -723,28 +723,52 @@ as "already in flight" and drew the chart from a reply fetched before the user
 asked for anything. `selectTab` moves the stack and the highlight; `setTab` is
 what a tab button does.
 
-**Gamescope is not handled yet — and the reason is narrower than this file
-used to claim.** What fails there is a second *toplevel*, which is what
-`mainwindow.go` creates: only one window carries `STEAM_OVERLAY`, and
-gamescope's `GetPossibleFocusWindows()` skips windows flagged `isOverlay`. That
-says nothing about screen space. The gamescope backend's window is **already
-fullscreen** — `Configure` sizes it to the whole output and keeps it mapped,
-and `WrapContent` puts a click-to-dismiss backdrop plus a right-aligned 320px
-panel inside it — so a full window there is a different **layout of the surface
-we already own**, not a second surface.
+**Gamescope hosts the full window inside its own surface.** What fails there
+is a second *toplevel*, which is what a plain `gtk.Window` is: only one window
+carries `STEAM_OVERLAY`, and `GetPossibleFocusWindows()` skips windows flagged
+`isOverlay`. That says nothing about screen space. The gamescope backend's
+window is **already fullscreen** — `Configure` sizes it to the whole output and
+keeps it mapped — so a full window there is a different **layout of a surface we
+already own**, not a second surface. HHD does exactly this, and it is the same
+fact as the popup-layer section above: its sidebar and its larger settings view
+are one Electron surface re-laying-out its contents.
 
-HHD does exactly that, and it is worth knowing because it is the same fact as
-the popup-layer section above: its sidebar and its larger settings view are one
-Electron surface re-laying-out its contents. Everything lives in the one surface
-gamescope composites, which is why its menus work where `GtkDropDown` does not.
+`fullSurfaceHost` in `backend.go` is the seam: `SetFullChild` installs the
+content, `ShowFull` swaps the surface between the quickbar layout and the
+full-window one. Only gamescope implements it — it is an optional interface
+rather than three `Backend` methods because layer-shell and overlay have nothing
+to implement, and two no-op bodies would suggest a choice where there is none.
+`Window.fullHost()` is the single place that asks, which is what keeps
+`mainWindow.win == nil` from becoming a condition the whole file remembers.
 
-The claim that *does* hold is why the drawer's existing view stack is not the
-substitute: that stack lives inside the 320px panel the backend sizes, so a page
-added to it would be a 320px "full window". The seam wanted is a stack at the
-**wrapper** level — a `Backend` method to swap the wrapped child, which
-layer-shell and overlay satisfy by continuing to use the toplevel. Until then
-`openFull` opens the drawer's own dashboard under gamescope: the double press
-still reaches the charts, on the surface that session actually has.
+Three details worth keeping:
+
+- **The stack is above the panel, not inside it.** The drawer's own view stack
+  lives inside the 320px panel `WrapContent` sizes, so a page added there would
+  be a 320px "full window". `SetFullChild` adds a sibling page to a stack that
+  wraps the whole layout.
+- **`ShowFull(true)` with no page installed is ignored.** Switching a `GtkStack`
+  to a missing child blanks the surface with no way back, and a blank fullscreen
+  overlay over a running game is the worst thing this backend can do.
+- **The hosted path shows the drawer first**, where the toplevel path hides it.
+  The surface has to be up before a page inside it can be shown; on desktop a
+  separate window replaces the drawer, so it is hidden instead.
+
+`mainWindow` therefore separates `content` (the widget tree) from `win` (the
+toplevel, nil when hosted). That split is what made hosting possible at all —
+the tree used to be built straight into `m.win.SetChild`, so "the full window"
+and "a toplevel" were one object.
+
+**The drawer's dashboard view was removed with this.** It existed only as the
+gamescope fallback; with a real full window there it had no caller, and dead
+code that reads as a fallback is worse than either having one or not. It also
+matches the standing rule that the dashboard belongs to the full window — the
+drawer is quick controls, and a chart at 320px is not one. The focus dump
+diffed to exactly one removed grid, every other list byte-identical.
+
+**The gamescope path is unverified**: there is no Gaming Mode session on the
+development machine, so it compiles and is structured correctly but has not been
+seen working. It needs a hardware pass before release.
 
 **Two of the four specified pages are absent, not stubbed.** Settings is
 blocked on the same two api additions `internal/controls` records for generic

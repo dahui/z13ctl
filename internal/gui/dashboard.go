@@ -207,35 +207,6 @@ func (d *dashboardView) syncSpanButtons() {
 	}
 }
 
-// showDashboardView switches the drawer to the dashboard, building it on first
-// access. A second call returns to the main view.
-//
-// **Nothing in the drawer calls this.** The dashboard is a reading surface and
-// belongs to the full window; the drawer is the controls a user wants close at
-// hand, and a chart at 320px is not one of them. The single caller is
-// Window.openFull's gamescope branch, where a second toplevel does not
-// composite and this is the only surface that session has — so the double press
-// still reaches the charts. It goes away when the wrapper-level stack lands and
-// gamescope gets a real full window.
-func (w *Window) showDashboardView() {
-	if w.viewStack == nil {
-		return
-	}
-	w.closePopup()
-	if w.viewStack.VisibleChildName() == "dashboard" {
-		w.showMainView()
-		return
-	}
-	if w.dashboard == nil {
-		w.dashboard = newDashboardView(w, w.drawerHost("dashboard"))
-		w.viewStack.AddNamed(w.dashboard.root, "dashboard")
-	}
-	w.viewStack.SetVisibleChildName("dashboard")
-	w.swapFocusList(w.dashboard.focusItems)
-	w.dashboard.refresh()
-	w.dashboard.startPolling()
-}
-
 // startPolling refreshes the chart once a second while the dashboard is the
 // visible view. It is separate from startTelemetryPolling, which reads
 // get-state for the header's live numbers: this one asks for the *history*,

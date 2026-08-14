@@ -221,7 +221,6 @@ func (w *Window) showThemeView() {
 		return
 	}
 	w.closePopup()
-	w.stopDashboardPolling()
 	if w.viewStack.VisibleChildName() == "theme" {
 		w.showMainView()
 		return

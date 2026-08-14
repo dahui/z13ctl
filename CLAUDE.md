@@ -1411,25 +1411,42 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `reportError` fans out, because the drawer's bar is hidden whenever the window
   is up and a failure reported only to it is invisible. That is issue #14's
   shape reintroduced by a second surface.
-  **Gamescope is still on the drawer's dashboard — but "a second toplevel does
-  not composite there" is a fact about second *windows*, not about screen
-  space, and stating it as "gamescope cannot have a full window" was wrong.**
-  Only one window carries `STEAM_OVERLAY` and gamescope's
-  `GetPossibleFocusWindows()` skips `isOverlay`-flagged windows, so the real
-  `gtk.Window` `mainwindow.go` creates is invisible there. But the gamescope
-  backend's own window is *already fullscreen* — `Configure` sizes it to the
-  whole output and keeps it mapped, and `WrapContent` puts a click-to-dismiss
-  backdrop plus a right-aligned 320px panel inside it. The full window there is
-  a different **layout of the surface we already own**. HHD is the existence
-  proof and is the same shape: its sidebar and its larger settings view are one
-  Electron surface re-laying-out its contents, which is also why its menus work
-  where `GtkDropDown` does not. What *does* hold is why the **drawer's** stack
-  is not the substitute: it lives inside the 320px panel the backend sizes, so a
-  page added to it would be a 320px "full window". The seam wanted is a stack at
-  the **wrapper** level — a `Backend` method to swap the wrapped child, which
-  layer-shell and overlay satisfy by going on using the toplevel. Until it lands
-  the double press opens the drawer's own dashboard, which at least reaches the
-  charts on the surface that session has.
+  **Gamescope hosts the full window inside its own surface, and the claim that
+  it could not was wrong.** What does not composite there is a second
+  *toplevel*: only one window carries `STEAM_OVERLAY` and
+  `GetPossibleFocusWindows()` skips `isOverlay`-flagged windows. That is a fact
+  about second windows, not about screen space — the gamescope backend's window
+  is *already fullscreen*, so the full window there is a different **layout of
+  a surface we already own**. HHD is the existence proof and the same shape:
+  its sidebar and its larger settings view are one Electron surface
+  re-laying-out its contents, which is also why its menus work where
+  `GtkDropDown` does not.
+  `fullSurfaceHost` (`backend.go`) is the seam — `SetFullChild` + `ShowFull`,
+  implemented by gamescope alone. It is an *optional* interface because
+  layer-shell and overlay have nothing to implement: they use the real toplevel,
+  which is the better surface where it works, and two no-op methods would
+  suggest a choice where there is none. `Window.fullHost()` is the only place
+  that asks, so `mainWindow.win` being nil is confined to a handful of guards.
+  Two things are load-bearing. The stack sits **above** the 320px panel: the
+  drawer's own view stack lives *inside* it, so a page added there would be a
+  320px "full window" — that part of the old note was right. And `ShowFull(true)`
+  with no installed page is **ignored**, because switching a `GtkStack` to a
+  missing child leaves the surface blank with no way back, and a blank
+  fullscreen overlay over a running game is the worst failure that file can
+  produce.
+  The hosted path inverts the drawer handling: `openFull` *shows* the drawer
+  first (the surface must be up before a page inside it can be), where the
+  toplevel path hides it (a separate window replaces it).
+  **The drawer's dashboard view is gone with it.** It existed only as the
+  gamescope fallback, and with a real full window there it had no caller —
+  dead code that reads as a fallback is worse than either option. This also
+  matches the standing rule that the dashboard belongs to the full window
+  (Jeff, 2026-08-13): the drawer is quick controls, and a chart at 320px is not
+  one. `VOLTAIRE_GUI_DUMP_FOCUS` diffed to exactly one removed grid
+  (`view=dashboard`), every other list byte-identical including both full-window
+  pages. **The gamescope path itself is unverified — there is no Gaming Mode
+  session on the development machine — so it needs a hardware pass before
+  release.**
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing

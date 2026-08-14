@@ -84,6 +84,7 @@ type Backend struct {
 	outputHeight int     // from realize; used in WrapContent for margins
 	scale        float64 // outputWidth / 1280, clamped [1.0, 3.0]
 	panel        *gtk.Box
+	stack        *gtk.Stack // quickbar / full-window layouts of the one surface
 	onDismiss    func()
 }
 
@@ -223,7 +224,74 @@ func (b *Backend) WrapContent(drawer gtk.Widgetter) gtk.Widgetter {
 		gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1,
 	)
 
-	return wrapper
+	// The quickbar layout becomes one page of a stack rather than the window's
+	// child directly, so the full window can be a second page filling the same
+	// already-fullscreen surface. A second toplevel is what gamescope will not
+	// composite; the screen space is ours either way.
+	//
+	// The stack sits *above* the panel deliberately. The drawer's own view
+	// stack lives inside that 320px panel, so a page added there would be a
+	// 320px "full window" — this is the level where a page can use the output.
+	b.stack = gtk.NewStack()
+	b.stack.AddNamed(wrapper, pageQuickbar)
+	b.stack.SetVisibleChildName(pageQuickbar)
+	return b.stack
+}
+
+// Stack page names. Only ever set from the GTK main thread.
+const (
+	pageQuickbar = "quickbar"
+	pageFull     = "full"
+)
+
+// SetFullChild installs the full window's content as the stack's second page.
+//
+// It expands to the whole surface rather than sitting in the panel: that is the
+// entire difference between the two layouts, and the reason gamescope can have
+// a full window at all. Called once, on the first open.
+func (b *Backend) SetFullChild(child gtk.Widgetter) {
+	if b.stack == nil || child == nil {
+		return
+	}
+	if b.stack.ChildByName(pageFull) != nil {
+		return // already installed; SetFullChild is idempotent
+	}
+	holder := gtk.NewBox(gtk.OrientationVertical, 0)
+	holder.AddCSSClass("gs-full")
+	holder.SetHExpand(true)
+	holder.SetVExpand(true)
+	// The same 5% inset the panel gets, so the full page does not run into the
+	// bezel on a handheld the way an edge-to-edge surface would.
+	if b.outputHeight > 0 {
+		margin := b.outputHeight / marginFraction
+		holder.SetMarginTop(margin)
+		holder.SetMarginBottom(margin)
+		holder.SetMarginStart(margin)
+		holder.SetMarginEnd(margin)
+	}
+	holder.Append(child)
+	b.stack.AddNamed(holder, pageFull)
+}
+
+// ShowFull swaps the surface between the quickbar and full-window layouts.
+//
+// A request to show a page that was never installed is ignored rather than
+// obeyed: switching to a missing child would leave the surface blank with no
+// way back, and a blank fullscreen overlay over a running game is the worst
+// failure this file can produce.
+func (b *Backend) ShowFull(show bool) {
+	if b.stack == nil {
+		return
+	}
+	if show && b.stack.ChildByName(pageFull) == nil {
+		slog.Debug("gamescope: ShowFull(true) with no full page installed, ignoring")
+		return
+	}
+	if show {
+		b.stack.SetVisibleChildName(pageFull)
+		return
+	}
+	b.stack.SetVisibleChildName(pageQuickbar)
 }
 
 // Scale returns the resolution-derived CSS scale factor. Anything the drawer

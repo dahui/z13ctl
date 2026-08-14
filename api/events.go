@@ -40,6 +40,22 @@ const (
 	EventStateChanged = "state-changed"
 )
 
+// A "device-changed" event is deliberately absent, and this note exists so its
+// absence reads as a decision rather than an oversight.
+//
+// The roadmap specifies one: payload-free, telling clients to re-fetch
+// device-get. Nothing can emit it today. The daemon assembles its device once
+// at startup from the DMI-matched device data and never reassigns it, and the
+// document is a pure projection of that value — so the capability set a client
+// holds cannot go stale while the daemon lives. Adding the name now would
+// publish an event that never fires, which is the same trap as a document
+// declaring a capability nothing reads: it looks like a feature and delivers
+// nothing, and a client could reasonably write a handler that is dead code.
+//
+// The real trigger is the external plugin tier, where a plugin registering,
+// crashing or being removed genuinely changes what the machine can do. It
+// belongs in that change, beside the thing that fires it.
+
 // AllEvents lists every event name the daemon can emit. Subscribing with an
 // empty event list is equivalent to subscribing to all of them.
 var AllEvents = []string{EventGUIToggle, EventGUIOpenFull, EventPowerSource, EventStateChanged}

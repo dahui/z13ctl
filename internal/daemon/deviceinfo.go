@@ -63,8 +63,16 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 	}
 	if hw.Toggles != nil {
 		for _, t := range hw.Toggles.List() {
+			// A driver written before plugins existed leaves Source empty;
+			// substituting here rather than in every driver keeps the wire
+			// contract "always populated" true no matter which driver answered.
+			source := t.Source
+			if source == "" {
+				source = api.ToggleSourceCore
+			}
 			info.Toggles = append(info.Toggles, api.ToggleInfo{
-				ID: t.ID, Label: t.Label, Description: t.Description, Kind: string(t.Kind),
+				ID: t.ID, Label: t.Label, Description: t.Description,
+				Kind: string(t.Kind), Source: source,
 			})
 		}
 	}

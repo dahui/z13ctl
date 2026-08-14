@@ -396,7 +396,6 @@ func (w *Window) showCustomView() {
 		return
 	}
 	w.closePopup()
-	w.stopDashboardPolling()
 	if w.viewStack.VisibleChildName() == "custom" {
 		w.showMainView()
 		return
