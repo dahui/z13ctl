@@ -3,9 +3,12 @@
 
 package gui
 
-// popup.go — the in-surface popup layer: a GtkOverlay wrapped around the
-// drawer's content, whose overlay children are the popup scrim, the popup
-// surface (dropdown lists), and the anchored hint label.
+// popup.go — the in-surface popup layer: a GtkOverlay wrapped around a
+// surface's content, whose overlay children are the popup scrim, the popup
+// surface (dropdown lists), and the anchored hint label. There is one layer
+// per surface — the drawer's and the full window's — because placement
+// translates the anchor into the layer's own widget tree, which fails across
+// toplevels; activePopup picks the one popups target.
 //
 // The drawer cannot use GTK's own popups. Every GtkPopover — and so every
 // GtkDropDown, GtkMenuButton and tooltip — is a separate GdkSurface:
@@ -65,11 +68,16 @@ func newPopupScroll() *gtk.ScrolledWindow {
 	return scroll
 }
 
-// buildPopupLayer wraps content in the overlay and builds the three overlay
-// children. Called once from buildContent; nothing is visible until openPopup.
-func (w *Window) buildPopupLayer(content gtk.Widgetter) gtk.Widgetter {
+// newPopupLayer wraps content in the overlay and builds the three overlay
+// children, returning the layer for the caller to install (p.overlay is the
+// widget). One layer per surface: the drawer builds one around its content
+// (buildContent) and the full window one around its own (newMainWindow) —
+// placement translates the anchor into the layer's tree, which fails across
+// toplevels, so a popup opened from the window used to render on the hidden
+// drawer surface with nothing visible where the user tapped. Nothing is
+// visible until openPopup.
+func (w *Window) newPopupLayer(content gtk.Widgetter) *popupLayer {
 	p := &popupLayer{}
-	w.popup = p
 
 	p.overlay = gtk.NewOverlay()
 	p.overlay.SetChild(content)
@@ -140,17 +148,49 @@ func (w *Window) buildPopupLayer(content gtk.Widgetter) gtk.Widgetter {
 			if !p.open {
 				return rectOf(popupgeom.Rect{}), true
 			}
-			return rectOf(w.placeOverlayChild(&p.surface.Widget, p.anchor, true)), true
+			return rectOf(w.placeOverlayChild(p, &p.surface.Widget, p.anchor, true)), true
 		case hintN:
 			if !p.hint.IsVisible() || p.hintAnchor == nil {
 				return rectOf(popupgeom.Rect{}), true
 			}
-			return rectOf(w.placeOverlayChild(&p.hint.Widget, p.hintAnchor, false)), true
+			return rectOf(w.placeOverlayChild(p, &p.hint.Widget, p.hintAnchor, false)), true
 		}
 		return rectOf(popupgeom.Rect{}), true
 	})
 
-	return p.overlay
+	// The hint prune backstop lives on the layer rather than on a toplevel:
+	// the pointer coordinates and the anchor translation then share one widget
+	// tree on every surface, where the old gtkWin-relative wiring could only
+	// ever serve the drawer (see pruneHintAt).
+	motion := gtk.NewEventControllerMotion()
+	motion.ConnectMotion(func(x, y float64) { w.pruneHintAt(p, x, y) })
+	p.overlay.AddController(motion)
+
+	return p
+}
+
+// activePopup is the layer popups and hints target: the full window's while
+// it is up, the drawer's otherwise. fullVisible is the right discriminator on
+// both paths — on the desktop the drawer is hidden behind the window, and
+// under gamescope the wrapper stack shows exactly one of the two pages.
+func (w *Window) activePopup() *popupLayer {
+	if w.fullVisible.Load() && w.mainWin != nil && w.mainWin.popup != nil {
+		return w.mainWin.popup
+	}
+	return w.popup
+}
+
+// popupLayers is every layer that exists, for the paths that must be
+// idempotent across surfaces (closing, hint teardown).
+func (w *Window) popupLayers() []*popupLayer {
+	var out []*popupLayer
+	if w.popup != nil {
+		out = append(out, w.popup)
+	}
+	if w.mainWin != nil && w.mainWin.popup != nil {
+		out = append(out, w.mainWin.popup)
+	}
+	return out
 }
 
 // rectOf converts a popupgeom.Rect to the *gdk.Rectangle the signal wants.
@@ -160,10 +200,10 @@ func rectOf(r popupgeom.Rect) *gdk.Rectangle {
 }
 
 // placeOverlayChild computes the rectangle for one overlay child against its
-// anchor. matchAnchorWidth is true for the popup surface — a dropdown is never
-// narrower than its trigger — and false for the hint.
-func (w *Window) placeOverlayChild(child *gtk.Widget, anchor gtk.Widgetter, matchAnchorWidth bool) popupgeom.Rect {
-	p := w.popup
+// anchor, within the layer that owns the child. matchAnchorWidth is true for
+// the popup surface — a dropdown is never narrower than its trigger — and
+// false for the hint.
+func (w *Window) placeOverlayChild(p *popupLayer, child *gtk.Widget, anchor gtk.Widgetter, matchAnchorWidth bool) popupgeom.Rect {
 	ab := gtk.BaseWidget(anchor)
 	ax, ay, ok := ab.TranslateCoordinates(p.overlay, 0, 0) //nolint:staticcheck // TranslateCoordinates is deprecated in GTK4 but avoids graphene import; same call ensureVisible uses
 	if !ok {
@@ -207,7 +247,7 @@ func (w *Window) placeOverlayChild(child *gtk.Widget, anchor gtk.Widgetter, matc
 // current focus list in favour of items. onClose runs when the popup closes,
 // on every path — scrim tap, Escape, gamepad B, view switch, drawer hide.
 func (w *Window) openPopup(anchor, body gtk.Widgetter, items []focusItem, onClose func()) {
-	p := w.popup
+	p := w.activePopup()
 	if p == nil {
 		return
 	}
@@ -223,33 +263,40 @@ func (w *Window) openPopup(anchor, body gtk.Widgetter, items []focusItem, onClos
 	w.pushFocusList(items)
 }
 
-// closePopup dismisses the open popup. Idempotent — every dismissal path
-// calls it, and several can fire for one gesture.
+// closePopup dismisses the open popup on every surface. Idempotent — every
+// dismissal path calls it, and several can fire for one gesture. It sweeps
+// all layers rather than just the active one: only one can be open, the
+// sweep is cheap, and no hide()/openFull ordering can then close the wrong
+// surface's popup.
 func (w *Window) closePopup() {
-	p := w.popup
-	if p == nil || !p.open {
-		return
-	}
-	p.open = false
-	p.scrim.SetVisible(false)
-	p.surface.SetVisible(false)
-	p.anchor = nil
-	onClose := p.onClose
-	p.onClose = nil
-	w.popFocusList()
-	if onClose != nil {
-		onClose()
-	}
-	// Deliver the refresh any suppressed sync still owes the widgets.
-	// refreshState does socket I/O, so never inline on the GTK thread.
-	if p.stale {
-		p.stale = false
-		go w.refreshState()
+	for _, p := range w.popupLayers() {
+		if !p.open {
+			continue
+		}
+		p.open = false
+		p.scrim.SetVisible(false)
+		p.surface.SetVisible(false)
+		p.anchor = nil
+		onClose := p.onClose
+		p.onClose = nil
+		w.popFocusList()
+		if onClose != nil {
+			onClose()
+		}
+		// Deliver the refresh any suppressed sync still owes the widgets.
+		// refreshState does socket I/O, so never inline on the GTK thread.
+		if p.stale {
+			p.stale = false
+			go w.refreshState()
+		}
 	}
 }
 
 // popupOpen reports whether a popup is on screen.
-func (w *Window) popupOpen() bool { return w.popup != nil && w.popup.open }
+func (w *Window) popupOpen() bool {
+	p := w.activePopup()
+	return p != nil && p.open
+}
 
 // syncsSuppressed reports whether widget syncs must be skipped because a
 // popup is open, recording that a refresh is owed when it closes. Content is
@@ -258,9 +305,10 @@ func (w *Window) popupOpen() bool { return w.popup != nil && w.popup.open }
 // the option list, the anchor row, or the suspended focus frame out from
 // under the pointer. closePopup delivers the deferred refresh.
 func (w *Window) syncsSuppressed() bool {
-	if !w.popupOpen() {
+	p := w.activePopup()
+	if p == nil || !p.open {
 		return false
 	}
-	w.popup.stale = true
+	p.stale = true
 	return true
 }

@@ -308,8 +308,15 @@ func (w *Window) swapFocusList(items []focusItem) {
 // scroller wins: it is what gamepad navigation and ensureVisible must move
 // while the popup has focus, and the scrim keeps the view behind it still.
 func (w *Window) activeScroll() *gtk.ScrolledWindow {
-	if w.popupOpen() {
-		return w.popup.scroll
+	if p := w.activePopup(); p != nil && p.open {
+		return p.scroll
+	}
+	// The full window's pages have their own scrollers; consulting the
+	// drawer's stack while the window is up scrolled a hidden surface, so
+	// D-pad navigation past the bottom of a window page moved nothing. This
+	// also serves ensureVisible and the wheel-over-slider path in one move.
+	if w.fullVisible.Load() && w.mainWin != nil {
+		return w.mainWin.activeScroll()
 	}
 	if w.viewStack == nil {
 		return nil

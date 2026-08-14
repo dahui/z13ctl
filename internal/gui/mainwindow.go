@@ -3,49 +3,42 @@
 
 package gui
 
-// mainwindow.go — the full window: a real toplevel with a tab per page,
-// opened by a double press of the hardware button (api.EventGUIOpenFull).
+// mainwindow.go — the full window: a tab per page, opened by a double press
+// of the hardware button (api.EventGUIOpenFull). A real toplevel on desktop;
+// hosted inside the backend's own surface under gamescope (fullSurfaceHost).
 //
-// It is a different surface from the drawer, not a wider one. The drawer is a
-// 320px column reached in a hurry and it already shows every control; what it
-// cannot show is a chart at a size worth reading, which is why the telemetry
-// tab leads. Both surfaces host the same view implementations — a second
-// *instance*, never a second copy of the code, which is what the per-view
-// structs and the viewHost seam exist for.
+// It is a different surface from the drawer, not a wider one — and since the
+// desktop design pass it is a different *design*: mouse/keyboard-first
+// (underline tabs, ~30px controls, a card-grid dashboard) where the drawer
+// stays touch-first. The drawer is a 320px column reached in a hurry and it
+// already shows every control; what it cannot show is a chart at a size worth
+// reading, which is why the telemetry tab leads. Both surfaces host the same
+// view implementations — a second *instance*, never a second copy of the
+// code, which is what the per-view structs and the viewHost seam exist for.
 //
 // Which tabs exist, in what order, and how large the window may open are in
 // internal/mainwin, where `make test` can reach them. What is here is the GTK.
 //
-// # Gamescope is not handled here yet — but not because it cannot be
+// # Gamescope hosts this content instead of a second toplevel
 //
-// What does not work under gamescope is a second *toplevel*, which is what this
-// file creates: only one window carries the STEAM_OVERLAY atom, and gamescope's
-// GetPossibleFocusWindows() skips windows flagged isOverlay. That is a fact
-// about second windows, not about screen space — and it has been mis-stated
-// here as "gamescope cannot show a full window", which is wrong.
+// What does not work under gamescope is a second *toplevel*: only one window
+// carries the STEAM_OVERLAY atom, and gamescope's GetPossibleFocusWindows()
+// skips windows flagged isOverlay. That is a fact about second windows, not
+// about screen space — the gamescope backend's window is *already
+// fullscreen*, so the full window there is a different **layout of the
+// surface we already own**. fullSurfaceHost (backend.go) is the seam:
+// SetFullChild installs this file's content as a sibling page of the wrapper
+// stack, ShowFull swaps between it and the quickbar layout. HHD is the same
+// shape — its sidebar and its larger settings view are one Electron surface
+// re-laying-out its contents.
 //
-// The gamescope backend's window is *already fullscreen*: Configure sizes it to
-// the whole output and keeps it mapped, and WrapContent puts a click-to-dismiss
-// backdrop plus a right-aligned 320px panel inside it. So the full window there
-// is a different **layout of the surface we already own** — swap the wrapper's
-// child for full-window content and it fills the screen.
-//
-// HHD is the existence proof, and it is the same shape: its sidebar and its
-// larger settings view are one Electron surface re-laying-out its contents, not
-// two windows. Same reason its menus work where GtkDropDown does not (see the
-// popup-layer notes in internal/gui/CLAUDE.md) — everything lives in the one
-// surface gamescope composites.
-//
-// The one claim that does hold is why the drawer's *existing* view stack is not
-// the answer: it lives inside the 320px panel the backend sizes, so a page
-// added to it would be a 320px "full window". The seam wanted is a stack at the
-// *wrapper* level — a Backend method to swap the wrapped child, which
-// layer-shell and overlay satisfy by going on using this toplevel. Until it
-// lands, openFull degrades to opening the drawer's own dashboard: the double
-// press still gets the user to the charts, on the surface that session has.
+// The drawer's *own* view stack was never the answer: it lives inside the
+// 320px panel the backend sizes, so a page added to it would be a 320px
+// "full window". The hosted stack sits at the wrapper level, above the panel.
 
 import (
 	"log/slog"
+	"math"
 
 	"github.com/dahui/voltaire/v2/internal/mainwin"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -76,6 +69,12 @@ type mainWindow struct {
 	// errView is this surface's error strip. The drawer's is hidden whenever
 	// this window is up, so a failure reported to it alone would be invisible.
 	errView *errBarView
+
+	// popup is this surface's popup layer, for the same reason as errView:
+	// placement translates the anchor into the layer's own widget tree, so
+	// the drawer's layer cannot serve a dropdown opened here — it would show
+	// its scrim on the hidden drawer with nothing visible in this window.
+	popup *popupLayer
 
 	// The hosted views, built with the window rather than lazily: there are two
 	// of them, the tab bar has to be able to switch to either immediately, and
@@ -124,6 +123,24 @@ func newMainWindow(w *Window) *mainWindow {
 			return false
 		})
 		m.win.AddController(esc)
+
+		// Reaching for the mouse dismisses the gamepad focus ring, as it does
+		// in the drawer. The same-coordinate guard is the drawer's: touch
+		// events arrive with a synthetic motion that would otherwise clear
+		// gamepad mode on every press. The hosted path needs no equivalent —
+		// the drawer's own controller sits on the surface holding the content.
+		motion := gtk.NewEventControllerMotion()
+		lastX, lastY := math.NaN(), math.NaN()
+		motion.ConnectMotion(func(x, y float64) {
+			if x == lastX && y == lastY {
+				return
+			}
+			lastX, lastY = x, y
+			if w.gamepadActive {
+				w.hideGamepadFocus()
+			}
+		})
+		m.win.AddController(motion)
 	}
 
 	outer := gtk.NewBox(gtk.OrientationVertical, 0)
@@ -144,13 +161,17 @@ func newMainWindow(w *Window) *mainWindow {
 
 	m.buildPages()
 	m.content = outer
+	// The surface's own popup layer wraps the content; the overlay is what
+	// gets installed. Built once, before the single SetFullChild call, so the
+	// hosted path's install-once contract holds.
+	m.popup = w.newPopupLayer(outer)
 	if m.win != nil {
-		m.win.SetChild(m.content)
+		m.win.SetChild(m.popup.overlay)
 	} else {
 		// Hosted in the backend's surface. Installed now rather than on show so
 		// the first open is a page switch and not a widget build — the same
 		// reason the tab bar builds both pages up front.
-		m.w.fullHost().SetFullChild(m.content)
+		m.w.fullHost().SetFullChild(m.popup.overlay)
 	}
 
 	if len(m.tabs) > 0 {
@@ -166,8 +187,13 @@ func newMainWindow(w *Window) *mainWindow {
 
 // buildTabBar creates the row of page buttons. It is the window's only
 // navigation, which is why the hosted views build no back button of their own.
+// Zero spacing: underline tabs read as one strip, not a group of buttons.
+// .btn-group stays on the bar deliberately — the underline styling wins by
+// specificity in theme-default.css, and a verbatim theme.css written before
+// those rules existed then falls back to its own filled-button look instead
+// of stock GTK colours (see the CSS architecture entry in CLAUDE.md).
 func (m *mainWindow) buildTabBar() *gtk.Box {
-	bar := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	bar := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	bar.AddCSSClass("btn-group")
 	bar.AddCSSClass("main-tabs")
 	for _, t := range m.tabs {
@@ -226,9 +252,59 @@ func (m *mainWindow) selectTab(id string) {
 	setActiveButton(m.tabBtns, id)
 }
 
+// cycleTab steps to the neighbouring tab — the gamepad bumpers' gesture while
+// this window is up. Clamped rather than wrapping, matching jumpSection's
+// edge behaviour: a held bumper settles on the last tab instead of spinning.
+func (m *mainWindow) cycleTab(dir int) {
+	if m.stack == nil || len(m.tabs) == 0 {
+		return
+	}
+	cur := m.stack.VisibleChildName()
+	idx := 0
+	for i, t := range m.tabs {
+		if t.ID == cur {
+			idx = i
+			break
+		}
+	}
+	idx += dir
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.tabs) {
+		idx = len(m.tabs) - 1
+	}
+	if m.tabs[idx].ID != cur {
+		m.setTab(m.tabs[idx].ID)
+	}
+}
+
+// activeScroll is the scroller of the page on screen, for D-pad navigation
+// and the wheel — the window-side answer to the drawer's Window.activeScroll.
+func (m *mainWindow) activeScroll() *gtk.ScrolledWindow {
+	if m.stack == nil {
+		return nil
+	}
+	switch m.stack.VisibleChildName() {
+	case mainwin.TabDashboard:
+		if m.dashboard != nil {
+			return m.dashboard.scroll
+		}
+	case mainwin.TabProfiles:
+		if m.custom != nil {
+			return m.custom.scroll
+		}
+	}
+	return nil
+}
+
 // setTab switches pages and brings the new one up to date. What a tab button
 // does.
 func (m *mainWindow) setTab(id string) {
+	// A view switch closes any open popup — the drawer's rule: a dropdown
+	// left open over a page change strands its focus frame over a vanished
+	// anchor.
+	m.w.closePopup()
 	m.selectTab(id)
 	m.syncPage(id)
 }
@@ -285,6 +361,10 @@ func (m *mainWindow) show() {
 
 // hide closes the window and stops everything that was running for it.
 func (m *mainWindow) hide() {
+	// Before fullVisible flips: closePopup sweeps every layer regardless, but
+	// the pop of the suspended focus list must happen while this surface's
+	// popup still reads as open.
+	m.w.closePopup()
 	m.w.fullVisible.Store(false)
 	if m.dashboard != nil {
 		m.dashboard.stopPolling()

@@ -383,7 +383,10 @@ func (b *Backend) scaledCSS() string {
 .gamepad-editing { outline-width: %.0fpx; outline-offset: %.0fpx; }
 .tdp-warning { font-size: %.0fpx; margin-top: %.0fpx; margin-bottom: %.0fpx; }
 .fan-curve-area { min-height: %.0fpx; border-radius: %.0fpx; }
-.dash-chart { min-height: %.0fpx; border-radius: %.0fpx; margin-bottom: %.0fpx; }
+.dash-chart { min-height: %.0fpx; border-radius: %.0fpx; }
+.main-window .dash-card { min-width: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
+.main-window .dash-card-title { font-size: %.0fpx; letter-spacing: %.0fpx; }
+.main-window .dash-card-value { font-size: %.0fpx; }
 .custom-actions button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .advanced-check { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .error-bar { padding: %.0fpx %.0fpx; margin: 0 %.0fpx %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -423,7 +426,17 @@ func (b *Backend) scaledCSS() string {
 		2*s, 2*s, // gamepad-editing (outline-width, outline-offset)
 		10*s, 4*s, 4*s, // tdp-warning (font-size, margin-top, margin-bottom)
 		240*s, 6*s, // fan-curve-area (min-height, border-radius)
-		96*s, 6*s, 8*s, // dash-chart (min-height, border-radius, margin-bottom)
+		64*s, 6*s, // dash-chart (min-height, border-radius)
+		// Dashboard cards. The .drawer.main-window desktop-density block in
+		// layout.css is deliberately NOT restated here: this sheet loads at a
+		// higher provider priority, so its 48*s touch rules above win on the
+		// hosted full-window page, keeping it touch-sized while the desktop
+		// toplevel gets 30px controls from layout.css — the intended split,
+		// with no per-backend branching in Go. The cards' own dimensions have
+		// no touch counterpart, so they scale like everything else.
+		170*s, 6*s, 8*s, 8*s, // dash-card (min-width, padding-v, padding-h, border-radius)
+		10*s, 1*s, // dash-card-title (font-size, letter-spacing)
+		11*s,                // dash-card-value font-size
 		36*s, 4*s, 8*s, 6*s, // custom-actions button (min-height, padding-v, padding-h, border-radius)
 		36*s, 4*s, 10*s, 6*s, // advanced-check (min-height, padding-v, padding-h, border-radius)
 		// Error bar. Omitting it left the drawer's only failure report at 1x while

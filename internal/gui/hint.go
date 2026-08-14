@@ -74,10 +74,13 @@ func (w *Window) setHint(widget gtk.Widgetter, text string) {
 		if base.IsSensitive() && base.IsVisible() {
 			return
 		}
-		if p := w.popup; p != nil && p.hintAnchor != nil &&
-			coreglib.BaseObject(p.hintAnchor).Native() == coreglib.BaseObject(widget).Native() {
-			w.hintGen++ // also cancels a dwell timer still in flight
-			w.hideHint()
+		for _, p := range w.popupLayers() {
+			if p.hintAnchor != nil &&
+				coreglib.BaseObject(p.hintAnchor).Native() == coreglib.BaseObject(widget).Native() {
+				w.hintGen++ // also cancels a dwell timer still in flight
+				w.hideHint()
+				return
+			}
 		}
 	}
 	base.Connect("notify::sensitive", drop)
@@ -93,7 +96,7 @@ func (w *Window) setHint(widget gtk.Widgetter, text string) {
 // the reason instead. (The gamepad path cannot reach one anyway —
 // focusItem.visible skips insensitive widgets.)
 func (w *Window) showHint(anchor gtk.Widgetter) {
-	p := w.popup
+	p := w.activePopup()
 	if p == nil || p.open {
 		return
 	}
@@ -111,18 +114,21 @@ func (w *Window) showHint(anchor gtk.Widgetter) {
 	p.hint.SetVisible(true)
 }
 
-// hideHint hides the hint label. Idempotent.
+// hideHint hides the hint label on every surface. Idempotent — a hint shown
+// on the layer that was active at dwell time must not survive a surface
+// switch, so this sweeps rather than asking which layer is active now.
 func (w *Window) hideHint() {
-	p := w.popup
-	if p == nil {
-		return
+	for _, p := range w.popupLayers() {
+		p.hintAnchor = nil
+		p.hint.SetVisible(false)
 	}
-	p.hintAnchor = nil
-	p.hint.SetVisible(false)
 }
 
 // pruneHintAt hides an anchored hint once the pointer is outside its anchor.
-// x and y are window-relative, as the window's motion controller reports them.
+// x and y are relative to the layer's overlay, whose own motion controller
+// calls this — coordinates and anchor translation then share one widget tree
+// on every surface, where the old gtkWin-relative wiring could only ever
+// serve the drawer.
 //
 // The anchor's own Leave is the normal path; this is the backstop for the
 // cases where it never arrives, both of which were found on hardware: a widget
@@ -130,13 +136,12 @@ func (w *Window) hideHint() {
 // clicked), and a crossing swallowed while the popup scrim was covering the
 // anchor. A stranded hint is not merely untidy — it sits over the .block-note
 // that explains the control it is anchored to.
-func (w *Window) pruneHintAt(x, y float64) {
-	p := w.popup
+func (w *Window) pruneHintAt(p *popupLayer, x, y float64) {
 	if p == nil || p.hintAnchor == nil || !p.hint.IsVisible() {
 		return
 	}
 	b := gtk.BaseWidget(p.hintAnchor)
-	ax, ay, ok := b.TranslateCoordinates(w.gtkWin, 0, 0) //nolint:staticcheck // deprecated in GTK4 but avoids a graphene import; as ensureVisible does
+	ax, ay, ok := b.TranslateCoordinates(p.overlay, 0, 0) //nolint:staticcheck // deprecated in GTK4 but avoids a graphene import; as ensureVisible does
 	if !ok || x < ax || y < ay || x > ax+float64(b.Width()) || y > ay+float64(b.Height()) {
 		w.hintGen++ // also cancels a dwell timer still in flight
 		w.hideHint()

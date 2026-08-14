@@ -189,7 +189,8 @@ func (w *Window) buildContent() gtk.Widgetter {
 
 	content.Append(w.buildBottomBar())
 
-	outer.Append(w.buildPopupLayer(content))
+	w.popup = w.newPopupLayer(content)
+	outer.Append(w.popup.overlay)
 
 	w.buildMainFocusList()
 	w.focusItems = w.mainFocusItems

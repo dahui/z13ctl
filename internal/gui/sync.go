@@ -156,6 +156,13 @@ func (w *Window) startTelemetryPolling() {
 						c.pollTick(state)
 					}
 				}
+
+				// The dashboard's battery card header. Fed from this poll
+				// rather than the history reply so the state word and the
+				// wattage come from one source — see dashboardView.pollTick.
+				if m := w.mainWin; m != nil && m.dashboard != nil && m.dashboard.host.current() {
+					m.dashboard.pollTick(state)
+				}
 			})
 		}()
 		return true

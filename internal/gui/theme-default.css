@@ -51,17 +51,54 @@ window.voltaire-main-window {
     border: none;
 }
 
-.main-tabs button {
+/* Underline tabs. Scoped .drawer.main-window so these outrank the filled
+   .drawer .btn-group button rules below — (0,4,1)/(0,5,1) vs (0,2,1)/(0,3,1) —
+   which is what let the drawer's touch-button styling win here before.
+   .btn-group stays on the bar deliberately: a verbatim theme.css written
+   before these rules existed then falls back to its own filled-tab styling
+   instead of stock GTK colours. */
+.drawer.main-window .main-tabs {
+    border-bottom: 1px solid alpha(@voltaire-border, 0.7);
+}
+
+.drawer.main-window .main-tabs button {
     border-radius: 0;
     border: none;
     border-bottom: 2px solid transparent;
     background: transparent;
+    color: @voltaire-text-dim;
 }
 
-.main-tabs button.active {
+.drawer.main-window .main-tabs button:hover {
+    background: alpha(@voltaire-surface-alt, 0.6);
+    color: @voltaire-text;
+}
+
+.drawer.main-window .main-tabs button.active {
     background: transparent;
     border-bottom: 2px solid @voltaire-accent;
     color: @voltaire-text;
+}
+
+/* Dashboard cards — every colour derived from the eight tokens, so existing
+   themes (and all fifteen builtins) style the cards with zero edits. The
+   chart inside a card recedes so the two borders do not double up. */
+.main-window .dash-card {
+    background: mix(@voltaire-bg, @voltaire-surface, 0.45);
+    border: 1px solid alpha(@voltaire-border, 0.7);
+}
+
+.main-window .dash-card-title {
+    color: @voltaire-text-dim;
+}
+
+.main-window .dash-card-value {
+    color: @voltaire-text;
+}
+
+.main-window .dash-card .dash-chart {
+    background: alpha(@voltaire-bg, 0.55);
+    border: 1px solid alpha(@voltaire-border, 0.5);
 }
 
 /* Main drawer box */

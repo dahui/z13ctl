@@ -389,7 +389,9 @@ func New(app *gtk.Application) *Window {
 		if w.gamepadActive {
 			w.hideGamepadFocus()
 		}
-		w.pruneHintAt(x, y)
+		// The hint prune backstop moved onto each popup layer's own motion
+		// controller (newPopupLayer), where the coordinates and the anchor
+		// share a widget tree on every surface.
 	})
 	w.gtkWin.AddController(motion)
 
@@ -648,11 +650,18 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 		switch {
 		case w.focusEditing:
 			w.exitEditMode(false)
-		// Above the view-stack case: B must close the popup, not the view
-		// underneath it — closing the view first would strand the popup's
-		// focus frame over a vanished list.
+		// Above the window and view-stack cases: B must close the popup, not
+		// the surface underneath it — closing the surface first would strand
+		// the popup's focus frame over a vanished list.
 		case w.popupOpen():
 			w.closePopup()
+		// Above the drawer cases: while the full window is up, the drawer is
+		// hidden, so falling through to w.hide() dismissed nothing — B could
+		// not close the window at all. Same order as Escape and Toggle.
+		case w.fullVisible.Load():
+			if w.mainWin != nil {
+				w.mainWin.hide()
+			}
 		case w.viewStack != nil && w.viewStack.VisibleChildName() != "main":
 			w.showMainView()
 		default:
@@ -662,10 +671,21 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 		if w.focusEditing {
 			w.exitEditMode(true)
 		}
+		// The bumpers switch tabs while the full window is up — the
+		// console-universal gesture — and jump sections in the drawer. The
+		// window's pages keep D-pad navigation for their few sections.
+		if w.fullVisible.Load() && w.mainWin != nil {
+			w.mainWin.cycleTab(-1)
+			return
+		}
 		w.jumpSection(-1)
 	case gamepad.ActionBumpR:
 		if w.focusEditing {
 			w.exitEditMode(true)
+		}
+		if w.fullVisible.Load() && w.mainWin != nil {
+			w.mainWin.cycleTab(1)
+			return
 		}
 		w.jumpSection(1)
 	}

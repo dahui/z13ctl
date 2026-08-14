@@ -384,12 +384,26 @@ popup layer" below.
 
 ### The in-surface popup layer (`popup.go`, `dropdown.go`, `hint.go`, `internal/popupgeom`)
 
-`buildContent` wraps the view stack + error bar + bottom bar in a `GtkOverlay`
-whose overlay children are the popup **scrim**, the popup **surface** (dropdown
-lists), and the anchored **hint** label. All placement decisions live in
+`newPopupLayer` wraps a surface's content in a `GtkOverlay` whose overlay
+children are the popup **scrim**, the popup **surface** (dropdown lists), and
+the anchored **hint** label. All placement decisions live in
 `internal/popupgeom` (pure, tested — the same split `panelgeom` has with the
 overlay backend); the `get-child-position` handler only measures widgets and
 applies the returned rect.
+
+**There is one layer per surface** — `buildContent` builds the drawer's
+(`w.popup`), `newMainWindow` builds the full window's (`mainWin.popup`) —
+because placement translates the anchor into the layer's own widget tree,
+which fails across toplevels: with the drawer's layer as the only one, a
+dropdown opened from the window's Profiles tab showed nothing where the user
+tapped while a scrim quietly opened on the hidden drawer. `activePopup()`
+(keyed on `fullVisible`, correct on both the toplevel and the hosted path)
+picks the layer popups and hints target; `closePopup` and `hideHint` sweep
+*every* layer so no hide/open ordering can strand the other surface's popup;
+`popupOpen`/`syncsSuppressed` ask the active one. The hint-prune backstop is a
+motion controller on each layer's own overlay, so pointer coordinates and the
+anchor translation share one tree on every surface — it used to hang off
+`w.gtkWin` and could only ever serve the drawer.
 
 Why OS-level popups are a dead end, so nobody re-chases it:
 
@@ -770,13 +784,14 @@ diffed to exactly one removed grid, every other list byte-identical.
 development machine, so it compiles and is structured correctly but has not been
 seen working. It needs a hardware pass before release.
 
-**Two of the four specified pages are absent, not stubbed.** Settings is
-blocked on the same two api additions `internal/controls` records for generic
-toggle rows (a description on `api.ToggleInfo`, a per-feature value in
-`get-state`) — rendering the device's toggles is the whole content of that
-page. Quickbar customization needs a `gui.toml` writer and a reorder affordance
-that works on a controller. A tab onto an empty page is the same trap as a
-device document declaring a capability nothing reads.
+**Two of the four specified pages are absent, not stubbed.** Settings' api
+prerequisites have both landed (`api.ToggleInfo.Description`,
+`api.State.Features`); the page itself waits on Jeff's design pass, since its
+whole content is rendering the device's toggles and inventing that layout ahead
+of the pass would be designing it twice. Quickbar customization needs a
+`gui.toml` writer and a reorder affordance that works on a controller. A tab
+onto an empty page is the same trap as a device document declaring a capability
+nothing reads.
 
 **`VOLTAIRE_GUI_OPEN_FULL=1` opens it at startup**, for the same reason
 `VOLTAIRE_GUI_DUMP_FOCUS=1` exists: the window is otherwise reachable only by
@@ -784,27 +799,114 @@ pressing a key on one laptop, so nothing about it could be checked while it was
 being written. The focus dump covers the window too, logging its pages as
 `full:<tab>`.
 
+### The desktop design pass (`mainwindow.go`, `layout.css`, `theme-default.css`)
+
+The full window is **mouse/keyboard-first where the drawer is touch-first**,
+by design decision (Jeff, 2026-08-13): underline tabs, ~30px controls, a
+card-grid dashboard, a system titlebar. The drawer is untouched. How each part
+is achieved is load-bearing:
+
+- **Underline tabs win by specificity, never by dropping classes.** The tab
+  bar keeps `.btn-group` + `.main-tabs`, and the underline rules in
+  `theme-default.css` are scoped `.drawer.main-window .main-tabs button`
+  ((0,4,1)+) so they outrank the drawer's filled-button rules ((0,2,1)+) —
+  which is the specificity fight the original unscoped `.main-tabs button`
+  rules silently *lost*, leaving the intended underline design defeated on
+  screen for as long as it existed. Dropping `.btn-group` instead would
+  unstyle the tabs to stock Adwaita for every verbatim `theme.css` user, whose
+  entire theming is `.drawer`-scoped; with the classes kept, an old sheet
+  degrades to its own filled-tab look. Same reasoning as the
+  `.dropdown-trigger` entry below: rescope, don't remove.
+- **Desktop density is a `.drawer.main-window`-scoped block in `layout.css`,
+  deliberately absent from `gamescope.scaledCSS()`.** The gamescope sheet
+  loads at a higher provider priority, so its 48*s touch rules win on the
+  hosted full-window page while the desktop toplevel gets 30px controls from
+  layout.css — touch density under gamescope *by omission*, with no
+  per-backend branching in Go. A comment in `scaledCSS` marks the omission as
+  deliberate; restating the density block there would undo it silently.
+- **"System titlebar" means doing nothing.** No `SetTitlebar`, no
+  `GtkHeaderBar`, no `SetDecorated`: GTK4 never implemented xdg-decoration, so
+  on Wayland the toplevel gets GTK's fallback CSD header, which
+  kde-gtk-config themes to match the desktop. That is the most "system" look
+  reachable from the app; anything we drew ourselves would also be invisible
+  under gamescope.
+- **The bumpers switch tabs while the window is up; B closes it.**
+  `handleGamepadAction` branches on `fullVisible` ahead of the drawer cases:
+  LB/RB call `mainWindow.cycleTab` (clamped, no wrap — `jumpSection`'s edge
+  behaviour), and `ActionBack` gains a full-window case between the popup case
+  and the drawer's view stack, matching Escape and Toggle's order. The cost,
+  accepted: LB/RB no longer jump sections *within* window pages. Chosen over a
+  "tabs" focus-list section because it is the console-universal gesture and it
+  leaves every focus list byte-identical — the dump fingerprint held through
+  the entire redesign, which is what made it verifiable.
+- **`Window.activeScroll` consults the window first.** It returned the
+  drawer's scrollers unconditionally, so D-pad navigation, `ensureVisible`,
+  and the wheel-over-slider capture all scrolled a hidden surface while the
+  window was up. `mainWindow.activeScroll()` keys off the stack's visible
+  child, the same shape as the drawer's.
+- **Each surface owns a popup layer** — see the popup-layer section; the short
+  version is that placement translates the anchor into the layer's own widget
+  tree, which fails across toplevels, so the drawer's layer *could not* serve
+  a dropdown opened in the window: the user saw nothing while a scrim opened
+  on the hidden drawer. `activePopup()` (keyed on `fullVisible`) picks the
+  target; `closePopup` sweeps every layer so no hide/open ordering closes the
+  wrong one; the hint-prune backstop moved onto each layer's own motion
+  controller, where pointer coordinates and the anchor share a tree on every
+  surface — the old wiring translated against `w.gtkWin` and could only ever
+  serve the drawer.
+
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 
-The `"dashboard"` view draws the daemon's sample history: one Cairo chart per
-measured quantity, refreshed once a second while it is the visible view.
+The full window's Telemetry tab draws the daemon's sample history as a **row
+of compact cards** — a `GtkFlowBox` of `.dash-card` tiles, one per measured
+quantity, each a header row (kind name left, live readout right) over a
+sparkline-height Cairo chart — refreshed once a second while it is the visible
+page. **The cards are glanceable tiles, not panels** (Jeff, 2026-08-13: "the
+idea is information at a glance" — the first cut at 400×180 read as half-window
+panels and was sent back; a second at 200×96 was still "a bit too big", so the
+chart is 64px and the type a step smaller). `.dash-card`'s 170px CSS
+`min-width` is the whole reflow policy: all four in one row at the window's
+900px default, two per row at the 560px minimum, with no breakpoint in Go —
+though note the FlowBox divides the row's width evenly, so at 900px the tiles
+render ~209px wide regardless; height, padding and type are the levers that
+actually change their size there. The value label is ellipsized at 20 chars so
+the battery card's longest reading cannot widen its tile past a one-row share
+and wrap the row.
 
 **Everything about *what* to draw is in `internal/telemetryplot`**, which is pure
 and 100% covered: which series exist at all, where each reading sits in the
-window, where the line breaks across a suspend, and what the y-axis spans.
+window, where the line breaks across a suspend, what the y-axis spans — and,
+since the card redesign, the header strings too (`Group.HeaderTitle`,
+`Group.HeaderValue`, `FormatValue`), which used to be cgo-side literals.
 `dashboard.go` measures the widget, multiplies by `Backend.Scale()`, and strokes
 the result — the same split `fanCurveEditor` has with `internal/limits`, and for
 the same reason. The three rules and the axis policy are written up in the root
 `CLAUDE.md`; the ones that bite here are:
 
-- **A quantity no sample carries gets no chart.** On the Z13 that means two
-  charts, not three: `Sample()` reports no package power, and a flat line at 0 W
-  would read as a measurement. Verified on hardware, not just in the table test.
+- **A quantity no sample carries gets no card.** A flat line at 0 W would read
+  as a measurement. On the Z13 all four quantities are read (temperature, both
+  fans, package power, battery flow), so the grid is 2×2 — but only because the
+  data says so, per card.
 - **Series of one kind share an axis**, because two fans on one chart are only
   worth drawing together if their heights are comparable.
-- **`Plot.Shape()` is the rebuild key.** Chart widgets are torn down only when
+- **`Plot.Shape()` is the rebuild key.** Card widgets are torn down only when
   the layout changes, never when the values do — a per-second `DrawingArea`
   rebuild is the kind of churn that shows up as flicker.
+
+**The battery card's header is owned by the get-state poll, not the history
+reply, and the split is deliberate.** Three cards print `Group.HeaderValue()`
+from the same `telemetry-history` reply that drew their chart — agreement with
+the trace by construction. The battery card instead shows
+`profileui.BatteryStatus(state)` (pure, table-tested): the state word and the
+wattage must come from *one* reply, or the word could contradict the number
+beside it — and the word is the point, because on a charge-limited machine the
+commonest reading is 0 W with `not-charging`, which the label renders as
+"AC · not charging" and **never** as a number that reads like a dead sensor.
+The daemon already serves the sampler's own most recent figure on `get-state`,
+so this header and the chart's right edge still agree. `chart.sync` skips the
+battery value label; `dashboardView.pollTick` (fed from
+`startTelemetryPolling`'s IdleAdd) is its one writer, and the text is stored on
+the view so a shape rebuild repopulates instead of blanking for a tick.
 
 GTK-side facts worth keeping:
 
@@ -812,19 +914,17 @@ GTK-side facts worth keeping:
   and reads `Window.colors` — the standing rule for anything Cairo. Trace colours
   come from the theme (`Accent`, then `Text`), never a hardcoded hue, or a light
   palette gets a trace it cannot see.
-- `.dash-chart` restates its `min-height` in `gamescope.scaledCSS()`, as
-  `.fan-curve-area` does. A `SetSizeRequest` height alone would stay at 1x.
+- `.dash-chart` and `.dash-card` restate their dimensions in
+  `gamescope.scaledCSS()`, as `.fan-curve-area` does. A `SetSizeRequest` height
+  alone would stay at 1x.
 - **The history poll is its own loop**, separate from `startTelemetryPolling`'s
   `get-state` poll: history is a much larger reply and only this view wants it.
-  Every exit calls `stopDashboardPolling()`, `hide()` included — the tick's
-  visible-child guard would catch a view switch a second later, but `hide()`
-  leaves no view switch to catch.
-- **Charts are not in the focus grid.** There is nothing to activate on one, so
-  the list is the back button plus the span selector, and a shape change cannot
-  invalidate it.
-- The bottom-bar button is hidden when `device.Telemetry` is nil, and kept when
-  the whole document is nil — absence means the machine lacks the capability,
-  while a missing document only means the daemon did not answer.
+  Every exit calls the view's `stopPolling()`, `mainWindow.hide()` included —
+  the tick's visible-child guard would catch a page switch a second later, but
+  `hide()` leaves no page switch to catch.
+- **Cards are not in the focus grid**, and their `FlowBoxChild`ren are
+  `SetFocusable(false)`. There is nothing to activate on one, so the list is
+  the span selector alone, and a shape change cannot invalidate it.
 
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 

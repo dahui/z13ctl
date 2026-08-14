@@ -21,11 +21,13 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
+	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/telemetryplot"
 	"github.com/dahui/voltaire/v2/internal/theme"
 	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
 // dashboardSpans are the history windows the user can pick between.
@@ -47,7 +49,9 @@ var dashboardSpans = []struct {
 
 // dashboardChartHeight is the unscaled height of one chart. `.dash-chart`
 // restates it so gamescope scales it, exactly as `.fan-curve-area` does.
-const dashboardChartHeight = 96
+// Sparkline height: the card is a glanceable tile, and the trace's job is
+// its shape — nothing in one is dragged or read off precisely.
+const dashboardChartHeight = 64
 
 // dashboardView is the telemetry dashboard. It is a view rather than a widget
 // tree hanging off Window so that the full window can host the same thing
@@ -61,7 +65,7 @@ type dashboardView struct {
 	root     *gtk.Box
 	scroll   *gtk.ScrolledWindow
 	backBtn  *gtk.Button
-	chartBox *gtk.Box
+	grid     *gtk.FlowBox
 	emptyLbl *gtk.Label
 
 	spanBtns []*gtk.Button
@@ -75,6 +79,11 @@ type dashboardView struct {
 	shape  string
 	plot   telemetryplot.Plot
 
+	// batteryStatus is the battery card's header text, from the get-state poll
+	// rather than the history reply — see pollTick. Stored so a shape rebuild
+	// repopulates the header instead of blanking it until the next poll.
+	batteryStatus string
+
 	// gen invalidates a refresh in flight, on the pattern startTelemetryPolling
 	// established; busy keeps one request outstanding at a time, since an api
 	// command carries a 10s deadline and a goroutine per tick against a slow
@@ -83,13 +92,15 @@ type dashboardView struct {
 	busy bool
 }
 
-// dashboardChart is one chart: the series of a single kind, sharing one axis.
+// dashboardChart is one card: the series of a single kind sharing one axis,
+// under a header row carrying the kind's name and its live readout.
 type dashboardChart struct {
-	d     *dashboardView
-	box   *gtk.Box
-	area  *gtk.DrawingArea
-	title *gtk.Label
-	group telemetryplot.Group
+	d        *dashboardView
+	cell     *gtk.FlowBoxChild
+	area     *gtk.DrawingArea
+	titleLbl *gtk.Label
+	valueLbl *gtk.Label
+	group    telemetryplot.Group
 }
 
 // buildDashboardView constructs the view. Called once, lazily, on first
@@ -128,8 +139,18 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 
 	inner.Append(d.buildSpanRow())
 
-	d.chartBox = gtk.NewBox(gtk.OrientationVertical, 0)
-	inner.Append(d.chartBox)
+	// The card grid. min-width on .dash-card is what drives the reflow: all
+	// four tiles in one row at the window's 900px default — the at-a-glance
+	// row the dashboard is for — wrapping to two per row at the 560px
+	// minimum. The FlowBox does all of it, so no Go code holds a breakpoint.
+	d.grid = gtk.NewFlowBox()
+	d.grid.SetSelectionMode(gtk.SelectionNone)
+	d.grid.SetHomogeneous(true)
+	d.grid.SetMinChildrenPerLine(1)
+	d.grid.SetMaxChildrenPerLine(4)
+	d.grid.SetRowSpacing(12)
+	d.grid.SetColumnSpacing(12)
+	inner.Append(d.grid)
 
 	// Shown while there is nothing to draw. Deliberately not empty axes: a
 	// chart frame with no line in it reads as "this machine measured nothing",
@@ -157,6 +178,11 @@ func (d *dashboardView) buildSpanRow() *gtk.Box {
 	row.SetMarginTop(6)
 	row.SetMarginBottom(4)
 
+	// Right-aligned, natural-width buttons: a compact desktop control above
+	// the grid, not the drawer's full-width touch strip. Safe to change here
+	// because the dashboard exists only in the full window.
+	row.SetHAlign(gtk.AlignEnd)
+
 	retained := d.retention()
 	for _, s := range dashboardSpans {
 		// Offer a span only if the daemon retains at least most of it. The
@@ -167,7 +193,6 @@ func (d *dashboardView) buildSpanRow() *gtk.Box {
 		}
 		span := s.span
 		btn := gtk.NewButtonWithLabel(s.label)
-		btn.SetHExpand(true)
 		btn.ConnectClicked(func() { d.setSpan(span) })
 		d.w.setHint(btn, "Show the last "+s.label+" of telemetry")
 		row.Append(btn)
@@ -275,7 +300,7 @@ func (d *dashboardView) apply(p telemetryplot.Plot, handled bool, err error) {
 	}
 
 	empty := p.Empty()
-	d.chartBox.SetVisible(!empty)
+	d.grid.SetVisible(!empty)
 	d.emptyLbl.SetVisible(empty)
 	if empty {
 		d.emptyLbl.SetLabel(emptyDashboardText(handled, err, d.span))
@@ -311,18 +336,21 @@ func shortSpan(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
-// rebuildCharts replaces the chart widgets to match the plot's current shape.
+// rebuildCharts replaces the card widgets to match the plot's current shape.
 func (d *dashboardView) rebuildCharts() {
 	for _, c := range d.charts {
-		d.chartBox.Remove(c.container())
+		d.grid.Remove(c.container())
 	}
 	d.charts = nil
 
 	for _, g := range d.plot.Groups() {
 		c := d.newChart(g)
 		d.charts = append(d.charts, c)
-		d.chartBox.Append(c.container())
+		d.grid.Insert(c.container(), -1)
 	}
+	// The battery header's owner is the get-state poll, so a rebuilt card
+	// repopulates from the stored text rather than blanking for a tick.
+	d.syncBatteryHeader()
 	// The focus list names the span buttons and the back button only — charts
 	// are not navigable — so a shape change cannot invalidate it.
 }
@@ -330,29 +358,54 @@ func (d *dashboardView) rebuildCharts() {
 func (d *dashboardView) newChart(g telemetryplot.Group) *dashboardChart {
 	c := &dashboardChart{d: d, group: g}
 
-	c.title = gtk.NewLabel("")
-	c.title.SetHAlign(gtk.AlignStart)
-	c.title.AddCSSClass("section-label")
+	c.titleLbl = gtk.NewLabel(g.HeaderTitle())
+	c.titleLbl.SetHAlign(gtk.AlignStart)
+	c.titleLbl.AddCSSClass("dash-card-title")
+
+	c.valueLbl = gtk.NewLabel("")
+	c.valueLbl.SetHAlign(gtk.AlignEnd)
+	c.valueLbl.SetHExpand(true)
+	// Bounded, not free-width: the tile's size must win over its text, or the
+	// battery card's longest reading ("Discharging · 12.3 W", exactly 20
+	// chars) would widen its card's natural size past a one-row share and
+	// wrap the at-a-glance row to two.
+	c.valueLbl.SetEllipsize(pango.EllipsizeEnd)
+	c.valueLbl.SetMaxWidthChars(20)
+	c.valueLbl.AddCSSClass("dash-card-value")
+
+	header := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	header.Append(c.titleLbl)
+	header.Append(c.valueLbl)
 
 	c.area = gtk.NewDrawingArea()
 	c.area.AddCSSClass("dash-chart")
 	c.area.SetSizeRequest(-1, dashboardChartHeight) // .dash-chart scales this under gamescope
+	// Never VExpand: GTK4 propagates expand flags upward, so an expanding
+	// chart makes the cell, the FlowBox and the page all expand — the single
+	// tile row then stretches to the full page height and the "sparkline" is
+	// 500px tall. Seen on hardware; the tile's height is its natural height.
 	c.area.SetDrawFunc(func(_ *gtk.DrawingArea, cr *cairo.Context, width, height int) {
 		c.draw(cr, width, height)
 	})
 
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.Append(c.title)
-	box.Append(c.area)
-	c.box = box
+	card := gtk.NewBox(gtk.OrientationVertical, 6)
+	card.AddCSSClass("dash-card")
+	card.Append(header)
+	card.Append(c.area)
+
+	// Not focusable: there is nothing to activate on a card, and the gamepad
+	// grid deliberately skips the charts for the same reason.
+	c.cell = gtk.NewFlowBoxChild()
+	c.cell.SetFocusable(false)
+	c.cell.SetChild(card)
 	return c
 }
 
-func (c *dashboardChart) container() *gtk.Box { return c.box }
+func (c *dashboardChart) container() *gtk.FlowBoxChild { return c.cell }
 
-// sync points the chart at the matching group in a new plot and repaints. A
-// group that has vanished leaves the chart holding its last data, but that
-// cannot be seen: a vanished group changes the shape, so the chart is being
+// sync points the card at the matching group in a new plot and repaints. A
+// group that has vanished leaves the card holding its last data, but that
+// cannot be seen: a vanished group changes the shape, so the card is being
 // replaced in the same pass.
 func (c *dashboardChart) sync(p telemetryplot.Plot) {
 	for _, g := range p.Groups() {
@@ -360,37 +413,40 @@ func (c *dashboardChart) sync(p telemetryplot.Plot) {
 			continue
 		}
 		c.group = g
-		c.title.SetLabel(chartTitle(g))
+		c.titleLbl.SetLabel(g.HeaderTitle())
+		if g.Kind != telemetryplot.KindBattery {
+			c.valueLbl.SetLabel(g.HeaderValue())
+		}
 		c.area.QueueDraw()
 		return
 	}
 }
 
-// chartTitle is the heading and the live readout in one line: "APU  52°C", or
-// "FAN  1: 2400 · 2: 2600 RPM" when a chart carries more than one series.
-func chartTitle(g telemetryplot.Group) string {
-	if len(g.Series) == 1 {
-		s := g.Series[0]
-		return fmt.Sprintf("%s  %s%s", s.Label, formatValue(s.Kind, s.Latest), s.Unit)
-	}
-	out := ""
-	for i, s := range g.Series {
-		if i > 0 {
-			out += " · "
-		}
-		out += fmt.Sprintf("%s: %s", s.Label, formatValue(s.Kind, s.Latest))
-	}
-	return out + " " + g.Unit
+// pollTick consumes the drawer-wide get-state poll while the dashboard is
+// current. The battery card is the one header fed from get-state rather than
+// the history reply: its state word and wattage arrive in one reply, so the
+// word can never contradict the number beside it — and the daemon already
+// serves the sampler's own most recent figure there, so the header and the
+// chart's right-hand edge agree by construction.
+func (d *dashboardView) pollTick(st *api.State) {
+	d.batteryStatus = profileui.BatteryStatus(st)
+	d.syncBatteryHeader()
 }
 
-// formatValue renders a reading. Temperature and RPM are whole numbers on this
-// hardware; power is not, and truncating 27.4 W to 27 loses the only digit that
-// moves while a load ramps.
-func formatValue(kind telemetryplot.Kind, v float64) string {
-	if kind == telemetryplot.KindPower {
-		return fmt.Sprintf("%.1f", v)
+// syncBatteryHeader writes the stored battery status to the battery card's
+// header, or a placeholder while nothing can honestly be claimed.
+func (d *dashboardView) syncBatteryHeader() {
+	for _, c := range d.charts {
+		if c.group.Kind != telemetryplot.KindBattery {
+			continue
+		}
+		if d.batteryStatus == "" {
+			c.valueLbl.SetLabel("—")
+		} else {
+			c.valueLbl.SetLabel(d.batteryStatus)
+		}
+		return
 	}
-	return fmt.Sprintf("%.0f", v)
 }
 
 // draw strokes one chart.
@@ -439,9 +495,9 @@ func (c *dashboardChart) draw(cr *cairo.Context, width, height int) {
 	cr.SetSourceRGBA(dr, dg, db, 1)
 	cr.SetFontSize(fontSize)
 	cr.MoveTo(2*s, chartY+fontSize)
-	cr.ShowText(formatValue(c.group.Kind, b.Max))
+	cr.ShowText(telemetryplot.FormatValue(c.group.Kind, b.Max))
 	cr.MoveTo(2*s, chartY+chartH)
-	cr.ShowText(formatValue(c.group.Kind, b.Min))
+	cr.ShowText(telemetryplot.FormatValue(c.group.Kind, b.Min))
 
 	// The traces. Series of a group share the axis, so their heights are
 	// directly comparable — which is the only reason to draw two fans together.

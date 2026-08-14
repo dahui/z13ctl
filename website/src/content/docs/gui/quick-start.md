@@ -14,10 +14,11 @@ close it.
 ## Opening the full window
 
 Press the **Armoury Crate button twice** — a normal double tap — and the drawer
-is replaced by a full window with room for the telemetry charts at a readable
-size and the profile editor beside them. Close it with **Escape** or the
-window's own close button; the drawer is unaffected and the next single press
-opens it as usual.
+is replaced by a full window: a desktop-style window with a **Telemetry** tab
+(the dashboard) and a **Profiles** tab (the profile editor). Switch pages with
+the tabs under the titlebar. Close it with **Escape**, the window's close
+button, or another press of the Armoury Crate button; the drawer is unaffected
+and the next single press opens it as usual.
 
 The first press still opens the drawer immediately, so a single press costs
 nothing extra: the drawer appears, and if a second press follows quickly it is
@@ -25,9 +26,10 @@ swapped for the window. Presses more than about 400 ms apart are two separate
 toggles, not a double tap.
 
 :::note[Steam Gaming Mode]
-Under gamescope a double press opens the drawer's own telemetry view rather
-than a separate window — gamescope does not composite a second application
-window. The charts are the same ones.
+Under gamescope the full window opens inside voltaire's own fullscreen surface
+rather than as a separate window — gamescope does not composite a second
+application window. The pages, tabs, and controls are the same; L1/R1 switch
+tabs and B closes it.
 :::
 
 ## Drawer controls
@@ -41,8 +43,7 @@ window. The charts are the same ones.
 | **Custom TDP** | Configurable power limits with basic (single slider) and advanced (PL1 sustained / PL2 short boost / PL3 fast boost) modes |
 | **Fan Curve** | Edit the fan response curve per-profile (profile editor, advanced mode) |
 | **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
-| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source |
-| **Telemetry charts** | The chart button at the bottom-left opens a history view: APU temperature and fan speed over the last 1, 5 or 15 minutes. See [Telemetry charts](#telemetry-charts). |
+| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source. The full history charts live on the full window's Telemetry tab — see [Telemetry dashboard](#telemetry-dashboard). |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
@@ -58,17 +59,24 @@ persist across reboots while the daemon is running.
 The theme picker button at the bottom-left of the drawer opens the theme
 view. See [Theming](/voltaire/gui/theming/) for details.
 
-## Telemetry charts
+## Telemetry dashboard
 
-The chart button in the bottom bar opens a history view. The daemon samples the
-machine once a second and keeps the last five minutes, so the charts are drawn
-from readings taken whether or not the drawer was open.
+The full window's **Telemetry** tab is a dashboard: a grid of labelled cards,
+one chart per quantity, each with the live reading in its header. The daemon
+samples the machine once a second and keeps the last five minutes, so the
+charts are drawn from readings taken whether or not anything was open.
 
-There is one chart per quantity the machine actually measures — on the Z13 that
+There is one card per quantity the machine actually measures — on the Z13 that
 is APU temperature, the two fan speeds, CPU package power, and battery flow.
 Both fans share one chart and one scale, so you can compare them directly. A
-quantity your hardware does not report gets no chart at all rather than a line
+quantity your hardware does not report gets no card at all rather than a line
 sitting at zero, which would look like a measurement.
+
+The **battery card's header names what the pack is doing** — Charging,
+Discharging (each with the live wattage), or *AC · not charging*. That last one
+is the normal state on a machine with a charge limit: a pack resting above its
+threshold on mains moves no energy, so the chart sits at zero and the header
+says why.
 
 **Package power** is read from the kernel's RAPL energy counter. That file is
 root-only by default (a side-channel mitigation), so the chart appears only
@@ -116,8 +124,8 @@ voltaire-gui supports full gamepad control for use in Steam Gaming Mode:
 | A (Cross) | Activate buttons/switches, or enter edit mode for sliders |
 | Left/Right (in edit mode) | Adjust a slider value |
 | A (in edit mode) | Commit the value |
-| B (Circle) | Cancel edit, go back, or close the drawer |
-| L1/R1 (shoulder) | Jump between sections |
+| B (Circle) | Cancel edit, close an open dropdown, close the full window, go back, or close the drawer — in that order |
+| L1/R1 (shoulder) | Jump between sections; switch tabs while the full window is open |
 
 Gamepad focus (indicated by a highlight border) is automatically hidden when
 the mouse moves. To disable gamepad input entirely, set
