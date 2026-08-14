@@ -86,6 +86,7 @@ func (c *customView) buildProfileSelector() *gtk.Box {
 	w.setHint(c.saveAsBtn, "Copy the active profile's settings under a new name")
 	c.saveAsBtn.ConnectClicked(func() { c.showNameEntry(nameModeSaveAs) })
 	actions.Append(c.saveAsBtn)
+	c.compactRow(actions, c.activateBtn, c.newProfileBtn, c.saveAsBtn)
 	box.Append(actions)
 
 	// One note serves both refusals — they are almost always blocked together

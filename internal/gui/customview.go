@@ -102,6 +102,25 @@ type customView struct {
 	deleteArmed bool       // first tap of the two-tap delete confirmation
 }
 
+// hosted reports whether this instance is the full window's — host.back ==
+// nil on both the desktop toplevel and the gamescope page. That surface's
+// widgets take desktop shapes (inline values, natural-width buttons, plain
+// checkboxes) where the drawer's take touch ones.
+func (c *customView) hosted() bool { return c.host.back == nil }
+
+// compactRow reshapes an action row for the hosted surface: natural-width
+// buttons aligned start, instead of the drawer's full-width touch slabs. A
+// no-op in the drawer.
+func (c *customView) compactRow(row *gtk.Box, btns ...*gtk.Button) {
+	if !c.hosted() {
+		return
+	}
+	row.SetHAlign(gtk.AlignStart)
+	for _, b := range btns {
+		b.SetHExpand(false)
+	}
+}
+
 // newCustomView builds the custom TDP/fan curve view for the given surface.
 func newCustomView(w *Window, host viewHost) *customView {
 	// The default target, so the selector has a name to show before
@@ -159,7 +178,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// the content wants: the TDP that governs the fan floor sits beside the
 	// curve it constrains. The drawer path stays byte-for-byte the layout it
 	// always had.
-	hosted := host.back == nil
+	hosted := c.hosted()
 	var leftCol, rightCol *gtk.Box
 	if hosted {
 		content.SetSpacing(12)
@@ -198,19 +217,26 @@ func newCustomView(w *Window, host viewHost) *customView {
 	}
 
 	// --- TELEMETRY ---
-	sec = newSection(leftCol)
-	sec.Append(sectionLabel("TELEMETRY"))
-	telRow := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	c.telemetryTempLabel = gtk.NewLabel("APU: --°C")
-	c.telemetryTempLabel.SetHAlign(gtk.AlignStart)
-	c.telemetryTempLabel.AddCSSClass("section-label")
-	c.telemetryFanLabel = gtk.NewLabel("Fan: -- RPM")
-	c.telemetryFanLabel.SetHAlign(gtk.AlignEnd)
-	c.telemetryFanLabel.SetHExpand(true)
-	c.telemetryFanLabel.AddCSSClass("section-label")
-	telRow.Append(c.telemetryTempLabel)
-	telRow.Append(c.telemetryFanLabel)
-	sec.Append(telRow)
+	// Drawer only. In the window the dashboard is one tab away with the same
+	// numbers and their history behind them, and the fan curve editor already
+	// draws the live temperature as its dashed marker — a readout card here
+	// was duplication, not glanceability (Jeff, 2026-08-13). syncTelemetry
+	// nil-guards the labels, so the hosted instance simply never builds them.
+	if !hosted {
+		sec = newSection(leftCol)
+		sec.Append(sectionLabel("TELEMETRY"))
+		telRow := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		c.telemetryTempLabel = gtk.NewLabel("APU: --°C")
+		c.telemetryTempLabel.SetHAlign(gtk.AlignStart)
+		c.telemetryTempLabel.AddCSSClass("section-label")
+		c.telemetryFanLabel = gtk.NewLabel("Fan: -- RPM")
+		c.telemetryFanLabel.SetHAlign(gtk.AlignEnd)
+		c.telemetryFanLabel.SetHExpand(true)
+		c.telemetryFanLabel.AddCSSClass("section-label")
+		telRow.Append(c.telemetryTempLabel)
+		telRow.Append(c.telemetryFanLabel)
+		sec.Append(telRow)
+	}
 
 	// --- TDP ---
 	sec = newSection(leftCol)
@@ -237,8 +263,18 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.tdpBasicScale.ConnectValueChanged(func() {
 		c.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
 	})
-	tdpBasicBox.Append(c.tdpBasicScale)
-	tdpBasicBox.Append(c.tdpBasicLabel)
+	if hosted {
+		// Value beside the slider, not centred beneath it: the desktop eye
+		// scans a form row, where the touch column stacks for a thumb.
+		basicRow := gtk.NewBox(gtk.OrientationHorizontal, 10)
+		c.tdpBasicScale.SetHExpand(true)
+		basicRow.Append(c.tdpBasicScale)
+		basicRow.Append(c.tdpBasicLabel)
+		tdpBasicBox.Append(basicRow)
+	} else {
+		tdpBasicBox.Append(c.tdpBasicScale)
+		tdpBasicBox.Append(c.tdpBasicLabel)
+	}
 	sec.Append(tdpBasicBox)
 
 	// Advanced box (hidden by default) — replaces basic slider in-place.
@@ -286,6 +322,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.resetUvBtn.SetHExpand(true)
 	c.resetUvBtn.ConnectClicked(func() { c.resetUndervolt() })
 	uvBtnRow.Append(c.resetUvBtn)
+	c.compactRow(uvBtnRow, c.saveUvBtn, c.resetUvBtn)
 
 	c.uvBox.Append(uvBtnRow)
 	c.tdpAdvancedBox.Append(c.uvBox)
@@ -338,6 +375,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.saveBothBtn.SetHExpand(true)
 	c.saveBothBtn.ConnectClicked(func() { c.saveCustomBoth() })
 	saveRow.Append(c.saveBothBtn)
+	c.compactRow(saveRow, c.saveTdpBtn, c.saveFanBtn, c.saveBothBtn)
 
 	sec.Append(saveRow)
 
@@ -355,6 +393,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	w.setHint(c.resetFanBtn, "Reset fan curves to firmware auto")
 	c.resetFanBtn.ConnectClicked(func() { c.resetFanCurve() })
 	resetRow.Append(c.resetFanBtn)
+	c.compactRow(resetRow, c.resetTdpBtn, c.resetFanBtn)
 
 	sec.Append(resetRow)
 	c.resetNote = blockNote()
@@ -375,6 +414,11 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
 	w.setHint(c.deleteBtn, "Remove this saved profile")
 	c.deleteBtn.ConnectClicked(func() { c.deleteProfileClicked() })
+	if hosted {
+		// A destructive action is a small deliberate target on a desktop, not
+		// a full-width bar inviting the tap it exists to survive.
+		c.deleteBtn.SetHAlign(gtk.AlignStart)
+	}
 	sec.Append(c.deleteBtn)
 	c.deleteNote = blockNote()
 	sec.Append(c.deleteNote)
@@ -393,12 +437,10 @@ func (c *customView) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) 
 	nameLabel := gtk.NewLabel(label)
 	nameLabel.SetHAlign(gtk.AlignStart)
 	nameLabel.AddCSSClass("scale-name")
-	c.tdpAdvancedBox.Append(nameLabel)
 	descLabel := gtk.NewLabel(desc)
 	descLabel.SetHAlign(gtk.AlignStart)
 	descLabel.SetWrap(true)
 	descLabel.AddCSSClass("scale-value")
-	c.tdpAdvancedBox.Append(descLabel)
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(w.limits.TDPMin), float64(w.limits.TDPMaxForced), 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(false)
@@ -410,8 +452,24 @@ func (c *customView) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) 
 	sc.ConnectValueChanged(func() {
 		valLabel.SetLabel(fmt.Sprintf("%d W", int(sc.Value())))
 	})
-	c.tdpAdvancedBox.Append(sc)
-	c.tdpAdvancedBox.Append(valLabel)
+	if c.hosted() {
+		// Desktop form row: name and value share a header line, description
+		// beneath, slider last — the shape every settings app uses. The touch
+		// column below stacks each on its own line for a thumb-sized target.
+		head := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		head.Append(nameLabel)
+		valLabel.SetHAlign(gtk.AlignEnd)
+		valLabel.SetHExpand(true)
+		head.Append(valLabel)
+		c.tdpAdvancedBox.Append(head)
+		c.tdpAdvancedBox.Append(descLabel)
+		c.tdpAdvancedBox.Append(sc)
+	} else {
+		c.tdpAdvancedBox.Append(nameLabel)
+		c.tdpAdvancedBox.Append(descLabel)
+		c.tdpAdvancedBox.Append(sc)
+		c.tdpAdvancedBox.Append(valLabel)
+	}
 	return sc, valLabel
 }
 
@@ -420,21 +478,46 @@ func (c *customView) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gt
 	nameLabel := gtk.NewLabel(label)
 	nameLabel.SetHAlign(gtk.AlignStart)
 	nameLabel.AddCSSClass("scale-name")
-	c.uvBox.Append(nameLabel)
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, lo, hi, 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(false)
 	sc.SetValue(0)
 	sc.SetFocusable(false)
 	c.w.wheelScrollsView(sc)
-	valLabel := gtk.NewLabel(uvLabel(label, 0))
+	valLabel := gtk.NewLabel(c.uvText(label, 0))
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
-		valLabel.SetLabel(uvLabel(label, int(sc.Value())))
+		valLabel.SetLabel(c.uvText(label, int(sc.Value())))
 	})
-	c.uvBox.Append(sc)
-	c.uvBox.Append(valLabel)
+	if c.hosted() {
+		// Same desktop form row as buildTdpScale.
+		head := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		head.Append(nameLabel)
+		valLabel.SetHAlign(gtk.AlignEnd)
+		valLabel.SetHExpand(true)
+		head.Append(valLabel)
+		c.uvBox.Append(head)
+		c.uvBox.Append(sc)
+	} else {
+		c.uvBox.Append(nameLabel)
+		c.uvBox.Append(sc)
+		c.uvBox.Append(valLabel)
+	}
 	return sc, valLabel
+}
+
+// uvText formats an undervolt value for this surface: the drawer's stacked
+// label repeats the name ("CPU Curve Optimizer: -20") because the value sits
+// alone under the slider; the window's header row already shows the name on
+// the same line, so the value stands bare ("-20", "0 (stock)").
+func (c *customView) uvText(name string, val int) string {
+	if c.hosted() {
+		if val == 0 {
+			return "0 (stock)"
+		}
+		return fmt.Sprintf("%d", val)
+	}
+	return uvLabel(name, val)
 }
 
 // uvLabel formats an undervolt value label, e.g. "CPU Curve Optimizer: -20" or "... 0 (stock)".
@@ -593,7 +676,7 @@ func (c *customView) sync() {
 	}
 	if c.uvCpuScale != nil {
 		c.uvCpuScale.SetValue(float64(es.CO))
-		c.uvCpuLabel.SetLabel(uvLabel("CPU Curve Optimizer", es.CO))
+		c.uvCpuLabel.SetLabel(c.uvText("CPU Curve Optimizer", es.CO))
 	}
 
 	// Delete affordance, mirroring the daemon's refusals. The reason goes to

@@ -849,18 +849,33 @@ is achieved is load-bearing:
 - **The Profiles tab's sections are cards in two columns on the hosted
   surface only.** `newCustomView` builds each section into the container
   `newSection(col)` returns: a fresh `.section-card` in the named column when
-  `host.back == nil` (both the desktop toplevel and the gamescope page), or
-  the shared flat column — separators, rhythm and all, byte-for-byte the
-  historical layout — in the drawer, where `col` is ignored. The columns are
-  homogeneous halves (letting the wider side win would reflow the page every
-  time Advanced toggles): editing on the left (profile, telemetry, TDP,
-  delete — destructive kept away from the save cluster), the fan curve and
-  its save/reset actions on the right, because a single centred column was
-  tried first and read as "the drawer again, only wider" (Jeff, 2026-08-13).
-  Focus lists are untouched by any of this — items reference widgets, not
-  containers — which is why the dump stayed byte-identical through it; the
-  cost is that D-pad order still follows the drawer's logical sequence, not
-  the two-column visual layout.
+  `c.hosted()` (host.back == nil — both the desktop toplevel and the
+  gamescope page), or the shared flat column — separators, rhythm and all,
+  byte-for-byte the historical layout — in the drawer, where `col` is
+  ignored. The columns are homogeneous halves (letting the wider side win
+  would reflow the page every time Advanced toggles): editing on the left
+  (profile, TDP, delete — destructive kept away from the save cluster), the
+  fan curve and its save/reset actions on the right, because a single centred
+  column was tried first and read as "the drawer again, only wider" (Jeff,
+  2026-08-13). Focus lists are untouched by any of this — items reference
+  widgets, not containers — which is why the dump stayed byte-identical
+  through it; the cost is that D-pad order still follows the drawer's logical
+  sequence, not the two-column visual layout.
+- **The hosted instance's widgets take desktop shapes, not just desktop
+  sizes** (same review: "the design is still very much a touch focused
+  design"). `c.compactRow` turns full-width touch slabs into natural-width
+  start-aligned buttons; slider values sit beside/above their slider on a
+  form row (`buildTdpScale`/`buildUvScale` branch on `c.hosted()`, and
+  `c.uvText` drops the name from the value because the header row already
+  shows it — the drawer's stacked label keeps it); the Advanced checkbutton
+  is a plain checkbox (theme-default strips the fill **and sets
+  `border: none`, which no voltaire sheet needs but Breeze-gtk does** — the
+  GTK theme's checkbutton border shows through the moment the fill goes
+  transparent); Delete is a small start-aligned target. The hosted TELEMETRY
+  section is not built at all: the dashboard is one tab away with the same
+  numbers plus history, and the curve editor already draws live temperature
+  as its dashed marker — `syncTelemetry` nil-guards the labels, so the drawer
+  keeps its section untouched.
 - **Never `SetVExpand(true)` on anything inside a FlowBox tile.** GTK4
   propagates expand upward, so one expanding chart made the cell, the FlowBox
   and the page all expand — the single tile row stretched to the full page

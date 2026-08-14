@@ -106,6 +106,20 @@ window.voltaire-main-window {
     border: 1px solid alpha(@voltaire-border, 0.7);
 }
 
+/* Desktop checkbox: the drawer's filled touch row reads as a button in a
+   window; strip the fill in every state so it is a plain labelled checkbox
+   (the check indicator itself still colours normally). border: none matters
+   even though no voltaire sheet sets one — the GTK theme's checkbutton
+   border (Breeze draws one) shows through the moment the fill goes
+   transparent, and nothing here would otherwise override it. */
+.drawer.main-window checkbutton,
+.drawer.main-window checkbutton:hover,
+.drawer.main-window checkbutton:checked {
+    background: transparent;
+    border: none;
+    color: @voltaire-text;
+}
+
 /* Main drawer box */
 .drawer {
     background: @voltaire-bg;

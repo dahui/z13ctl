@@ -27,9 +27,11 @@
     border-radius: 5px;
 }
 
+/* A plain desktop checkbox, not a touch row — the fill is stripped in
+   theme-default.css and the padding here. */
 .drawer.main-window checkbutton {
-    min-height: 30px;
-    padding: 3px 8px;
+    min-height: 24px;
+    padding: 2px 0;
 }
 
 .drawer.main-window .custom-actions button {
