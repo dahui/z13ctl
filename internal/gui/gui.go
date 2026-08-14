@@ -126,8 +126,6 @@ type Window struct {
 
 	// Widget references for syncState.
 	battScale       *gtk.Scale
-	overdriveSwitch *gtk.Switch
-	bootSoundSwitch *gtk.Switch
 	headerTelemetry *gtk.Label // "45°C · 3200 RPM" in the header, on every view
 
 	// Main-view sections the control registry can drop independently.

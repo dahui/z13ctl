@@ -332,12 +332,15 @@ window.voltaire-main-window {
     color: @voltaire-text;
 }
 
-/* Toggle switches (panel overdrive, boot sound) */
-.bottom-bar switch {
+/* Switches, wherever they are: the settings page's firmware rows and the
+   autoswitch enable. Scoped to .bottom-bar until the firmware toggles moved
+   off it, which left every other switch in the tree wearing stock Adwaita —
+   visibly not the user's theme under anything but the default palette. */
+.drawer switch {
     background: @voltaire-surface;
 }
 
-.bottom-bar switch:checked {
+.drawer switch:checked {
     background: @voltaire-accent;
 }
 

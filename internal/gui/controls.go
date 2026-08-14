@@ -198,9 +198,16 @@ func (w *Window) buildContent() gtk.Widgetter {
 	return outer
 }
 
-// buildBottomBar returns the fixed bottom bar containing the theme picker button
-// and system toggles (panel overdrive, boot sound). It sits below the scroll
-// area and is always visible (not scrolled).
+// buildBottomBar returns the fixed bottom bar: the theme picker button. It sits
+// below the scroll area and is always visible (not scrolled).
+//
+// It used to carry panel overdrive and boot sound as two bespoke switches.
+// They moved to the full window's Settings tab (Jeff, 2026-08-14) — BIOS
+// settings nobody adjusts often, and the drawer is the quick controls you reach
+// for in a hurry. Nothing is lost under gamescope either: the full window is
+// hosted in the same surface there, so its Settings tab is as reachable as this
+// bar was. The two switches were also the last hardcoded per-toggle UI in the
+// tree; every firmware toggle is now rendered from the device document.
 func (w *Window) buildBottomBar() *gtk.Box {
 	bar := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	bar.AddCSSClass("bottom-bar")
@@ -221,52 +228,7 @@ func (w *Window) buildBottomBar() *gtk.Box {
 	// gamescope, where there is no second toplevel to put it on — see
 	// Window.openFull.
 
-	// Spacer pushes toggles to the right.
-	spacer := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	spacer.SetHExpand(true)
-	bar.Append(spacer)
-
-	bar.Append(w.buildToggle("Panel Overdrive", "Enable panel overdrive for faster pixel response (may cause ghosting)", &w.overdriveSwitch, func(active bool) {
-		v := 0
-		if active {
-			v = 1
-		}
-		w.sendOverdriveSet(v)
-	}))
-	bar.Append(w.buildToggle("Boot Sound", "Play startup sound when the laptop powers on", &w.bootSoundSwitch, func(active bool) {
-		v := 0
-		if active {
-			v = 1
-		}
-		w.sendBootSoundSet(v)
-	}))
-
 	return bar
-}
-
-// buildToggle creates a compact label + switch pair for the bottom bar.
-func (w *Window) buildToggle(label, hint string, sw **gtk.Switch, onChange func(bool)) *gtk.Box {
-	box := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	w.setHint(box, hint)
-	lbl := gtk.NewLabel(label)
-	lbl.AddCSSClass("toggle-label")
-	s := gtk.NewSwitch()
-	// Registered on the switch as well as the box: the gamepad focus item is
-	// the switch, and the focus path looks hints up by the focused widget.
-	w.setHint(s, hint)
-	s.ConnectStateSet(func(state bool) bool {
-		if !w.syncing {
-			onChange(state)
-		}
-		return false
-	})
-	if w.gamescope {
-		addTouchActivate(s, func() { s.SetActive(!s.Active()) })
-	}
-	*sw = s
-	box.Append(lbl)
-	box.Append(s)
-	return box
 }
 
 // showMainView switches the view stack to the main drawer view.
@@ -458,34 +420,17 @@ func (w *Window) focusBatterySection(b *focusgrid.Builder, items *[]focusItem) {
 	})
 }
 
-// focusFooter: the theme button, then whichever firmware toggles this device
-// has. They share one line, so the count is known only after the nil checks.
+// focusFooter: the theme button, alone since the firmware toggles moved to the
+// full window's Settings tab.
 //
 // The footer is fixed chrome outside the scroll area, so it is not a registry
 // control and always comes last regardless of how the sections are ordered.
 func (w *Window) focusFooter(b *focusgrid.Builder, items *[]focusItem) {
 	b.Section("footer")
-	footer := []struct {
-		widget   gtk.Widgetter
-		activate func()
-	}{{w.paletteBtn, func() { w.showThemeView() }}}
-	if sw := w.overdriveSwitch; sw != nil {
-		footer = append(footer, struct {
-			widget   gtk.Widgetter
-			activate func()
-		}{sw, func() { sw.SetActive(!sw.Active()) }})
-	}
-	if sw := w.bootSoundSwitch; sw != nil {
-		footer = append(footer, struct {
-			widget   gtk.Widgetter
-			activate func()
-		}{sw, func() { sw.SetActive(!sw.Active()) }})
-	}
-	for i, fc := range b.Line(len(footer)) {
-		f := footer[i]
+	for _, fc := range b.Line(1) {
 		*items = append(*items, focusItem{
-			widget: f.widget, row: fc.Row, col: fc.Col, section: fc.Section,
-			onActivate: f.activate,
+			widget: w.paletteBtn, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: func() { w.showThemeView() },
 		})
 	}
 }

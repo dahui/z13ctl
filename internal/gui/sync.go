@@ -43,8 +43,6 @@ func (w *Window) syncState() {
 	w.syncProfiles()
 	w.syncAutoswitch()
 	w.syncBattery()
-	w.syncOverdrive()
-	w.syncBootSound()
 	w.syncSettings()
 	w.syncCustomView()
 	w.updateHeader()
@@ -247,38 +245,13 @@ func (w *Window) initBatteryDebounce(sc *gtk.Scale) {
 	})
 }
 
-// syncOverdrive sets the overdrive switch to match the daemon state.
-func (w *Window) syncOverdrive() {
-	if w.state == nil || w.overdriveSwitch == nil {
-		return
-	}
-	w.overdriveSwitch.SetActive(w.state.PanelOverdrive != 0)
-}
-
-// syncBootSound sets the boot sound switch to match the daemon state.
-func (w *Window) syncBootSound() {
-	if w.state == nil || w.bootSoundSwitch == nil {
-		return
-	}
-	w.bootSoundSwitch.SetActive(w.state.BootSound != 0)
-}
-
-// sendOverdriveSet sends a panel overdrive change to the daemon.
-func (w *Window) sendOverdriveSet(value int) {
-	go func() {
-		slog.Debug("sendOverdriveSet: calling daemon", "value", value)
-		start := time.Now()
-		if err := apiresult.Err(api.SendPanelOverdriveSet(value)); err != nil {
-			w.reportError("Set panel overdrive", err)
-			return
-		}
-		w.clearErrorAsync()
-		slog.Debug("sendOverdriveSet: done", "elapsed", time.Since(start))
-	}()
-}
-
-// sendFeatureSet writes one firmware toggle by its wire id — the generic form
-// of the two named sends below, and what the settings page uses for every row.
+// sendFeatureSet writes one firmware toggle by its wire id — the only toggle
+// write path the GUI has, and what the settings page uses for every row.
+//
+// It replaced a named send per toggle when the drawer's two bespoke switches
+// moved to that page. The api keeps SendBootSoundSet and SendPanelOverdriveSet
+// for the CLI and for clients written against them; nothing here needs a
+// function per toggle, which is the point of rendering rows from the document.
 //
 // The error names the toggle's id rather than a prose label because this
 // function does not have one: the label is device data the page renders, and
@@ -293,19 +266,5 @@ func (w *Window) sendFeatureSet(id string, value int) {
 		}
 		w.clearErrorAsync()
 		slog.Debug("sendFeatureSet: done", "id", id, "elapsed", time.Since(start))
-	}()
-}
-
-// sendBootSoundSet sends a boot sound change to the daemon.
-func (w *Window) sendBootSoundSet(value int) {
-	go func() {
-		slog.Debug("sendBootSoundSet: calling daemon", "value", value)
-		start := time.Now()
-		if err := apiresult.Err(api.SendBootSoundSet(value)); err != nil {
-			w.reportError("Set boot sound", err)
-			return
-		}
-		w.clearErrorAsync()
-		slog.Debug("sendBootSoundSet: done", "elapsed", time.Since(start))
 	}()
 }

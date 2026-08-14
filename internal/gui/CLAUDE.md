@@ -969,8 +969,22 @@ is achieved is load-bearing:
   rows exist, what each may claim, what an empty page says) live in
   `internal/settingsui` where `make test` reaches them, and this file builds a
   label, a switch and a send. That is the whole point — the drawer's bottom bar
-  names its two switches as GTK literals with their warning text beside them,
-  which is exactly why a device with a different set could not be described.
+  used to name its two switches as GTK literals with their warning text beside
+  them, which is exactly why a device with a different set could not be
+  described.
+- **The drawer's two switches are gone** (Jeff, 2026-08-14) — this page is the
+  only place in the GUI that offers firmware toggles. `buildToggle`, the two
+  `*Switch` fields, `syncOverdrive`/`syncBootSound` and the two named sends went
+  with them, leaving `sendFeatureSet(id, value)` as the GUI's only toggle write
+  path. The bottom bar is the theme button alone, and the `main` focus line is
+  42 → 40 items: the first deliberate re-baseline of the *drawer's* fingerprint,
+  with the other six lines byte-identical.
+- **Switch styling moved from `.bottom-bar switch` to `.drawer switch`** rather
+  than being deleted with the widgets. It now covers this page and, incidentally,
+  the autoswitch enable switch — which had been rendering in stock Adwaita
+  colours under every theme because the only switch rules in the sheet were
+  scoped to a bar it does not live in. Same re-scope in gamescope's `scaledCSS`:
+  an unscaled switch on a hosted page is a control a thumb cannot hit.
 - **The row set is built once and never rebuilt**, unlike the dashboard's
   charts: which toggles exist comes from the capability document, static for
   the daemon's lifetime and fetched before any widget exists. Only values move,

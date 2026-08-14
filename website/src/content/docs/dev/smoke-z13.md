@@ -383,11 +383,13 @@ outside.
       with its name leading and the device's own description beneath it (panel
       overdrive's says "may cause ghosting"), and each switch matching
       `./voltaire bootsound --get` / `paneloverdrive --get`.
-- [ ] Flip a switch there — the setting takes effect and the drawer's own
-      bottom-bar switch follows on its next sync. Then change the same toggle
-      from the CLI with the tab open: **the switch moves within a second**,
-      which is the `state-changed` broadcast all three toggle write paths now
-      emit. Set both back to preference afterwards.
+- [ ] Flip a switch there — the setting takes effect (`--get` agrees). Then
+      change the same toggle from the CLI with the tab open: **the switch moves
+      within a second**, which is the `state-changed` broadcast all three toggle
+      write paths now emit. Set both back to preference afterwards.
+- [ ] The drawer's bottom bar holds **only** the theme button now: the two
+      firmware switches moved to this tab, and the drawer's gamepad footer is
+      one item wide.
 
 ## 14. Cleanup
 

@@ -1483,10 +1483,27 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   neither. And **an empty page says which kind of nothing it is** — daemon not
   running, device has none, or a kind this build cannot show — because the
   three call for different responses from the user.
-  The drawer keeps its two bespoke switches deliberately: they are quick
-  controls on the surface reached in a hurry, and drawer/window overlap is the
-  established shape here (both show profiles, both show autoswitch), with both
-  staying in step because both sync from the same get-state.
+  **The drawer's two bespoke switches were then removed** (Jeff, 2026-08-14):
+  BIOS settings nobody adjusts often, on the surface meant for the controls you
+  reach for in a hurry. Keeping them was the first instinct — drawer/window
+  overlap is the established shape for profiles and autoswitch — but those two
+  are things you change *because* you are already in the drawer, and a POST beep
+  is not. Nothing is lost under gamescope, where the full window is hosted in
+  the same surface, so its Settings tab is as reachable as the bar was.
+  That took `buildToggle`, both `*Switch` fields, `syncOverdrive`/`syncBootSound`
+  and `sendOverdriveSet`/`sendBootSoundSet` with it — the last hardcoded
+  per-toggle UI in the tree, which is the point: **the GUI now has exactly one
+  toggle write path** (`sendFeatureSet`, by id) and no code anywhere that knows
+  what a boot sound is. `api.SendBootSoundSet`/`SendPanelOverdriveSet` stay for
+  the CLI and for clients written against them.
+  It is also the **first deliberate change to the drawer's own focus-dump line**
+  (`main` 42 → 40, footer three items → one); the other six lines were
+  byte-identical across the move, which is what said the removal touched
+  nothing else.
+  One thing came free and is worth knowing: the switch styling was scoped
+  `.bottom-bar switch`, so re-scoping it to `.drawer switch` rather than
+  deleting it fixed the **autoswitch** enable switch, which had been wearing
+  stock Adwaita colours on every theme since it was written.
 - **Every firmware-toggle write path must notify, and two of the three did
   not.** `handlePanelOverdrive` had updated state and called `saveAndNotify`
   since it was written; `handleBootSound` and the generic `handleFeature` did

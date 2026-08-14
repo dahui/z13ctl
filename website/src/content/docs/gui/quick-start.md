@@ -50,11 +50,14 @@ tabs and B closes it.
 | **Color 1 / Color 2** | Pick from 8 presets or open the custom color picker |
 | **Speed** | Animation speed for modes that support it: slow, normal, fast |
 | **Brightness** | Lighting brightness: 0–3 |
-| **Panel Overdrive** | Toggle faster pixel response (may cause slight ghosting) |
-| **Boot Sound** | Enable or disable the startup POST sound |
 
 Changes take effect immediately and are sent to the voltaire daemon. Settings
 persist across reboots while the daemon is running.
+
+The firmware switches — panel overdrive and the POST boot sound — live on the
+full window's [Settings tab](#the-settings-tab) rather than in the drawer. They
+are BIOS settings most people set once, and the drawer is for the controls you
+reach for in a hurry.
 
 The theme picker button at the bottom-left of the drawer opens the theme
 view. See [Theming](/voltaire/gui/theming/) for details.
@@ -170,10 +173,10 @@ with none says so. A switch voltaire cannot read the current value of is shown
 greyed rather than defaulting to off — off would be a claim about your hardware.
 
 Changes apply immediately and are BIOS settings, so they persist across reboots
-on their own; the daemon does not need to restore them. The drawer keeps its own
-switches for the same two toggles at the bottom of the panel, and the two
-surfaces stay in step — change it in either place, or with the CLI, and the
-other follows.
+on their own; the daemon does not need to restore them. This page is the only
+place in the GUI that offers them — the drawer used to carry the same two
+switches in its bottom bar and no longer does. Change one here or with the CLI
+and every open surface follows within a second.
 
 ## Custom color picker
 
