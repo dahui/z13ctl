@@ -101,11 +101,15 @@ power_draw      = "rapl"
 # Expanded sources, each named only because the driver reads it (the
 # declaration guard holds both directions): the amdgpu iGPU (edge temp, busy
 # %, sclk, GFX power and UCLK from gpu_metrics, VRAM carveout), procfs/cpufreq
-# CPU stats (utilisation counters, average core clock, system memory), and the
-# amdxdna NPU (power, utilisation, clock — read only while runtime-active).
+# CPU stats (utilisation counters, average core clock, system memory), the
+# amdxdna NPU (power, utilisation, clock — read only while runtime-active),
+# and the physical interfaces' byte counters from /proc/net/dev (summed over
+# interfaces with a /sys/class/net/*/device link, so tunnels and bridges do
+# not double-count).
 gpu             = "amdgpu"
 cpu_stats       = "procfs"
 npu             = "amdxdna"
+net             = "procfs"
 history_seconds = 300
 
 # The Armoury Crate button: KEY_PROG3 on the "Asus WMI hotkeys" input device

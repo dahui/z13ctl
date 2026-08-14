@@ -95,6 +95,10 @@ type Daemon struct {
 	// toucher, so no handler may read or re-baseline it.
 	prevJiffies jiffieReading
 
+	// prevNet is the last network byte-counter reading, for deriving the
+	// throughput rate. Same ownership terms as the two above.
+	prevNet netReading
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 

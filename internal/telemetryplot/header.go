@@ -46,12 +46,13 @@ func (g Group) HeaderValue() string {
 }
 
 // FormatValue renders a reading. Temperature, RPM and percentages are whole
-// numbers on this hardware; power, the GHz-denominated clocks and the GB
-// memory gauges are not — truncating 27.4 W to 27, or 3.2 GHz to 3, loses the
-// only digit that moves.
+// numbers on this hardware; power, the GHz-denominated clocks, the GB memory
+// gauges and MB/s throughput are not — truncating 27.4 W to 27, or 3.2 GHz
+// to 3, loses the only digit that moves (and an idle link's 0.3 MB/s would
+// read as nothing at all).
 func FormatValue(kind Kind, v float64) string {
 	switch kind {
-	case KindPower, KindClock, KindMemory:
+	case KindPower, KindClock, KindMemory, KindNet:
 		return fmt.Sprintf("%.1f", v)
 	default:
 		return fmt.Sprintf("%.0f", v)

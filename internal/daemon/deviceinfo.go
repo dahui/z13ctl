@@ -91,6 +91,7 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 			GPU:            t.GPU,
 			CPUStats:       t.CPUStats,
 			NPU:            t.NPU,
+			Net:            t.Net,
 			HistorySeconds: t.HistorySeconds,
 		}
 	}

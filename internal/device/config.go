@@ -167,16 +167,18 @@ type UndervoltConfig struct {
 // TelemetryConfig selects the telemetry driver and describes what it reports.
 //
 // PowerDraw names the package-power source and must be left unset until the
-// driver actually reads one — see driver.TelemetryInfo. GPU, CPUStats and NPU
-// name the expanded sources on the same must-be-read terms. HistorySeconds
-// sizes the daemon's sample ring and is what clients read as the largest
-// history window worth asking for; unset means DefaultHistorySeconds.
+// driver actually reads one — see driver.TelemetryInfo. GPU, CPUStats, NPU
+// and Net name the expanded sources on the same must-be-read terms.
+// HistorySeconds sizes the daemon's sample ring and is what clients read as
+// the largest history window worth asking for; unset means
+// DefaultHistorySeconds.
 type TelemetryConfig struct {
 	Method         string `toml:"method"`
 	PowerDraw      string `toml:"power_draw"`
 	GPU            string `toml:"gpu"`
 	CPUStats       string `toml:"cpu_stats"`
 	NPU            string `toml:"npu"`
+	Net            string `toml:"net"`
 	HistorySeconds int    `toml:"history_seconds"`
 }
 
@@ -202,6 +204,7 @@ func (c TelemetryConfig) Info() driver.TelemetryInfo {
 		GPU:            c.GPU,
 		CPUStats:       c.CPUStats,
 		NPU:            c.NPU,
+		Net:            c.Net,
 		HistorySeconds: secs,
 	}
 }

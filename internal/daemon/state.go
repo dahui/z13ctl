@@ -272,7 +272,7 @@ func cloneState(s api.State) api.State {
 	return c
 }
 
-// cloneTelemetrySample deep-copies the live-edge sample: one slice and six
+// cloneTelemetrySample deep-copies the live-edge sample: one slice and nine
 // pointer fields. The daemon's persisted state never carries one — it is
 // filled per get-state reply on the cloned snapshot — but cloneState's
 // contract is that no pointer on api.State survives it shallow, because the
@@ -301,8 +301,11 @@ func cloneTelemetrySample(t *api.TelemetrySample) *api.TelemetrySample {
 		return &v
 	}
 	c.BatteryPowerW = cloneFloat(t.BatteryPowerW)
+	c.BatteryLevelPct = cloneInt(t.BatteryLevelPct)
 	c.GPUPowerW = cloneFloat(t.GPUPowerW)
 	c.NPUPowerW = cloneFloat(t.NPUPowerW)
+	c.NetRxMBps = cloneFloat(t.NetRxMBps)
+	c.NetTxMBps = cloneFloat(t.NetTxMBps)
 	c.CPUUtilPct = cloneInt(t.CPUUtilPct)
 	c.GPUUtilPct = cloneInt(t.GPUUtilPct)
 	c.NPUUtilPct = cloneInt(t.NPUUtilPct)

@@ -213,12 +213,19 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 			st.HealthPercent = health
 		}
 	}
+	// The energy pair backs the client-side time estimate, and is undeclared
+	// best-effort like the flow and state it annotates — the three are halves
+	// of one feature, and gating one behind a capability the others do not
+	// have would serve an estimate with no rate beside it or the reverse.
+	if now, full, err := ReadBatteryEnergyWh(); err == nil {
+		st.EnergyWh, st.EnergyFullWh = now, full
+	}
 	return st, nil
 }
 
 // NewTelemetry returns the telemetry source described by device data: APU
 // temperature and both fan speeds from hwmon, the package energy counter from
-// powercap RAPL, and battery flow from power_supply.
+// powercap RAPL, and battery flow plus state of charge from power_supply.
 func NewTelemetry(info driver.TelemetryInfo) driver.Telemetry {
 	return telemetry{info: info}
 }
@@ -251,6 +258,9 @@ func (t telemetry) Sample() (driver.Sample, error) {
 	}
 	if watts, err := ReadBatteryPowerW(); err == nil {
 		s.BatteryPowerW, s.BatteryPowerKnown = watts, true
+	}
+	if pct, err := readIntFile(FindBatteryCapacityPath()); err == nil {
+		s.BatteryLevelPct, s.BatteryLevelKnown = pct, true
 	}
 
 	// The expanded sources, each gated on its declaration: a capability the
@@ -290,6 +300,13 @@ func (t telemetry) Sample() (driver.Sample, error) {
 	if t.info.NPU != "" {
 		if w, util, clock, known := ReadNPUTelemetry(); known {
 			s.NPUPowerW, s.NPUBusyPct, s.NPUClockMHz, s.NPUKnown = w, util, clock, true
+		}
+	}
+	if t.info.Net != "" {
+		// Counters, not a rate — the sampler derives NetRxMBps/NetTxMBps, on
+		// the energy-counter pattern.
+		if rx, tx, err := ReadNetBytes(); err == nil {
+			s.NetRxBytes, s.NetTxBytes = rx, tx
 		}
 	}
 	return s, nil

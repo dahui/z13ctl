@@ -112,6 +112,40 @@ func ReadBatteryPowerW() (float64, error) {
 	return signedByStatus(dir, float64(microwatts)/1e6), nil
 }
 
+// ReadBatteryEnergyWh returns the pack's remaining and full-charge energy in
+// watt-hours — the pair a time-to-empty or time-to-limit estimate divides by
+// the flow rate.
+//
+// The same two hardware shapes as the flow and health readers, resolved the
+// same way: an energy-reporting pack (the Z13's) publishes energy_now and
+// energy_full in µWh; a charge-reporting pack publishes charge_now and
+// charge_full in µAh, converted through voltage_now so watt-hours mean the
+// same thing on every machine. The pair is required together on each path — a
+// remaining figure without the pack size behind it answers only the discharge
+// half of the estimate, and no supply has been seen publishing half a pair.
+func ReadBatteryEnergyWh() (nowWh, fullWh float64, err error) {
+	dir, err := findBatteryDir()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if now, nErr := readUint(dir + "/energy_now"); nErr == nil {
+		if full, fErr := readUint(dir + "/energy_full"); fErr == nil {
+			return float64(now) / 1e6, float64(full) / 1e6, nil
+		}
+	}
+
+	chargeNow, cErr := readUint(dir + "/charge_now")
+	chargeFull, fErr := readUint(dir + "/charge_full")
+	voltageUV, vErr := readUint(dir + "/voltage_now")
+	if cErr != nil || fErr != nil || vErr != nil {
+		return 0, 0, fmt.Errorf("no battery energy reading in %s", dir)
+	}
+	// µAh × µV = picowatt-hours.
+	v := float64(voltageUV)
+	return float64(chargeNow) * v / 1e12, float64(chargeFull) * v / 1e12, nil
+}
+
 // ReadBatteryState reports what the pack is doing, or BatteryStateUnknown when
 // it cannot be read. It is the one place that knows power_supply's `status`
 // vocabulary, so the sign convention below and the state on the wire cannot

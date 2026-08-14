@@ -199,6 +199,15 @@ func (d *Daemon) sampleOnce() {
 		}
 		d.prevJiffies = cur
 	}
+	// Network byte counters to throughput — the energy counter's shape again,
+	// wall-clock interval and all.
+	if s.NetRxBytes != 0 || s.NetTxBytes != 0 {
+		cur := netReading{at: now, rx: s.NetRxBytes, tx: s.NetTxBytes}
+		if rx, tx, ok := netRateMBps(d.prevNet, cur); ok {
+			s.NetRxMBps, s.NetTxMBps, s.NetRateKnown = rx, tx, true
+		}
+		d.prevNet = cur
+	}
 
 	d.history().Add(now, s)
 }
@@ -227,6 +236,39 @@ func cpuUtilPct(prev, cur jiffieReading) (pct int, ok bool) {
 		pct = 100
 	}
 	return pct, true
+}
+
+// netReading is one network byte-counter sample: cumulative received and
+// transmitted bytes, and when they were read.
+type netReading struct {
+	at     time.Time
+	rx, tx uint64
+}
+
+// netRateMBps converts two consecutive byte-counter readings into throughput
+// in decimal megabytes per second over the interval between them.
+//
+// packagePowerW's refusals, for packagePowerW's reasons: no previous reading,
+// a non-positive or over-long wall-clock interval (the same maxEnergyGap — a
+// suspend-spanning average describes no moment inside it, and the awake-only
+// counters divided by a wall-clock interval would understate it anyway), and
+// a counter that went backwards, which here means an interface disappeared
+// from the sum (an unplugged dock, a downed wlan) rather than a wrap —
+// /proc/net/dev is 64-bit, so a wrap is decades away. ok false means record
+// no rate, never zero: 0.0 MB/s is an idle link, a real reading.
+func netRateMBps(prev, cur netReading) (rx, tx float64, ok bool) {
+	if prev.at.IsZero() {
+		return 0, 0, false
+	}
+	dt := cur.at.Sub(prev.at)
+	if dt <= 0 || dt > maxEnergyGap {
+		return 0, 0, false
+	}
+	if cur.rx < prev.rx || cur.tx < prev.tx {
+		return 0, 0, false
+	}
+	secs := dt.Seconds()
+	return float64(cur.rx-prev.rx) / 1e6 / secs, float64(cur.tx-prev.tx) / 1e6 / secs, true
 }
 
 // liveTelemetryMaxAge bounds how stale the sampler's most recent derived figure
@@ -290,6 +332,12 @@ func (d *Daemon) applyLiveTelemetry(s *api.State, sample driver.Sample) {
 	if haveLatest && latest.Sample.CPUUtilKnown {
 		v := latest.Sample.CPUUtilPct
 		t.CPUUtilPct = &v
+	}
+	if haveLatest && latest.Sample.NetRateKnown {
+		rx := latest.Sample.NetRxMBps
+		t.NetRxMBps = &rx
+		tx := latest.Sample.NetTxMBps
+		t.NetTxMBps = &tx
 	}
 	s.Telemetry = &t
 }
@@ -391,6 +439,10 @@ func apiTelemetrySample(at int64, s driver.Sample) api.TelemetrySample {
 		w := s.BatteryPowerW
 		out.BatteryPowerW = &w
 	}
+	if s.BatteryLevelKnown {
+		v := s.BatteryLevelPct
+		out.BatteryLevelPct = &v
+	}
 	if s.CPUUtilKnown {
 		v := s.CPUUtilPct
 		out.CPUUtilPct = &v
@@ -408,6 +460,12 @@ func apiTelemetrySample(at int64, s driver.Sample) api.TelemetrySample {
 		out.NPUPowerW = &w
 		v := s.NPUBusyPct
 		out.NPUUtilPct = &v
+	}
+	if s.NetRateKnown {
+		rx := s.NetRxMBps
+		out.NetRxMBps = &rx
+		tx := s.NetTxMBps
+		out.NetTxMBps = &tx
 	}
 	return out
 }

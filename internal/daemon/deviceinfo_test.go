@@ -196,6 +196,18 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 		}
 		t.Errorf("npu declaration %q does not match what Sample reads (%v)", info.Telemetry.NPU, npuReads)
 	}
+	// The counters, not the derived rate — a single Sample legitimately
+	// reports bytes and no MB/s, exactly the package-power split above. A
+	// physical interface has moved *some* traffic on any machine that boots,
+	// so a zero pair means the read did not happen.
+	if netReads := s.NetRxBytes != 0 || s.NetTxBytes != 0; netReads != (info.Telemetry.Net != "") {
+		if info.Telemetry.Net != "" {
+			if _, _, err := asusz13.ReadNetBytes(); err != nil {
+				t.Skipf("net declared but no physical interface here: %v", err)
+			}
+		}
+		t.Errorf("net declaration %q does not match what Sample reads (%v)", info.Telemetry.Net, netReads)
+	}
 }
 
 // TestDocumentMatchesTheDrawersFallback closes the loop the drawer now depends
@@ -253,7 +265,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"battery":{"charge_limit":true,"health":true}`,
-		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","history_seconds":300}`,
+		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs","history_seconds":300}`,
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true`,
 	} {

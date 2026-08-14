@@ -83,10 +83,14 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 
 	// The Z13's pack is the *energy* kind: power_now in microwatts, no
 	// current_now at all. A reader written only for the charge form finds
-	// nothing here, which is the point of building it this way.
+	// nothing here, which is the point of building it this way. capacity is on
+	// every pack; the full-charge attributes (energy_full and friends) are
+	// deliberately NOT here — the health test's "nothing readable" case needs
+	// their absence, so tests that want them write their own.
 	f.writeFile(t, f.battery+"/power_now", "12500000")
 	f.writeFile(t, f.battery+"/voltage_now", "16124000")
 	f.writeFile(t, f.battery+"/status", "Discharging")
+	f.writeFile(t, f.battery+"/capacity", "81")
 
 	// powercap: the package domain plus a sub-domain, whose energy is a *part*
 	// of the package's — a reader that summed them would double-count.

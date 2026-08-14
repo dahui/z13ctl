@@ -23,7 +23,7 @@ func TestFormatValue(t *testing.T) {
 		{"power keeps a decimal", telemetryplot.KindPower, 27.44, "27.4"},
 		{"temperature is whole", telemetryplot.KindTemp, 52.4, "52"},
 		{"rpm is whole", telemetryplot.KindFan, 2600, "2600"},
-		{"battery is whole", telemetryplot.KindBattery, -3.2, "-3"},
+		{"battery charge is whole", telemetryplot.KindBattery, 81.4, "81"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

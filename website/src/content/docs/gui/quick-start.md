@@ -67,15 +67,16 @@ samples the machine once a second and keeps the last five minutes, so the
 charts are drawn from readings taken whether or not anything was open.
 
 There is one card per *kind* of quantity the machine actually measures — on
-the Z13 that is seven:
+the Z13 that is eight:
 
 - **Temp** — CPU die and GPU edge temperature, one shared scale
 - **Fan** — both fan speeds
 - **Power** — CPU package, GPU (GFX domain), and NPU draw in watts
-- **Battery** — battery flow (see below)
+- **Battery** — state of charge (see below)
 - **Load** — CPU, GPU, and NPU utilisation
 - **Clocks** — average CPU core clock, GPU clock, and memory clock, in GHz
 - **Memory** — unified memory in use, and the iGPU's VRAM carveout, in GB
+- **Net** — network throughput, down and up, in MB/s
 
 Series on one card share one scale, so their heights compare directly. A
 quantity your hardware does not report gets no card at all rather than a line
@@ -86,10 +87,16 @@ time on a machine not running local inference, and is a true reading, not a
 gap. voltaire deliberately never wakes it to ask: the reading is taken only
 while something else already has the NPU powered up.
 
-The **battery card's header names what the pack is doing** — Charging,
-Discharging (each with the live wattage), or *AC · not charging*. That last one
-is the normal state on a machine with a charge limit: a pack resting above its
-threshold on mains moves no energy, so the chart sits at zero and the header
+The **battery card's header names what the pack is doing**. While energy is
+actually moving it shows the charge level, the rate in watts, and a time
+estimate — `64% · 28.0 W · 30 m to limit` while charging (the estimate targets
+your charge limit when one is set, since the pack genuinely stops there; "to
+full" otherwise), `81% · 12.3 W · 3 h 5 m to empty` on battery. The estimate
+is remaining energy over the current rate, so it moves with the load exactly
+as every battery indicator does; at rates too low to divide by honestly it is
+dropped and the plain Charging/Discharging word returns. At rest the header
+reads *AC · not charging* — the normal state on a machine with a charge limit:
+a pack resting above its threshold on mains moves no energy, and the header
 says why.
 
 **Package power** is read from the kernel's RAPL energy counter. That file is
@@ -98,10 +105,16 @@ after `sudo voltaire setup` has granted read access — it is a **read-only**
 grant, since the same directory holds the CPU's power caps. If you upgraded
 from a version before this existed, re-run setup once.
 
-**Battery flow** is positive while the machine is drawing from the pack and
-negative while charging, so the line crosses zero when you plug in. Sitting at
-exactly zero is a real reading — a full battery on mains moves no energy — and
-is drawn as such; a machine with no battery gets no chart instead.
+**The battery chart plots state of charge** on a fixed 0–100% scale, so a day
+of use reads as one slowly falling and rising line and a suspend leaves a
+visible gap in it. The flow in watts lives in the card's header rather than on
+the chart — watts and percent cannot share an axis. A machine with no battery
+gets no chart at all.
+
+**Network throughput** counts the machine's physical interfaces — Wi-Fi, a
+docked ethernet port — and deliberately not tunnels or bridges, whose traffic
+also crosses the hardware beneath them and would be counted twice. An idle
+link's 0.0 MB/s is a real reading and is drawn as one.
 
 The full card set appears the moment the tab opens, with each chart framed and
 "—" beside its name, and the data fills in as it arrives — usually within a

@@ -49,4 +49,9 @@ var (
 	// sysAccelDir and devAccelDir locate the amdxdna NPU accel device.
 	sysAccelDir = "/sys/class/accel"
 	devAccelDir = "/dev/accel"
+
+	// procNetDevPath and sysNetDir are the network byte counters and the
+	// class directory that says which interfaces are physical.
+	procNetDevPath = "/proc/net/dev"
+	sysNetDir      = "/sys/class/net"
 )

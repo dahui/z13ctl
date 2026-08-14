@@ -125,7 +125,8 @@ func TestBatteryStatusReportsHealthOnlyWhenDeclared(t *testing.T) {
 func TestBatteryStatusSurvivesAnUnreadableHealthPair(t *testing.T) {
 	// Best-effort, for the same reason RPM is in Sample: a pack whose
 	// full-charge attributes are missing must not make the charge level
-	// unreadable. Zero is the documented "not reported".
+	// unreadable. Zero is the documented "not reported". The energy pair is
+	// absent here too, and must report the documented zeros rather than fail.
 	f := newFakeSysfs(t)
 	f.writeFile(t, f.battery+"/capacity", "55")
 
@@ -135,5 +136,25 @@ func TestBatteryStatusSurvivesAnUnreadableHealthPair(t *testing.T) {
 	}
 	if st.Capacity != 55 || st.HealthPercent != 0 {
 		t.Errorf("Status() = %+v, want capacity 55 and no health", st)
+	}
+	if st.EnergyWh != 0 || st.EnergyFullWh != 0 {
+		t.Errorf("energy = %v/%v Wh with nothing to read, want zeros", st.EnergyWh, st.EnergyFullWh)
+	}
+}
+
+// TestBatteryStatusReportsTheEnergyPair: the estimate's divisor rides along
+// with the status read, undeclared best-effort like the flow and state it
+// annotates.
+func TestBatteryStatusReportsTheEnergyPair(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.battery+"/energy_now", "45500000")
+	f.writeFile(t, f.battery+"/energy_full", "64092000")
+
+	st, err := NewBattery(driver.BatteryCaps{}).Status()
+	if err != nil {
+		t.Fatalf("Status() = %v", err)
+	}
+	if st.EnergyWh != 45.5 || st.EnergyFullWh != 64.092 {
+		t.Errorf("energy = %v/%v Wh, want 45.5/64.092", st.EnergyWh, st.EnergyFullWh)
 	}
 }

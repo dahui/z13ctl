@@ -487,6 +487,8 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `source_known` | whether `on_ac` reflects a real reading |
 | `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
 | `battery_health` | full-charge capacity as a percentage of design capacity |
+| `battery_energy_wh` | the pack's remaining energy in watt-hours |
+| `battery_energy_full_wh` | the pack's full-charge energy in watt-hours |
 
 These are not persisted — they are real-time sensor values, the live edge of the
 same series `telemetry-history` returns.
@@ -530,6 +532,16 @@ Four of them need care:
   charge now; the second is the end threshold voltaire writes. They are
   routinely different numbers, and the level sitting above the limit is the
   case above.
+- **The energy pair turns the flow into a time estimate.** While discharging,
+  `battery_energy_wh / |battery_power_w|` is hours to empty; while charging,
+  the gap between `battery_energy_wh` and the charge target over the rate is
+  hours to full — where the target is `battery_energy_full_wh` scaled by
+  `battery_limit` when a limit is set, since the pack genuinely stops there.
+  The pair is watt-hours on every machine (the daemon converts charge-reporting
+  packs through their voltage), and both are zero when the pack reports neither
+  energy form. Suppress the estimate at very low rates — a resting pack wobbles
+  by tenths of a watt, and dividing by that claims precision the reading does
+  not have.
 - `battery_health` is zero when the device does not report it — `device-get`'s
   `battery.health` says which in advance. It is not clamped to 100.
 

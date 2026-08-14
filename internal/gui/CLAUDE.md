@@ -964,19 +964,29 @@ is achieved is load-bearing:
 
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 
-- **The expanded set (2026-08-14) is seven cards** — Temp (CPU+GPU), Fan,
+- **The expanded set (2026-08-14) is eight cards** — Temp (CPU+GPU), Fan,
   Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem in
-  GHz), Memory (RAM+VRAM in GB) — matching the z13ctl-plus data set, all
-  daemon-served (root CLAUDE.md has the driver/wire story). GUI-side that
-  cost exactly three things: `seriesColor` gained a third theme-derived
-  colour (accent, text, text-dim — never a hardcoded hue, so light palettes
-  keep every trace visible); the header readout's ellipsize bound rose from
-  20 to 34 chars, sized for "Pkg: 12.8 · GPU: 3.2 · NPU: 0.1 W" at the
-  ~285px a card gets when seven share the window four to a row; and
-  `showPlaceholder` derives `telemetryplot.PlaceholderCaps` from the device
-  document's four telemetry declarations. Cards and headers otherwise flow
+  GHz), Memory (RAM+VRAM in GB), Net (Down+Up in MB/s) — the z13ctl-plus data
+  set plus network throughput (Jeff, 2026-08-14: the eighth card, picked to
+  even the grid at 4×2 and 2×4), all daemon-served (root CLAUDE.md has the
+  driver/wire story). GUI-side that cost exactly three things: `seriesColor`
+  gained a third theme-derived colour (accent, text, text-dim — never a
+  hardcoded hue, so light palettes keep every trace visible); the header
+  readout's ellipsize bound rose from 20 to 34 chars, sized for
+  "Pkg: 12.8 · GPU: 3.2 · NPU: 0.1 W" at the ~285px a card gets when eight
+  share the window four to a row; and `showPlaceholder` derives
+  `telemetryplot.PlaceholderCaps` from the device document's five telemetry
+  declarations. Cards and headers otherwise flow
   entirely from `Groups()` — no per-quantity GUI code exists, which is what
   made adding ten quantities a plot-package change.
+- **The Battery card plots state of charge, and its header is the flow's home**
+  (Jeff, 2026-08-14). The chart is a 0–100% frame drawn from
+  `battery_level_pct`; the header — still `profileui.BatteryStatus`, still fed
+  by `pollTick` from get-state, zero GUI changes — now renders level, rate and
+  a time estimate ("64% · 28.0 W · 30 m to limit"). Every rule lives in
+  `profileui`/`telemetryplot`, so both were table-tested before the GUI ever
+  drew them; the estimate's suppressions (sub-0.5 W rates, answers past a day)
+  are `profileui` constants with their reasons on them.
 
 The full window's Telemetry tab draws the daemon's sample history as a **row
 of compact cards** — a `GtkFlowBox` of `.dash-card` tiles, one per measured

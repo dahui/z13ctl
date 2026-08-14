@@ -207,6 +207,10 @@ func (d *Daemon) dispatch(req request) response {
 			// reports a correct 0 W that reads as a broken sensor.
 			s.BatteryLevel = bat.Capacity
 			s.BatteryState = string(bat.State)
+			// The pair a client divides the flow into for a time estimate;
+			// zero when the pack reports neither energy form.
+			s.BatteryEnergyWh = bat.EnergyWh
+			s.BatteryEnergyFullWh = bat.EnergyFullWh
 		}
 		// Populate firmware toggles from hardware (not cached in daemon state).
 		// Read once, generically, over whatever the device declares — a device

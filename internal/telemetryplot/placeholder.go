@@ -24,6 +24,7 @@ type PlaceholderCaps struct {
 	GPU      bool // telemetry.gpu
 	CPUStats bool // telemetry.cpu_stats
 	NPU      bool // telemetry.npu
+	Net      bool // telemetry.net
 }
 
 // PlaceholderKinds is the card set to frame before any history has arrived:
@@ -46,6 +47,9 @@ func PlaceholderKinds(c PlaceholderCaps) []Kind {
 	}
 	if c.CPUStats || c.GPU {
 		kinds = append(kinds, KindClock, KindMemory)
+	}
+	if c.Net {
+		kinds = append(kinds, KindNet)
 	}
 	return kinds
 }

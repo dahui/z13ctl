@@ -480,6 +480,65 @@ func TestCPUUtilPct(t *testing.T) {
 	}
 }
 
+// TestNetRateMBps covers the byte-counter conversion's decision table:
+// packagePowerW's refusals (no baseline, bad or over-long interval) plus a
+// counter that went backwards, which here means an interface left the sum
+// rather than a wrap.
+func TestNetRateMBps(t *testing.T) {
+	t.Parallel()
+	base := time.Unix(1_700_000_000, 0)
+	at := base.Add
+
+	cases := []struct {
+		name           string
+		prev, cur      netReading
+		wantRx, wantTx float64
+		ok             bool
+	}{
+		{
+			name:   "one second of traffic",
+			prev:   netReading{at: base, rx: 1_000_000, tx: 500_000},
+			cur:    netReading{at: at(time.Second), rx: 43_300_000, tx: 1_700_000},
+			wantRx: 42.3, wantTx: 1.2, ok: true,
+		},
+		{
+			name: "an idle second is a real 0.0",
+			prev: netReading{at: base, rx: 1000, tx: 1000},
+			cur:  netReading{at: at(time.Second), rx: 1000, tx: 1000},
+			ok:   true,
+		},
+		{
+			name: "no previous reading",
+			cur:  netReading{at: at(time.Second), rx: 1000, tx: 1000},
+		},
+		{
+			name: "a backwards wall clock",
+			prev: netReading{at: at(time.Second), rx: 1000, tx: 1000},
+			cur:  netReading{at: base, rx: 2000, tx: 2000},
+		},
+		{
+			name: "a gap beyond the ceiling",
+			prev: netReading{at: base, rx: 1000, tx: 1000},
+			cur:  netReading{at: at(time.Minute), rx: 2000, tx: 2000},
+		},
+		{
+			name: "a counter that went backwards (an interface left the sum)",
+			prev: netReading{at: base, rx: 9_000_000, tx: 9_000_000},
+			cur:  netReading{at: at(time.Second), rx: 1000, tx: 1000},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rx, tx, ok := netRateMBps(tc.prev, tc.cur)
+			if rx != tc.wantRx || tx != tc.wantTx || ok != tc.ok {
+				t.Errorf("netRateMBps() = %v, %v, %v; want %v, %v, %v",
+					rx, tx, ok, tc.wantRx, tc.wantTx, tc.ok)
+			}
+		})
+	}
+}
+
 // TestAPITelemetrySampleBoxesFreshPointers guards the projection: Known flags
 // become pointers, absent quantities stay nil, and the RPM slice is a copy —
 // the live-edge caller hands a sample the driver still owns.
@@ -493,8 +552,20 @@ func TestAPITelemetrySampleBoxesFreshPointers(t *testing.T) {
 		CPUUtilPct: 12, CPUUtilKnown: true,
 		NPUPowerW: 0, NPUBusyPct: 0, NPUKnown: true,
 		CPUClockMHz: 3200, MemUsedMB: 12000, MemTotalMB: 64000,
+		BatteryLevelPct: 81, BatteryLevelKnown: true,
+		NetRxMBps: 42.3, NetTxMBps: 0, NetRateKnown: true,
 	}
 	got := apiTelemetrySample(99, s)
+
+	if got.BatteryLevelPct == nil || *got.BatteryLevelPct != 81 {
+		t.Errorf("BatteryLevelPct = %v, want 81 — the battery chart's series", got.BatteryLevelPct)
+	}
+	if got.NetRxMBps == nil || *got.NetRxMBps != 42.3 {
+		t.Errorf("NetRxMBps = %v, want 42.3", got.NetRxMBps)
+	}
+	if got.NetTxMBps == nil || *got.NetTxMBps != 0 {
+		t.Error("a known 0.0 MB/s upload (an idle link) must survive as a pointer to 0")
+	}
 
 	if got.GPUUtilPct == nil || *got.GPUUtilPct != 0 {
 		t.Error("a known 0% GPU utilisation must survive as a pointer to 0, not vanish")

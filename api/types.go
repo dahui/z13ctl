@@ -121,6 +121,20 @@ type State struct {
 	// It is not clamped to 100; a freshly calibrated pack genuinely reads
 	// slightly above its design capacity.
 	BatteryHealth int `json:"battery_health,omitempty"`
+
+	// BatteryEnergyWh and BatteryEnergyFullWh are the pack's remaining and
+	// full-charge energy in watt-hours: the pair that turns BatteryPowerW into
+	// a time estimate — remaining over rate while discharging, the gap to the
+	// charge target over rate while charging (the target being the Battery
+	// limit when one is set, else the full charge).
+	//
+	// Watt-hours rather than a second health-style ratio because Wh is
+	// portable once the driver has converted a charge-reporting pack through
+	// its voltage, and the estimate needs the absolute size — a percentage
+	// cannot become hours without it. Both zero when the pack reports neither
+	// energy form; they always travel as a pair.
+	BatteryEnergyWh     float64 `json:"battery_energy_wh,omitempty"`
+	BatteryEnergyFullWh float64 `json:"battery_energy_full_wh,omitempty"`
 }
 
 // TelemetrySample is one reading from the daemon's sample history, as returned
@@ -154,19 +168,29 @@ type TelemetrySample struct {
 	// reasoning as BatteryInfo.ChargeLimit being a *bool.
 	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
 
+	// BatteryLevelPct is the pack's state of charge as a percentage — the
+	// quantity the battery chart plots, with BatteryPowerW as the rate behind
+	// its header. A pointer on the same terms as the utilisations: zero is a
+	// real reading (a flat pack), and nil means no pack reported one.
+	BatteryLevelPct *int `json:"battery_level_pct,omitempty"`
+
 	// The expanded quantities, present only on devices whose
 	// DeviceInfo.Telemetry declares the matching source (gpu, cpu_stats,
-	// npu). Pointer fields are the ones whose zero is a real reading — an
-	// idle CPU is genuinely at 0%, a GFXOFF'd GPU and a runtime-suspended NPU
-	// genuinely draw ~0 W — exactly BatteryPowerW's reasoning. Plain fields
-	// omit their zero because it is never a measurement (a 0°C die, a 0 MHz
-	// clock, an empty memory gauge).
+	// npu, net). Pointer fields are the ones whose zero is a real reading —
+	// an idle CPU is genuinely at 0%, a GFXOFF'd GPU and a runtime-suspended
+	// NPU genuinely draw ~0 W, an idle link moves 0.0 MB/s — exactly
+	// BatteryPowerW's reasoning. Plain fields omit their zero because it is
+	// never a measurement (a 0°C die, a 0 MHz clock, an empty memory gauge).
+	// Network throughput is decimal megabytes per second, received and
+	// transmitted summed over the machine's physical interfaces.
 	GPUTempC    int      `json:"gpu_temp_c,omitempty"`
 	CPUUtilPct  *int     `json:"cpu_util_pct,omitempty"`
 	GPUUtilPct  *int     `json:"gpu_util_pct,omitempty"`
 	NPUUtilPct  *int     `json:"npu_util_pct,omitempty"`
 	GPUPowerW   *float64 `json:"gpu_power_w,omitempty"`
 	NPUPowerW   *float64 `json:"npu_power_w,omitempty"`
+	NetRxMBps   *float64 `json:"net_rx_mbps,omitempty"`
+	NetTxMBps   *float64 `json:"net_tx_mbps,omitempty"`
 	CPUClockMHz int      `json:"cpu_clock_mhz,omitempty"`
 	GPUClockMHz int      `json:"gpu_clock_mhz,omitempty"`
 	MemClockMHz int      `json:"mem_clock_mhz,omitempty"`

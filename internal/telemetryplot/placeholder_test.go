@@ -11,18 +11,21 @@ import (
 )
 
 func TestPlaceholderKinds(t *testing.T) {
-	all := PlaceholderCaps{Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true}
+	all := PlaceholderCaps{Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true}
 	cases := []struct {
 		name string
 		caps PlaceholderCaps
 		want []Kind
 	}{
 		{"everything declared", all,
-			[]Kind{KindTemp, KindFan, KindPower, KindBattery, KindLoad, KindClock, KindMemory}},
+			[]Kind{KindTemp, KindFan, KindPower, KindBattery, KindLoad, KindClock, KindMemory, KindNet}},
 		{"nothing declared", PlaceholderCaps{},
 			[]Kind{KindTemp, KindFan}},
 		{"battery only", PlaceholderCaps{Battery: true},
 			[]Kind{KindTemp, KindFan, KindBattery}},
+		// A net source alone brings exactly its own frame.
+		{"net only", PlaceholderCaps{Net: true},
+			[]Kind{KindTemp, KindFan, KindNet}},
 		// An NPU alone brings a power and a load frame — it has a series on
 		// each — but no clock or memory card, whose series it never fills.
 		{"npu only", PlaceholderCaps{NPU: true},
@@ -52,10 +55,10 @@ func TestPlaceholderKinds(t *testing.T) {
 // cannot claim a measurement).
 func TestPlaceholderFramesAreDrawable(t *testing.T) {
 	groups := Placeholder(PlaceholderKinds(PlaceholderCaps{
-		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true,
+		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
 	}))
-	if len(groups) != 7 {
-		t.Fatalf("got %d groups, want 7", len(groups))
+	if len(groups) != 8 {
+		t.Fatalf("got %d groups, want 8", len(groups))
 	}
 	for _, g := range groups {
 		if len(g.Series) != 0 {
@@ -68,12 +71,13 @@ func TestPlaceholderFramesAreDrawable(t *testing.T) {
 			t.Errorf("kind %d: no header title", g.Kind)
 		}
 	}
-	// The battery frame must straddle zero: flow is signed, and a frame that
-	// starts at zero would draw every charging reading off the bottom edge
-	// the moment real data replaced it at a different frame — visibly jumping.
+	// The battery frame is the same hard 0–100 the real chart uses — state of
+	// charge, not the signed flow this frame straddled zero for before
+	// 2026-08-14 — so the first real data lands in an identical frame with no
+	// visible jump.
 	for _, g := range groups {
-		if g.Kind == KindBattery && (g.Bounds.Min >= 0 || g.Bounds.Max <= 0) {
-			t.Errorf("battery frame %+v does not straddle zero", g.Bounds)
+		if g.Kind == KindBattery && (g.Bounds.Min != 0 || g.Bounds.Max != 100) {
+			t.Errorf("battery frame %+v, want the 0..100 charge frame", g.Bounds)
 		}
 	}
 }

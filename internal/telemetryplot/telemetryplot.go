@@ -62,6 +62,7 @@ const (
 	KindLoad
 	KindClock
 	KindMemory
+	KindNet
 )
 
 // Point is one reading placed in the plot.
@@ -134,12 +135,12 @@ var axes = map[Kind]axis{
 	KindTemp:  {label: "Temp", unit: "°C", nomMin: 30, nomMax: 100, step: 10},
 	KindFan:   {label: "Fan", unit: "RPM", nomMin: 0, nomMax: 6000, step: 1000},
 	KindPower: {label: "Power", unit: "W", nomMin: 0, nomMax: 60, step: 10},
-	// Battery flow is signed: discharging is positive, charging negative, so
-	// the nominal frame straddles zero. It is a chart of its own rather than a
-	// third series on the power chart, because the two answer different
-	// questions — how hard the SoC is working, and which way the pack is
-	// moving — and sharing an axis would squash both.
-	KindBattery: {label: "Battery", unit: "W", nomMin: -30, nomMax: 30, step: 10},
+	// The battery chart plots state of charge, not flow (Jeff, 2026-08-14: the
+	// percentage is what you glance at a battery chart for). The flow still
+	// crosses the wire and feeds the card header's rate and time estimate —
+	// it just is not the trace, so the signed ±30 W frame this axis used to
+	// carry went with it. A hard 0–100 scale like Load's.
+	KindBattery: {label: "Battery", unit: "%", nomMin: 0, nomMax: 100, step: 25},
 	// Load is a hard 0–100 scale by definition; the frame never needs to grow
 	// but bounds() would let it if a driver ever misreported.
 	KindLoad: {label: "Load", unit: "%", nomMin: 0, nomMax: 100, step: 25},
@@ -151,6 +152,11 @@ var axes = map[Kind]axis{
 	// from the data — nominal 32 covers the smaller configurations without
 	// wasting half the axis on a 32 GB machine.
 	KindMemory: {label: "Memory", unit: "GB", nomMin: 0, nomMax: 32, step: 8},
+	// Network throughput in decimal MB/s. The nominal frame is deliberately
+	// small — idle and browsing traffic lives under 10 — and a big download
+	// expands it to wherever the link actually runs; a frame sized for the
+	// link's ceiling would pin everyday traffic to an unreadable floor.
+	KindNet: {label: "Net", unit: "MB/s", nomMin: 0, nomMax: 10, step: 5},
 }
 
 // bounds frames v's observed range: the nominal window, expanded outward to a
@@ -287,17 +293,14 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 		spec{kind: KindPower, label: "NPU", value: ptrFloat(func(s api.TelemetrySample) *float64 { return s.NPUPowerW })},
 	)
 
-	specs = append(specs, spec{kind: KindBattery, value: func(s api.TelemetrySample) (float64, bool) {
-		// The original zero-is-a-reading pointer — a full pack on mains moves
-		// no energy — which is why the wire field is a pointer and presence is
-		// the pointer, not the value. Testing the value instead would drop the
-		// chart on every laptop sitting at 100%, and testing nothing would draw
-		// one flat at zero on a desktop with no pack.
-		if s.BatteryPowerW == nil {
-			return 0, false
-		}
-		return *s.BatteryPowerW, true
-	}})
+	// State of charge, not flow — see the axis comment. Presence is the
+	// pointer on the same terms as the old flow series: a flat pack's 0% is a
+	// reading, and a machine with no pack must produce no series rather than
+	// a line pinned to the floor. BatteryPowerW still crosses the wire but is
+	// deliberately not a series here; it feeds the card header's rate and
+	// time estimate instead, because watts and percent cannot share an axis.
+	specs = append(specs, spec{kind: KindBattery,
+		value: ptrInt(func(s api.TelemetrySample) *int { return s.BatteryLevelPct })})
 
 	// Utilisation: all pointers — an idle anything is genuinely at 0%.
 	specs = append(specs,
@@ -338,6 +341,14 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 		spec{kind: KindMemory, label: "VRAM", value: gb(
 			func(s api.TelemetrySample) int { return s.VRAMUsedMB },
 			func(s api.TelemetrySample) int { return s.VRAMTotalMB })},
+	)
+
+	// Network throughput: pointers, because an idle link's 0.0 MB/s is a real
+	// reading and most links are idle most of the time — the value-presence
+	// rule would blank the chart on every quiet machine.
+	specs = append(specs,
+		spec{kind: KindNet, label: "Down", value: ptrFloat(func(s api.TelemetrySample) *float64 { return s.NetRxMBps })},
+		spec{kind: KindNet, label: "Up", value: ptrFloat(func(s api.TelemetrySample) *float64 { return s.NetTxMBps })},
 	)
 
 	// Gather first, frame second. The axis is computed per *kind*, over every

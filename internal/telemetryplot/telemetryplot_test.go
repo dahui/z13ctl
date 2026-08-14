@@ -497,19 +497,19 @@ func TestBuildDoesNotMutateItsInput(t *testing.T) {
 	}
 }
 
-// batteryW is the pointer the wire carries, so a test can say "reported zero"
-// as distinct from "reported nothing".
-func batteryW(v float64) *float64 { return &v }
+// batteryPct is the pointer the wire carries, so a test can say "reported
+// zero" as distinct from "reported nothing".
+func batteryPct(v int) *int { return &v }
 
-// TestBatteryZeroIsAReadingButAbsenceIsNot is the asymmetry battery flow adds,
-// and the reason api.TelemetrySample.BatteryPowerW is a pointer.
+// TestBatteryZeroIsAReadingButAbsenceIsNot is the asymmetry the battery series
+// adds, and the reason api.TelemetrySample.BatteryLevelPct is a pointer.
 //
 // Every other quantity here can use its value as its presence test, because
 // their zeros are implausible (0°C is not an APU temperature, 0 W is not a
-// running package). Battery flow's zero is the *commonest* real state there
-// is — a full pack on mains — so testing the value would drop the chart from
-// every plugged-in laptop, and testing nothing at all would draw one flat at
-// zero on a desktop with no pack.
+// running package). A flat pack's 0% is a real state — and either way the
+// distinction has to hold: testing the value would drop a dying machine's
+// chart at the moment it matters, and testing nothing at all would draw one
+// flat at zero on a desktop with no pack.
 func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 	t.Parallel()
 
@@ -519,12 +519,12 @@ func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 	t.Run("a reported zero is drawn", func(t *testing.T) {
 		t.Parallel()
 		p := telemetryplot.Build([]api.TelemetrySample{
-			{At: at(-2), TempC: 50, BatteryPowerW: batteryW(0)},
-			{At: at(-1), TempC: 51, BatteryPowerW: batteryW(0)},
+			{At: at(-2), TempC: 50, BatteryLevelPct: batteryPct(0)},
+			{At: at(-1), TempC: 51, BatteryLevelPct: batteryPct(0)},
 		}, now, time.Minute, 0)
 
 		if !hasKind(p, telemetryplot.KindBattery) {
-			t.Fatal("a pack reporting 0 W lost its series; that is a real reading")
+			t.Fatal("a pack reporting 0% lost its series; that is a real reading")
 		}
 	})
 
@@ -543,31 +543,44 @@ func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 	})
 }
 
-// TestBatteryFlowIsSigned pins the direction convention end to end: the axis
-// has to frame negatives, or a charging machine's line is clipped to the floor.
-func TestBatteryFlowIsSigned(t *testing.T) {
+// TestBatteryChartIsStateOfCharge pins the 2026-08-14 change of quantity: the
+// battery chart plots the charge percentage on a 0–100 frame, and the flow —
+// which still crosses the wire for the card header's rate and estimate — no
+// longer produces a series. A sample carrying only BatteryPowerW is an old
+// daemon's, and charting it against a percent axis would draw watts as
+// percent.
+func TestBatteryChartIsStateOfCharge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_700_000_000, 0)
+	flow := -28.0
 	p := telemetryplot.Build([]api.TelemetrySample{
-		{At: now.Add(-2 * time.Second).Unix(), BatteryPowerW: batteryW(-45)}, // charging hard
-		{At: now.Add(-time.Second).Unix(), BatteryPowerW: batteryW(18)},      // then discharging
+		{At: now.Add(-2 * time.Second).Unix(), BatteryLevelPct: batteryPct(64), BatteryPowerW: &flow},
+		{At: now.Add(-time.Second).Unix(), BatteryLevelPct: batteryPct(65), BatteryPowerW: &flow},
 	}, now, time.Minute, 0)
 
-	var s *telemetryplot.Series
-	for i := range p.Series {
-		if p.Series[i].Kind == telemetryplot.KindBattery {
-			s = &p.Series[i]
+	var got []telemetryplot.Series
+	for _, s := range p.Series {
+		if s.Kind == telemetryplot.KindBattery {
+			got = append(got, s)
 		}
 	}
-	if s == nil {
-		t.Fatal("no battery series")
+	if len(got) != 1 {
+		t.Fatalf("battery series = %d, want exactly one (charge, never flow)", len(got))
 	}
-	if s.Bounds.Min > -45 {
-		t.Errorf("bounds %v..%v clip a -45 W charge", s.Bounds.Min, s.Bounds.Max)
+	s := got[0]
+	if s.Unit != "%" || s.Latest != 65 {
+		t.Errorf("series = %q latest %v, want %% latest 65", s.Unit, s.Latest)
 	}
-	if s.Bounds.Max < 18 {
-		t.Errorf("bounds %v..%v clip an 18 W draw", s.Bounds.Min, s.Bounds.Max)
+	if s.Bounds.Min != 0 || s.Bounds.Max != 100 {
+		t.Errorf("bounds %v..%v, want the hard 0..100 frame", s.Bounds.Min, s.Bounds.Max)
+	}
+
+	flowOnly := telemetryplot.Build([]api.TelemetrySample{
+		{At: now.Add(-time.Second).Unix(), BatteryPowerW: &flow},
+	}, now, time.Minute, 0)
+	if hasKind(flowOnly, telemetryplot.KindBattery) {
+		t.Error("a flow-only sample produced a battery series; watts must not plot on the percent axis")
 	}
 }
 

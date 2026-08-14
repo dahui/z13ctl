@@ -130,16 +130,17 @@ type BatteryInfo struct {
 // PowerDraw names the package-power source ("rapl", "pm-table") and is empty
 // when the device reads none — in which case Sample's package power is always
 // zero and the graph should be hidden rather than drawn flat. GPU ("amdgpu"),
-// CPUStats ("procfs") and NPU ("amdxdna") name the expanded sources on the
-// same terms: a name for provenance, absence meaning the matching sample
-// fields are never filled and their graphs should not exist. HistorySeconds
-// is the largest window a telemetry-history request can usefully ask for; zero
-// means the daemon keeps no history for this device and only live readings are
-// available.
+// CPUStats ("procfs"), NPU ("amdxdna") and Net ("procfs") name the expanded
+// sources on the same terms: a name for provenance, absence meaning the
+// matching sample fields are never filled and their graphs should not exist.
+// HistorySeconds is the largest window a telemetry-history request can
+// usefully ask for; zero means the daemon keeps no history for this device
+// and only live readings are available.
 type TelemetryInfo struct {
 	PowerDraw      string `json:"power_draw,omitempty"`
 	GPU            string `json:"gpu,omitempty"`
 	CPUStats       string `json:"cpu_stats,omitempty"`
 	NPU            string `json:"npu,omitempty"`
+	Net            string `json:"net,omitempty"`
 	HistorySeconds int    `json:"history_seconds,omitempty"`
 }

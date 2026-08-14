@@ -343,16 +343,17 @@ const placeholderShape = "placeholder"
 func (d *dashboardView) showPlaceholder() {
 	doc := d.w.device
 	caps := telemetryplot.PlaceholderCaps{
-		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true,
+		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
 	}
 	if doc != nil {
 		caps.Battery = doc.Battery != nil
-		caps.Power, caps.GPU, caps.CPUStats, caps.NPU = false, false, false, false
+		caps.Power, caps.GPU, caps.CPUStats, caps.NPU, caps.Net = false, false, false, false, false
 		if t := doc.Telemetry; t != nil {
 			caps.Power = t.PowerDraw != ""
 			caps.GPU = t.GPU != ""
 			caps.CPUStats = t.CPUStats != ""
 			caps.NPU = t.NPU != ""
+			caps.Net = t.Net != ""
 		}
 	}
 	kinds := telemetryplot.PlaceholderKinds(caps)

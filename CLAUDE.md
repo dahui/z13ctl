@@ -1251,13 +1251,23 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `prevJiffies` owned by its goroutine); unlike energy it needs no gap ceiling
   — jiffies only advance awake. (3) Presence per field by what zero means:
   utils and GPU/NPU power are wire *pointers* (idle is genuinely 0), temps and
-  clocks omit zero (never a reading). `telemetry.{gpu,cpu_stats,npu}` are
-  declared in the device TOML and the declaration guard now holds all four
+  clocks omit zero (never a reading). `telemetry.{gpu,cpu_stats,npu,net}` are
+  declared in the device TOML and the declaration guard now holds all five
   sources both directions. `State.Telemetry` is the full live edge as one
   nested sample (freshness-bounded; derived rates grafted from the ring) so
   the every-quantity-live rule holds without a top-level field per quantity —
   the pre-2.0 named fields stay forever. New State pointer ⇒ `cloneState` got
   `cloneTelemetrySample`.
+  **Network throughput (the eighth card; Jeff, 2026-08-14, picked to even the
+  grid) is the same shape end to end**: `/proc/net/dev` byte counters cross
+  the driver boundary cumulative (`netRateMBps` in the sampler, `prevNet`
+  owned by its goroutine, `maxEnergyGap` ceiling — wall-clock interval, unlike
+  jiffies), and the rates are wire pointers because an idle link's 0.0 MB/s is
+  a reading. The part with judgement in it is *which interfaces count*:
+  `ReadNetBytes` sums only interfaces with a `/sys/class/net/<name>/device`
+  link — hardware-backed — because summing everything counts VPN and bridge
+  traffic twice (once on the tunnel, once on the hardware beneath it), and no
+  physical interface at all is an error, never a zero.
 - **Package power crosses the driver boundary as an energy *counter*, not as
   watts.** RAPL publishes cumulative microjoules, so power is a difference over
   an interval — arithmetic that needs the *previous* reading, which a driver
@@ -1290,6 +1300,27 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   carry it: the magnitude is in `power_now` (or `current_now` × `voltage_now`
   on a charge-reporting pack — the same both-forms split as battery health, and
   the Z13 has only the energy form) while the direction is in `status`.
+- **The battery chart plots state of charge; the flow feeds the card header's
+  rate and time estimate** (Jeff, 2026-08-14: the percentage is what you glance
+  at a battery chart for). `Sample.BatteryLevelPct`/`Known` →
+  `TelemetrySample.BatteryLevelPct *int` (zero is a reading — a flat pack — so
+  the pointer, exactly the flow's reasoning) is the series, on a hard 0–100
+  frame like Load's; `BatteryPowerW` stays on the wire untouched but no longer
+  charts, because watts and percent cannot share an axis. The estimate is
+  client-side and pure (`profileui.batteryEstimate`): get-state gains
+  `battery_energy_wh`/`battery_energy_full_wh` (via `driver.BatteryStatus` —
+  watt-hours on every machine, the driver converting a charge-reporting pack
+  through `voltage_now`; a *pair*, since remaining without the pack size
+  answers only the discharge half), and the header divides — remaining over
+  rate to empty while discharging, gap-to-target over rate while charging,
+  where the target is the charge *limit* when one is set because the pack
+  genuinely stops there ("to full" would promise what the firmware prevents).
+  Two suppressions are deliberate: rates under `minEstimateW` (a resting pack
+  wobbles by tenths of a watt, and dividing by that claims false precision) and
+  answers beyond a day (noise the floor did not catch) fall back to the plain
+  state word. The estimate is instantaneous — remaining over the *current*
+  rate — not smoothed; if that ever wants smoothing, the history ring is where
+  the average lives, not a second counter in a handler.
 - **`battery` and `telemetry` are document *sections*, not presence bools,
   because their contents are independently absent.** A machine can report state
   of health while exposing no charge-limit attribute, and the reverse — a
@@ -1606,18 +1637,20 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   stopped fan and is a reading — hence the RPM **slice's** presence is the test
   there, not its value. That asymmetry looks like an inconsistency until you
   know why, so `TestZeroMeansAbsentForTemperatureButNotForFans` pins it.
-  Battery flow is the case where per-field cleverness ran out and the *wire*
-  had to change: its zero is both plausible and common, so it is a pointer and
-  presence is the pointer. The first attempt made it unconditional and the
-  suite caught it immediately — that draws a flat-zero chart on a machine with
-  no battery, the exact false measurement rule (3) exists to prevent
+  Battery charge is the case where per-field cleverness ran out and the *wire*
+  had to change: its zero is plausible (a flat pack), so it is a pointer and
+  presence is the pointer — first established for the flow this chart plotted
+  before it became state of charge, and inherited by the level for the same
+  reason. Testing the value instead would drop a dying machine's chart at the
+  moment it matters, and testing nothing draws one flat at zero on a desktop
+  with no pack — the exact false measurement rule (3) exists to prevent
   (`TestBatteryZeroIsAReadingButAbsenceIsNot`).
 - **The axis is framed per *kind*, not per series, and the nominal frame is a
   starting point that expands rather than a clamp.** Two fans are drawn on one
   chart, so separate axes would make their line heights incomparable — which is
   the one thing a viewer will use them for. The nominal ranges (30–100 °C,
-  0–6000 RPM, 0–60 W package, ±30 W battery) keep the axis steady while values
-  wander, because a chart
+  0–6000 RPM, 0–60 W package, 0–100% battery charge) keep the axis steady while
+  values wander, because a chart
   that rescales every second at a 1 Hz refresh is unreadable; anything outside
   expands the frame to a step boundary, so no reading is ever cut off. That
   invariant is what makes it safe to carry one laptop's numbers in a package
@@ -2021,7 +2054,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. The full window has had its **desktop design pass** (Jeff, 2026-08-13): underline tabs winning by CSS specificity, `.drawer.main-window`-scoped desktop density (gamescope keeps touch density by scaledCSS *omission*), a `GtkFlowBox` card-grid dashboard whose battery card header renders `profileui.BatteryStatus` from get-state (never a bare 0 W on a charge-limited pack), a per-surface popup layer (the window's dropdowns previously rendered on the hidden drawer), LB/RB tab switching, B closing the window, and `activeScroll` learning the window's pages — all with the six-line focus dump byte-identical throughout. Details in `internal/gui/CLAUDE.md` ("The desktop design pass"). A second pass (Jeff, 2026-08-14) reshaped the Profiles page around **one commit button** — dirty-tracked Apply/Save Changes in a bar under the scroller, per-domain saves gone from the window (the drawer keeps its), resets right-aligned per card, `profileui.CommitLabel`/`UnsavedSummary` carrying the label rules — added an **AUTOSWITCH card** to that page (second `autoswitchSection` instance), and made the dashboard show its **full placeholder card set immediately** (`telemetryplot.Placeholder`) with the first history fetch fired on show; the daemon side of the same day is the fresh-promotion rule above. The `full:custom` dump line was re-baselined twice, deliberately, and the other five lines held. The dashboard then grew to the **expanded telemetry set** (see the dedicated entry above): seven cards — Temp (CPU+GPU), Fan, Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem, GHz), Memory (RAM+VRAM, GB) — with a third theme-derived trace colour and a 34-char header bound; the placeholder set derives from the four telemetry declarations. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. The full window has had its **desktop design pass** (Jeff, 2026-08-13): underline tabs winning by CSS specificity, `.drawer.main-window`-scoped desktop density (gamescope keeps touch density by scaledCSS *omission*), a `GtkFlowBox` card-grid dashboard whose battery card header renders `profileui.BatteryStatus` from get-state (never a bare 0 W on a charge-limited pack), a per-surface popup layer (the window's dropdowns previously rendered on the hidden drawer), LB/RB tab switching, B closing the window, and `activeScroll` learning the window's pages — all with the six-line focus dump byte-identical throughout. Details in `internal/gui/CLAUDE.md` ("The desktop design pass"). A second pass (Jeff, 2026-08-14) reshaped the Profiles page around **one commit button** — dirty-tracked Apply/Save Changes in a bar under the scroller, per-domain saves gone from the window (the drawer keeps its), resets right-aligned per card, `profileui.CommitLabel`/`UnsavedSummary` carrying the label rules — added an **AUTOSWITCH card** to that page (second `autoswitchSection` instance), and made the dashboard show its **full placeholder card set immediately** (`telemetryplot.Placeholder`) with the first history fetch fired on show; the daemon side of the same day is the fresh-promotion rule above. The `full:custom` dump line was re-baselined twice, deliberately, and the other five lines held. The dashboard then grew to the **expanded telemetry set** (see the dedicated entry above): seven cards — Temp (CPU+GPU), Fan, Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem, GHz), Memory (RAM+VRAM, GB) — with a third theme-derived trace colour and a 34-char header bound; the placeholder set derives from the four telemetry declarations. The Battery card then changed quantity (same day): the chart plots **state of charge** on a 0–100% frame and the header carries the rate plus a time-to-limit/full/empty estimate from the new `battery_energy_wh` pair — see the dedicated entry above. An eighth card, **Net** (down/up MB/s from `/proc/net/dev`, physical interfaces only), evens the grid at 4×2; same day, same entry. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

@@ -16,7 +16,7 @@ import (
 // really for. A new Kind with no table entry gets the zero axis, whose zero step
 // divides to infinity — so this test is the one that has to fail first.
 func TestEveryKindHasAWellFormedAxis(t *testing.T) {
-	for kind := KindTemp; kind <= KindMemory; kind++ {
+	for kind := KindTemp; kind <= KindNet; kind++ {
 		a, ok := axes[kind]
 		if !ok {
 			t.Errorf("Kind %d has no axis entry", kind)
@@ -35,8 +35,8 @@ func TestEveryKindHasAWellFormedAxis(t *testing.T) {
 	}
 	// The last kind in the enum, so a kind added without an axis is caught
 	// rather than silently framed 0..0 the first time something reports it.
-	if len(axes) != int(KindMemory)+1 {
-		t.Errorf("axes has %d entries for %d kinds", len(axes), int(KindMemory)+1)
+	if len(axes) != int(KindNet)+1 {
+		t.Errorf("axes has %d entries for %d kinds", len(axes), int(KindNet)+1)
 	}
 }
 

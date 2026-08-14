@@ -120,6 +120,50 @@ func TestReadBatteryPowerFallsBackToCurrentTimesVoltage(t *testing.T) {
 	}
 }
 
+// TestReadBatteryEnergyWh covers both hardware shapes of the estimate's
+// divisor: the Z13's energy pair in µWh, and the charge-form fallback that
+// becomes watt-hours through voltage_now — the same portability split as the
+// flow and health readers, for the same reason.
+func TestReadBatteryEnergyWh(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.battery+"/energy_now", "45500000")  // 45.5 Wh
+	f.writeFile(t, f.battery+"/energy_full", "64092000") // 64.092 Wh
+
+	now, full, err := ReadBatteryEnergyWh()
+	if err != nil {
+		t.Fatalf("ReadBatteryEnergyWh() = %v", err)
+	}
+	if now != 45.5 || full != 64.092 {
+		t.Errorf("= %v, %v Wh; want 45.5, 64.092", now, full)
+	}
+}
+
+func TestReadBatteryEnergyFallsBackToChargeTimesVoltage(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.battery+"/charge_now", "2500000")   // 2.5 Ah
+	f.writeFile(t, f.battery+"/charge_full", "5000000")  // 5 Ah
+	f.writeFile(t, f.battery+"/voltage_now", "16000000") // 16 V
+
+	now, full, err := ReadBatteryEnergyWh()
+	if err != nil {
+		t.Fatalf("ReadBatteryEnergyWh() = %v", err)
+	}
+	if now != 40 || full != 80 {
+		t.Errorf("= %v, %v Wh; want 40, 80 from 2.5/5 Ah × 16 V", now, full)
+	}
+}
+
+// TestReadBatteryEnergyRequiresThePair: a remaining figure without the pack
+// size behind it answers only half the estimate, so half a pair is an error
+// on both paths — never a zero standing in for the missing half.
+func TestReadBatteryEnergyRequiresThePair(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.battery+"/energy_now", "45500000")
+	if _, _, err := ReadBatteryEnergyWh(); err == nil {
+		t.Error("ReadBatteryEnergyWh() = nil error with energy_now but no energy_full")
+	}
+}
+
 // TestReadBatteryPowerWithNoReading: a pack reporting neither form is an
 // error, not a zero. Zero is a real reading here (a full pack on mains moves
 // no energy), so it cannot double as "no source".
@@ -173,6 +217,10 @@ func TestSampleReadsEveryQuantity(t *testing.T) {
 	}
 	if s.BatteryPowerW == 0 {
 		t.Error("Sample() reported no battery flow")
+	}
+	if !s.BatteryLevelKnown || s.BatteryLevelPct != 81 {
+		t.Errorf("BatteryLevelPct = %d (known %v), want 81 — the battery chart's series",
+			s.BatteryLevelPct, s.BatteryLevelKnown)
 	}
 	// The counter is a counter: converting it needs the previous reading, so
 	// the driver must not have guessed at a power figure.

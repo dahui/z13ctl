@@ -252,6 +252,20 @@ type BatteryStatus struct {
 	// nothing is moving — and 0 W with no state beside it is indistinguishable
 	// from a broken sensor. That is not hypothetical: it was reported as one.
 	State BatteryState
+
+	// EnergyWh and EnergyFullWh are the pack's remaining and full-charge
+	// energy in watt-hours, so a client can turn the flow into a time
+	// estimate: remaining over rate is time to empty, and the gap to the
+	// charge target over rate is time to full or to the limit.
+	//
+	// Unlike health, the raw pair *is* portable once denominated in energy:
+	// a charge-reporting pack's µAh becomes Wh through voltage_now inside the
+	// driver, so Wh means the same thing on every machine — which is why this
+	// is not a second ratio. Both zero when the pack reports neither form;
+	// they travel as a pair because a remaining figure without the pack size
+	// behind it answers only half the estimate.
+	EnergyWh     float64
+	EnergyFullWh float64
 }
 
 // BatteryState is what a pack is doing. The values are the portable subset of
@@ -368,6 +382,13 @@ type Sample struct {
 	BatteryPowerW     float64
 	BatteryPowerKnown bool
 
+	// BatteryLevelPct is the pack's state of charge as a percentage — the
+	// quantity the dashboard's battery chart plots, where the flow above gives
+	// the chart's header its rate. Zero is a reading (a flat pack), hence the
+	// Known flag on BatteryPowerW's terms.
+	BatteryLevelPct   int
+	BatteryLevelKnown bool
+
 	// GPU quantities, read only when TelemetryInfo.GPU names a source. All
 	// value+flag pairs follow the BatteryPowerW convention above; plain zero
 	// fields mean "not read" because their zero is never a real reading
@@ -402,6 +423,20 @@ type Sample struct {
 	MemUsedMB  int
 	MemTotalMB int
 
+	// Network byte counters, read only when TelemetryInfo.Net names a source:
+	// cumulative received/transmitted bytes summed over the machine's physical
+	// interfaces, on the energy-counter pattern and for the same reason — a
+	// rate needs the previous reading and the interval since, which only the
+	// daemon's sampler holds. The sampler derives NetRxMBps/NetTxMBps (MB/s,
+	// decimal megabytes) with NetRateKnown saying a rate was derived at all;
+	// drivers leave those zero. One flag for the pair: the counters are read
+	// together, and an idle link's 0.0 MB/s is a real reading.
+	NetRxBytes   uint64
+	NetTxBytes   uint64
+	NetRxMBps    float64
+	NetTxMBps    float64
+	NetRateKnown bool
+
 	// NPU quantities, read only when TelemetryInfo.NPU names a source.
 	// One flag for the set: the amdxdna query answers power and utilisation
 	// together. A runtime-suspended NPU reports Known with zeros — suspended
@@ -431,17 +466,19 @@ type Sample struct {
 // so the largest window a telemetry-history request can usefully ask for. Zero
 // means no history is kept; live readings still work.
 //
-// GPU, CPUStats and NPU name further sources on the same terms as PowerDraw —
-// a name for provenance, empty for absence, and never declared unless the
-// driver actually reads it. GPU ("amdgpu") covers the iGPU's temperature,
-// utilisation, clock, power, VRAM and memory clock; CPUStats ("procfs") the
-// CPU utilisation counters, average core clock and system memory; NPU
-// ("amdxdna") the XDNA accelerator's power, utilisation and clock.
+// GPU, CPUStats, NPU and Net name further sources on the same terms as
+// PowerDraw — a name for provenance, empty for absence, and never declared
+// unless the driver actually reads it. GPU ("amdgpu") covers the iGPU's
+// temperature, utilisation, clock, power, VRAM and memory clock; CPUStats
+// ("procfs") the CPU utilisation counters, average core clock and system
+// memory; NPU ("amdxdna") the XDNA accelerator's power, utilisation and
+// clock; Net ("procfs") the physical interfaces' byte counters.
 type TelemetryInfo struct {
 	PowerDraw      string
 	GPU            string
 	CPUStats       string
 	NPU            string
+	Net            string
 	HistorySeconds int
 }
 

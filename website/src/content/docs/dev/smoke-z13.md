@@ -345,7 +345,7 @@ outside.
 ### The full window (double press)
 
 - [ ] Double-press the Armoury Crate button — the drawer flashes and the full
-      window replaces it. The **Telemetry** tab shows all seven cards
+      window replaces it. The **Telemetry** tab shows all eight cards
       *immediately* (framed charts, "—" readouts at worst for the first
       second), never a blank grid.
 - [ ] The expanded cards read sensibly: Temp shows CPU and GPU, Power shows
@@ -353,6 +353,16 @@ outside.
       Load shows all three utilisations, Clocks in GHz, Memory RAM+VRAM in
       GB. Run something GPU-heavy and the GPU load/clock/power traces move
       together; `voltaire status` and the Temp card's CPU figure agree.
+- [ ] The Net card reads `Down: 0.0 · Up: 0.0 MB/s` on a quiet machine (a real
+      reading, not a gap); start a large download and the Down trace and header
+      move together, at roughly what Steam or the browser reports. Traffic over
+      a VPN charts at its real size, not doubled.
+- [ ] The Battery card plots the charge percentage on a 0–100 frame, and its
+      header follows the pack: at rest above the limit on mains it reads
+      `NN% · AC · not charging` (never a bare 0 W); unplug and it becomes
+      `NN% · <rate> W · <time> to empty`; replug below the limit and the
+      estimate says `to limit`. The estimate moves with the load — sanity-check
+      one against `(battery_energy_wh / rate) × 60`.
 - [ ] Profiles tab: move only the TDP slider — the bottom bar reads
       "Unsaved: TDP" and **Apply Changes** enables. Apply: only the TDP
       changes (fans stay as they were); the bar clears and the button disables.
