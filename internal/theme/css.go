@@ -38,15 +38,26 @@ func BuildThemeCSS(c Colors, templateCSS string) string {
 	return defs.String() + "\n" + StripDefineColors(templateCSS)
 }
 
-// definePattern matches an "@define-color z13-foo …;" declaration, capturing the
-// token name. referencePattern matches a "@z13-foo" use.
+// definePattern matches an "@define-color voltaire-foo …;" declaration,
+// capturing the token name. referencePattern matches a "@voltaire-foo" use.
+//
+// **Both prefixes, deliberately.** They were z13-only when z13-* was the only
+// name, and leaving them that way through the rename would have quietly ended
+// the self-containedness guard: the bundled template now references
+// @voltaire-*, so a token it used without defining would have matched nothing
+// and UndefinedColorTokens would have reported a clean sheet. That is the exact
+// bug the guard exists for (the template shipped for months referencing
+// @z13-error without defining it), reintroduced by making its own regex stop
+// seeing the names in use. When @z13-* is removed at 3.0 the alternation goes
+// with it, not before.
 var (
-	definePattern    = regexp.MustCompile(`@define-color\s+(z13-[a-z0-9-]+)`)
-	referencePattern = regexp.MustCompile(`@(z13-[a-z0-9-]+)`)
+	definePattern    = regexp.MustCompile(`@define-color\s+((?:z13|voltaire)-[a-z0-9-]+)`)
+	referencePattern = regexp.MustCompile(`@((?:z13|voltaire)-[a-z0-9-]+)`)
 )
 
-// UndefinedColorTokens returns, sorted, the @z13-* tokens css references without
+// UndefinedColorTokens returns, sorted, the colour tokens css references without
 // also defining — the tokens that make a stylesheet fail to stand on its own.
+// Both the @voltaire-* names and the @z13-* aliases they replaced are checked.
 //
 // This distinction is easy to miss because the two ways of supplying a theme are
 // not symmetrical. A theme.toml is substituted into a copy of the embedded

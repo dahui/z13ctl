@@ -7,14 +7,14 @@
    and modify the @define-color values or any rule below.
 
    Available named colors:
-     @z13-accent      — active/highlight color (buttons, sliders, selections)
-     @z13-bg          — drawer background
-     @z13-surface     — raised surface color (buttons, rows)
-     @z13-surface-alt — alternate/hover surface
-     @z13-text        — primary text
-     @z13-text-dim    — secondary/label text
-     @z13-border      — window border and separator color
-     @z13-error       — error bar text and border, high-TDP warning text
+     @voltaire-accent      — active/highlight color (buttons, sliders, selections)
+     @voltaire-bg          — drawer background
+     @voltaire-surface     — raised surface color (buttons, rows)
+     @voltaire-surface-alt — alternate/hover surface
+     @voltaire-text        — primary text
+     @voltaire-text-dim    — secondary/label text
+     @voltaire-border      — window border and separator color
+     @voltaire-error       — error bar text and border, high-TDP warning text
 
    Every one of those is defined below, so this file works as a standalone
    theme.css. That matters: theme.css is loaded verbatim, unlike theme.toml,
@@ -25,14 +25,14 @@
    This file is loaded at STYLE_PROVIDER_PRIORITY_USER so its rules take
    precedence over the GTK default theme. */
 
-@define-color z13-accent      #cc0000;
-@define-color z13-bg          #1a1a1a;
-@define-color z13-surface     #2a2a2a;
-@define-color z13-surface-alt #333333;
-@define-color z13-text        #e0e0e0;
-@define-color z13-text-dim    #888888;
-@define-color z13-border      #444444;
-@define-color z13-error       #ff4444;
+@define-color voltaire-accent            #cc0000;
+@define-color voltaire-bg                #1a1a1a;
+@define-color voltaire-surface           #2a2a2a;
+@define-color voltaire-surface-alt       #333333;
+@define-color voltaire-text              #e0e0e0;
+@define-color voltaire-text-dim          #888888;
+@define-color voltaire-border            #444444;
+@define-color voltaire-error             #ff4444;
 
 /* Window — transparent background so border-radius from .drawer is visible. */
 window.z13-drawer-window {
@@ -43,7 +43,7 @@ window.z13-drawer-window {
    lives in. Its content box carries .drawer for every widget rule below, plus
    .main-window to drop the floating panel's rounded border. */
 window.voltaire-main-window {
-    background: @z13-bg;
+    background: @voltaire-bg;
 }
 
 .drawer.main-window {
@@ -60,135 +60,135 @@ window.voltaire-main-window {
 
 .main-tabs button.active {
     background: transparent;
-    border-bottom: 2px solid @z13-accent;
-    color: @z13-text;
+    border-bottom: 2px solid @voltaire-accent;
+    color: @voltaire-text;
 }
 
 /* Main drawer box */
 .drawer {
-    background: @z13-bg;
-    color: @z13-text;
+    background: @voltaire-bg;
+    color: @voltaire-text;
     border-radius: 12px;
-    border: 1px solid @z13-border;
+    border: 1px solid @voltaire-border;
     /* No box-shadow: shadow pixels outside clip region cause smearing in Wayland Vulkan */
 }
 
 /* Drawer title */
 .drawer-title {
-    color: @z13-text-dim;
+    color: @voltaire-text-dim;
 }
 
 /* Header telemetry readout */
 .header-telemetry {
-    color: @z13-text-dim;
+    color: @voltaire-text-dim;
 }
 
 /* Section group headings */
 .section-group {
-    color: @z13-text;
+    color: @voltaire-text;
 }
 
 /* Section labels */
 .section-label {
-    color: @z13-text-dim;
+    color: @voltaire-text-dim;
 }
 
 /* Slider value readouts */
 .scale-value {
-    color: @z13-text;
+    color: @voltaire-text;
 }
 
 /* Slider name labels */
 .scale-name {
-    color: @z13-text-dim;
+    color: @voltaire-text-dim;
 }
 
 /* Separators */
 .drawer separator {
-    background: @z13-border;
+    background: @voltaire-border;
     min-height: 1px;
 }
 
 /* Button groups (profiles, modes, speeds) */
 .drawer .btn-group button {
-    background: @z13-surface;
-    color: @z13-text;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    color: @voltaire-text;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer .btn-group button:hover {
-    background: @z13-surface-alt;
+    background: @voltaire-surface-alt;
 }
 
 .drawer .btn-group button.active {
-    background: @z13-accent;
+    background: @voltaire-accent;
     color: #ffffff;
 }
 
 /* Tab buttons (still CheckButton) */
 .drawer checkbutton {
-    background: @z13-surface;
-    color: @z13-text;
+    background: @voltaire-surface;
+    color: @voltaire-text;
 }
 
 .drawer checkbutton:hover {
-    background: @z13-surface-alt;
+    background: @voltaire-surface-alt;
 }
 
 .drawer checkbutton:checked {
-    background: @z13-accent;
+    background: @voltaire-accent;
     color: #ffffff;
 }
 
 /* TDP warning label */
 .tdp-warning {
-    color: @z13-error;
+    color: @voltaire-error;
 }
 
 /* Error bar */
 .error-bar {
-    background: @z13-surface;
-    border: 1px solid @z13-error;
+    background: @voltaire-surface;
+    border: 1px solid @voltaire-error;
 }
 
 .error-bar .error-text {
-    color: @z13-error;
+    color: @voltaire-error;
 }
 
 /* Fan curve drawing area */
 .fan-curve-area {
-    background: @z13-surface;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    border: 1px solid @voltaire-border;
 }
 
 .dash-chart {
-    background: @z13-surface;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    border: 1px solid @voltaire-border;
 }
 
 
 /* Sliders */
 .drawer scale trough {
-    background: @z13-surface;
+    background: @voltaire-surface;
 }
 
 .drawer scale trough highlight {
-    background: @z13-accent;
+    background: @voltaire-accent;
 }
 
 
 /* Current-color swatch */
 .drawer .color-swatch {
-    border: 1px solid @z13-border;
+    border: 1px solid @voltaire-border;
 }
 
 /* Preset color buttons */
 .drawer .color-preset {
-    border: 1px solid @z13-border;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer .color-preset:hover {
-    border: 1px solid @z13-text;
+    border: 1px solid @voltaire-text;
 }
 
 /* Icon buttons that sit outside the button groups: the bottom bar's theme
@@ -199,31 +199,31 @@ window.voltaire-main-window {
    theme picker button fell back to the stock GTK button colours. */
 .bottom-bar button,
 .view-back-btn {
-    background: @z13-surface;
-    color: @z13-text;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    color: @voltaire-text;
+    border: 1px solid @voltaire-border;
 }
 
 .bottom-bar button:hover,
 .view-back-btn:hover {
-    background: @z13-surface-alt;
+    background: @voltaire-surface-alt;
 }
 
 /* Error bar dismiss — transparent rather than surface-coloured, since the bar
-   itself is @z13-surface and a filled button on it would disappear. */
+   itself is @voltaire-surface and a filled button on it would disappear. */
 .error-bar .error-dismiss {
     background: transparent;
-    color: @z13-error;
+    color: @voltaire-error;
     border: none;
 }
 
 .error-bar .error-dismiss:hover {
-    background: @z13-surface-alt;
+    background: @voltaire-surface-alt;
 }
 
 /* Active accent dot — theme-aware border (visible on both dark and light) */
 .accent-dot-active {
-    border-color: @z13-text;
+    border-color: @voltaire-text;
 }
 
 /* In-surface popup layer (dropdown lists, anchored hints). The surface and
@@ -236,14 +236,14 @@ window.voltaire-main-window {
 }
 
 .drawer.popup-hint {
-    background: @z13-surface;
+    background: @voltaire-surface;
     border-radius: 6px;
 }
 
 /* The running profile's marker in the profile dropdown. Accent on a normal
    row; white on a selected (.active) row, whose background is the accent. */
 .drawer .popup-surface .running-dot {
-    color: @z13-accent;
+    color: @voltaire-accent;
 }
 
 .drawer .popup-surface button.active .running-dot {
@@ -253,62 +253,62 @@ window.voltaire-main-window {
 /* Refusal reason under a desensitized control. Dim rather than error-red:
    it explains a greyed button, it is not reporting a failure. */
 .block-note {
-    color: @z13-text-dim;
+    color: @voltaire-text-dim;
 }
 
 /* Slider value label */
 .drawer scale value {
-    color: @z13-text;
+    color: @voltaire-text;
 }
 
 /* Toggle switches (panel overdrive, boot sound) */
 .bottom-bar switch {
-    background: @z13-surface;
+    background: @voltaire-surface;
 }
 
 .bottom-bar switch:checked {
-    background: @z13-accent;
+    background: @voltaire-accent;
 }
 
 /* Custom view action buttons (save, reset) */
 .drawer .custom-actions button {
-    background: @z13-surface;
-    color: @z13-text;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    color: @voltaire-text;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer .custom-actions button:hover {
-    background: @z13-surface-alt;
+    background: @voltaire-surface-alt;
 }
 
 /* Save button — accent styling */
 .drawer .save-btn {
-    background: @z13-accent;
+    background: @voltaire-accent;
     color: #ffffff;
 }
 
 .drawer .save-btn:hover {
-    background: shade(@z13-accent, 1.2);
+    background: shade(@voltaire-accent, 1.2);
 }
 
 /* Advanced checkbox in custom view */
 .drawer .advanced-check {
-    background: @z13-surface;
-    color: @z13-text;
-    border: 1px solid @z13-border;
+    background: @voltaire-surface;
+    color: @voltaire-text;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer .advanced-check:checked {
-    background: @z13-accent;
+    background: @voltaire-accent;
     color: #ffffff;
 }
 
 /* Gamepad focus indicator */
 .gamepad-focus {
-    outline-color: @z13-accent;
+    outline-color: @voltaire-accent;
 }
 
 /* Gamepad editing indicator (slider adjust mode) */
 .gamepad-editing {
-    outline-color: @z13-accent;
+    outline-color: @voltaire-accent;
 }

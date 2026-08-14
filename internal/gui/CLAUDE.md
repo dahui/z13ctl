@@ -301,7 +301,7 @@ contrib/
   an unsynchronized read. Do not promote it to a field — reading it from `show()`/
   `hide()` would be a data race, and `internal/gui` is not covered by `go test -race`.
 - **Anything painted rather than styled must apply the scale and theme itself.**
-  The fan curve chart is Cairo, so it reads neither the `@z13-*` tokens nor the
+  The fan curve chart is Cairo, so it reads neither the `@voltaire-*` tokens nor the
   gamescope CSS scaling. `Backend.Scale()` returns 1.0 on layer-shell and the
   resolution factor under gamescope; `Window.colors` holds the active palette
   alongside the CSS built from it. Every dimension in `fanCurveEditor.draw` and

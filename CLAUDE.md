@@ -1581,15 +1581,38 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   goroutines can land on the daemon out of order and store an intermediate
   choice.
 - **`BuildThemeCSS` defines every token twice — `@z13-*` and `@voltaire-*` —
-  which is what lets the token rename be *staged*.** The generated
-  `@define-color` block is prepended to the bundled `theme-default.css`, and
-  that sheet still references `@z13-*`; emitting only the new names would drop
-  every rule using them and leave the drawer unstyled, so defines and references
-  cannot flip in the same commit. Both names now, bundled sheet migrates at M4,
-  `@z13-*` removed at 3.0 with the other shims. Note the asymmetry that makes
-  this safe: a user's `theme.css` is loaded **verbatim** (it supplies its own
-  defines and never sees ours), while a `theme.toml` is substituted into the
-  bundled template — so the alias affects the template path only.
+  which is what let the token rename be *staged*.** The generated
+  `@define-color` block is prepended to the bundled `theme-default.css`.
+  Emitting only the new names while that sheet still referenced the old ones
+  would have dropped every rule using them and left the drawer unstyled, so
+  defines and references could not flip in the same commit: both names first,
+  bundled sheet second. **The sheet is migrated** — it defines and references
+  `@voltaire-*` throughout — so the `@z13-*` aliases now have no in-tree
+  consumer at all and 3.0's removal is a pure deletion.
+  `TestLegacyAliasesAreStillEmitted` is what makes that deletion deliberate
+  rather than accidental, since nothing else would notice them going.
+  Note the asymmetry that makes the whole thing safe: a user's `theme.css` is
+  loaded **verbatim** (it supplies its own defines and never sees ours), while
+  a `theme.toml` is substituted into the bundled template — so the alias only
+  ever affected the template path, and a hand-written sheet on the old names
+  keeps working because it never depended on ours.
+- **The token regexes must match *both* prefixes, and widening them was the
+  load-bearing half of the migration.** `definePattern` and `referencePattern`
+  were `z13-`-only, which was correct while that was the only name and would
+  have silently ended the self-containedness guard the moment the sheet moved:
+  a `@voltaire-*` token referenced but not defined would have matched nothing,
+  and `UndefinedColorTokens` would have reported a clean stylesheet. That is
+  precisely the bug the guard exists for — the template shipped for months
+  referencing `@z13-error` without defining it — reintroduced by making its own
+  regex stop seeing the names in use. Widening them found the real gap
+  immediately (the migrated sheet defined none of what it now referenced).
+  **There is no runtime signal to fall back on.** GTK4 drops a rule with an
+  unresolvable colour without logging anything — checked by breaking a token
+  deliberately and watching a full `--debug` run stay silent — so the symptom
+  is a wrong-coloured border, not an error. `TestTheComposedSheetHasNoUndefinedTokens`
+  therefore checks the sheet the app actually loads (defines plus the
+  stripped template), because the two halves each passing their own test is not
+  the same as the composition being sound.
 
 ## Go conventions established in this project
 
@@ -1798,7 +1821,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. Also remaining: bundled CSS to `@voltaire-*` |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

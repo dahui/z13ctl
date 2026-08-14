@@ -134,19 +134,23 @@ selected.
 
 | Key | CSS variable | Controls |
 |-----|-------------|----------|
-| `accent` | `@z13-accent` | Active buttons, slider fill, checked radio buttons, active tab |
-| `background` | `@z13-bg` | Drawer panel background |
-| `surface` | `@z13-surface` | Button backgrounds, input row backgrounds |
-| `surface_alt` | `@z13-surface-alt` | Hover state for buttons and rows |
-| `text` | `@z13-text` | Primary text, labels, button text |
-| `text_dim` | `@z13-text-dim` | Section headings (MODE, SPEED, etc.), secondary labels |
-| `border` | `@z13-border` | Drawer border, separators, button outlines |
-| `error` | `@z13-error` | Error bar text and border, high-TDP warning text |
+| `accent` | `@voltaire-accent` | Active buttons, slider fill, checked radio buttons, active tab |
+| `background` | `@voltaire-bg` | Drawer panel background |
+| `surface` | `@voltaire-surface` | Button backgrounds, input row backgrounds |
+| `surface_alt` | `@voltaire-surface-alt` | Hover state for buttons and rows |
+| `text` | `@voltaire-text` | Primary text, labels, button text |
+| `text_dim` | `@voltaire-text-dim` | Section headings (MODE, SPEED, etc.), secondary labels |
+| `border` | `@voltaire-border` | Drawer border, separators, button outlines |
+| `error` | `@voltaire-error` | Error bar text and border, high-TDP warning text |
 
-Every variable is also defined under a `@voltaire-*` alias (`@voltaire-accent`
-and so on). A stylesheet may reference either name through the 2.x line; the
-`@z13-*` names are the ones the bundled rules currently use, and they are
-removed at 3.0.
+Every variable is also defined under its pre-rename `@z13-*` name
+(`@z13-accent` and so on). A stylesheet may reference either through the whole
+2.x line; the `@voltaire-*` names are what the bundled rules use, and the
+`@z13-*` aliases are removed at 3.0.
+
+If you wrote a `theme.css` against the old names it keeps working unchanged —
+it is loaded verbatim and supplies its own definitions, so it never sees ours.
+The names matter only if you started from the bundled sheet and mix the two.
 
 ## Catppuccin accent colors
 

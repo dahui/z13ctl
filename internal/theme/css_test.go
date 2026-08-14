@@ -188,39 +188,96 @@ func TestUndefinedColorTokens(t *testing.T) {
 // so a token it references without defining silently drops every rule that uses it.
 func TestEmbeddedTemplateIsSelfContained(t *testing.T) {
 	const path = "../gui/theme-default.css"
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("cannot read the embedded theme template: %v", err)
-	}
-	if missing := UndefinedColorTokens(string(data)); len(missing) > 0 {
+	if missing := UndefinedColorTokens(readTemplate(t)); len(missing) > 0 {
 		t.Errorf("%s references colour tokens it does not define: %v\n"+
 			"It is documented as a starting point for theme.css, which is loaded "+
 			"verbatim, so every rule using these would be dropped.", path, missing)
 	}
 }
 
-// The template must also define exactly the tokens Colors carries, so that a
-// verbatim copy and a BuildThemeCSS-substituted copy style the same things. A
-// token in Colors but not the template means the standalone path is missing a
-// colour; the reverse means BuildThemeCSS cannot override one.
-func TestEmbeddedTemplateDefinesEveryColorToken(t *testing.T) {
+// Every token the template defines must also be defined by BuildThemeCSS.
+//
+// The direction matters and is easy to write backwards. BuildThemeCSS strips
+// the template's own @define-color lines and prepends its own, so a token the
+// template defines and BuildThemeCSS does not is a colour a theme.toml can
+// never change: the standalone copy has it, the substituted copy has nothing.
+// The reverse is not a defect — BuildThemeCSS also emits the @z13-* aliases,
+// which nothing in the tree references any more and which exist only for a
+// third-party sheet written against the old names.
+func TestBuildThemeCSSCanOverrideEveryTemplateToken(t *testing.T) {
+	css := readTemplate(t)
+	generated := BuildThemeCSS(DefaultColors, "")
+
+	for _, m := range definePattern.FindAllStringSubmatch(css, -1) {
+		tok := m[1]
+		if !regexp.MustCompile(`@define-color\s+` + regexp.QuoteMeta(tok) + `\s`).MatchString(generated) {
+			t.Errorf("the template defines %s but BuildThemeCSS does not, so a "+
+				"theme.toml could never change that colour", tok)
+		}
+	}
+
+	// And BuildThemeCSS's own output must stand on its own too.
+	for _, tok := range UndefinedColorTokens(StripDefineColors(generated)) {
+		t.Errorf("BuildThemeCSS emits a reference to %s that it does not define", tok)
+	}
+}
+
+// TestTheComposedSheetHasNoUndefinedTokens checks the thing the app actually
+// loads: BuildThemeCSS's defines followed by the template with its own defines
+// stripped. The two halves are verified separately elsewhere, and a rename
+// applied to only one of them passes both of those and still ships a drawer
+// missing a colour.
+//
+// It has to be a test. GTK4 drops a rule with an unresolvable colour **without
+// logging anything** — verified by breaking a token deliberately and watching a
+// full debug run stay silent — so there is no runtime signal to notice, and the
+// symptom is a border or a label that is simply the wrong colour.
+func TestTheComposedSheetHasNoUndefinedTokens(t *testing.T) {
+	composed := BuildThemeCSS(DefaultColors, readTemplate(t))
+	if missing := UndefinedColorTokens(composed); len(missing) > 0 {
+		t.Errorf("the composed stylesheet references colour tokens nothing defines: %v\n"+
+			"GTK drops every rule using them, silently.", missing)
+	}
+}
+
+// TestTemplateUsesTheCurrentTokenNames pins the migration. The bundled sheet
+// referenced @z13-* until the rename was staged through it; a rule reverting to
+// the old prefix would still *work* — BuildThemeCSS defines both names — right
+// up until 3.0 deletes the aliases, at which point it would silently lose its
+// colour. Catching it here is the difference between a failing test now and an
+// unstyled control in a major release.
+func TestTemplateUsesTheCurrentTokenNames(t *testing.T) {
+	css := readTemplate(t)
+	if legacy := regexp.MustCompile(`@z13-[a-z0-9-]+`).FindAllString(css, -1); len(legacy) > 0 {
+		t.Errorf("the bundled template still uses the pre-rename token names: %v\n"+
+			"They are aliases removed at 3.0; use the @voltaire-* names.", legacy)
+	}
+}
+
+// TestLegacyAliasesAreStillEmitted keeps the 2.x compatibility promise honest.
+// Nothing in the tree references @z13-* any more, so dropping the aliases would
+// break nothing here and everything in a third-party theme.css written against
+// them. Removing this test is the deliberate act that 3.0 requires.
+func TestLegacyAliasesAreStillEmitted(t *testing.T) {
+	generated := BuildThemeCSS(DefaultColors, "")
+	for _, tok := range []string{"z13-accent", "z13-bg", "z13-surface", "z13-surface-alt",
+		"z13-text", "z13-text-dim", "z13-border", "z13-error"} {
+		if !regexp.MustCompile(`@define-color\s+` + tok + `\s`).MatchString(generated) {
+			t.Errorf("BuildThemeCSS no longer defines @%s; the alias is promised through 2.x", tok)
+		}
+	}
+}
+
+// readTemplate reads the sheet embedded by internal/gui.
+//
+// Reaching across packages for a file is deliberate: the template lives in the
+// cgo island, which has no tests of its own, and it doubles as the documented
+// starting point for a hand-written theme.css.
+func readTemplate(t *testing.T) string {
+	t.Helper()
 	data, err := os.ReadFile("../gui/theme-default.css")
 	if err != nil {
 		t.Fatalf("cannot read the embedded theme template: %v", err)
 	}
-	css := string(data)
-
-	// The tokens BuildThemeCSS emits, taken from its own output so the two cannot
-	// drift apart.
-	for _, tok := range UndefinedColorTokens(StripDefineColors(BuildThemeCSS(DefaultColors, ""))) {
-		t.Errorf("BuildThemeCSS emits a reference to %s that it does not define", tok)
-	}
-	generated := BuildThemeCSS(DefaultColors, "")
-	for _, m := range definePattern.FindAllStringSubmatch(generated, -1) {
-		if !strings.Contains(css, "@define-color "+m[1]) &&
-			!regexp.MustCompile(`@define-color\s+`+regexp.QuoteMeta(m[1])).MatchString(css) {
-			t.Errorf("BuildThemeCSS defines %s but the template does not, so a "+
-				"verbatim theme.css copy would leave it undefined", m[1])
-		}
-	}
+	return string(data)
 }
