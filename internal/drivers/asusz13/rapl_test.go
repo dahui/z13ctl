@@ -6,6 +6,8 @@ package asusz13
 import (
 	"os"
 	"testing"
+
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // TestFindRAPLPackagePathPicksThePackageDomain is the double-counting guard.
@@ -201,5 +203,65 @@ func TestSampleSurvivesAnUngrantedCounter(t *testing.T) {
 	}
 	if s.PackageEnergyUJ != 0 {
 		t.Errorf("PackageEnergyUJ = %d, want 0 when the counter is unreadable", s.PackageEnergyUJ)
+	}
+}
+
+// TestBatteryStateMapping pins power_supply's `status` vocabulary, which is the
+// one place that knows it — the sign convention in signedByStatus reads the same
+// function, so the flow's direction and the state on the wire cannot drift.
+func TestBatteryStateMapping(t *testing.T) {
+	f := newFakeSysfs(t)
+
+	cases := []struct {
+		raw  string
+		want driver.BatteryState
+	}{
+		{"Charging", driver.BatteryStateCharging},
+		{"Discharging", driver.BatteryStateDischarging},
+		{"Full", driver.BatteryStateFull},
+		{"Not charging", driver.BatteryStateNotCharging},
+		{"Unknown", driver.BatteryStateUnknown},
+		{"something new", driver.BatteryStateUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			f.writeFile(t, f.battery+"/status", tc.raw)
+			if got := ReadBatteryState(); got != tc.want {
+				t.Errorf("ReadBatteryState() with status %q = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNotChargingIsDistinctFromFull is the case that produced the bug report,
+// and the reason the state is on the wire at all.
+//
+// A charge-end threshold below the current level leaves the pack resting: it
+// cannot charge (it is over the limit) and it is not discharging (mains is
+// attached), so power_now is 0 and that is the truth. Reported as a bare "0 W"
+// it reads as a dead sensor. Collapsing "Not charging" into "Full" — the
+// tempting simplification, since both mean no flow — would throw away exactly
+// the distinction that explains it, because the pack is *not* full: it is at
+// 81% against a 74% limit.
+func TestNotChargingIsDistinctFromFull(t *testing.T) {
+	f := newFakeSysfs(t)
+
+	f.writeFile(t, f.battery+"/status", "Not charging")
+	f.writeFile(t, f.battery+"/capacity", "81")
+	f.writeFile(t, f.battery+"/charge_control_end_threshold", "74")
+
+	if got := ReadBatteryState(); got != driver.BatteryStateNotCharging {
+		t.Fatalf("ReadBatteryState() = %q, want %q", got, driver.BatteryStateNotCharging)
+	}
+	if driver.BatteryStateNotCharging == driver.BatteryStateFull {
+		t.Fatal("held-below-threshold and full must stay distinguishable")
+	}
+	// And the flow really is zero, which is what needed explaining.
+	watts, err := ReadBatteryPowerW()
+	if err != nil {
+		t.Fatalf("ReadBatteryPowerW() = %v", err)
+	}
+	if watts != 0 {
+		t.Errorf("= %v W, want 0 — nothing flows into or out of a pack held above its limit", watts)
 	}
 }

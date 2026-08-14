@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/telemetryplot"
 	"github.com/dahui/voltaire/v2/internal/telemetryring"
@@ -296,5 +297,155 @@ func TestEnergyGapMatchesThePlotsGapThreshold(t *testing.T) {
 		t.Errorf("maxEnergyGap = %v but telemetryplot.DefaultMaxGap = %v; "+
 			"a power figure would span an interval the chart breaks the line across",
 			maxEnergyGap, telemetryplot.DefaultMaxGap)
+	}
+}
+
+// TestApplyLiveTelemetryCarriesEveryMeasuredQuantity is the regression guard for
+// the gap this closed: Sample() reported temperature, both fans, the energy
+// counter and battery flow, and get-state published the temperature and one fan.
+// The dashboard charted four series while the readouts beside it showed two.
+func TestApplyLiveTelemetryCarriesEveryMeasuredQuantity(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{telemetry: telemetryring.New(8)}
+	now := time.Now()
+	// The sampler's most recent figure, which is where a counter device's
+	// package power has to come from.
+	d.telemetry.Add(now, driver.Sample{PackagePowerW: 42.5})
+
+	var st api.State
+	d.applyLiveTelemetry(&st, driver.Sample{
+		TempC:             61,
+		RPM:               []int{2400, 2600},
+		PackageEnergyUJ:   1_000_000,
+		BatteryPowerW:     -18.5,
+		BatteryPowerKnown: true,
+	})
+
+	if st.Temperature != 61 {
+		t.Errorf("Temperature = %d, want 61", st.Temperature)
+	}
+	if len(st.RPM) != 2 || st.RPM[0] != 2400 || st.RPM[1] != 2600 {
+		t.Errorf("RPM = %v, want [2400 2600]; both fans cool the same die and a "+
+			"reader quoting one of them describes neither", st.RPM)
+	}
+	if st.FanRPM != 2400 {
+		t.Errorf("FanRPM = %d, want 2400 — it is RPM[0] and every pre-2.0 client reads it", st.FanRPM)
+	}
+	if st.PackagePowerW != 42.5 {
+		t.Errorf("PackagePowerW = %v, want the sampler's 42.5", st.PackagePowerW)
+	}
+	if st.BatteryPowerW == nil || *st.BatteryPowerW != -18.5 {
+		t.Errorf("BatteryPowerW = %v, want -18.5 (charging)", st.BatteryPowerW)
+	}
+}
+
+// TestLiveBatteryZeroIsAReading is the pointer's whole reason for existing, one
+// layer down from telemetryplot's version of the same case: a full pack on mains
+// moves no energy, and that must not read as "this machine has no battery".
+func TestLiveBatteryZeroIsAReading(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{telemetry: telemetryring.New(8)}
+
+	var known api.State
+	d.applyLiveTelemetry(&known, driver.Sample{BatteryPowerW: 0, BatteryPowerKnown: true})
+	if known.BatteryPowerW == nil {
+		t.Error("a measured 0 W was dropped; zero is a reading here, not an absence")
+	} else if *known.BatteryPowerW != 0 {
+		t.Errorf("BatteryPowerW = %v, want 0", *known.BatteryPowerW)
+	}
+
+	var absent api.State
+	d.applyLiveTelemetry(&absent, driver.Sample{})
+	if absent.BatteryPowerW != nil {
+		t.Errorf("BatteryPowerW = %v on a device reporting none, want nil", *absent.BatteryPowerW)
+	}
+}
+
+// TestLivePackagePowerPrefersAnInstantaneousReading: a device whose hardware
+// reports watts directly (OXP's pm-table) needs no history at all, and must not
+// be served a stale figure from a ring it never filled.
+func TestLivePackagePowerPrefersAnInstantaneousReading(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{telemetry: telemetryring.New(8)}
+	d.telemetry.Add(time.Now(), driver.Sample{PackagePowerW: 9})
+
+	var st api.State
+	d.applyLiveTelemetry(&st, driver.Sample{PackagePowerW: 31})
+	if st.PackagePowerW != 31 {
+		t.Errorf("PackagePowerW = %v, want the sample's own 31", st.PackagePowerW)
+	}
+}
+
+// TestLivePackagePowerIsAbsentWhenStale covers the two ways there is no
+// trustworthy current figure. Serving either as "now" is worse than serving
+// nothing: a number labelled current that describes a moment before a suspend
+// is a wrong reading, where an absent one is an honest gap.
+func TestLivePackagePowerIsAbsentWhenStale(t *testing.T) {
+	t.Parallel()
+
+	counter := driver.Sample{PackageEnergyUJ: 1_000_000}
+
+	t.Run("nothing sampled yet", func(t *testing.T) {
+		t.Parallel()
+		d := &Daemon{telemetry: telemetryring.New(8)}
+		var st api.State
+		d.applyLiveTelemetry(&st, counter)
+		if st.PackagePowerW != 0 {
+			t.Errorf("PackagePowerW = %v with an empty ring, want absent", st.PackagePowerW)
+		}
+	})
+
+	t.Run("older than liveTelemetryMaxAge", func(t *testing.T) {
+		t.Parallel()
+		d := &Daemon{telemetry: telemetryring.New(8)}
+		d.telemetry.Add(time.Now().Add(-time.Hour), driver.Sample{PackagePowerW: 42.5})
+		var st api.State
+		d.applyLiveTelemetry(&st, counter)
+		if st.PackagePowerW != 0 {
+			t.Errorf("PackagePowerW = %v from an hour-old sample, want absent", st.PackagePowerW)
+		}
+	})
+}
+
+// TestFreshEnoughBound covers the staleness window itself.
+//
+// It does **not** cover the monotonic-versus-wall-clock hazard freshEnough's
+// doc comment is mostly about, and no test can: the two readings diverge only
+// across a real suspend or a clock step, and nothing in-process separates them
+// — time.Now().Add(-10*time.Hour) moves both together. That was verified by
+// deleting the safeguard and watching an earlier version of this test pass
+// anyway. The protection there is structural (Unix seconds have no monotonic
+// path), not this table, and saying so here is the point: a future reader must
+// not take a green run as evidence the hazard is covered.
+func TestFreshEnoughBound(t *testing.T) {
+	t.Parallel()
+
+	// Wall-clock-only times, which is the form freshEnough compares in.
+	now := time.Unix(1_700_000_000, 0)
+
+	cases := []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"the current tick", now, true},
+		{"one tick ago", now.Add(-telemetrySampleInterval), true},
+		{"exactly at the bound", now.Add(-liveTelemetryMaxAge), true},
+		{"one second past the bound", now.Add(-liveTelemetryMaxAge - time.Second), false},
+		{"from before a suspend", now.Add(-10 * time.Hour), false},
+		// A clock step forward puts a sample in the future. That says nothing
+		// about how old the reading is, so it is refused rather than guessed at.
+		{"timestamped in the future", now.Add(time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := freshEnough(now, tc.at, liveTelemetryMaxAge); got != tc.want {
+				t.Errorf("freshEnough = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

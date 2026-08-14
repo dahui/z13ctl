@@ -215,7 +215,37 @@ type BatteryStatus struct {
 	OnAC          bool    // mains power attached; meaningless unless ACKnown
 	ACKnown       bool    // whether the power source could be observed
 	PowerNowW     float64 // instantaneous draw or charge rate, watts
+
+	// State is what the pack is doing: one of the BatteryState constants, or
+	// BatteryStateUnknown when the device does not say.
+	//
+	// It is carried because the flow figure is not self-explaining, and on a
+	// machine with a charge limit the commonest reading is the confusing one.
+	// A pack sitting above its threshold on mains reports 0 W — correctly,
+	// nothing is moving — and 0 W with no state beside it is indistinguishable
+	// from a broken sensor. That is not hypothetical: it was reported as one.
+	State BatteryState
 }
+
+// BatteryState is what a pack is doing. The values are the portable subset of
+// power_supply's `status`, lowercased and hyphenated for the wire.
+//
+// NotCharging is the one worth knowing about: it is not an error and not
+// "idle" in general, but specifically a pack that *could* charge and is being
+// held back — almost always by a charge-end threshold. Distinguishing it from
+// Full is what lets a client say "holding at your 75% limit" rather than
+// leaving a user to conclude the reading is broken.
+type BatteryState string
+
+// The battery states. Unknown is the zero value, so a driver that does not set
+// State reports it, and it is omitted from the wire.
+const (
+	BatteryStateUnknown     BatteryState = ""
+	BatteryStateCharging    BatteryState = "charging"
+	BatteryStateDischarging BatteryState = "discharging"
+	BatteryStateFull        BatteryState = "full"
+	BatteryStateNotCharging BatteryState = "not-charging"
+)
 
 // BatteryCaps is what a device's battery interface offers. Like every other
 // capability in this package it is declared by device data rather than probed,

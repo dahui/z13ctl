@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // raplPackageName is the powercap domain that measures the whole CPU package.
@@ -110,23 +112,69 @@ func ReadBatteryPowerW() (float64, error) {
 	return signedByStatus(dir, float64(microwatts)/1e6), nil
 }
 
+// ReadBatteryState reports what the pack is doing, or BatteryStateUnknown when
+// it cannot be read. It is the one place that knows power_supply's `status`
+// vocabulary, so the sign convention below and the state on the wire cannot
+// drift apart.
+func ReadBatteryState() driver.BatteryState {
+	dir, err := findBatteryDir()
+	if err != nil {
+		return driver.BatteryStateUnknown
+	}
+	state, _ := batteryStateIn(dir)
+	return state
+}
+
+// batteryStateIn also reports whether `status` could be read at all, which is
+// **not** the same as reading it and finding "Unknown". Both map to
+// BatteryStateUnknown on the wire — a client can do nothing different with them
+// — but signedByStatus treats them differently, so collapsing them here silently
+// changes what a flow reading means. That happened: the two were merged during a
+// refactor and TestReadBatteryPowerW caught it.
+func batteryStateIn(dir string) (state driver.BatteryState, readable bool) {
+	raw, err := os.ReadFile(dir + "/status")
+	if err != nil {
+		return driver.BatteryStateUnknown, false
+	}
+	return mapBatteryState(strings.TrimSpace(string(raw))), true
+}
+
+func mapBatteryState(raw string) driver.BatteryState {
+	switch raw {
+	case "Charging":
+		return driver.BatteryStateCharging
+	case "Discharging":
+		return driver.BatteryStateDischarging
+	case "Full":
+		return driver.BatteryStateFull
+	case "Not charging":
+		// The pack could charge and is being held back — on this machine, by
+		// the charge-end threshold. Deliberately distinct from Full: it is the
+		// state that makes a 0 W flow reading make sense.
+		return driver.BatteryStateNotCharging
+	default:
+		return driver.BatteryStateUnknown
+	}
+}
+
 // signedByStatus applies the sign the magnitude in sysfs does not carry.
 func signedByStatus(dir string, watts float64) float64 {
-	status, err := os.ReadFile(dir + "/status")
-	if err != nil {
-		// Direction unknown. Reporting the magnitude as a draw is the safer of
-		// the two guesses: a machine on battery is the case where the number
-		// matters, and calling a discharge a charge would draw the graph
+	state, readable := batteryStateIn(dir)
+	if !readable {
+		// No direction to be had. Reporting the magnitude as a draw is the
+		// safer of the two guesses: a machine on battery is the case where the
+		// number matters, and calling a discharge a charge would draw the graph
 		// upside down.
 		return watts
 	}
-	switch strings.TrimSpace(string(status)) {
-	case "Discharging":
+	switch state {
+	case driver.BatteryStateDischarging:
 		return watts
-	case "Charging":
+	case driver.BatteryStateCharging:
 		return -watts
 	default:
-		// Full, Not charging, Unknown: no flow, whatever the magnitude says.
+		// Full, Not charging, Unknown — the firmware was asked and reported no
+		// flow, which is a stronger statement than an unreadable file.
 		return 0
 	}
 }

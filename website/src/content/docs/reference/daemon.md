@@ -169,8 +169,11 @@ above design). `telemetry.history_seconds` is the largest history window worth
 requesting, and `telemetry.power_draw` names the package-power source
 (`"rapl"`, `"pm-table"`) — **absent when the device reads none**, in which case
 package power is always zero and the graph should be hidden rather than drawn
-flat. The Z13 currently declares no power source: its `energy_uj` is root-only
-under the Platypus mitigation, so nothing reads it yet.
+flat. The Z13 declares `"rapl"`. Its `energy_uj` counter is root-only under the
+Platypus side-channel mitigation, so `voltaire setup` grants the group **read**
+access to it (the one read-only grant voltaire installs — the same directory
+holds the CPU's power caps). Until setup has run, the device still declares the
+source but no sample carries a reading, and the graph is hidden.
 
 `telemetry-history` returns what the daemon sampled at 1 Hz, oldest first:
 
@@ -460,16 +463,58 @@ so its top-level `fan_curve`/`tdp`/`undervolt` are migrated into a profile
 called `custom` on first load — the same settings, now addressable by name.
 Nothing needs to be done by hand.
 
-On `get-state` requests the daemon also populates `temperature` (APU die
-temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
-is plugged in), `source_known` (whether `on_ac` reflects a real reading — on a
-machine with no mains supply to read, such as a VM, `on_ac` is false with
-`source_known` false, which means *unknown*, not battery),
-`undervolt_available` (whether the `ryzen_smu` kernel module is present), and
-`battery_health` (full-charge capacity as a percentage of design capacity, zero
-when the device does not report it — `device-get`'s `battery.health` says which
-in advance) from live sysfs reads. These are not persisted — they are real-time
-sensor values.
+On `get-state` requests the daemon also populates, from live sysfs reads:
+
+| Field | Meaning |
+|---|---|
+| `temperature` | APU die temperature in °C |
+| `rpm` | every fan the device reports, in driver order |
+| `fan_rpm` | `rpm[0]`, kept for clients written before multi-fan support |
+| `package_power_w` | current CPU package draw in watts; absent when unavailable |
+| `battery_power_w` | battery flow in watts, **positive discharging**, negative charging |
+| `battery_level` | the pack's current charge, percent |
+| `battery_state` | `charging`, `discharging`, `full`, `not-charging` |
+| `on_ac` | whether the charger is plugged in |
+| `source_known` | whether `on_ac` reflects a real reading |
+| `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
+| `battery_health` | full-charge capacity as a percentage of design capacity |
+
+These are not persisted — they are real-time sensor values, the live edge of the
+same series `telemetry-history` returns.
+
+Four of them need care:
+
+- **`source_known` false means *unknown*, not battery.** On a machine with no
+  mains supply to read (a VM, a desktop) `on_ac` is false with `source_known`
+  false. Claim nothing in that case.
+- **`rpm` and `fan_rpm` are the same reading, not two.** Prefer `rpm`: both of
+  the Z13's fans cool the same die and routinely differ by several hundred RPM,
+  so quoting `fan_rpm` alone describes neither.
+- **`package_power_w` is absent rather than stale.** On hardware that publishes a
+  cumulative energy counter instead of instantaneous power, this is the daemon's
+  1 Hz sampler's most recent figure — deriving power needs two readings and the
+  interval between them, so a single request cannot compute one. A figure the
+  sampler has not refreshed within a few seconds (it stands down across a
+  suspend) is omitted, because a value labelled "now" describing some other
+  moment is worse than no value.
+- **`battery_power_w`'s zero is a reading**, which is why it is the one field
+  here that is null rather than omitted when absent: a full pack on mains
+  genuinely moves no energy, so zero and "this machine has no battery" have to
+  stay distinguishable.
+- **Read `battery_power_w` together with `battery_state`, never alone.** The
+  commonest reading on a machine with a charge limit is the confusing one: a
+  pack resting *above* its threshold on mains reports exactly `0`, correctly,
+  because nothing is moving in either direction. Shown as a bare zero that is
+  indistinguishable from a broken sensor. `battery_state` is `not-charging`
+  there — deliberately distinct from `full`, since the pack is not full, it is
+  being held back — and with `battery_level` (the reading) beside `battery_limit`
+  (the setting) a client can say "81%, holding at your 75% limit".
+- **`battery_level` and `battery_limit` are different things.** The first is the
+  charge now; the second is the end threshold voltaire writes. They are
+  routinely different numbers, and the level sitting above the limit is the
+  case above.
+- `battery_health` is zero when the device does not report it — `device-get`'s
+  `battery.health` says which in advance. It is not clamped to 100.
 
 On startup the daemon reads this file, resolves what the current power source
 calls for if autoswitch is configured, and restores all saved settings before

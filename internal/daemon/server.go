@@ -201,6 +201,12 @@ func (d *Daemon) dispatch(req request) response {
 			// Zero unless the device declares battery.health, which is what
 			// DeviceInfo.Battery.Health tells a client to expect.
 			s.BatteryHealth = bat.HealthPercent
+			// The level and what the pack is doing. Both were read here and
+			// discarded, which left BatteryPowerW travelling with nothing that
+			// makes it legible: a pack resting above its charge threshold
+			// reports a correct 0 W that reads as a broken sensor.
+			s.BatteryLevel = bat.Capacity
+			s.BatteryState = string(bat.State)
 		}
 		// Populate firmware-managed fields from hardware (not cached in daemon
 		// state); a failed read reports zero, as it always has.
@@ -225,21 +231,19 @@ func (d *Daemon) dispatch(req request) response {
 		}
 		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
 		s.UndervoltAvailable = d.uvAvailable()
-		// Populate APU temperature and fan RPM from hardware. A sample fails only
-		// when the temperature is unreadable, so fall back to the fan controller
-		// for RPM there — the two readings were always independent on the wire.
+		// Populate live telemetry from hardware. A sample fails only when the
+		// temperature is unreadable, so fall back to the fan controller for RPM
+		// there — the two readings were always independent on the wire.
 		sampled := false
 		if d.hw != nil && d.hw.Telemetry != nil {
 			if sample, err := d.hw.Telemetry.Sample(); err == nil {
 				sampled = true
-				s.Temperature = sample.TempC
-				if len(sample.RPM) > 0 {
-					s.FanRPM = sample.RPM[0]
-				}
+				d.applyLiveTelemetry(&s, sample)
 			}
 		}
 		if !sampled && d.hw != nil && d.hw.Fans != nil {
 			if rpms, err := d.hw.Fans.ReadRPM(); err == nil && len(rpms) > 0 {
+				s.RPM = append([]int(nil), rpms...)
 				s.FanRPM = rpms[0]
 			}
 		}

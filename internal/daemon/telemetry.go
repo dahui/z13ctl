@@ -16,6 +16,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/telemetryring"
 )
 
@@ -191,6 +192,89 @@ func (d *Daemon) sampleOnce() {
 	}
 
 	d.history().Add(now, s)
+}
+
+// liveTelemetryMaxAge bounds how stale the sampler's most recent derived figure
+// may be before get-state omits it instead of serving it as the current value.
+//
+// Three ticks: one miss is noise, and the sampler needs one tick after a resume
+// before it has anything to say. Beyond that the likely causes are a sampler
+// standing down across a suspend and a telemetry source that has started
+// failing — and in both, a number labelled "now" that describes some other
+// moment is worse than no number.
+const liveTelemetryMaxAge = 3 * telemetrySampleInterval
+
+// applyLiveTelemetry fills the live telemetry fields of a get-state reply from
+// one fresh sample, plus — for package power alone — the sampler's history.
+//
+// Everything but package power is instantaneous and comes straight from the
+// sample. Package power is a *rate*, and on any device whose hardware offers a
+// cumulative energy counter (powercap RAPL, which is what x86 offers) a single
+// reading cannot become one: it needs a previous reading and the interval since.
+// This handler has neither, and must not acquire them — d.prevEnergy is owned by
+// the sampler's goroutine and unguarded precisely because that goroutine is the
+// only writer, so re-baselining it from a socket handler would be a data race
+// *and* would corrupt the series the dashboard is drawing. Serving the sampler's
+// own most recent figure is also the only way the header and the right-hand edge
+// of the chart beside it can agree, and two numbers for one quantity that
+// disagree is indistinguishable from a bug.
+func (d *Daemon) applyLiveTelemetry(s *api.State, sample driver.Sample) {
+	s.Temperature = sample.TempC
+	if len(sample.RPM) > 0 {
+		s.RPM = append([]int(nil), sample.RPM...)
+		s.FanRPM = sample.RPM[0]
+	}
+	if sample.BatteryPowerKnown {
+		watts := sample.BatteryPowerW
+		s.BatteryPowerW = &watts
+	}
+
+	switch {
+	case sample.PackagePowerW != 0:
+		// A device reporting instantaneous power (OXP's pm-table) needs none
+		// of the above.
+		s.PackagePowerW = sample.PackagePowerW
+	case sample.PackageEnergyUJ != 0:
+		if e, ok := d.history().Latest(); ok && freshEnough(time.Now(), e.At, liveTelemetryMaxAge) {
+			s.PackagePowerW = e.Sample.PackagePowerW
+		}
+	}
+}
+
+// freshEnough reports whether a sample taken at `at` is recent enough, as of
+// `now`, to serve as a current reading.
+//
+// # The comparison is on Unix seconds, and that is structural
+//
+// Both times come from time.Now() and so carry *monotonic* clock readings,
+// which Sub and Since prefer over the wall clock. Go's monotonic clock is
+// CLOCK_MONOTONIC, which does not advance while the machine is suspended — the
+// same fact reconcileSuspendMaxTicks is counted in ticks for, and the reason
+// telemetryring stores wall-clock timestamps at all. A monotonic comparison
+// would measure a sample taken before a ten-hour suspend as seconds old and
+// serve it as the current package draw, for the second between a resume and the
+// sampler's next tick.
+//
+// Unix() reads the wall clock and nothing else, so there is no monotonic path
+// through this function to remove by accident. That matters more than the
+// precision it costs: **this property cannot be unit-tested.** Wall and
+// monotonic readings only diverge across a real suspend or a clock step, and
+// no in-process construction separates them — time.Now().Add(-10*time.Hour)
+// moves both together, so a test written against it passes just as happily with
+// the safeguard deleted. That was checked, not assumed. An equivalent written
+// as at.Round(0) is correct today and one "simplify this" away from silently
+// not being, with nothing to catch it.
+//
+// The cost is second granularity, which is nothing here: the sampler runs at
+// 1 Hz and the bound is three of its ticks, so the answer can be off by at most
+// one tick of a threshold that is itself a judgement call.
+//
+// A negative age means the wall clock stepped forward between the sample and
+// now, which says nothing about how old the reading is, so it is refused on the
+// same "absent beats stale" grounds.
+func freshEnough(now, at time.Time, limit time.Duration) bool {
+	age := time.Duration(now.Unix()-at.Unix()) * time.Second
+	return age >= 0 && age <= limit
 }
 
 // handleTelemetryHistory answers with the samples taken within the requested

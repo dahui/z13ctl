@@ -32,6 +32,63 @@ type State struct {
 	Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
 	FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 
+	// RPM is every fan the device reports, in the driver's order; FanRPM is
+	// RPM[0]. Both are carried because they answer different questions and one
+	// of them is a compatibility surface: FanRPM predates multi-fan support and
+	// every pre-2.0 client reads it, so it is served forever, while a machine
+	// with two fans cooling the same die is misdescribed by either one of them
+	// alone — the Z13's fans routinely differ by several hundred RPM, and a
+	// header quoting only the quieter one reads as a stopped fan.
+	//
+	// The same values a TelemetrySample carries, from the same driver call; this
+	// is the live edge of the series the dashboard plots.
+	RPM []int `json:"rpm,omitempty"`
+
+	// PackagePowerW is the current CPU package draw in watts, absent on a
+	// device that reports none. See TelemetrySample.PackagePowerW — the value
+	// here is the same quantity and, on a device whose hardware offers a
+	// cumulative energy counter rather than instantaneous power, literally the
+	// same number: the conversion needs two readings taken a known interval
+	// apart, so the daemon serves its sampler's most recent figure rather than
+	// deriving a second one from a different baseline. Two derivations would
+	// disagree, and a header disagreeing with the right-hand edge of the chart
+	// beside it is indistinguishable from a bug.
+	//
+	// Absent rather than stale: a figure the sampler has not refreshed recently
+	// (it stands down across a suspend) is omitted, because a reading labelled
+	// "now" that describes ten hours ago is worse than no reading.
+	PackagePowerW float64 `json:"package_power_w,omitempty"`
+
+	// BatteryPowerW is battery flow in watts: positive while discharging,
+	// negative while charging. A pointer for the same reason
+	// TelemetrySample.BatteryPowerW is one — zero is a real reading here, so
+	// absent and zero must be distinguishable.
+	BatteryPowerW *float64 `json:"battery_power_w,omitempty"`
+
+	// BatteryLevel is the pack's current charge as a percentage, zero when the
+	// device has no battery.
+	//
+	// Note the neighbour it is easily confused with: `Battery` above is the
+	// charge *limit* (the end threshold voltaire writes), which is a setting,
+	// while this is the reading. They are routinely different numbers and the
+	// interesting case is when the level sits above the limit — see
+	// BatteryState.
+	BatteryLevel int `json:"battery_level,omitempty"`
+
+	// BatteryState is what the pack is doing: "charging", "discharging",
+	// "full", "not-charging", or absent when the device does not say.
+	//
+	// It exists because BatteryPowerW is not self-explaining, and on a machine
+	// with a charge limit the commonest reading is the confusing one: a pack
+	// resting above its threshold on mains reports exactly 0 W, correctly,
+	// because nothing is moving. Without a state beside it that is
+	// indistinguishable from a dead sensor — which is how it was first
+	// reported. "not-charging" is deliberately distinct from "full": it means
+	// the pack could charge and is being held back, which together with
+	// BatteryLevel and Battery lets a client say "81%, holding at your 75%
+	// limit" instead of showing a bare zero.
+	BatteryState string `json:"battery_state,omitempty"`
+
 	// BatteryHealth is full-charge capacity as a percentage of design
 	// capacity, or zero when the device does not report it — which is what
 	// DeviceInfo.Battery.Health says in advance, so a client knows whether to

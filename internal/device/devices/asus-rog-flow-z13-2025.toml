@@ -82,18 +82,14 @@ method = "ryzen-smu-co"
 min    = -40
 max    = 0
 
-# power_draw is deliberately unset. This machine does expose powercap RAPL
-# (intel-rapl:0, name "package-0"), but energy_uj is 0400 root:root — the
-# Platypus mitigation — so reading it needs a udev grant through voltaire setup
-# and the packaged rules, which nothing has added yet. Naming a source here
-# before Sample() reads one would put a flat zero line on the dashboard instead
-# of hiding the graph, and capability absence is what clients hide on.
 # APU temperature and both fan speeds from hwmon; package power from the
-# powercap RAPL energy counter; battery flow from power_supply. energy_uj is
-# 0400 root:root under the Platypus mitigation, so package power appears only
-# after "voltaire setup" has granted the group read access — a machine without
-# it reports no package power and the dashboard draws no power chart, rather
-# than a line flat at zero.
+# powercap RAPL energy counter (intel-rapl:0, name "package-0"); battery flow
+# from power_supply. energy_uj is 0400 root:root under the Platypus mitigation,
+# so package power appears only after "voltaire setup" has granted the group
+# read access — a machine without it reports no package power and the dashboard
+# draws no power chart, rather than a line flat at zero. Declaring a source here
+# that Sample() does not read is the failure this block used to describe: the
+# graph would be flat at zero, which reads as a measurement.
 [telemetry]
 method          = "hwmon-rapl"
 power_draw      = "rapl"

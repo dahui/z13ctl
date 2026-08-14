@@ -144,10 +144,9 @@ type Window struct {
 	syncing bool // true while syncState is updating widgets; suppresses sendApply
 
 	// View switching (main/theme/color views).
-	mainScroll   *gtk.ScrolledWindow // scrollable area in main drawer view
-	viewStack    *gtk.Stack          // switches between the drawer's views
-	paletteBtn   *gtk.Button         // theme button in bottom bar
-	dashboardBtn *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
+	mainScroll *gtk.ScrolledWindow // scrollable area in main drawer view
+	viewStack  *gtk.Stack          // switches between the drawer's views
+	paletteBtn *gtk.Button         // theme button in bottom bar
 
 	// fullVisible is true when the full window is on screen. Atomic for the
 	// same reason `visible` is: the gamepad reader's goroutine reads both

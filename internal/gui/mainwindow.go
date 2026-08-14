@@ -16,17 +16,33 @@ package gui
 // Which tabs exist, in what order, and how large the window may open are in
 // internal/mainwin, where `make test` can reach them. What is here is the GTK.
 //
-// # Gamescope is deliberately not handled here yet
+// # Gamescope is not handled here yet — but not because it cannot be
 //
-// Under gamescope a second toplevel does not composite, so the full window has
-// to be a fullscreen surface inside the one window that does — and the drawer's
-// view stack is not it: that stack lives inside a 320px panel the backend sizes,
-// so a page added to it would be a 320px "full window". The right shape is a
-// stack at the *wrapper* level, which means a new Backend method and a change
-// to all three backends. Until that lands, openFull degrades to opening the
-// drawer's own dashboard: the double press still gets the user to the charts,
-// on the surface that session actually has. A dead event would be worse, and so
-// would a window nobody can see.
+// What does not work under gamescope is a second *toplevel*, which is what this
+// file creates: only one window carries the STEAM_OVERLAY atom, and gamescope's
+// GetPossibleFocusWindows() skips windows flagged isOverlay. That is a fact
+// about second windows, not about screen space — and it has been mis-stated
+// here as "gamescope cannot show a full window", which is wrong.
+//
+// The gamescope backend's window is *already fullscreen*: Configure sizes it to
+// the whole output and keeps it mapped, and WrapContent puts a click-to-dismiss
+// backdrop plus a right-aligned 320px panel inside it. So the full window there
+// is a different **layout of the surface we already own** — swap the wrapper's
+// child for full-window content and it fills the screen.
+//
+// HHD is the existence proof, and it is the same shape: its sidebar and its
+// larger settings view are one Electron surface re-laying-out its contents, not
+// two windows. Same reason its menus work where GtkDropDown does not (see the
+// popup-layer notes in internal/gui/CLAUDE.md) — everything lives in the one
+// surface gamescope composites.
+//
+// The one claim that does hold is why the drawer's *existing* view stack is not
+// the answer: it lives inside the 320px panel the backend sizes, so a page
+// added to it would be a 320px "full window". The seam wanted is a stack at the
+// *wrapper* level — a Backend method to swap the wrapped child, which
+// layer-shell and overlay satisfy by going on using this toplevel. Until it
+// lands, openFull degrades to opening the drawer's own dashboard: the double
+// press still gets the user to the charts, on the surface that session has.
 
 import (
 	"log/slog"

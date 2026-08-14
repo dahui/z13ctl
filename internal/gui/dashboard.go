@@ -207,8 +207,16 @@ func (d *dashboardView) syncSpanButtons() {
 	}
 }
 
-// showDashboardView switches to the dashboard, building it on first access.
-// A second tap returns to the main view, matching every other view button.
+// showDashboardView switches the drawer to the dashboard, building it on first
+// access. A second call returns to the main view.
+//
+// **Nothing in the drawer calls this.** The dashboard is a reading surface and
+// belongs to the full window; the drawer is the controls a user wants close at
+// hand, and a chart at 320px is not one of them. The single caller is
+// Window.openFull's gamescope branch, where a second toplevel does not
+// composite and this is the only surface that session has — so the double press
+// still reaches the charts. It goes away when the wrapper-level stack lands and
+// gamescope gets a real full window.
 func (w *Window) showDashboardView() {
 	if w.viewStack == nil {
 		return

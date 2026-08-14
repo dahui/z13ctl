@@ -213,17 +213,12 @@ func (w *Window) buildBottomBar() *gtk.Box {
 	w.paletteBtn.ConnectClicked(func() { w.showThemeView() })
 	bar.Append(w.paletteBtn)
 
-	// Telemetry, when the device reports any. Capability absence hides the
-	// button rather than opening a view with nothing in it — a nil document
-	// means the daemon did not answer, which is not evidence the machine
-	// measures nothing, so it keeps the button.
-	if w.device == nil || w.device.Telemetry != nil {
-		w.dashboardBtn = gtk.NewButton()
-		w.dashboardBtn.SetIconName("utilities-system-monitor-symbolic")
-		w.setHint(w.dashboardBtn, "Temperature and fan history")
-		w.dashboardBtn.ConnectClicked(func() { w.showDashboardView() })
-		bar.Append(w.dashboardBtn)
-	}
+	// There is deliberately no telemetry button here. The drawer is the quick
+	// controls a user wants close at hand; the dashboard is a reading surface
+	// that belongs to the full window, and a chart is the one thing 320px
+	// cannot show at a size worth looking at. The view is still reachable under
+	// gamescope, where there is no second toplevel to put it on — see
+	// Window.openFull.
 
 	// Spacer pushes toggles to the right.
 	spacer := gtk.NewBox(gtk.OrientationHorizontal, 0)
@@ -484,12 +479,6 @@ func (w *Window) focusFooter(b *focusgrid.Builder, items *[]focusItem) {
 		widget   gtk.Widgetter
 		activate func()
 	}{{w.paletteBtn, func() { w.showThemeView() }}}
-	if btn := w.dashboardBtn; btn != nil {
-		footer = append(footer, struct {
-			widget   gtk.Widgetter
-			activate func()
-		}{btn, func() { w.showDashboardView() }})
-	}
 	if sw := w.overdriveSwitch; sw != nil {
 		footer = append(footer, struct {
 			widget   gtk.Widgetter

@@ -202,6 +202,9 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 	if on, err := OnACPower(); err == nil {
 		st.OnAC, st.ACKnown = on, true
 	}
+	// Best-effort, on the same terms as health: a pack whose `status` cannot be
+	// read must not make the charge level unreadable.
+	st.State = ReadBatteryState()
 	// Health is best-effort for the same reason RPM is in Sample: a pack whose
 	// full-charge attributes are missing must not make the charge level
 	// unreadable. Zero is the documented "not reported".

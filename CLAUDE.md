@@ -461,7 +461,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
   | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live temp/RPM + undervolt_available + on_ac/source_known + battery_health) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live telemetry + undervolt_available + on_ac/source_known + battery_health) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
   (events: `gui-toggle`, `gui-open-full`, `power-source`, `state-changed`)
 
@@ -1393,13 +1393,25 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `reportError` fans out, because the drawer's bar is hidden whenever the window
   is up and a failure reported only to it is invisible. That is issue #14's
   shape reintroduced by a second surface.
-  **Gamescope is deliberately still on the drawer's dashboard.** A second
-  toplevel does not composite there, and the drawer's stack is not a substitute:
-  it lives inside a 320px panel the backend sizes, so a page added to it would
-  be a 320px "full window". The real fix is a stack at the wrapper level — a new
-  `Backend` method across all three backends — and until it lands the double
-  press opens the drawer's own dashboard, which at least reaches the charts on
-  the surface that session has.
+  **Gamescope is still on the drawer's dashboard — but "a second toplevel does
+  not composite there" is a fact about second *windows*, not about screen
+  space, and stating it as "gamescope cannot have a full window" was wrong.**
+  Only one window carries `STEAM_OVERLAY` and gamescope's
+  `GetPossibleFocusWindows()` skips `isOverlay`-flagged windows, so the real
+  `gtk.Window` `mainwindow.go` creates is invisible there. But the gamescope
+  backend's own window is *already fullscreen* — `Configure` sizes it to the
+  whole output and keeps it mapped, and `WrapContent` puts a click-to-dismiss
+  backdrop plus a right-aligned 320px panel inside it. The full window there is
+  a different **layout of the surface we already own**. HHD is the existence
+  proof and is the same shape: its sidebar and its larger settings view are one
+  Electron surface re-laying-out its contents, which is also why its menus work
+  where `GtkDropDown` does not. What *does* hold is why the **drawer's** stack
+  is not the substitute: it lives inside the 320px panel the backend sizes, so a
+  page added to it would be a 320px "full window". The seam wanted is a stack at
+  the **wrapper** level — a `Backend` method to swap the wrapped child, which
+  layer-shell and overlay satisfy by going on using the toplevel. Until it lands
+  the double press opens the drawer's own dashboard, which at least reaches the
+  charts on the surface that session has.
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing
@@ -1420,6 +1432,64 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   trustworthy. `sampleOnce` also takes neither `hwMu` nor `d.mu` for the read
   itself, on the same grounds `*-get` handlers do not: blocking the dashboard's
   data behind a fan write sequence is the regression, not the protection.
+- **`get-state` is the *live* edge of the same series `telemetry-history`
+  plots, and it must carry every quantity the device measures.** The roadmap
+  puts live updates on the existing 1 Hz `get-state` poll and history on the
+  ring, so the two are one feature seen at two timescales. That was half-built
+  for a release: `Sample()` reported temperature, both fans, the energy counter
+  and battery flow, and `handleGetState` published `Temperature` and `RPM[0]` —
+  a dashboard charting four series beside readouts showing two. `RPM []int`,
+  `PackagePowerW` and `BatteryPowerW` close it; `FanRPM` stays forever as
+  `RPM[0]` because every pre-2.0 client reads it. Quoting one of two fans that
+  cool the same die describes neither — the Z13's differ by hundreds of RPM.
+  **Package power is the one quantity a handler may not derive.** It is a rate,
+  so on counter hardware it needs the previous reading and the interval since;
+  `d.prevEnergy` belongs to the sampler's goroutine and is unguarded *because*
+  that goroutine is its only writer, so re-baselining it from a socket handler
+  would be both a data race and a corruption of the series being drawn. The
+  handler serves the sampler's most recent figure instead, which is also the
+  only way the live readout and the right-hand edge of the chart can agree —
+  two numbers for one quantity that disagree is indistinguishable from a bug.
+  It is served **absent rather than stale**, bounded by `liveTelemetryMaxAge`.
+- **A battery flow figure is meaningless without the pack's state beside it,
+  and shipping the number alone was reported as a broken sensor.** On a machine
+  with a charge limit the commonest reading is the confusing one: a pack resting
+  *above* its end threshold on mains is neither charging (it is over the limit)
+  nor discharging (mains is attached), so `power_now` is exactly 0 — correct,
+  and indistinguishable from a dead reading. Measured on this machine: limit 74,
+  level 81, `status` "Not charging", and UPower independently agreeing at
+  `energy-rate: 0 W`, `state: pending-charge`. `get-state` was already reading
+  `BatteryStatus.Capacity` on every request and **throwing it away**, so no
+  client could show the level either. `battery_level` and `battery_state` close
+  it; `battery_limit` remains the *setting* and is a different number from
+  `battery_level`, the reading.
+  `not-charging` is deliberately **not** folded into `full` even though both
+  mean no flow — the pack is not full, it is being held back, and that is the
+  entire explanation for the zero. `mapBatteryState` is the one place that knows
+  power_supply's `status` vocabulary, so the wire state and `signedByStatus`'s
+  sign convention cannot drift.
+  **`batteryStateIn` also returns whether `status` could be *read*, which is not
+  the same as reading it and finding "Unknown".** Both are `BatteryStateUnknown`
+  to a client, but an unreadable file leaves `signedByStatus` guessing
+  "discharging" (the direction that matters, on a machine running off the pack)
+  while an explicit answer means no flow. Merging the two during this refactor
+  silently changed what a flow reading meant, and `TestReadBatteryPowerW` caught
+  it.
+- **`freshEnough` compares Unix seconds, and the reason is that the hazard it
+  guards cannot be tested.** Ring timestamps and `time.Now()` both carry
+  monotonic readings, which `Sub`/`Since` prefer — and Go's monotonic clock is
+  `CLOCK_MONOTONIC`, which does not advance across a suspend (the same fact
+  `reconcileSuspendMaxTicks` is counted in ticks for). A monotonic comparison
+  serves a pre-suspend figure as the current draw for the second between a
+  resume and the sampler's next tick. The first fix was `at.Round(0)`, which is
+  correct and undetectably fragile: **the negative control was run, and a test
+  named for the wall clock passed with the safeguard deleted**, because
+  `time.Now().Add(-10*time.Hour)` moves both readings together and nothing
+  in-process separates them. `Unix()` has no monotonic path to remove by
+  accident. The cost is second granularity against a three-tick bound on a 1 Hz
+  sampler, which is nothing. `TestFreshEnoughBound` covers the window and says
+  in its own comment that it does *not* cover the hazard, so a green run is not
+  mistaken for evidence.
 - **A failed sample is a gap, not a zero, and the wire carries timestamps so a
   client can see it.** `api.TelemetrySample.At` is Unix seconds and samples are
   **not evenly spaced** — the sampler stands down across a suspend and skips a

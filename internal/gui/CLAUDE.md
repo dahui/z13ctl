@@ -723,15 +723,28 @@ as "already in flight" and drew the chart from a reply fetched before the user
 asked for anything. `selectTab` moves the stack and the highlight; `setTab` is
 what a tab button does.
 
-**Gamescope is not handled yet, and the fallback is deliberate.** A second
-toplevel does not composite there, so the window has to be a fullscreen surface
-inside the one window that does — and the drawer's view stack is not it: that
-stack lives inside a 320px panel the backend sizes, so a page added to it would
-be a 320px "full window". The right shape is a stack at the *wrapper* level,
-which means a new `Backend` method and a change to all three backends. Until
-then `openFull` opens the drawer's own dashboard under gamescope: the double
-press still reaches the charts, on the surface that session actually has. A
-dead event would be worse, and so would a window nobody can see.
+**Gamescope is not handled yet — and the reason is narrower than this file
+used to claim.** What fails there is a second *toplevel*, which is what
+`mainwindow.go` creates: only one window carries `STEAM_OVERLAY`, and
+gamescope's `GetPossibleFocusWindows()` skips windows flagged `isOverlay`. That
+says nothing about screen space. The gamescope backend's window is **already
+fullscreen** — `Configure` sizes it to the whole output and keeps it mapped,
+and `WrapContent` puts a click-to-dismiss backdrop plus a right-aligned 320px
+panel inside it — so a full window there is a different **layout of the surface
+we already own**, not a second surface.
+
+HHD does exactly that, and it is worth knowing because it is the same fact as
+the popup-layer section above: its sidebar and its larger settings view are one
+Electron surface re-laying-out its contents. Everything lives in the one surface
+gamescope composites, which is why its menus work where `GtkDropDown` does not.
+
+The claim that *does* hold is why the drawer's existing view stack is not the
+substitute: that stack lives inside the 320px panel the backend sizes, so a page
+added to it would be a 320px "full window". The seam wanted is a stack at the
+**wrapper** level — a `Backend` method to swap the wrapped child, which
+layer-shell and overlay satisfy by continuing to use the toplevel. Until then
+`openFull` opens the drawer's own dashboard under gamescope: the double press
+still reaches the charts, on the surface that session actually has.
 
 **Two of the four specified pages are absent, not stubbed.** Settings is
 blocked on the same two api additions `internal/controls` records for generic
