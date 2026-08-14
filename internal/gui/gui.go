@@ -149,6 +149,17 @@ type Window struct {
 	paletteBtn   *gtk.Button         // theme button in bottom bar
 	dashboardBtn *gtk.Button         // telemetry button in bottom bar; nil when the device reports none
 
+	// fullVisible is true when the full window is on screen. Atomic for the
+	// same reason `visible` is: the gamepad reader's goroutine reads both
+	// through anyVisible. Written only from mainWindow.show/hide on the GTK
+	// thread.
+	fullVisible atomic.Bool
+
+	// mainWin is the full window (mainwindow.go); nil until a double press
+	// asks for it. It hosts its own instances of the views the drawer also
+	// shows, so nothing here is shared but Window itself.
+	mainWin *mainWindow
+
 	// Lazily-built stack views. Each owns its widgets, and a nil pointer is
 	// also the built-yet test every show*View uses.
 	custom    *customView // custom profile editor (customview.go, profiles.go, fancurve.go)
@@ -165,16 +176,14 @@ type Window struct {
 	steamPID     int
 
 	// Gamepad focus navigation.
-	gamepadReader       *gamepad.Reader
-	focusItems          []focusItem  // active view's navigable widgets (points to one of the lists below)
-	focusIdx            int          // current position in focusItems
-	gamepadActive       bool         // true when gamepad focus indicator is shown
-	focusEditing        bool         // true when a slider is in edit mode
-	editOriginalValue   float64      // saved value for cancel on B
-	mainFocusItems      []focusItem  // focus grid for main drawer view
-	customFocusItems    []focusItem  // focus grid for the custom profile view
-	dashboardFocusItems []focusItem  // focus grid for the telemetry dashboard
-	focusStack          []focusFrame // suspended focus lists while a popup is open
+	gamepadReader     *gamepad.Reader
+	focusItems        []focusItem  // active view's navigable widgets (points to one of the lists below)
+	focusIdx          int          // current position in focusItems
+	gamepadActive     bool         // true when gamepad focus indicator is shown
+	focusEditing      bool         // true when a slider is in edit mode
+	editOriginalValue float64      // saved value for cancel on B
+	mainFocusItems    []focusItem  // focus grid for main drawer view
+	focusStack        []focusFrame // suspended focus lists while a popup is open
 
 	// dashboard is the telemetry view; nil until first navigation. It owns its
 	// own refresh loop because it reads telemetry-history rather than
@@ -359,7 +368,7 @@ func New(app *gtk.Application) *Window {
 	if startup.GUIEnv("NO_GAMEPAD") == "" {
 		w.gamepadReader = gamepad.New(
 			w.handleGamepadAction,
-			w.visible.Load,
+			w.anyVisible,
 			func(f func()) { glib.IdleAdd(f) },
 		)
 		go w.gamepadReader.Run()
@@ -419,6 +428,17 @@ func New(app *gtk.Application) *Window {
 	if startup.GUIEnv("DUMP_FOCUS") != "" {
 		w.dumpAllFocusLists()
 	}
+	// VOLTAIRE_GUI_OPEN_FULL=1 opens the full window at startup, without the
+	// hardware double press. It is the same kind of instrument as DUMP_FOCUS
+	// and exists for the same reason: the full window is otherwise reachable
+	// only by pressing a key on one laptop, so nothing about it could be
+	// checked while developing it.
+	if startup.GUIEnv("OPEN_FULL") != "" {
+		glib.IdleAdd(func() bool {
+			w.openFull()
+			return false
+		})
+	}
 
 	slog.Info("drawer initialized")
 	return w
@@ -445,12 +465,12 @@ func (w *Window) dumpAllFocusLists() {
 		return
 	}
 	if w.custom == nil {
-		w.viewStack.AddNamed(w.buildCustomView(), "custom")
-		w.buildCustomFocusList()
+		w.custom = newCustomView(w, w.drawerHost("custom"))
+		w.viewStack.AddNamed(w.custom.root, "custom")
 	}
 	if w.dashboard == nil {
-		w.viewStack.AddNamed(w.buildDashboardView(), "dashboard")
-		w.buildDashboardFocusList()
+		w.dashboard = newDashboardView(w, w.drawerHost("dashboard"))
+		w.viewStack.AddNamed(w.dashboard.root, "dashboard")
 	}
 	if w.themeView == nil {
 		w.viewStack.AddNamed(w.buildThemeView(), "theme")
@@ -461,6 +481,15 @@ func (w *Window) dumpAllFocusLists() {
 		w.buildColorFocusList()
 	}
 	w.viewStack.SetVisibleChildName("main")
+
+	// The full window is a second surface hosting its own instances of two of
+	// those views, so the fingerprint has to cover it too — a change that left
+	// the drawer's grids untouched and broke the window's would otherwise pass
+	// the diff. Its pages are named full:<tab> in the log, since the view names
+	// alone would collide with the drawer's.
+	if w.mainWin == nil {
+		w.mainWin = newMainWindow(w)
+	}
 }
 
 // Toggle shows or hides the drawer. Must be called from the GTK main thread.
@@ -673,6 +702,17 @@ func (w *Window) subscribeLoop() {
 				slog.Debug("gui-toggle received, dispatching")
 				glib.TimeoutAdd(0, func() bool {
 					w.Toggle()
+					return false
+				})
+				glib.MainContextDefault().Wakeup()
+			case api.EventGUIOpenFull:
+				// Additive to the gui-toggle the same press already emitted:
+				// the quickbar is up by now, and this replaces it. Never
+				// debounced against the toggle — they are one press reported
+				// twice on purpose.
+				slog.Debug("gui-open-full received, dispatching")
+				glib.TimeoutAdd(0, func() bool {
+					w.openFull()
 					return false
 				})
 				glib.MainContextDefault().Wakeup()

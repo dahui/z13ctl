@@ -11,6 +11,12 @@
     padding: 0;
 }
 
+/* Full window tab bar. Padding rather than the panel's 4px gap: the tabs read
+   as a strip along the top of the window, not as a group of buttons in it. */
+.main-tabs {
+    padding: 4px 8px 0 8px;
+}
+
 /* Touch targets — button group controls minimum 48px tall */
 .drawer .btn-group button {
     min-height: 48px;

@@ -21,6 +21,14 @@ package gui
 // friends stay as thin delegates: the ~50 call sites across the package say what
 // they mean already, and a refactor whose point is to shrink the Window struct
 // should not also churn every caller.
+//
+// There is one bar per *surface*, not one per process: the full window is a
+// separate toplevel, and an error raised from a view inside it would otherwise
+// be shown on the drawer's bar, which is hidden at the time. reportError fans
+// out to every bar that has been built and each suppresses itself when its own
+// surface is closed — the report is cheap, and a message written to a bar
+// nobody can see costs nothing, whereas the one the user is looking at showing
+// nothing costs them the reason their save failed.
 
 import (
 	"log/slog"
@@ -40,15 +48,20 @@ const errLabelMaxChars = 34
 type errBarView struct {
 	w *Window
 
+	// visible reports whether this bar's own surface is on screen. A report
+	// that lands after its surface closed is dropped rather than left waiting
+	// to greet the next open — the stale-failure case hide()'s clearError
+	// exists for.
+	visible func() bool
+
 	bar     *gtk.Box
 	label   *gtk.Label
 	dismiss *gtk.Button
 }
 
-// buildErrorBar returns the hidden-by-default error strip.
-func (w *Window) buildErrorBar() *gtk.Box {
-	e := &errBarView{w: w}
-	w.errView = e
+// newErrorBar returns the hidden-by-default error strip for one surface.
+func newErrorBar(w *Window, visible func() bool) *errBarView {
+	e := &errBarView{w: w, visible: visible}
 
 	e.bar = gtk.NewBox(gtk.OrientationHorizontal, 4)
 	e.bar.AddCSSClass("error-bar")
@@ -77,7 +90,7 @@ func (w *Window) buildErrorBar() *gtk.Box {
 	e.dismiss.ConnectClicked(func() { e.clear() })
 	e.bar.Append(e.dismiss)
 
-	return e.bar
+	return e
 }
 
 // errBarRow places the error bar after every other row in every view's focus
@@ -93,12 +106,11 @@ const errBarRow = 10000
 // were to close the drawer or to complete an operation successfully, which is
 // exactly what a user staring at a failure is unsure how to do. It is only
 // navigable while the bar is showing.
-func (w *Window) errBarFocusItem() focusItem {
-	e := w.errView
+func (e *errBarView) focusItem() focusItem {
 	item := focusItem{
 		row: errBarRow, col: 0, section: "error",
 		isVisible:  func() bool { return e != nil && e.bar != nil && e.bar.IsVisible() },
-		onActivate: func() { w.clearError() },
+		onActivate: func() { e.clear() },
 	}
 	if e != nil {
 		item.widget = e.dismiss
@@ -117,8 +129,8 @@ func (e *errBarView) report(op, msg string) {
 		// showing the bar then means it is already up the next time the drawer
 		// opens — the stale failure hide()'s clearError exists to prevent. The
 		// journal still has it.
-		if !e.w.visible.Load() {
-			slog.Debug("error suppressed: drawer already closed", "op", op)
+		if e.visible != nil && !e.visible() {
+			slog.Debug("error suppressed: surface already closed", "op", op)
 			return
 		}
 		// Most recent error wins; the bar shows one message at a time.
@@ -149,18 +161,30 @@ func (w *Window) reportError(op string, err error) {
 		return
 	}
 	slog.Warn("operation failed", "op", op, "err", err)
-	if w.errView == nil {
-		return
+	for _, e := range w.errBars() {
+		e.report(op, op+": "+err.Error())
 	}
-	w.errView.report(op, op+": "+err.Error())
+}
+
+// errBars returns every error bar that has been built: the drawer's, and the
+// full window's when it exists.
+func (w *Window) errBars() []*errBarView {
+	out := make([]*errBarView, 0, 2)
+	if w.errView != nil {
+		out = append(out, w.errView)
+	}
+	if w.mainWin != nil && w.mainWin.errView != nil {
+		out = append(out, w.mainWin.errView)
+	}
+	return out
 }
 
 // clearError hides the error bar. Must be called from the GTK main thread.
 // Called on each successful operation and from hide(), so a stale failure does
 // not greet the user the next time the drawer opens.
 func (w *Window) clearError() {
-	if w.errView != nil {
-		w.errView.clear()
+	for _, e := range w.errBars() {
+		e.clear()
 	}
 }
 

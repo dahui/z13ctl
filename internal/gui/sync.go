@@ -115,7 +115,7 @@ func (w *Window) startTelemetryPolling() {
 	w.telemetryGen++
 	gen := w.telemetryGen
 	glib.TimeoutAdd(1000, func() bool {
-		if gen != w.telemetryGen || !w.visible.Load() {
+		if gen != w.telemetryGen || !w.anyVisible() {
 			return false
 		}
 		// One request at a time. api commands carry a 10s deadline, so against a
@@ -147,9 +147,14 @@ func (w *Window) startTelemetryPolling() {
 				// Header telemetry (visible on all views).
 				w.updateHeader()
 
-				// Custom view telemetry (only when active).
-				if w.viewStack != nil && w.viewStack.VisibleChildName() == "custom" {
-					w.custom.pollTick(state)
+				// Custom view telemetry, on whichever surface is showing
+				// one. Asked through the view's own host rather than the
+				// drawer's stack, so the full window's instance is served by
+				// the same poll instead of needing a second.
+				for _, c := range w.customViews() {
+					if c.host.current() {
+						c.pollTick(state)
+					}
 				}
 			})
 		}()

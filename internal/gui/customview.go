@@ -41,7 +41,11 @@ import (
 // is not running. The chart's floor line, the drag clamping and the Reset Fans
 // gate all read it.
 type customView struct {
-	w *Window
+	w    *Window
+	host viewHost
+
+	root       *gtk.Box
+	focusItems []focusItem
 
 	scroll  *gtk.ScrolledWindow
 	backBtn *gtk.Button
@@ -98,32 +102,35 @@ type customView struct {
 	deleteArmed bool       // first tap of the two-tap delete confirmation
 }
 
-// buildCustomView builds the custom TDP/fan curve view.
-func (w *Window) buildCustomView() *gtk.Box {
+// newCustomView builds the custom TDP/fan curve view for the given surface.
+func newCustomView(w *Window, host viewHost) *customView {
 	// The default target, so the selector has a name to show before
 	// showCustomView resolves the running one. editPlan tolerates "" as well,
 	// but the label built here would not.
-	c := &customView{w: w, editProfile: api.DefaultCustomProfile}
-	w.custom = c
+	c := &customView{w: w, host: host, editProfile: api.DefaultCustomProfile}
 
-	view := gtk.NewBox(gtk.OrientationVertical, 0)
+	c.root = gtk.NewBox(gtk.OrientationVertical, 0)
+	view := c.root
 
-	// Header: back button + title.
-	c.backBtn = gtk.NewButton()
-	c.backBtn.SetIconName("go-previous-symbolic")
-	c.backBtn.AddCSSClass("view-back-btn")
-	c.backBtn.ConnectClicked(func() { w.showMainView() })
+	// Header: back button + title. The full window supplies no back — its tab
+	// bar names the page — so it gets no header either.
+	if host.back != nil {
+		c.backBtn = gtk.NewButton()
+		c.backBtn.SetIconName("go-previous-symbolic")
+		c.backBtn.AddCSSClass("view-back-btn")
+		c.backBtn.ConnectClicked(host.back)
 
-	header := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	header.SetMarginTop(10)
-	header.SetMarginBottom(6)
-	header.SetMarginStart(14)
-	header.Append(c.backBtn)
-	lbl := gtk.NewLabel("Custom Profiles")
-	lbl.SetHAlign(gtk.AlignStart)
-	lbl.AddCSSClass("drawer-title")
-	header.Append(lbl)
-	view.Append(header)
+		header := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		header.SetMarginTop(10)
+		header.SetMarginBottom(6)
+		header.SetMarginStart(14)
+		header.Append(c.backBtn)
+		lbl := gtk.NewLabel("Custom Profiles")
+		lbl.SetHAlign(gtk.AlignStart)
+		lbl.AddCSSClass("drawer-title")
+		header.Append(lbl)
+		view.Append(header)
+	}
 
 	// Shown only for a stored edit — a target that is not running — where
 	// nothing on this view touches hardware. Without it, Save doing nothing
@@ -318,7 +325,8 @@ func (w *Window) buildCustomView() *gtk.Box {
 	c.scroll = newDrawerScroll(content)
 	view.Append(c.scroll)
 
-	return view
+	c.buildFocusList()
+	return c
 }
 
 // buildTdpScale creates a labeled TDP slider and appends it to the advanced
@@ -394,14 +402,14 @@ func (w *Window) showCustomView() {
 		return
 	}
 	if w.custom == nil {
-		w.viewStack.AddNamed(w.buildCustomView(), "custom")
-		w.buildCustomFocusList()
+		w.custom = newCustomView(w, w.drawerHost("custom"))
+		w.viewStack.AddNamed(w.custom.root, "custom")
 	}
 	w.custom.editProfile = profileui.DefaultEditTarget(w.state)
 	w.custom.disarmDelete()
 	w.custom.sync()
 	w.viewStack.SetVisibleChildName("custom")
-	w.swapFocusList(w.customFocusItems)
+	w.swapFocusList(w.custom.focusItems)
 	w.startTelemetryPolling()
 }
 
@@ -635,11 +643,7 @@ func (c *customView) syncFanResetSensitivity() {
 // Called exactly once, when the view is first built: the profile list lives
 // in the selector's popup (with its own focus frame), so nothing in this
 // grid shifts when profiles are created or deleted.
-func (w *Window) buildCustomFocusList() {
-	c := w.custom
-	if c == nil {
-		return
-	}
+func (c *customView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
@@ -666,11 +670,14 @@ func (w *Window) buildCustomFocusList() {
 	}
 
 	// Back button.
-	fc := b.Section("nav").One()
-	items = append(items, focusItem{
-		widget: c.backBtn, row: fc.Row, col: fc.Col, section: fc.Section,
-		onActivate: func() { w.showMainView() },
-	})
+	var fc focusgrid.Coord
+	if c.backBtn != nil {
+		fc = b.Section("nav").One()
+		items = append(items, focusItem{
+			widget: c.backBtn, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: c.host.back,
+		})
+	}
 
 	// Profile selector dropdown, then the actions and the inline name entry.
 	b.Section("profile")
@@ -744,18 +751,34 @@ func (w *Window) buildCustomFocusList() {
 	buttonLine(c.resetTdpBtn, c.resetFanBtn)
 	buttonLine(c.deleteBtn)
 
-	items = append(items, w.errBarFocusItem())
-	logFocusList("custom", items)
-	w.customFocusItems = items
+	items = append(items, c.host.errBar.focusItem())
+	logFocusList(c.host.focusName("custom"), items)
+	c.focusItems = items
 }
 
 // Window-level entry points. Each nil-guards the view, which is built lazily
 // on first navigation.
 
-// syncCustomView re-syncs the custom profile editor, if it has been built.
-func (w *Window) syncCustomView() {
+// customViews returns every custom profile editor that has been built: the
+// drawer's, and the full window's when it exists. Both edit the same daemon
+// state, so anything that refreshes one refreshes both — a stale second editor
+// showing a profile's old power limits is exactly the kind of thing nobody
+// notices until they save from it.
+func (w *Window) customViews() []*customView {
+	out := make([]*customView, 0, 2)
 	if w.custom != nil {
-		w.custom.sync()
+		out = append(out, w.custom)
+	}
+	if w.mainWin != nil && w.mainWin.custom != nil {
+		out = append(out, w.mainWin.custom)
+	}
+	return out
+}
+
+// syncCustomView re-syncs every custom profile editor that has been built.
+func (w *Window) syncCustomView() {
+	for _, c := range w.customViews() {
+		c.sync()
 	}
 }
 
@@ -763,7 +786,9 @@ func (w *Window) syncCustomView() {
 // with Cairo from w.colors rather than styled by CSS, so swapping the CSS
 // provider alone leaves it in the previous theme's colours.
 func (w *Window) redrawFanCurve() {
-	if w.custom != nil && w.custom.fanCurve != nil {
-		w.custom.fanCurve.area.QueueDraw()
+	for _, c := range w.customViews() {
+		if c.fanCurve != nil {
+			c.fanCurve.area.QueueDraw()
+		}
 	}
 }

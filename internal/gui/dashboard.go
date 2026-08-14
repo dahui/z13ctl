@@ -53,7 +53,10 @@ const dashboardChartHeight = 96
 // tree hanging off Window so that the full window can host the same thing
 // without a second implementation — nothing here reads the drawer's stack.
 type dashboardView struct {
-	w *Window
+	w    *Window
+	host viewHost
+
+	focusItems []focusItem
 
 	root     *gtk.Box
 	scroll   *gtk.ScrolledWindow
@@ -93,27 +96,30 @@ type dashboardChart struct {
 // navigation — the charts inside it are built on the first refresh, because
 // which series exist is a property of the data and not of the device document
 // (a declared source that never reads is exactly what must not draw a chart).
-func (w *Window) buildDashboardView() *gtk.Box {
-	d := &dashboardView{w: w, span: time.Minute}
-	w.dashboard = d
+func newDashboardView(w *Window, host viewHost) *dashboardView {
+	d := &dashboardView{w: w, host: host, span: time.Minute}
 
 	d.root = gtk.NewBox(gtk.OrientationVertical, 0)
 
-	d.backBtn = gtk.NewButton()
-	d.backBtn.SetIconName("go-previous-symbolic")
-	d.backBtn.AddCSSClass("view-back-btn")
-	d.backBtn.ConnectClicked(func() { w.showMainView() })
+	// The header is the drawer's chrome. The full window has a tab bar naming
+	// the page and no view to go "back" to, so it asks for neither.
+	if host.back != nil {
+		d.backBtn = gtk.NewButton()
+		d.backBtn.SetIconName("go-previous-symbolic")
+		d.backBtn.AddCSSClass("view-back-btn")
+		d.backBtn.ConnectClicked(host.back)
 
-	header := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	header.SetMarginTop(10)
-	header.SetMarginBottom(6)
-	header.SetMarginStart(14)
-	header.Append(d.backBtn)
-	title := gtk.NewLabel("Telemetry")
-	title.SetHAlign(gtk.AlignStart)
-	title.AddCSSClass("drawer-title")
-	header.Append(title)
-	d.root.Append(header)
+		header := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		header.SetMarginTop(10)
+		header.SetMarginBottom(6)
+		header.SetMarginStart(14)
+		header.Append(d.backBtn)
+		title := gtk.NewLabel("Telemetry")
+		title.SetHAlign(gtk.AlignStart)
+		title.AddCSSClass("drawer-title")
+		header.Append(title)
+		d.root.Append(header)
+	}
 
 	inner := gtk.NewBox(gtk.OrientationVertical, 0)
 	inner.SetMarginStart(14)
@@ -139,7 +145,8 @@ func (w *Window) buildDashboardView() *gtk.Box {
 	d.root.Append(scroll)
 	d.scroll = scroll
 
-	return d.root
+	d.buildFocusList()
+	return d
 }
 
 // buildSpanRow builds the history-window selector, offering only spans the
@@ -212,11 +219,11 @@ func (w *Window) showDashboardView() {
 		return
 	}
 	if w.dashboard == nil {
-		w.viewStack.AddNamed(w.buildDashboardView(), "dashboard")
-		w.buildDashboardFocusList()
+		w.dashboard = newDashboardView(w, w.drawerHost("dashboard"))
+		w.viewStack.AddNamed(w.dashboard.root, "dashboard")
 	}
 	w.viewStack.SetVisibleChildName("dashboard")
-	w.swapFocusList(w.dashboardFocusItems)
+	w.swapFocusList(w.dashboard.focusItems)
 	w.dashboard.refresh()
 	w.dashboard.startPolling()
 }
@@ -230,10 +237,7 @@ func (d *dashboardView) startPolling() {
 	d.gen++
 	gen := d.gen
 	glib.TimeoutAdd(1000, func() bool {
-		if gen != d.gen || !d.w.visible.Load() {
-			return false
-		}
-		if d.w.viewStack == nil || d.w.viewStack.VisibleChildName() != "dashboard" {
+		if gen != d.gen || !d.host.current() {
 			return false
 		}
 		d.refresh()
@@ -534,19 +538,17 @@ func rgbOr(hex, fallback string) (r, g, b float64) {
 // buildDashboardFocusList builds the gamepad grid: the back button and the
 // span selector. The charts are not navigable — there is nothing to activate
 // on one — so this list is fixed and never rebuilt.
-func (w *Window) buildDashboardFocusList() {
-	d := w.dashboard
-	if d == nil {
-		return
-	}
+func (d *dashboardView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
-	c := b.Section("nav").One()
-	items = append(items, focusItem{
-		widget: d.backBtn, row: c.Row, col: c.Col, section: c.Section,
-		onActivate: func() { w.showMainView() },
-	})
+	if d.backBtn != nil {
+		c := b.Section("nav").One()
+		items = append(items, focusItem{
+			widget: d.backBtn, row: c.Row, col: c.Col, section: c.Section,
+			onActivate: d.host.back,
+		})
+	}
 
 	b.Section("span")
 	for i, coord := range b.Line(len(d.spanBtns)) {
@@ -558,7 +560,7 @@ func (w *Window) buildDashboardFocusList() {
 		})
 	}
 
-	items = append(items, w.errBarFocusItem())
-	w.dashboardFocusItems = items
-	logFocusList("dashboard", items)
+	items = append(items, d.host.errBar.focusItem())
+	d.focusItems = items
+	logFocusList(d.host.focusName("dashboard"), items)
 }

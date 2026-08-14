@@ -61,6 +61,10 @@ internal/gui/
   gui.go                        Window struct, backend selection, show/hide, subscribeLoop, theming
   backend.go                    Backend interface (Configure, WrapContent, Show, Hide)
   controls.go                   All GTK widget construction (drawer, views, bottom bar)
+  mainwindow.go                 The full window: a real toplevel with a tab per page,
+                                opened by the double-press gui-open-full event
+  viewhost.go                   viewHost — the two things a view must be told about the
+                                surface it was built into (how to leave, am I on screen)
   customview.go                 Custom profile view: the customView struct, TDP + undervolt
                                 widgets, sync, and its focus list
   customsend.go                 How that view addresses its target: editPlan, the GTK-thread
@@ -665,6 +669,83 @@ thing a move is good at finding and nothing else is:
   resolves the running target *after* the build rather than before it — the end
   state before the view is ever shown is identical, because `sync` runs ahead of
   `SetVisibleChildName`.
+
+### The full window (`mainwindow.go`, `internal/mainwin`)
+
+A double press of the hardware button emits `gui-open-full` *in addition to*
+the `gui-toggle` the first press already sent, and this is its consumer: the
+quickbar the first press opened is hidden and a real toplevel takes its place.
+The brief flash is the accepted trade — a daemon that waited to see whether a
+second press was coming would put 400 ms onto every press on the machine.
+
+**It is a different surface, not a wider drawer.** The drawer is a 320px column
+reached in a hurry and it already shows every control; the one thing it cannot
+show is a chart at a size worth reading, which is why the telemetry tab leads.
+
+**Both surfaces host the same view implementations — a second instance, never a
+second copy.** That is what the window split was for, and `dashboardView`'s doc
+comment has said so since it was written. Three things had to become
+per-instance before it was true:
+
+- **Constructors return the view.** `buildDashboardView` assigned `w.dashboard`
+  and returned a `*gtk.Box`, so a second call clobbered the first. They are
+  `newDashboardView`/`newCustomView` now, and the caller stores what it gets —
+  which is also how `colorView` and `themeView` already worked.
+- **Focus lists moved onto the view.** `w.customFocusItems` and
+  `w.dashboardFocusItems` were `Window` fields; two instances would have fought
+  over them. `colorView.focusItems` was already the pattern.
+- **`viewHost` carries what differs between surfaces**, and it is deliberately
+  only three fields, because only three things differ. `back` is nil in the
+  window (the tab bar is the navigation), which is also what suppresses the
+  view's own header — so the window's focus grids are the drawer's minus the
+  `nav` row, which is exactly what the dump shows. `current` is "my surface is
+  open and showing me", asked instead of reading `w.viewStack` — a view that
+  consults the drawer's stack is a view that cannot live anywhere else. `errBar`
+  is the surface's own error strip.
+
+**One error bar per surface, and reports fan out to all of them.** The drawer's
+bar is hidden whenever the window is up, so a failure reported only to it would
+be invisible — the exact issue-#14 shape the bar was built to fix, reintroduced
+by a second surface. `reportError` writes to every bar that exists and each
+suppresses itself when its own surface is closed; a message written to a bar
+nobody can see costs nothing, while the one the user *is* looking at showing
+nothing costs them the reason their save failed.
+
+**`Window.anyVisible` is what the gamepad reader and the get-state poll gate
+on.** Both were gated on the drawer's `visible` alone, which left the window
+with a dead controller and frozen readouts the moment the drawer closed behind
+it. Both flags are atomics because the reader's goroutine reads them.
+
+**The constructor selects a tab; it does not sync one.** `syncPage` starts the
+dashboard's poll and asks the daemon for a history window, and the window is
+not on screen when it is built — the first `show` then skipped its own refresh
+as "already in flight" and drew the chart from a reply fetched before the user
+asked for anything. `selectTab` moves the stack and the highlight; `setTab` is
+what a tab button does.
+
+**Gamescope is not handled yet, and the fallback is deliberate.** A second
+toplevel does not composite there, so the window has to be a fullscreen surface
+inside the one window that does — and the drawer's view stack is not it: that
+stack lives inside a 320px panel the backend sizes, so a page added to it would
+be a 320px "full window". The right shape is a stack at the *wrapper* level,
+which means a new `Backend` method and a change to all three backends. Until
+then `openFull` opens the drawer's own dashboard under gamescope: the double
+press still reaches the charts, on the surface that session actually has. A
+dead event would be worse, and so would a window nobody can see.
+
+**Two of the four specified pages are absent, not stubbed.** Settings is
+blocked on the same two api additions `internal/controls` records for generic
+toggle rows (a description on `api.ToggleInfo`, a per-feature value in
+`get-state`) — rendering the device's toggles is the whole content of that
+page. Quickbar customization needs a `gui.toml` writer and a reorder affordance
+that works on a controller. A tab onto an empty page is the same trap as a
+device document declaring a capability nothing reads.
+
+**`VOLTAIRE_GUI_OPEN_FULL=1` opens it at startup**, for the same reason
+`VOLTAIRE_GUI_DUMP_FOCUS=1` exists: the window is otherwise reachable only by
+pressing a key on one laptop, so nothing about it could be checked while it was
+being written. The focus dump covers the window too, logging its pages as
+`full:<tab>`.
 
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 

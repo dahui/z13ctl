@@ -206,11 +206,20 @@ func IDsOf(cs []Control) []string {
 // document says otherwise, which is the posture limits.FromDevice already
 // takes for the same reason.
 func Supports(info *api.DeviceInfo, c Control) bool {
+	return SupportsAll(info, c.Requires)
+}
+
+// SupportsAll reports whether info has every capability in want. It is the
+// same question Supports asks, exposed for callers whose unit is not a
+// Control: internal/mainwin resolves the full window's tabs against the same
+// document, and a second copy of hasCapability is how two lists come to
+// disagree about what a device can do.
+func SupportsAll(info *api.DeviceInfo, want []Capability) bool {
 	if info == nil {
 		return true
 	}
-	for _, want := range c.Requires {
-		if !hasCapability(info, want) {
+	for _, c := range want {
+		if !hasCapability(info, c) {
 			return false
 		}
 	}

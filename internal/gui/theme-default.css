@@ -39,6 +39,31 @@ window.z13-drawer-window {
     background: transparent;
 }
 
+/* Full window — an opaque toplevel, unlike the transparent overlay the drawer
+   lives in. Its content box carries .drawer for every widget rule below, plus
+   .main-window to drop the floating panel's rounded border. */
+window.voltaire-main-window {
+    background: @z13-bg;
+}
+
+.drawer.main-window {
+    border-radius: 0;
+    border: none;
+}
+
+.main-tabs button {
+    border-radius: 0;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+}
+
+.main-tabs button.active {
+    background: transparent;
+    border-bottom: 2px solid @z13-accent;
+    color: @z13-text;
+}
+
 /* Main drawer box */
 .drawer {
     background: @z13-bg;

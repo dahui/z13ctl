@@ -184,7 +184,8 @@ func (w *Window) buildContent() gtk.Widgetter {
 
 	// Error bar sits outside the stack so a failure raised in any view stays
 	// visible, including after a view switch.
-	content.Append(w.buildErrorBar())
+	w.errView = newErrorBar(w, w.visible.Load)
+	content.Append(w.errView.bar)
 
 	content.Append(w.buildBottomBar())
 
@@ -441,7 +442,7 @@ func (w *Window) buildMainFocusList() {
 
 	w.focusFooter(b, &items)
 
-	items = append(items, w.errBarFocusItem())
+	items = append(items, w.errView.focusItem())
 	logFocusList("main", items)
 	w.mainFocusItems = items
 }

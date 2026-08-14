@@ -269,7 +269,7 @@ func (w *Window) buildColorFocusList() {
 		})
 	}
 
-	items = append(items, w.errBarFocusItem())
+	items = append(items, w.errView.focusItem())
 	logFocusList("color", items)
 	c.focusItems = items
 }

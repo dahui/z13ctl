@@ -144,6 +144,10 @@ internal/
   controls/                  M4: which drawer sections exist, what each needs from the device,
                              and their order — Resolve(gui.toml, device) + Layout (headings and
                              separators). Pure; internal/gui holds only ID→builder.
+  mainwin/                   M4: the full window's page list and opening geometry — Resolve(device)
+                             over the same capabilities controls uses (SupportsAll, so the two
+                             cannot disagree) + Fit(screen), which clamps each axis independently.
+                             Pure; internal/gui holds only tab ID→view.
   telemetryring/             M4: the daemon's bounded sample history — fixed-capacity ring,
                              copy-in/copy-out, Since(now, d) window. Pure; the one package
                              that carries its own lock, and says why.
@@ -1327,6 +1331,31 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Nothing consumes `gui-open-full` yet — the full window it is meant to open
   does not exist. It is additive and subscription-filtered, so no existing
   client sees it.
+- **`gui-open-full`'s consumer is a second GTK surface, and the views it shows
+  are second *instances* rather than a second implementation.** The drawer and
+  the full window both host `dashboardView` and `customView`; what differs is
+  carried in a three-field `viewHost` (how to leave, whether this page is on
+  screen, which error bar), because those are the only three things that
+  differ. A view that reads `w.viewStack` — the drawer's — is a view that
+  cannot live anywhere else, and every such read is now a `host.current()`
+  call. Making that true needed the constructors to *return* the view instead
+  of assigning `w.dashboard`, and the focus lists to move onto the view; both
+  were already how `colorView` and `themeView` worked, so the split was
+  finishing a pattern rather than inventing one.
+  Three Window-level things had to widen with it, each because it had been
+  written against the drawer alone: the gamepad reader's gate and the get-state
+  poll's (now `anyVisible`, or the window opens with a dead controller and
+  frozen readouts), and the error bar — there is one per *surface* now, and
+  `reportError` fans out, because the drawer's bar is hidden whenever the window
+  is up and a failure reported only to it is invisible. That is issue #14's
+  shape reintroduced by a second surface.
+  **Gamescope is deliberately still on the drawer's dashboard.** A second
+  toplevel does not composite there, and the drawer's stack is not a substitute:
+  it lives inside a 320px panel the backend sizes, so a page added to it would
+  be a 320px "full window". The real fix is a stack at the wrapper level — a new
+  `Backend` method across all three backends — and until it lands the double
+  press opens the drawer's own dashboard, which at least reaches the charts on
+  the surface that session has.
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing
@@ -1432,7 +1461,13 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   refactor can be diffed against. It is what made the M4 window split verifiable
   rather than merely careful: each view moved out of `Window` with the dump
   byte-identical to the baseline. Any future change that touches widget
-  construction or navigation should capture it first.
+  construction or navigation should capture it first. It now covers the full
+  window too, logging its pages as `full:<tab>` — a change that left the
+  drawer's grids untouched and broke the window's would otherwise pass the
+  diff. Its sibling `VOLTAIRE_GUI_OPEN_FULL=1` opens the full window at
+  startup, and exists for the same reason: that window is otherwise reachable
+  only by double-pressing a key on one laptop, so nothing about it could be
+  checked while it was being written.
 - **The GUI's environment variables renamed with a fallback:
   `startup.GUIEnv(suffix)`** reads `VOLTAIRE_GUI_<suffix>` and falls back to the
   pre-rename `Z13GUI_<suffix>` when the new name is empty — same 2.x contract as
@@ -1763,7 +1798,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. Remaining: the full window (`gui-open-full` has no consumer until it exists); bundled CSS to `@voltaire-*` |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. Also remaining: bundled CSS to `@voltaire-*` |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

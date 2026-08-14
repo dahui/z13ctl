@@ -93,6 +93,7 @@ See [Theming](/voltaire/gui/theming/) for the full theming guide.
 |----------|-------------|
 | `VOLTAIRE_GUI_SCALE` | Override CSS scale factor in gamescope mode (default: auto from output resolution) |
 | `VOLTAIRE_GUI_NO_GAMEPAD` | Set to `1` to disable gamepad input entirely |
+| `VOLTAIRE_GUI_OPEN_FULL` | Set to `1` to open the full window at startup, without the double press |
 
 The pre-rename names (`Z13GUI_SCALE`, `Z13GUI_NO_GAMEPAD`) are honoured
 through the whole 2.x line when the new name is unset, and removed at 3.0.

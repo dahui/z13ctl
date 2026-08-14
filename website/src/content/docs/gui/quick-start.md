@@ -11,6 +11,25 @@ right edge of the screen.
 Press it again, click anywhere outside the drawer, or press **Escape** to
 close it.
 
+## Opening the full window
+
+Press the **Armoury Crate button twice** — a normal double tap — and the drawer
+is replaced by a full window with room for the telemetry charts at a readable
+size and the profile editor beside them. Close it with **Escape** or the
+window's own close button; the drawer is unaffected and the next single press
+opens it as usual.
+
+The first press still opens the drawer immediately, so a single press costs
+nothing extra: the drawer appears, and if a second press follows quickly it is
+swapped for the window. Presses more than about 400 ms apart are two separate
+toggles, not a double tap.
+
+:::note[Steam Gaming Mode]
+Under gamescope a double press opens the drawer's own telemetry view rather
+than a separate window — gamescope does not composite a second application
+window. The charts are the same ones.
+:::
+
 ## Drawer controls
 
 | Section | What it does |

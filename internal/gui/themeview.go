@@ -278,7 +278,7 @@ func (w *Window) buildThemeFocusList() {
 		}
 	}
 
-	items = append(items, w.errBarFocusItem())
+	items = append(items, w.errView.focusItem())
 	logFocusList("theme", items)
 	t.focusItems = items
 }
