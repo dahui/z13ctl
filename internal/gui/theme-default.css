@@ -101,6 +101,11 @@ window.voltaire-main-window {
     border: 1px solid alpha(@voltaire-border, 0.5);
 }
 
+.main-window .section-card {
+    background: mix(@voltaire-bg, @voltaire-surface, 0.45);
+    border: 1px solid alpha(@voltaire-border, 0.7);
+}
+
 /* Main drawer box */
 .drawer {
     background: @voltaire-bg;

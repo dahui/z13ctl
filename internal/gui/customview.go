@@ -150,14 +150,56 @@ func newCustomView(w *Window, host viewHost) *customView {
 	content.SetMarginStart(12)
 	content.SetMarginEnd(12)
 
+	// hosted is the full-window presentation — host.back == nil on both the
+	// desktop toplevel and the gamescope page. There the sections become
+	// cards in the dashboard's visual language, laid out in two columns —
+	// editing on the left, the fan curve and its save/reset actions on the
+	// right — because a single column at window width is the drawer again,
+	// only wider (Jeff, 2026-08-13). Side by side is also the arrangement
+	// the content wants: the TDP that governs the fan floor sits beside the
+	// curve it constrains. The drawer path stays byte-for-byte the layout it
+	// always had.
+	hosted := host.back == nil
+	var leftCol, rightCol *gtk.Box
+	if hosted {
+		content.SetSpacing(12)
+		columns := gtk.NewBox(gtk.OrientationHorizontal, 12)
+		// Equal halves: the two columns hold different content, and letting
+		// the wider side win would reflow the whole page every time the
+		// Advanced toggle changes what the left column holds.
+		columns.SetHomogeneous(true)
+		leftCol = gtk.NewBox(gtk.OrientationVertical, 12)
+		rightCol = gtk.NewBox(gtk.OrientationVertical, 12)
+		columns.Append(leftCol)
+		columns.Append(rightCol)
+		content.Append(columns)
+	}
+	// newSection returns the container the next section's widgets land in: a
+	// fresh .section-card in the given column on the hosted surface, or the
+	// shared flat column (whose callers keep their historical separator
+	// rhythm) in the drawer, where col is ignored.
+	newSection := func(col *gtk.Box) *gtk.Box {
+		if !hosted {
+			return content
+		}
+		card := gtk.NewBox(gtk.OrientationVertical, 6)
+		card.AddCSSClass("section-card")
+		col.Append(card)
+		return card
+	}
+
 	// --- PROFILE SELECTOR ---
 	// The custom profiles live here rather than in the main view; everything
 	// below edits whichever one this selects.
-	content.Append(c.buildProfileSelector())
-	content.Append(separator())
+	sec := newSection(leftCol)
+	sec.Append(c.buildProfileSelector())
+	if !hosted {
+		content.Append(separator())
+	}
 
 	// --- TELEMETRY ---
-	content.Append(sectionLabel("TELEMETRY"))
+	sec = newSection(leftCol)
+	sec.Append(sectionLabel("TELEMETRY"))
 	telRow := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	c.telemetryTempLabel = gtk.NewLabel("APU: --°C")
 	c.telemetryTempLabel.SetHAlign(gtk.AlignStart)
@@ -168,10 +210,11 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.telemetryFanLabel.AddCSSClass("section-label")
 	telRow.Append(c.telemetryTempLabel)
 	telRow.Append(c.telemetryFanLabel)
-	content.Append(telRow)
+	sec.Append(telRow)
 
 	// --- TDP ---
-	content.Append(sectionLabel("TDP"))
+	sec = newSection(leftCol)
+	sec.Append(sectionLabel("TDP"))
 
 	// Advanced checkbox — placed above sliders so toggle swaps content in-place.
 	c.tdpAdvancedCheck = gtk.NewCheckButtonWithLabel("Advanced")
@@ -179,7 +222,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	if w.gamescope {
 		addTouchActivate(c.tdpAdvancedCheck, func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) })
 	}
-	content.Append(c.tdpAdvancedCheck)
+	sec.Append(c.tdpAdvancedCheck)
 
 	// Basic TDP box (visible by default).
 	tdpBasicBox := gtk.NewBox(gtk.OrientationVertical, 4)
@@ -196,7 +239,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	})
 	tdpBasicBox.Append(c.tdpBasicScale)
 	tdpBasicBox.Append(c.tdpBasicLabel)
-	content.Append(tdpBasicBox)
+	sec.Append(tdpBasicBox)
 
 	// Advanced box (hidden by default) — replaces basic slider in-place.
 	c.tdpAdvancedBox = gtk.NewBox(gtk.OrientationVertical, 4)
@@ -247,7 +290,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.uvBox.Append(uvBtnRow)
 	c.tdpAdvancedBox.Append(c.uvBox)
 
-	content.Append(c.tdpAdvancedBox)
+	sec.Append(c.tdpAdvancedBox)
 
 	c.tdpAdvancedCheck.ConnectToggled(func() {
 		adv := c.tdpAdvancedCheck.Active()
@@ -255,16 +298,25 @@ func newCustomView(w *Window, host viewHost) *customView {
 		tdpBasicBox.SetVisible(!adv)
 	})
 
-	content.Append(separator())
+	if !hosted {
+		content.Append(separator())
+	}
 
 	// --- FAN CURVE ---
-	content.Append(sectionLabel("FAN CURVE"))
+	sec = newSection(rightCol)
+	sec.Append(sectionLabel("FAN CURVE"))
 	c.fanCurve = c.newFanCurveEditor()
-	content.Append(c.fanCurve.area)
+	sec.Append(c.fanCurve.area)
 
-	content.Append(separator())
+	if !hosted {
+		content.Append(separator())
+	}
 
 	// --- BUTTONS ---
+	// In the right column, under the curve: save and reset act on what both
+	// columns show, but they sit with the editor's big visual so committing
+	// is where the eye already is.
+	sec = newSection(rightCol)
 	// Save row: Save TDP | Save Fans | Save Both
 	saveRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	saveRow.AddCSSClass("custom-actions")
@@ -287,7 +339,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.saveBothBtn.ConnectClicked(func() { c.saveCustomBoth() })
 	saveRow.Append(c.saveBothBtn)
 
-	content.Append(saveRow)
+	sec.Append(saveRow)
 
 	// Reset row: Reset TDP | Reset Fans
 	resetRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
@@ -304,9 +356,9 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.resetFanBtn.ConnectClicked(func() { c.resetFanCurve() })
 	resetRow.Append(c.resetFanBtn)
 
-	content.Append(resetRow)
+	sec.Append(resetRow)
 	c.resetNote = blockNote()
-	content.Append(c.resetNote)
+	sec.Append(c.resetNote)
 
 	// --- DELETE ---
 	// Lives in the editor rather than on the profile row: the editor knows its
@@ -314,13 +366,18 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// from data loss. Two taps stand in for a confirm dialog (no popovers —
 	// they do not composite under gamescope); sensitivity mirrors the daemon's
 	// refusals via profileui.DeleteBlockFor.
-	content.Append(separator())
+	if !hosted {
+		content.Append(separator())
+	}
+	// Bottom of the left column, away from the save actions: destructive and
+	// constructive should not be neighbours.
+	sec = newSection(leftCol)
 	c.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
 	w.setHint(c.deleteBtn, "Remove this saved profile")
 	c.deleteBtn.ConnectClicked(func() { c.deleteProfileClicked() })
-	content.Append(c.deleteBtn)
+	sec.Append(c.deleteBtn)
 	c.deleteNote = blockNote()
-	content.Append(c.deleteNote)
+	sec.Append(c.deleteNote)
 
 	c.scroll = newDrawerScroll(content)
 	view.Append(c.scroll)

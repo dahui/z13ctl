@@ -70,6 +70,13 @@
     border-radius: 8px;
 }
 
+/* Profiles-tab section cards — the editor's sections in the same card
+   language as the dashboard tiles. */
+.main-window .section-card {
+    padding: 10px 12px;
+    border-radius: 8px;
+}
+
 .main-window .dash-card-title {
     font-size: 10px;
     font-weight: bold;

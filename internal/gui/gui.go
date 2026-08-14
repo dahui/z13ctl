@@ -28,6 +28,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/gui/layershell"
 	"github.com/dahui/voltaire/v2/internal/gui/overlay"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/mainwin"
 	"github.com/dahui/voltaire/v2/internal/panelgeom"
 	"github.com/dahui/voltaire/v2/internal/startup"
 	"github.com/dahui/voltaire/v2/internal/theme"
@@ -428,10 +429,15 @@ func New(app *gtk.Application) *Window {
 	// hardware double press. It is the same kind of instrument as DUMP_FOCUS
 	// and exists for the same reason: the full window is otherwise reachable
 	// only by pressing a key on one laptop, so nothing about it could be
-	// checked while developing it.
-	if startup.GUIEnv("OPEN_FULL") != "" {
+	// checked while developing it. A tab id as the value ("profiles") opens
+	// on that page — a page past the first is otherwise reachable only with
+	// a pointer, which a screenshot run does not have.
+	if openFull := startup.GUIEnv("OPEN_FULL"); openFull != "" {
 		glib.IdleAdd(func() bool {
 			w.openFull()
+			if _, ok := mainwin.Lookup(openFull); ok && w.mainWin != nil {
+				w.mainWin.setTab(openFull)
+			}
 			return false
 		})
 	}

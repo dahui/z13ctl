@@ -796,8 +796,10 @@ nothing reads.
 **`VOLTAIRE_GUI_OPEN_FULL=1` opens it at startup**, for the same reason
 `VOLTAIRE_GUI_DUMP_FOCUS=1` exists: the window is otherwise reachable only by
 pressing a key on one laptop, so nothing about it could be checked while it was
-being written. The focus dump covers the window too, logging its pages as
-`full:<tab>`.
+being written. A tab id as the value (`VOLTAIRE_GUI_OPEN_FULL=profiles`) opens
+on that page — added when the Profiles tab's card layout needed a screenshot
+and a page past the first was reachable only with a pointer. The focus dump
+covers the window too, logging its pages as `full:<tab>`.
 
 ### The desktop design pass (`mainwindow.go`, `layout.css`, `theme-default.css`)
 
@@ -844,6 +846,26 @@ is achieved is load-bearing:
   and the wheel-over-slider capture all scrolled a hidden surface while the
   window was up. `mainWindow.activeScroll()` keys off the stack's visible
   child, the same shape as the drawer's.
+- **The Profiles tab's sections are cards in two columns on the hosted
+  surface only.** `newCustomView` builds each section into the container
+  `newSection(col)` returns: a fresh `.section-card` in the named column when
+  `host.back == nil` (both the desktop toplevel and the gamescope page), or
+  the shared flat column — separators, rhythm and all, byte-for-byte the
+  historical layout — in the drawer, where `col` is ignored. The columns are
+  homogeneous halves (letting the wider side win would reflow the page every
+  time Advanced toggles): editing on the left (profile, telemetry, TDP,
+  delete — destructive kept away from the save cluster), the fan curve and
+  its save/reset actions on the right, because a single centred column was
+  tried first and read as "the drawer again, only wider" (Jeff, 2026-08-13).
+  Focus lists are untouched by any of this — items reference widgets, not
+  containers — which is why the dump stayed byte-identical through it; the
+  cost is that D-pad order still follows the drawer's logical sequence, not
+  the two-column visual layout.
+- **Never `SetVExpand(true)` on anything inside a FlowBox tile.** GTK4
+  propagates expand upward, so one expanding chart made the cell, the FlowBox
+  and the page all expand — the single tile row stretched to the full page
+  height and the 64px "sparkline" rendered 500px tall. Seen on hardware via
+  screenshot; a tile's height is its natural height.
 - **Each surface owns a popup layer** — see the popup-layer section; the short
   version is that placement translates the anchor into the layer's own widget
   tree, which fails across toplevels, so the drawer's layer *could not* serve
