@@ -23,6 +23,10 @@ func z13() *api.DeviceInfo {
 		Battery:   &api.BatteryInfo{ChargeLimit: true, Health: true},
 		Telemetry: &api.TelemetryInfo{HistorySeconds: 300},
 		Undervolt: &api.UndervoltInfo{Min: -40, Max: 0},
+		Toggles: []api.ToggleInfo{
+			{ID: "boot_sound", Label: "POST boot sound", Kind: api.ToggleKindBool},
+			{ID: "panel_overdrive", Label: "Panel overdrive", Kind: api.ToggleKindBool},
+		},
 	}
 }
 
@@ -52,7 +56,7 @@ func equal(a, b []string) bool {
 func TestTelemetryLeads(t *testing.T) {
 	t.Parallel()
 	got := ids(mainwin.Resolve(z13()))
-	want := []string{mainwin.TabDashboard, mainwin.TabProfiles}
+	want := []string{mainwin.TabDashboard, mainwin.TabProfiles, mainwin.TabSettings}
 	if !equal(got, want) {
 		t.Errorf("Resolve(z13) = %v, want %v", got, want)
 	}
@@ -80,11 +84,20 @@ func TestATabWithNothingToShowIsDropped(t *testing.T) {
 		want []string
 	}{
 		{"no telemetry", func(d *api.DeviceInfo) { d.Telemetry = nil },
-			[]string{mainwin.TabProfiles}},
+			[]string{mainwin.TabProfiles, mainwin.TabSettings}},
 		{"no profiles", func(d *api.DeviceInfo) { d.Profiles = nil },
-			[]string{mainwin.TabDashboard}},
-		{"neither", func(d *api.DeviceInfo) { d.Telemetry, d.Profiles = nil, nil },
-			nil},
+			[]string{mainwin.TabDashboard, mainwin.TabSettings}},
+		// Toggles are a list, not a nil-able section, so "no settings" is an
+		// empty one — a device with nothing to switch must not get a page
+		// whose entire content is an explanation of its own emptiness.
+		{"no toggles", func(d *api.DeviceInfo) { d.Toggles = nil },
+			[]string{mainwin.TabDashboard, mainwin.TabProfiles}},
+		{"an empty toggle list is the same as none",
+			func(d *api.DeviceInfo) { d.Toggles = []api.ToggleInfo{} },
+			[]string{mainwin.TabDashboard, mainwin.TabProfiles}},
+		{"nothing at all", func(d *api.DeviceInfo) {
+			d.Telemetry, d.Profiles, d.Toggles = nil, nil, nil
+		}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

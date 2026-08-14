@@ -379,6 +379,15 @@ outside.
 - [ ] Reset TDP / Reset Fans sit right-aligned in their cards and still gate:
       Reset Fans is refused above the safe sustained limit with the note under
       the fan card.
+- [ ] The **Settings** tab lists both firmware toggles under FIRMWARE, each
+      with its name leading and the device's own description beneath it (panel
+      overdrive's says "may cause ghosting"), and each switch matching
+      `./voltaire bootsound --get` / `paneloverdrive --get`.
+- [ ] Flip a switch there — the setting takes effect and the drawer's own
+      bottom-bar switch follows on its next sync. Then change the same toggle
+      from the CLI with the tab open: **the switch moves within a second**,
+      which is the `state-changed` broadcast all three toggle write paths now
+      emit. Set both back to preference afterwards.
 
 ## 14. Cleanup
 

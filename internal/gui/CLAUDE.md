@@ -962,6 +962,44 @@ is achieved is load-bearing:
   surface — the old wiring translated against `w.gtkWin` and could only ever
   serve the drawer.
 
+### The Settings tab (`settingsview.go`, `internal/settingsui`)
+
+- **It is a renderer, and it knows nothing about any particular toggle.** Every
+  row's id, label and prose comes from `DeviceInfo.Toggles`; the rules (which
+  rows exist, what each may claim, what an empty page says) live in
+  `internal/settingsui` where `make test` reaches them, and this file builds a
+  label, a switch and a send. That is the whole point — the drawer's bottom bar
+  names its two switches as GTK literals with their warning text beside them,
+  which is exactly why a device with a different set could not be described.
+- **The row set is built once and never rebuilt**, unlike the dashboard's
+  charts: which toggles exist comes from the capability document, static for
+  the daemon's lifetime and fetched before any widget exists. Only values move,
+  and `sync` moves them on the existing widgets, so a background refresh can
+  never tear a switch out from under the pointer.
+- **`sync` must run inside `w.syncing`.** `gtk.Switch` fires `state-set` on a
+  *programmatic* `SetActive` too, so an unguarded sync writes every row back to
+  the daemon — which calls `refreshState`, which syncs again. Both call sites
+  (`syncState`, `refreshState`) hold the guard.
+- **The sync call belongs in `refreshState`, not only in `syncState`.** That is
+  the funnel: every write path ends there, the daemon's `state-changed`
+  broadcast calls it, and the full window's `show()` calls it — whereas
+  `syncState` runs on the *drawer's* own fetch, a surface this page does not
+  live on. Without it the page was correct only at the moment its tab was first
+  opened, which is exactly how it was found: opened via
+  `VOLTAIRE_GUI_OPEN_FULL=settings`, both switches sat greyed and off while the
+  wire said one was on.
+- A row whose value the daemon could not read is **insensitive, not off**, and
+  the focus grid already skips insensitive widgets — so a controller cannot
+  land on a switch that could not be operated.
+- **`.setting-name` / `.setting-desc` exist because the row has a heading and a
+  caption, and reusing the nearest classes got it backwards** (Jeff,
+  2026-08-14): the name went in `.scale-name` — 10px bold *dim*, made for a
+  slider's label — over a description whose class did not exist at all, so it
+  fell through to the default font. The result was a small dim heading above
+  large bright body text. Both classes are restated in gamescope's `scaledCSS`,
+  unlike the desktop-density block: type that does not scale is unreadable on
+  a handheld, and these have no touch counterpart to preserve.
+
 ### The telemetry dashboard (`dashboard.go`, `internal/telemetryplot`)
 
 - **The expanded set (2026-08-14) is eight cards** — Temp (CPU+GPU), Fan,

@@ -165,6 +165,15 @@ window.voltaire-main-window {
     color: @voltaire-text-dim;
 }
 
+/* Settings rows: the name carries the weight, the description supports it. */
+.setting-name {
+    color: @voltaire-text;
+}
+
+.setting-desc {
+    color: @voltaire-text-dim;
+}
+
 /* Separators */
 .drawer separator {
     background: @voltaire-border;

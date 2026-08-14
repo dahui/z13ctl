@@ -184,5 +184,38 @@ func (d *Daemon) handleFeature(req request) response {
 		return response{OK: false, Error: "feature " + spec.ID + ": " + err.Error()}
 	}
 	slog.Info("feature", "id", spec.ID, "set", value)
+	d.notifyToggleChanged(spec.ID, value)
 	return response{OK: true}
+}
+
+// notifyToggleChanged records a firmware toggle's new value and tells every
+// subscriber the state moved.
+//
+// The notify is the load-bearing half. Toggle values reach clients through
+// get-state — State.Features, plus the two named fields older clients read —
+// so a client that re-reads sees truth; what it had no way to learn was that
+// there was anything to re-read. Without this, a toggle changed by any other
+// client leaves every open UI showing the old position until something else
+// happens to refresh it, which is exactly the stale-value failure saveAndNotify
+// exists to prevent. It became visible when the full window grew a settings
+// page rendering these rows from State.Features: handlePanelOverdrive notified
+// and its two siblings did not, so the same switch updated live or did not
+// depending on which command wrote it.
+//
+// The state write is a projection, not persistence: these are BIOS settings the
+// firmware owns, and readFeatures re-reads them from hardware on every
+// get-state. It is kept because the two named fields are the vocabulary pre-2.0
+// clients know, and leaving them behind after a write makes the saved state
+// disagree with the machine for anyone reading the file directly.
+func (d *Daemon) notifyToggleChanged(id string, value int) {
+	d.mu.Lock()
+	switch id {
+	case "boot_sound":
+		d.state.BootSound = value
+	case "panel_overdrive":
+		d.state.PanelOverdrive = value
+	}
+	s := cloneState(d.state)
+	d.mu.Unlock()
+	d.saveAndNotify(s)
 }

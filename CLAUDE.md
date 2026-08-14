@@ -125,13 +125,22 @@ internal/
                              panel overdrive, APU temperature, battery capacity
       power.go               FindACOnlinePath, OnACPower (Mains-only discovery)
       rapl.go                powercap package-energy counter (read-only grant) + battery
-                             flow from power_supply (power_now, or current x voltage)
+                             flow, state and the Wh energy pair from power_supply
+                             (power_now, or current x voltage; energy_now, or charge x voltage)
+      gpu.go                 amdgpu: edge temp, busy %, sclk, VRAM carveout, and the pure
+                             gpu_metrics v3.0 parser (GFX power at 124, UCLK at 186)
+      cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory
+      npu.go                 amdxdna NPU power/util/clock over DRM ioctls; queried only
+                             while runtime_status reads active (opening it resumes the NPU)
+      net.go                 /proc/net/dev byte counters, summed over physical interfaces
+                             only (a /sys/class/net/*/device link) so tunnels never double-count
       tdp.go                 PPT read/write: SetTDP, SetTDPState, ReadAllPPT
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
       undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues
       paths.go               sysfs roots as vars (injectable by tests); see Testing
       sysfs_fake_test.go     fake sysfs tree + fakeSMU mailbox + ppdRunner stub
       fan_sysfs_test.go / smu_test.go / tdp_test.go / power_test.go / undervolt_test.go
+      rapl_test.go / battery_test.go / gpu_test.go / cpu_test.go / net_test.go
       register/             blank-import side-effect package wiring it into the registry
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
     evdevkey/                driver.Buttons over one key on an evdev device ("evdev-key")
@@ -146,7 +155,8 @@ internal/
   controls/                  M4: which drawer sections exist, what each needs from the device,
                              and their order — Resolve(gui.toml, device) + Layout (headings and
                              separators). Pure; internal/gui holds only ID→builder.
-  mainwin/                   M4: the full window's page list and opening geometry — Resolve(device)
+  mainwin/                   M4: the full window's page list (Telemetry, Profiles, Settings)
+                             and opening geometry — Resolve(device)
                              over the same capabilities controls uses (SupportsAll, so the two
                              cannot disagree) + Fit(screen), which clamps each axis independently.
                              Pure; internal/gui holds only tab ID→view.
@@ -173,9 +183,16 @@ internal/
                              state the daemon would refuse (the testable half of the
                              custom view — gui/customview.go and gui/fancurve.go)
   lighting/                  the drawer's RGB rules: mode from state, controls per mode
+  settingsui/                the full window's Settings page: which firmware-toggle rows a
+                             device offers (from the document, never a written list), each
+                             row's value from State.Features — absent means *unknown*, not
+                             off — and which kind of nothing an empty page is
   profileui/                 the drawer's profile rules: list rows + affordances, live-vs-stored
                              edit planning (PlanEdit/ForEditor), name pre-checks, autoswitch
                              target options, power-source label
+    commit.go                the window's one-commit labels: CommitLabel, UnsavedSummary
+    battery.go               the battery card's headline: level, rate, and the
+                             time-to-limit/full/empty estimate off the Wh pair
   colorconv/                 RRGGBB ⇄ HSL for the colour picker (separate so it is testable)
   focusgrid/                 D-pad focus navigation over rows/columns/sections
   keyrepeat/                 which held direction owns the gamepad auto-repeat
@@ -184,6 +201,9 @@ internal/
   telemetryplot/             M4: the dashboard's series shaping — Build(samples, now, window,
                              maxGap) → time-placed points, gap-broken segments, per-kind shared
                              axis, Groups/Shape. Pure; internal/gui only strokes the result
+    header.go                per-card heading and live readout (HeaderTitle/HeaderValue/FormatValue)
+    placeholder.go           the framed, trace-less loading cards + which kinds a device's
+                             declarations justify framing at all
   uiscale/                   UI scale factor for gamescope, where GTK cannot be asked
   togglegate/                debounce window for the toggle signal
   startup/                   pre-GTK process startup: argument scan + log filtering
@@ -1414,10 +1434,10 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   reason instead of answering "unknown edge", and every parse failure still
   returns a usable edge so a bad config costs a warning and not a drawer that
   will not open.
-- **Generic toggle rows needed two api additions; both have landed, and what
-  is left is a renderer.** The roadmap has `internal/controls` rendering the
-  firmware toggles (and later plugin features) from the device document instead
-  of the bottom bar's two bespoke switches.
+- **Generic toggle rows needed two api additions; both landed, and the renderer
+  is now the full window's Settings tab.** The roadmap had `internal/controls`
+  rendering the firmware toggles (and later plugin features) from the device
+  document instead of the bottom bar's two bespoke switches.
   (1) **`api.ToggleInfo.Description`** carries the prose those switches held as
   GTK literals. It is *device data*, in the TOML beside the label, because
   whether panel overdrive ghosts is a fact about the panel — a client rendering
@@ -1440,9 +1460,52 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   be able to show "I do not know" — the same rule as a failed telemetry sample
   being a gap. `readFeatures` returns nil (not an empty map) so `omitempty`
   keeps the key off the wire for a device with no toggles.
-  A `Kind` field on `controls.Control` is still deliberately absent: with no
-  view to render it, adding it would be the same trap as a device document
-  declaring a capability nothing reads.
+  A `Kind` field on `controls.Control` is still deliberately absent — see the
+  next entry for where the renderer actually landed.
+- **The Settings tab renders `DeviceInfo.Toggles` directly, not through
+  `internal/controls`.** `internal/controls` lists the *drawer's* sections, and
+  a firmware toggle is not one: the rows are device data, so a registry entry
+  per toggle would be a second list to keep in step with the document. What
+  does live in `controls` is `CapToggles`, so "does this machine have any"
+  has one answer for every surface — and it is the odd capability out, since
+  every other one is a nil-able document section while toggles are a *list*
+  whose emptiness is the question. `internal/settingsui` holds the rules
+  (`Rows`, `EmptyReason`) and `gui/settingsview.go` builds a label, a switch
+  and a send; nothing in it knows what a boot sound is.
+  Three rules earned their place. **Absent from `State.Features` renders as
+  insensitive, never as off** — the daemon omits a toggle it could not read
+  precisely so a failed read is distinguishable from "off", and reading absence
+  as zero here would put that claim back one layer up; insensitive also means
+  the gamepad grid skips it, which is the established rule for a control that
+  cannot be operated. **An unrecognized `Kind` is skipped** (`api.ToggleKindBool`
+  is the only one today): drawing an enumerated toggle as a switch would
+  misrepresent it and writing to it would send a 0 or 1 to something that means
+  neither. And **an empty page says which kind of nothing it is** — daemon not
+  running, device has none, or a kind this build cannot show — because the
+  three call for different responses from the user.
+  The drawer keeps its two bespoke switches deliberately: they are quick
+  controls on the surface reached in a hurry, and drawer/window overlap is the
+  established shape here (both show profiles, both show autoswitch), with both
+  staying in step because both sync from the same get-state.
+- **Every firmware-toggle write path must notify, and two of the three did
+  not.** `handlePanelOverdrive` had updated state and called `saveAndNotify`
+  since it was written; `handleBootSound` and the generic `handleFeature` did
+  neither, so a toggle changed by any other client left every open UI showing
+  the old position. That was invisible while the only renderer was the drawer's
+  bottom bar, which resyncs whenever the drawer opens, and became visible the
+  moment a settings page rendered rows from `State.Features`: the same switch
+  updated live or did not, depending on which command wrote it. All three now
+  go through `notifyToggleChanged`, whose *notify* is the load-bearing half —
+  values reach clients through `get-state`'s live reads, so a client that
+  re-reads sees truth; what it had no way to learn was that there was anything
+  to re-read. The state write beside it is only the pre-2.0 named-field
+  projection, kept so the saved file does not disagree with the machine.
+  `TestEveryToggleWritePathNotifies` is a source check because the alternative
+  is a hardware write, and **its first version passed with the call deleted**:
+  each of those functions *mentions* `notifyToggleChanged` in a comment, so the
+  check was reading prose and reporting it as code. `funcBody` strips comments
+  now; the negative control is the only thing that caught it, and is the reason
+  any source-shaped guard needs one.
 - **A double press emits `gui-open-full` *in addition to* `gui-toggle`, and
   never instead of it.** The first press opens the quickbar immediately; a
   client that wants the escalation subscribes to both and hides whatever the
@@ -1895,9 +1958,16 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   cgo-free, it belongs in the run.
   `make lint` deliberately runs the **full** tree, GTK island included; it is a
   local/dev gate where the headers are present.
-- Current coverage: ~87% cli, ~78% aura, ~40% hid, ~38% daemon, ~29% api, ~9% cmd.
-  Re-measure with `go test -cover ./...` (plus `cd api`) rather than trusting these
-  — they were stale by 17 points on daemon and 9 on api before v1.3.1.
+- Coverage, measured 2026-08-14: cli 84%, device 70%, asusz13 67%, aura 65%,
+  safety 64%, hid 43%, daemon 42%, api 35%, cmd 8%. Every pure package on the
+  GUI side — `limits`, `profileui`, `telemetryplot`, `focusgrid`, `mainwin`,
+  `popupgeom`, `controls`, `colorconv`, `startup` — sits at 91–99%, which is
+  the whole argument for the cgo boundary: logic moved out of `internal/gui`
+  gets tested, logic left inside it cannot be.
+  Re-measure with `go test -cover ./...` (plus `cd api`) rather than trusting
+  these. The previous set in this file had drifted 13 points on aura and 6 on
+  api, in both directions — a stale number here reads as a measurement, which
+  is the same failure as a chart drawn flat at zero.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
 ### Fake sysfs (`internal/drivers/asusz13`)
@@ -2054,7 +2124,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | mostly done. Done: `internal/telemetryring`, the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`), the 1 Hz sampler + `telemetry-history`, `internal/controls` + `gui.toml`, `panelgeom.Edge` + movable quickbar, double-tap `gui-open-full`, the in-surface popup layer (`popupgeom` — not in the original list; it replaced the expanding selector and the cycle buttons), and the dashboard (`internal/telemetryplot` + `gui/dashboard.go`). The window split is **done**: `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView` and `customView` own their own widgets and focus lists, verified by `VOLTAIRE_GUI_DUMP_FOCUS` diffing byte-identical after each move. The full window is **built and consuming `gui-open-full`**: a real toplevel with a Telemetry and a Profiles tab, hosting second *instances* of `dashboardView` and `customView` through the new `viewHost` seam, with `internal/mainwin` deciding the tabs and the size. Remaining on it: the gamescope surface (a second toplevel does not composite there — needs a wrapper-level stack and a new `Backend` method; `openFull` opens the drawer's dashboard there meanwhile), the settings tab (blocked on the same two api additions generic toggle rows need) and quickbar customization. The bundled CSS is **migrated to `@voltaire-*`**, leaving the aliases with no in-tree consumer. Telemetry now reads all three of the plan's Z13 sources — hwmon, powercap RAPL (via a new read-only `energy_uj` grant) and power_supply battery flow — so the dashboard draws four quantities rather than two. The full window has had its **desktop design pass** (Jeff, 2026-08-13): underline tabs winning by CSS specificity, `.drawer.main-window`-scoped desktop density (gamescope keeps touch density by scaledCSS *omission*), a `GtkFlowBox` card-grid dashboard whose battery card header renders `profileui.BatteryStatus` from get-state (never a bare 0 W on a charge-limited pack), a per-surface popup layer (the window's dropdowns previously rendered on the hidden drawer), LB/RB tab switching, B closing the window, and `activeScroll` learning the window's pages — all with the six-line focus dump byte-identical throughout. Details in `internal/gui/CLAUDE.md` ("The desktop design pass"). A second pass (Jeff, 2026-08-14) reshaped the Profiles page around **one commit button** — dirty-tracked Apply/Save Changes in a bar under the scroller, per-domain saves gone from the window (the drawer keeps its), resets right-aligned per card, `profileui.CommitLabel`/`UnsavedSummary` carrying the label rules — added an **AUTOSWITCH card** to that page (second `autoswitchSection` instance), and made the dashboard show its **full placeholder card set immediately** (`telemetryplot.Placeholder`) with the first history fetch fired on show; the daemon side of the same day is the fresh-promotion rule above. The `full:custom` dump line was re-baselined twice, deliberately, and the other five lines held. The dashboard then grew to the **expanded telemetry set** (see the dedicated entry above): seven cards — Temp (CPU+GPU), Fan, Power (Pkg+GPU+NPU), Battery, Load (CPU+GPU+NPU), Clocks (CPU+GPU+Mem, GHz), Memory (RAM+VRAM, GB) — with a third theme-derived trace colour and a 34-char header bound; the placeholder set derives from the four telemetry declarations. The Battery card then changed quantity (same day): the chart plots **state of charge** on a 0–100% frame and the header carries the rate plus a time-to-limit/full/empty estimate from the new `battery_energy_wh` pair — see the dedicated entry above. An eighth card, **Net** (down/up MB/s from `/proc/net/dev`, physical interfaces only), evens the grid at 4×2; same day, same entry. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Telemetry and Profiles tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` six-line fingerprint held byte-identical through all of them bar two deliberate `full:custom` re-baselines. The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). **Remaining:** (1) **quickbar customization**, on top of the `internal/controls` + `gui.toml` machinery that already exists — the last M4 feature. (2) The **gamescope path has never run in a Gaming Mode session** — there is none on this machine — so it is built, reviewed and unverified: the standing pre-release hardware risk, in both this table and the smoke checklist. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |

@@ -97,6 +97,15 @@ type ToggleInfo struct {
 	Source string `json:"source"`
 }
 
+// ToggleKindBool is a 0/1 firmware switch — the only kind that exists today.
+// It is named here because a client rendering these rows generically has to
+// decide what widget to build, and "kind == bool" written as a literal at each
+// such site is how one of them comes to render a future enumerated toggle as a
+// switch. A client must skip a kind it does not recognize rather than guess:
+// showing an unknown shape as a switch would misrepresent the setting and, on
+// a write, send 0 or 1 to something that means neither.
+const ToggleKindBool = "bool"
+
 // Toggle sources. A toggle provided by a compiled-in driver is ToggleSourceCore;
 // one contributed by an external plugin is ToggleSourcePluginPrefix + its plugin
 // id. A client that does not care about provenance can ignore the field

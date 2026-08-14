@@ -387,6 +387,8 @@ func (b *Backend) scaledCSS() string {
 .main-window .dash-card { min-width: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .main-window .dash-card-title { font-size: %.0fpx; letter-spacing: %.0fpx; }
 .main-window .dash-card-value { font-size: %.0fpx; }
+.setting-name { font-size: %.0fpx; }
+.setting-desc { font-size: %.0fpx; }
 .main-window .section-card { padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .main-window .commit-bar { padding: %.0fpx %.0fpx; }
 .main-window .commit-bar button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -439,7 +441,9 @@ func (b *Backend) scaledCSS() string {
 		// no touch counterpart, so they scale like everything else.
 		170*s, 6*s, 8*s, 8*s, // dash-card (min-width, padding-v, padding-h, border-radius)
 		10*s, 1*s, // dash-card-title (font-size, letter-spacing)
-		11*s,            // dash-card-value font-size
+		11*s,       // dash-card-value font-size
+		13*s, 11*s, // settings row (name, description) — the hosted full window
+		// shows this page too, and unscaled type there is unreadable
 		10*s, 12*s, 8*s, // section-card (padding-v, padding-h, border-radius)
 		8*s, 12*s, // commit-bar (padding-v, padding-h)
 		48*s, 4*s, 16*s, 6*s, // commit-bar button — touch height, like every button here

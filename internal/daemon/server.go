@@ -513,6 +513,10 @@ func (d *Daemon) handleBootSound(req request) response {
 		return response{OK: false, Error: "bootsound: " + err.Error()}
 	}
 	slog.Info("bootsound", "set", value)
+	// Its sibling below has notified since panel overdrive existed; this one
+	// never did, which no client could see until one rendered toggle rows from
+	// State.Features. See notifyToggleChanged.
+	d.notifyToggleChanged("boot_sound", value)
 	return response{OK: true}
 }
 
@@ -539,11 +543,9 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
 	}
 	slog.Info("paneloverdrive", "set", value)
-	d.mu.Lock()
-	d.state.PanelOverdrive = value
-	s := cloneState(d.state)
-	d.mu.Unlock()
-	d.saveAndNotify(s)
+	// Through the same helper as the other two write paths, so all three
+	// notify identically rather than one of them open-coding it.
+	d.notifyToggleChanged("panel_overdrive", value)
 	return response{OK: true}
 }
 

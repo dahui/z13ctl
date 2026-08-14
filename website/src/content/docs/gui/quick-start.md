@@ -15,8 +15,8 @@ close it.
 
 Press the **Armoury Crate button twice** — a normal double tap — and the drawer
 is replaced by a full window: a desktop-style window with a **Telemetry** tab
-(the dashboard) and a **Profiles** tab (the profile editor). Switch pages with
-the tabs under the titlebar. Close it with **Escape**, the window's close
+(the dashboard), a **Profiles** tab (the profile editor) and a **Settings** tab
+(the firmware switches). Switch pages with the tabs under the titlebar. Close it with **Escape**, the window's close
 button, or another press of the Armoury Crate button; the drawer is unaffected
 and the next single press opens it as usual.
 
@@ -156,6 +156,24 @@ immediately), **Save Changes** when it is not (stored, applied on
 activation). Each card keeps its own *reset*, which is a different operation:
 it removes that subsystem from the profile and hands the hardware back to the
 firmware.
+
+## The Settings tab
+
+The full window's **Settings** tab lists the firmware switches your machine
+exposes — on the Z13, the POST boot sound and panel overdrive — each with the
+description that comes from voltaire's own device data, so a warning like "may
+cause ghosting" is attached to the setting rather than left to be remembered.
+
+The list is not written into the app: it is whatever your device reports, so a
+machine with a different set of BIOS toggles shows that set instead, and one
+with none says so. A switch voltaire cannot read the current value of is shown
+greyed rather than defaulting to off — off would be a claim about your hardware.
+
+Changes apply immediately and are BIOS settings, so they persist across reboots
+on their own; the daemon does not need to restore them. The drawer keeps its own
+switches for the same two toggles at the bottom of the panel, and the two
+surfaces stay in step — change it in either place, or with the CLI, and the
+other follows.
 
 ## Custom color picker
 

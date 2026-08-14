@@ -142,6 +142,12 @@ const DefaultCustomProfile = "custom"
 const MaxProfileNameLen = 32
 ```
 
+<a name="ToggleKindBool"></a>ToggleKindBool is a 0/1 firmware switch — the only kind that exists today. It is named here because a client rendering these rows generically has to decide what widget to build, and "kind == bool" written as a literal at each such site is how one of them comes to render a future enumerated toggle as a switch. A client must skip a kind it does not recognize rather than guess: showing an unknown shape as a switch would misrepresent the setting and, on a write, send 0 or 1 to something that means neither.
+
+```go
+const ToggleKindBool = "bool"
+```
+
 ## Variables
 
 <a name="AllEvents"></a>AllEvents lists every event name the daemon can emit. Subscribing with an empty event list is equivalent to subscribing to all of them.
@@ -1706,7 +1712,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="BatteryInfo"></a>
-## type [BatteryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L121-L124>)
+## type [BatteryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L130-L133>)
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
@@ -2131,7 +2137,7 @@ type TDPState struct {
 ```
 
 <a name="TelemetryInfo"></a>
-## type [TelemetryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L139-L146>)
+## type [TelemetryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L148-L155>)
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
@@ -2290,7 +2296,7 @@ type ToggleInfo struct {
 ```
 
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L112-L115>)
+## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L121-L124>)
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 

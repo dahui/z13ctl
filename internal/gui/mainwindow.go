@@ -82,6 +82,7 @@ type mainWindow struct {
 	// lazy views get away with only because they are behind a navigation step.
 	dashboard *dashboardView
 	custom    *customView
+	settings  *settingsView
 }
 
 // newMainWindow builds the full window. It is not shown; show() does that.
@@ -219,6 +220,9 @@ func (m *mainWindow) buildPages() {
 		case mainwin.TabProfiles:
 			m.custom = newCustomView(m.w, m.host(t.ID))
 			m.stack.AddNamed(m.custom.root, t.ID)
+		case mainwin.TabSettings:
+			m.settings = newSettingsView(m.w, m.host(t.ID))
+			m.stack.AddNamed(m.settings.root, t.ID)
 		default:
 			slog.Warn("full window: no view for tab", "tab", t.ID)
 		}
@@ -294,6 +298,10 @@ func (m *mainWindow) activeScroll() *gtk.ScrolledWindow {
 		if m.custom != nil {
 			return m.custom.scroll
 		}
+	case mainwin.TabSettings:
+		if m.settings != nil {
+			return m.settings.scroll
+		}
 	}
 	return nil
 }
@@ -313,6 +321,13 @@ func (m *mainWindow) setTab(id string) {
 // called on show, so a window reopened on the tab it was left on is not showing
 // the values from last time.
 func (m *mainWindow) syncPage(id string) {
+	// Leaving the dashboard stops its history poll, whichever page we land on.
+	// This was written inside the Profiles case while that was the only other
+	// page — behind a third it would have left a few-hundred-sample round trip
+	// per second running for a page with no chart on it.
+	if id != mainwin.TabDashboard && m.dashboard != nil {
+		m.dashboard.stopPolling()
+	}
 	switch id {
 	case mainwin.TabDashboard:
 		if m.dashboard == nil {
@@ -325,11 +340,14 @@ func (m *mainWindow) syncPage(id string) {
 		if m.custom == nil {
 			return
 		}
-		if m.dashboard != nil {
-			m.dashboard.stopPolling()
-		}
 		m.w.swapFocusList(m.custom.focusItems)
 		m.custom.sync()
+	case mainwin.TabSettings:
+		if m.settings == nil {
+			return
+		}
+		m.w.swapFocusList(m.settings.focusItems)
+		m.settings.sync()
 	}
 }
 

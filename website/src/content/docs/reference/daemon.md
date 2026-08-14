@@ -368,7 +368,7 @@ Each streamed event is a full response object with an `event` field:
 | `gui-toggle` | the Armoury Crate button is pressed |
 | `gui-open-full` | the button is pressed twice in quick succession — sent **in addition to** the second `gui-toggle` |
 | `power-source` | the machine moves between mains and battery power |
-| `state-changed` | the active profile, its settings, the saved profiles, or the autoswitch configuration change |
+| `state-changed` | the active profile, its settings, the saved profiles, the autoswitch configuration, or a firmware toggle change |
 
 `gui-open-full` never replaces `gui-toggle`: every press toggles immediately, so
 the first one opens your window with no added latency, and a client that wants
@@ -384,10 +384,15 @@ press would look like a double. Three presses in a row escalate once, not twice.
 configured, so a client can drive a plug/battery indicator from it alone.
 
 `state-changed` fires whatever the cause — this client, another client, the
-CLI, autoswitch, or a resume. A client displaying profile, TDP, fan curve, or
-undervolt values should re-read them with `get-state` when it arrives.
-Lighting is deliberately excluded: a brightness slider drag would emit a burst
-of events describing values the client just set itself.
+CLI, autoswitch, or a resume. A client displaying profile, TDP, fan curve,
+undervolt or firmware-toggle values should re-read them with `get-state` when
+it arrives. Lighting is deliberately excluded: a brightness slider drag would
+emit a burst of events describing values the client just set itself.
+
+All three toggle write paths emit it — `feature`, `bootsound` and
+`paneloverdrive`. Only the last one used to, which nothing could observe until
+a client rendered toggle rows from `features`: the same switch then updated
+live or did not, depending on which command had written it.
 
 Events carry **no payload**. The name says what happened and `get-state`
 answers with current truth — a payload would describe the moment the event was

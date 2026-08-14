@@ -30,16 +30,11 @@
 // # What is deliberately not here yet
 //
 // The roadmap gives the full window four pages: dashboard, profile editor,
-// settings, and quickbar customization. Two of them exist as views today and
-// are listed below. The other two are not stubs, because a tab that opens onto
-// an empty page is worse than an absent tab — it is the same trap as a device
+// settings, and quickbar customization. Three of them exist as views and are
+// listed below. The fourth is not a stub, because a tab that opens onto an
+// empty page is worse than an absent tab — it is the same trap as a device
 // document declaring a capability nothing reads.
 //
-//   - settings now has everything it needs from the api — api.ToggleInfo.
-//     Description and api.State.Features both landed — so what is missing is
-//     the page itself, not a protocol gap. It stays off this list until the
-//     view exists, on the same rule: a tab that opens onto an empty page is the
-//     trap, not an absent tab.
 //   - quickbar customization needs a writer for gui.toml and a reorder
 //     affordance that works on a controller. internal/controls already holds
 //     the list as data, which was the prerequisite; the UI is its own piece of
@@ -73,6 +68,7 @@ type Tab struct {
 const (
 	TabDashboard = "dashboard"
 	TabProfiles  = "profiles"
+	TabSettings  = "settings"
 )
 
 // defaultOrder is the window's pages, left to right.
@@ -86,6 +82,13 @@ var defaultOrder = []Tab{
 		Requires: []controls.Capability{controls.CapTelemetry}},
 	{ID: TabProfiles, Title: "Profiles",
 		Requires: []controls.Capability{controls.CapProfiles}},
+	// Settings last: firmware toggles are set-and-forget, so it is the page a
+	// user visits least and the one it costs least to reach past the other
+	// two. It requires toggles rather than any document section, since the
+	// page is a rendering of that list and an empty one leaves nothing to
+	// show — see controls.CapToggles.
+	{ID: TabSettings, Title: "Settings",
+		Requires: []controls.Capability{controls.CapToggles}},
 }
 
 // All returns every known tab in order. The returned slice shares nothing with

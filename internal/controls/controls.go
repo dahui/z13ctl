@@ -31,17 +31,18 @@
 // the same trap as a device document declaring a capability nothing reads: it
 // looks like a feature and produces an empty space.
 //
-// The two api gaps that used to block generic toggle rows are **closed**:
-// api.ToggleInfo carries a Description (the prose the drawer's two bespoke
-// switches held as GTK literals, now device data — "may cause ghosting" is a
-// fact about the panel), and api.State.Features carries every declared toggle's
-// current value, so a row learns its own state from the get-state a client
-// already makes rather than one socket round trip per toggle per sync.
+// Generic toggle rows now exist, but they are the full window's Settings page
+// (internal/settingsui + gui/settingsview.go), rendered straight from
+// api.DeviceInfo.Toggles rather than from this registry. That is the split
+// worth knowing: this package lists the *drawer's* sections, and a firmware
+// toggle is not one of them — the rows are device data, so a registry entry
+// per toggle would be a second list to keep in step with the document.
 //
-// What remains is a renderer. Until a settings view exists to hold them, the
-// bottom bar keeps its two bespoke switches and this package describes the
-// scrolling sections only — adding Kind now would be the empty-space trap
-// above, not progress.
+// A Kind field here therefore stays out until the drawer itself hosts
+// generically-rendered rows, which is a quickbar-customization question rather
+// than a settings one. Adding it now would still be the empty-space trap above.
+// The capability those rows resolve against does live here (CapToggles), so
+// that "does this device have any" has one answer for every surface.
 package controls
 
 import "github.com/dahui/voltaire/api/v2"
@@ -63,6 +64,14 @@ const (
 	CapBattery   Capability = "battery"
 	CapTelemetry Capability = "telemetry"
 	CapUndervolt Capability = "undervolt"
+
+	// CapToggles is the odd one out: every capability above is a section of
+	// the document that is either present or nil, while toggles are a *list*,
+	// and a device that declares an empty one has no firmware switches to
+	// show. So the question here is "are there any", not "is the section
+	// there" — a settings page gated on an empty list would be the tab that
+	// opens onto an empty page.
+	CapToggles Capability = "toggles"
 )
 
 // The group headings the drawer prints, exactly as they are shown.
@@ -242,6 +251,8 @@ func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 		return info.Telemetry != nil
 	case CapUndervolt:
 		return info.Undervolt != nil
+	case CapToggles:
+		return len(info.Toggles) > 0
 	}
 	// An unknown capability is not satisfiable. It can only come from a Control
 	// written against a newer document than this build understands, and hiding

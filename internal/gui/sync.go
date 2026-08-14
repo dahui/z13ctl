@@ -45,6 +45,7 @@ func (w *Window) syncState() {
 	w.syncBattery()
 	w.syncOverdrive()
 	w.syncBootSound()
+	w.syncSettings()
 	w.syncCustomView()
 	w.updateHeader()
 }
@@ -98,6 +99,18 @@ func (w *Window) refreshState() {
 		w.syncing = true
 		w.syncProfiles()
 		w.syncAutoswitch()
+		// The settings page's switches, and it must be inside the syncing
+		// guard: gtk.Switch fires state-set on a *programmatic* SetActive too,
+		// so an unguarded sync writes every row straight back to the daemon —
+		// which calls refreshState again.
+		//
+		// Here rather than only in syncState because this is the funnel: every
+		// write path ends in refreshState, the daemon's state-changed broadcast
+		// calls it, and the full window's show() calls it, whereas syncState
+		// runs on the drawer's own fetch — a surface the settings page does not
+		// live on. Without this the page is correct only at the moment its tab
+		// is first opened.
+		w.syncSettings()
 		w.syncing = false
 		w.updateHeader()
 	})
@@ -261,6 +274,25 @@ func (w *Window) sendOverdriveSet(value int) {
 		}
 		w.clearErrorAsync()
 		slog.Debug("sendOverdriveSet: done", "elapsed", time.Since(start))
+	}()
+}
+
+// sendFeatureSet writes one firmware toggle by its wire id — the generic form
+// of the two named sends below, and what the settings page uses for every row.
+//
+// The error names the toggle's id rather than a prose label because this
+// function does not have one: the label is device data the page renders, and
+// an id is what the user would grep the daemon's log for.
+func (w *Window) sendFeatureSet(id string, value int) {
+	go func() {
+		slog.Debug("sendFeatureSet: calling daemon", "id", id, "value", value)
+		start := time.Now()
+		if err := apiresult.Err(api.SendFeatureSet(id, value)); err != nil {
+			w.reportError("Set "+id, err)
+			return
+		}
+		w.clearErrorAsync()
+		slog.Debug("sendFeatureSet: done", "id", id, "elapsed", time.Since(start))
 	}()
 }
 
