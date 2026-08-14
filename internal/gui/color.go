@@ -31,6 +31,12 @@ var presetColors = []string{
 // colorInput holds the current-color swatch, preset buttons, and a Custom
 // button that navigates to the HSL color picker view.
 type colorInput struct {
+	// owner is the RGB block this input belongs to. It is what routes a preset
+	// click — and, through colorView, an HSL slider — back to the *right*
+	// section now that two surfaces each build one. Reaching Window.lighting
+	// instead applied the drawer's zone to whatever the window was editing.
+	owner *lightingView
+
 	row        *gtk.Box      // entire color input container
 	swatch     *gtk.Box      // current-color square (CSS ID driven)
 	presetBtns []*gtk.Button // individual preset color buttons
@@ -41,13 +47,13 @@ type colorInput struct {
 
 // newColorInput creates a color input widget with swatch, preset buttons,
 // and a Custom button that navigates to the HSL color picker view.
-func (w *Window) newColorInput(initialHex, swatchName, label string) *colorInput {
+func (l *lightingView) newColorInput(initialHex, swatchName, label string) *colorInput {
 	hex, ok := colorconv.Normalize(initialHex)
 	if !ok {
 		slog.Warn("color input created with an unparseable default", "hex", initialHex)
 		hex = lighting.DefaultColor1
 	}
-	ci := &colorInput{hex: hex, label: label}
+	ci := &colorInput{owner: l, hex: hex, label: label}
 
 	// Current-color swatch (non-interactive colored square).
 	ci.swatch = gtk.NewBox(gtk.OrientationHorizontal, 0)
@@ -66,8 +72,8 @@ func (w *Window) newColorInput(initialHex, swatchName, label string) *colorInput
 		btn.StyleContext().AddProvider(p, gtk.STYLE_PROVIDER_PRIORITY_USER+5) //nolint:staticcheck // per-widget dynamic color
 		btn.ConnectClicked(func() {
 			ci.hex = h
-			w.updateSwatches()
-			w.sendApply()
+			l.updateSwatches()
+			l.sendApply()
 		})
 		ci.presetBtns = append(ci.presetBtns, btn)
 		presetsRow.Append(btn)
@@ -80,7 +86,7 @@ func (w *Window) newColorInput(initialHex, swatchName, label string) *colorInput
 	ci.customBtn = gtk.NewButton()
 	ci.customBtn.SetLabel("Custom")
 	ci.customBtn.SetHExpand(true)
-	ci.customBtn.ConnectClicked(func() { w.showColorView(ci) })
+	ci.customBtn.ConnectClicked(func() { l.openCustom(ci) })
 	controlsRow := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	controlsRow.Append(ci.swatch)
 	controlsRow.Append(ci.customBtn)

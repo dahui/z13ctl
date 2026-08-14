@@ -83,10 +83,6 @@ type customView struct {
 
 	fanCurve *fanCurveEditor
 
-	// autos is the window's own AUTOSWITCH block (nil in the drawer, whose
-	// section lives on the main view as w.autoswitch).
-	autos *autoswitchSection
-
 	// Undervolt; the box is hidden when the daemon reports no CO support.
 	uvBox      *gtk.Box
 	uvCpuScale *gtk.Scale
@@ -387,20 +383,13 @@ func newCustomView(w *Window, host viewHost) *customView {
 		content.Append(separator())
 	}
 
-	// --- AUTOSWITCH (window only) ---
-	// A second instance of the drawer's block, in its own card under the fan
-	// editor: autoswitch selects profiles, so it belongs on the page that
-	// manages them (Jeff, 2026-08-14). The drawer's stays on its main view.
-	// Gated on w.autoswitch rather than re-deriving the capability check: the
-	// drawer's control registry has already resolved it by the time the
-	// window builds (buildContent runs at startup, this view lazily on first
-	// open), so a device without the capability drops this card too.
-	if hosted && w.autoswitch != nil {
-		sec = newSection(rightCol)
-		var autoBox *gtk.Box
-		c.autos, autoBox = w.newAutoswitchSection()
-		sec.Append(autoBox)
-	}
+	// AUTOSWITCH used to sit here, in a card under the fan editor, on the
+	// reading that it selects profiles and so belongs with the profile
+	// controls. It moved to the dashboard rail (Jeff, 2026-08-14) on a better
+	// one: what this page edits is a profile's *contents*, and autoswitch
+	// changes which profile the machine runs — a live control, like the
+	// firmware profile buttons it picks between, neither of which is on this
+	// page either. The drawer's instance is unaffected.
 
 	// --- ACTIONS ---
 	// The two surfaces commit differently. The drawer keeps its historical
@@ -768,12 +757,6 @@ func (c *customView) sync() {
 		setBlockNote(c.deleteNote, block)
 	}
 
-	// The window's autoswitch card (nil in the drawer). Safe here because sync
-	// holds w.syncing, which its switch handler checks before echoing a send.
-	if c.autos != nil {
-		c.autos.sync()
-	}
-
 	// One-commit model (window only): the widgets now show the target's own
 	// values, which is the baseline the commit button measures edits against.
 	c.syncCommitBar(plan)
@@ -947,10 +930,6 @@ func (c *customView) buildFocusList() {
 			widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
 		})
 		buttonLine(c.resetFanBtn)
-
-		if c.autos != nil {
-			c.autos.appendFocus(b, &items)
-		}
 
 		b.Section("commit")
 		buttonLine(c.commitBtn)

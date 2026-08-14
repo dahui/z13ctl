@@ -109,6 +109,13 @@ func (w *Window) refreshState() {
 		// live on. Without this the page is correct only at the moment its tab
 		// is first opened.
 		w.syncSettings()
+		// The charge limit and the RGB block, for the same reason and since the
+		// same date: both are on the dashboard rail now, and both were synced
+		// only by syncState — the drawer's own fetch. Left out, the window's
+		// copies would show whatever the daemon happened to be reporting when
+		// the page was built and never move again.
+		w.syncBattery()
+		w.syncLightingSection()
 		w.syncing = false
 		w.updateHeader()
 	})
@@ -180,14 +187,6 @@ func (w *Window) startTelemetryPolling() {
 	})
 }
 
-// syncBattery sets the battery limit scale to match the daemon state.
-func (w *Window) syncBattery() {
-	if w.state == nil || w.state.Battery == 0 || w.battScale == nil {
-		return
-	}
-	w.battScale.SetValue(float64(w.state.Battery))
-}
-
 // sendProfileSet sends a profile change to the daemon.
 // The state refresh runs on this same goroutine, after the set returns. It must
 // not be a separate goroutine: switching to a stock profile makes the daemon
@@ -205,44 +204,6 @@ func (w *Window) sendProfileSet(prof string) {
 		slog.Debug("sendProfileSet: done", "elapsed", time.Since(start))
 		w.refreshState()
 	}()
-}
-
-// initBatteryDebounce sets up debounced battery limit changes on the given scale.
-func (w *Window) initBatteryDebounce(sc *gtk.Scale) {
-	var debounce *time.Timer
-	sc.ConnectValueChanged(func() {
-		// The syncing guard every other input has. syncBattery sets this scale from
-		// daemon state, which fires this handler, so without it every drawer open
-		// wrote the limit straight back to the hardware 200ms later. Harmless while
-		// the write succeeds — it is the value the daemon just reported — but on a
-		// device that rejects it that is now a visible error bar on every open,
-		// since daemon failures are no longer swallowed.
-		//
-		// Checked here rather than in the timer: by the time it fires the sync has
-		// long finished and the flag is false again.
-		if w.syncing {
-			return
-		}
-		if debounce != nil {
-			debounce.Stop()
-		}
-		debounce = time.AfterFunc(200*time.Millisecond, func() {
-			glib.IdleAdd(func() bool {
-				val := int(sc.Value()) // scale read must stay on the GTK thread
-				go func() {
-					slog.Debug("sendBatteryLimitSet: calling daemon", "limit", val)
-					start := time.Now()
-					if err := apiresult.Err(api.SendBatteryLimitSet(val)); err != nil {
-						w.reportError("Set battery limit", err)
-						return
-					}
-					w.clearErrorAsync()
-					slog.Debug("sendBatteryLimitSet: done", "elapsed", time.Since(start))
-				}()
-				return false
-			})
-		})
-	})
 }
 
 // sendFeatureSet writes one firmware toggle by its wire id — the only toggle

@@ -28,25 +28,39 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
-// profileSection is the main view's PROFILE block.
+// profileSection is a PROFILE block: the firmware profiles, and one button
+// standing for the whole custom family.
 type profileSection struct {
 	w *Window
 
 	btns      map[string]*gtk.Button // firmware profile buttons by name
-	customBtn *gtk.Button            // opens the custom view; labelled with the running custom profile
+	customBtn *gtk.Button            // opens the custom profiles; labelled with the running one
+
+	// onCustom is where the Custom button goes. It differs by surface — the
+	// drawer's own custom view, or the full window's Profiles tab — and it is
+	// the only thing about this block that does.
+	onCustom func()
 }
 
-// buildProfileSection creates the main view's PROFILE section: the three
-// firmware profiles on one row, and a single Custom button beneath them.
+// buildProfileSection creates the drawer main view's PROFILE section and
+// registers it as w.profiles, which the control registry's focus half reads.
+func (w *Window) buildProfileSection() *gtk.Box {
+	p, box := w.newProfileSection(func() { w.showCustomView() })
+	w.profiles = p
+	return box
+}
+
+// newProfileSection creates a PROFILE block: the three firmware profiles on one
+// row, and a single Custom button beneath them.
 //
 // The custom profiles are deliberately not listed here. One row per saved
 // profile pushed the RGB and battery controls off the bottom of a 320px
-// drawer, so the whole family collapses to one button that opens the custom
-// view; the button is labelled with the running custom profile, so the main
-// view still says what is in force.
-func (w *Window) buildProfileSection() *gtk.Box {
-	p := &profileSection{w: w, btns: make(map[string]*gtk.Button)}
-	w.profiles = p
+// drawer, so the whole family collapses to one button that opens the editor;
+// the button is labelled with the running custom profile, so the surface still
+// says what is in force. Two instances exist — the drawer main view's and the
+// dashboard rail's — and each is synced through Window.profileSections.
+func (w *Window) newProfileSection(onCustom func()) (*profileSection, *gtk.Box) {
+	p := &profileSection{w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 	box.Append(sectionLabel("PROFILE"))
@@ -77,11 +91,19 @@ func (w *Window) buildProfileSection() *gtk.Box {
 	p.customBtn = gtk.NewButtonWithLabel(profileui.Custom(nil).Label)
 	p.customBtn.SetHExpand(true)
 	w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
-	p.customBtn.ConnectClicked(func() { w.showCustomView() })
+	p.customBtn.ConnectClicked(func() { p.openCustom() })
 	customRow.Append(p.customBtn)
 	box.Append(customRow)
 
-	return box
+	return p, box
+}
+
+// openCustom follows the Custom button to whichever profile editor this
+// surface owns.
+func (p *profileSection) openCustom() {
+	if p.onCustom != nil {
+		p.onCustom()
+	}
 }
 
 // sync updates the main view's profile controls from daemon state. The section
@@ -276,12 +298,17 @@ func (a *autoswitchSection) sync() {
 	a.syncVis()
 }
 
-// focusProfileSection appends the PROFILE block's focus items.
+// focusProfileSection appends the drawer main view's PROFILE focus items; the
+// dashboard rail appends its own instance's in the dashboard's focus list.
 func (w *Window) focusProfileSection(b *focusgrid.Builder, items *[]focusItem) {
-	p := w.profiles
-	if p == nil {
-		return
+	if w.profiles != nil {
+		w.profiles.appendFocus(b, items)
 	}
+}
+
+// appendFocus appends this instance's focus items: the firmware profiles share
+// a row, and the Custom button sits below them.
+func (p *profileSection) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	stock := profileui.StockRows(nil)
 	b.Section("profile")
 	for i, c := range b.Line(len(stock)) {
@@ -338,17 +365,45 @@ func (a *autoswitchSection) appendFocus(b *focusgrid.Builder, items *[]focusItem
 	}
 }
 
-// Window-level entry points. Each nil-guards its section, which the control
-// registry may have dropped for this device.
+// Window-level entry points. Each walks every built instance, which is nil-safe
+// on a device the control registry dropped the section for.
+
+// profileSections returns every PROFILE block that has been built: the drawer
+// main view's, and the dashboard rail's when the full window exists.
+func (w *Window) profileSections() []*profileSection {
+	out := make([]*profileSection, 0, 2)
+	if w.profiles != nil {
+		out = append(out, w.profiles)
+	}
+	if m := w.mainWin; m != nil && m.dashboard != nil && m.dashboard.profiles != nil {
+		out = append(out, m.dashboard.profiles)
+	}
+	return out
+}
+
+// autoswitchSections returns every AUTOSWITCH block that has been built. The
+// window's lives on the dashboard rail rather than on the Profiles page (Jeff,
+// 2026-08-14: it changes what the machine is doing now rather than what a
+// profile contains, so it belongs with the live controls).
+func (w *Window) autoswitchSections() []*autoswitchSection {
+	out := make([]*autoswitchSection, 0, 2)
+	if w.autoswitch != nil {
+		out = append(out, w.autoswitch)
+	}
+	if m := w.mainWin; m != nil && m.dashboard != nil && m.dashboard.autos != nil {
+		out = append(out, m.dashboard.autos)
+	}
+	return out
+}
 
 func (w *Window) syncProfiles() {
-	if w.profiles != nil {
-		w.profiles.sync()
+	for _, p := range w.profileSections() {
+		p.sync()
 	}
 }
 
 func (w *Window) syncAutoswitch() {
-	if w.autoswitch != nil {
-		w.autoswitch.sync()
+	for _, a := range w.autoswitchSections() {
+		a.sync()
 	}
 }

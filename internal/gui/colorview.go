@@ -3,7 +3,8 @@
 
 package gui
 
-// colorview.go — the HSL colour picker, one of the drawer's stack views.
+// colorview.go — the HSL colour picker: a stack view on whichever surface
+// opened it.
 //
 // It is a full view rather than a popup for the standing gamescope reason: it
 // is large, and view switching is how the drawer handles anything that would
@@ -13,6 +14,12 @@ package gui
 // The view owns its widgets and its focus list. colorInput — the swatch and
 // preset row that *opens* this view — stays in color.go, because it is part of
 // the lighting section rather than of the picker.
+//
+// Two instances exist since the dashboard rail grew an RGB card: the drawer's
+// and the full window's. It takes a viewHost like every other shared view, and
+// the colour it edits reaches the right hardware through colorInput.owner
+// rather than through Window — the picker itself knows nothing about which
+// section opened it.
 
 import (
 	"fmt"
@@ -26,8 +33,10 @@ import (
 
 // colorView is the HSL picker page.
 type colorView struct {
-	w *Window
+	w    *Window
+	host viewHost
 
+	root     *gtk.Box
 	title    *gtk.Label
 	backBtn  *gtk.Button
 	presets  []*gtk.Button
@@ -48,22 +57,27 @@ type colorView struct {
 	focusItems []focusItem
 }
 
-// buildColorPickerView builds the HSL color picker view.
-// Contains preset buttons, hue/saturation/lightness sliders, and a preview swatch.
-func (w *Window) buildColorPickerView() *gtk.Box {
-	c := &colorView{w: w}
-	w.colorView = c
+// newColorView builds the HSL color picker for a surface: preset buttons,
+// hue/saturation/lightness sliders, and a preview swatch.
+//
+// Unlike the drawer's other views it always builds a header. Its back button is
+// the only way out of a page the tab bar does not name, so a nil host.back —
+// the test every other view reads as "this surface has a tab bar" — would leave
+// the full window's picker with no exit at all.
+func newColorView(w *Window, host viewHost) *colorView {
+	c := &colorView{w: w, host: host}
 
 	view := gtk.NewBox(gtk.OrientationVertical, 8)
 	view.SetMarginStart(12)
 	view.SetMarginEnd(12)
+	c.root = view
 
 	// Header: back button + dynamic title.
 	c.title = gtk.NewLabel("COLOR")
 	c.backBtn = gtk.NewButton()
 	c.backBtn.SetIconName("go-previous-symbolic")
 	c.backBtn.AddCSSClass("view-back-btn")
-	c.backBtn.ConnectClicked(func() { w.showMainView() })
+	c.backBtn.ConnectClicked(func() { c.back() })
 
 	header := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	header.SetMarginTop(10)
@@ -119,7 +133,16 @@ func (w *Window) buildColorPickerView() *gtk.Box {
 	previewRow.Append(c.hexLabel)
 	view.Append(previewRow)
 
-	return view
+	c.buildFocusList()
+	return c
+}
+
+// back leaves the picker. Nil-guarded for the same reason every host.back call
+// is: a surface with no way out would be a trap, but a crash is worse.
+func (c *colorView) back() {
+	if c.host.back != nil {
+		c.host.back()
+	}
 }
 
 // newScale creates a Scale for an HSL component.
@@ -141,18 +164,13 @@ func hslScaleBox(label string, sc *gtk.Scale) *gtk.Box {
 	return box
 }
 
-// showColorView navigates the view stack to the HSL color picker
-// and initializes the sliders from the given colorInput's current hex.
-func (w *Window) showColorView(ci *colorInput) {
-	if w.viewStack == nil {
-		return
-	}
-	w.closePopup()
-	if w.colorView == nil {
-		w.viewStack.AddNamed(w.buildColorPickerView(), "color")
-		w.buildColorFocusList()
-	}
-	c := w.colorView
+// colorPage is the stack child name the picker is installed under, on both
+// surfaces.
+const colorPage = "color"
+
+// open points the picker at a colour input and initializes the sliders from its
+// current hex. Making it visible is the surface's job.
+func (c *colorView) open(ci *colorInput) {
 	c.editing = ci
 	c.title.SetLabel(ci.label)
 	// Defensive: hex is normalized on ingest in syncLightingSection, so a failure
@@ -164,7 +182,21 @@ func (w *Window) showColorView(ci *colorInput) {
 		slog.Warn("color picker opened with an unparseable color", "hex", ci.hex)
 	}
 	c.updatePreview()
-	w.viewStack.SetVisibleChildName("color")
+}
+
+// showColorView navigates the drawer's view stack to the HSL color picker.
+func (w *Window) showColorView(ci *colorInput) {
+	if w.viewStack == nil {
+		return
+	}
+	w.closePopup()
+	if w.colorView == nil {
+		w.colorView = newColorView(w, w.drawerHost(colorPage))
+		w.viewStack.AddNamed(w.colorView.root, colorPage)
+	}
+	c := w.colorView
+	c.open(ci)
+	w.viewStack.SetVisibleChildName(colorPage)
 	w.swapFocusList(c.focusItems)
 }
 
@@ -190,9 +222,9 @@ func (c *colorView) onChanged() {
 	}
 	hex := colorconv.HSLToHex(c.hue.Value(), c.sat.Value(), c.lit.Value())
 	c.editing.hex = hex
-	c.w.updateSwatches()
+	c.editing.owner.updateSwatches()
 	c.updatePreview()
-	c.w.queueApply()
+	c.editing.owner.queueApply()
 }
 
 // presetClicked handles a preset button click in the color picker view.
@@ -201,8 +233,8 @@ func (c *colorView) presetClicked(hex string) {
 		return
 	}
 	c.editing.hex = hex
-	c.w.updateSwatches()
-	c.w.sendApply()
+	c.editing.owner.updateSwatches()
+	c.editing.owner.sendApply()
 	// Update HSL sliders to reflect the preset. presetColors are compile-time
 	// constants, so a failure here is a programming error, not bad input.
 	if h, s, l, ok := colorconv.HexToHSL(hex); ok {
@@ -227,12 +259,8 @@ func (c *colorView) updatePreview() {
 	}
 }
 
-// buildColorFocusList builds the 2D focus grid for the HSL color picker view.
-func (w *Window) buildColorFocusList() {
-	c := w.colorView
-	if c == nil {
-		return
-	}
+// buildFocusList builds the 2D focus grid for the HSL color picker view.
+func (c *colorView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
 
@@ -241,7 +269,7 @@ func (w *Window) buildColorFocusList() {
 		coord := b.Section("nav").One()
 		items = append(items, focusItem{
 			widget: c.backBtn, row: coord.Row, col: coord.Col, section: coord.Section,
-			onActivate: func() { w.showMainView() },
+			onActivate: func() { c.back() },
 		})
 	}
 
@@ -268,7 +296,7 @@ func (w *Window) buildColorFocusList() {
 		})
 	}
 
-	items = append(items, w.errView.focusItem())
-	logFocusList("color", items)
+	items = append(items, c.host.errBar.focusItem())
+	logFocusList(c.host.focusName(colorPage), items)
 	c.focusItems = items
 }

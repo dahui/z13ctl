@@ -389,6 +389,7 @@ func (b *Backend) scaledCSS() string {
 .setting-name { font-size: %.0fpx; }
 .setting-desc { font-size: %.0fpx; }
 .main-window .section-card { padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
+.main-window .dash-control { min-width: %.0fpx; }
 .main-window .commit-bar { padding: %.0fpx %.0fpx; }
 .main-window .commit-bar button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .custom-actions button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -447,6 +448,11 @@ func (b *Backend) scaledCSS() string {
 		13*s, 11*s, // settings row (name, description) — the hosted full window
 		// shows this page too, and unscaled type there is unreadable
 		10*s, 12*s, 8*s, // section-card (padding-v, padding-h, border-radius)
+		// The Dashboard's control cards. min-width is what breaks their FlowBox
+		// into lines, so it is a layout dimension like .dash-card's and has to
+		// scale — left at 1x it would pack four unreadably narrow cards onto a
+		// line meant to hold two.
+		200*s,     // dash-control min-width
 		8*s, 12*s, // commit-bar (padding-v, padding-h)
 		48*s, 4*s, 16*s, 6*s, // commit-bar button — touch height, like every button here
 		36*s, 4*s, 8*s, 6*s, // custom-actions button (min-height, padding-v, padding-h, border-radius)

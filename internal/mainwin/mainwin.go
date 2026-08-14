@@ -73,12 +73,18 @@ const (
 
 // defaultOrder is the window's pages, left to right.
 //
-// Telemetry leads because it is the page that justifies a large window at all:
-// the drawer already shows every control at 320px, and the one thing it cannot
-// show is a chart big enough to read. The roadmap says "dashboard (top)" for
-// the same reason.
+// The dashboard leads because it is the page that justifies a large window at
+// all: the drawer already shows every control at 320px, and the one thing it
+// cannot show is a chart big enough to read. The roadmap says "dashboard (top)"
+// for the same reason.
+//
+// Its title was "Telemetry" until it grew a rail of live controls beside the
+// charts (Jeff, 2026-08-14) — at which point the name described a third of the
+// page. The *ID* did not change and must not: it is the GTK stack child name,
+// it is the name the focus dump logs the page under, and it is what will land
+// in the user's config once the window remembers its last page.
 var defaultOrder = []Tab{
-	{ID: TabDashboard, Title: "Telemetry",
+	{ID: TabDashboard, Title: "Dashboard",
 		Requires: []controls.Capability{controls.CapTelemetry}},
 	{ID: TabProfiles, Title: "Profiles",
 		Requires: []controls.Capability{controls.CapProfiles}},

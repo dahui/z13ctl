@@ -83,6 +83,13 @@ type mainWindow struct {
 	dashboard *dashboardView
 	custom    *customView
 	settings  *settingsView
+
+	// colorPicker is the HSL picker the dashboard rail's RGB card opens. It is
+	// a stack child that is *not* a tab — a sub-page reached from one control
+	// and left by its back button — so it is built lazily like the drawer's,
+	// and returnTab is where leaving it goes.
+	colorPicker *colorView
+	returnTab   string
 }
 
 // newMainWindow builds the full window. It is not shown; show() does that.
@@ -306,6 +313,78 @@ func (m *mainWindow) activeScroll() *gtk.ScrolledWindow {
 	return nil
 }
 
+// ensureColorView builds the window's HSL picker and installs it as a non-tab
+// stack child. Split from showColorView so the focus-dump build can bring it
+// into existence without navigating to it — otherwise the one grid reachable
+// only by clicking Custom on the rail would be missing from the fingerprint,
+// which is exactly the gap VOLTAIRE_GUI_DUMP_FOCUS exists to close.
+func (m *mainWindow) ensureColorView() *colorView {
+	if m.colorPicker != nil {
+		return m.colorPicker
+	}
+	m.colorPicker = newColorView(m.w, viewHost{
+		errBar: m.errView,
+		prefix: "full:",
+		back:   func() { m.leaveColorView() },
+		current: func() bool {
+			return m.isVisible() && m.stack != nil && m.stack.VisibleChildName() == colorPage
+		},
+	})
+	// A centred column rather than the full width of the window. The picker is
+	// the drawer's layout — eight preset squares, three sliders, a swatch —
+	// and stretched across 1200px the presets become letterboxes and the
+	// sliders lose all precision per pixel. Done here rather than inside the
+	// view because it is a fact about this surface, and the drawer's instance
+	// must keep filling its 320px panel.
+	m.colorPicker.root.SetHAlign(gtk.AlignCenter)
+	m.colorPicker.root.SetSizeRequest(colorPickerWidth, -1)
+	m.stack.AddNamed(m.colorPicker.root, colorPage)
+	return m.colorPicker
+}
+
+// colorPickerWidth is the HSL picker's column width in the full window. Wider
+// than the drawer's panel — the sliders are worth the extra travel — and well
+// short of a 1200px window.
+const colorPickerWidth = 480
+
+// showColorView opens the HSL picker over the window's tabs.
+func (m *mainWindow) showColorView(ci *colorInput) {
+	if m.stack == nil {
+		return
+	}
+	m.w.closePopup()
+	c := m.ensureColorView()
+	if cur := m.stack.VisibleChildName(); cur != colorPage {
+		m.returnTab = cur
+	}
+	c.open(ci)
+	m.stack.SetVisibleChildName(colorPage)
+	// No tab is highlighted while a sub-page is up. setActiveButton clears
+	// every button for a key that names none of them, which is the honest
+	// rendering: the picker is not one of the tabs.
+	setActiveButton(m.tabBtns, colorPage)
+	m.w.swapFocusList(c.focusItems)
+}
+
+// leaveColorView returns from the picker to the tab it was opened from.
+func (m *mainWindow) leaveColorView() {
+	id := m.returnTab
+	if _, ok := mainwin.Lookup(id); !ok {
+		// The picker is only reachable from the rail, so this is the tab it
+		// came from in every real case. Falling back rather than trusting the
+		// field keeps a stack with no visible child out of reach.
+		id = mainwin.TabDashboard
+	}
+	m.setTab(id)
+}
+
+// onColorPage reports whether the window is showing a sub-page rather than a
+// tab. B and the tab bar both need to know: from here, "back" is one level up,
+// not out of the window.
+func (m *mainWindow) onColorPage() bool {
+	return m.stack != nil && m.stack.VisibleChildName() == colorPage
+}
+
 // setTab switches pages and brings the new one up to date. What a tab button
 // does.
 func (m *mainWindow) setTab(id string) {
@@ -334,6 +413,7 @@ func (m *mainWindow) syncPage(id string) {
 			return
 		}
 		m.w.swapFocusList(m.dashboard.focusItems)
+		m.dashboard.syncControls()
 		m.dashboard.refresh()
 		m.dashboard.startPolling()
 	case mainwin.TabProfiles:
@@ -386,6 +466,13 @@ func (m *mainWindow) hide() {
 	m.w.fullVisible.Store(false)
 	if m.dashboard != nil {
 		m.dashboard.stopPolling()
+	}
+	// Never leave the stack on a sub-page. show() syncs whatever child is
+	// selected, and syncPage knows only tabs — so reopening onto the colour
+	// picker would give a page with a stale focus list and no tab highlighted,
+	// reachable only by pressing back.
+	if m.onColorPage() {
+		m.leaveColorView()
 	}
 	m.w.setGamepadGrabbed(false)
 	m.w.hideGamepadFocus()

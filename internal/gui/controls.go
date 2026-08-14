@@ -279,24 +279,6 @@ func (w *Window) buildButtonGroup(
 	return row
 }
 
-// buildBatterySection creates the battery charge limit scale (40–100%).
-func (w *Window) buildBatterySection() *gtk.Box {
-	box := gtk.NewBox(gtk.OrientationVertical, 4)
-	box.Append(sectionLabel("BATTERY LIMIT"))
-
-	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 40, 100, 1)
-	sc.SetDigits(0)
-	sc.SetDrawValue(true)
-	sc.SetValue(80)
-	sc.SetFocusable(false)
-	w.wheelScrollsView(sc)
-	w.battScale = sc
-	w.initBatteryDebounce(sc)
-
-	box.Append(sc)
-	return box
-}
-
 // colorSubBox wraps a section label + content widget into a single Box,
 // making it easy to show/hide the whole subsection at once.
 func colorSubBox(label string, content gtk.Widgetter) *gtk.Box {
@@ -400,25 +382,10 @@ func boxVisible(box *gtk.Box) func() bool {
 	return func() bool { return box.IsVisible() }
 }
 
-// focusProfileSection: the three firmware buttons share a row, and the Custom
-// button that opens the custom view sits below them. The custom profiles
-// themselves are navigated in that view, not here.
-
-// focusAutoswitchSection: enable switch, then a dropdown per power source. The
-// two target rows only exist while autoswitch is enabled, so they carry the
-// container's visibility.
-
-// focusBatterySection: the charge-limit slider.
-func (w *Window) focusBatterySection(b *focusgrid.Builder, items *[]focusItem) {
-	left, right, get, set := scaleAdjust(w.battScale, 5)
-	c := b.Section("battery").One()
-	*items = append(*items, focusItem{
-		widget: w.battScale, row: c.Row, col: c.Col, section: c.Section,
-		editable: true,
-		onLeft:   left, onRight: right,
-		getValue: get, setValue: set,
-	})
-}
+// Each control's focus half lives beside its widgets: focusProfileSection and
+// focusAutoswitchSection in mainprofile.go, focusBatterySection in battery.go,
+// focusLightingSection in lightingview.go. Only the footer is here, because it
+// is the one piece of chrome that is not a registry control.
 
 // focusFooter: the theme button, alone since the firmware toggles moved to the
 // full window's Settings tab.

@@ -47,6 +47,15 @@
     min-height: 18px;
 }
 
+/* The RGB effect grid on the dashboard rail. It needs its own rule because
+   `.drawer .mode-grid.btn-group button` below is (0,3,1) — the same weight as
+   the desktop-density rule above — and later in the sheet, so it won the tie
+   and left the effect buttons 52px tall in a window whose every other button
+   is 30px. (0,4,1) settles it. */
+.drawer.main-window .mode-grid.btn-group button {
+    min-height: 34px;
+}
+
 /* The Profiles page's commit bar — the one Apply/Save button for every
    unsaved edit, fixed under the scroll area so it cannot scroll out of reach
    while the advanced controls are open. The separating border is in
@@ -92,6 +101,24 @@
 .main-window .section-card {
     padding: 10px 12px;
     border-radius: 8px;
+}
+
+/* Dashboard control cards — the live controls under the tiles. min-width is
+   what makes their FlowBox reflow, exactly as .dash-card's does for the tiles
+   above. It is a second class rather than a change to .section-card, which the
+   Profiles page also wears in a fixed two-column box that has no reflow to
+   drive.
+
+   200 is not a taste figure: the FlowBox breaks lines on *natural* width, and
+   for three of these four cards the natural width is this minimum (their
+   contents are a dropdown or a slider, both of which are happy to be narrow).
+   At 250 the four cards asked for more than a 1200px window has and the last
+   one wrapped alone onto a line of its own, leaving two thirds of it empty —
+   the exact waste of width this layout was rearranged to stop. The cards then
+   expand to fill whatever the line has left over, so the smaller minimum costs
+   nothing at full width and buys a second card per line at the small end. */
+.main-window .dash-control {
+    min-width: 200px;
 }
 
 .main-window .dash-card-title {

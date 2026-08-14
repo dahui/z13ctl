@@ -345,7 +345,7 @@ outside.
 ### The full window (double press)
 
 - [ ] Double-press the Armoury Crate button — the drawer flashes and the full
-      window replaces it. The **Telemetry** tab shows all eight cards
+      window replaces it. The **Dashboard** tab shows all eight cards
       *immediately* (framed charts, "—" readouts at worst for the first
       second), never a blank grid.
 - [ ] The expanded cards read sensibly: Temp shows CPU and GPU, Power shows
@@ -373,9 +373,9 @@ outside.
 - [ ] Toggling Advanced with no value moved does **not** enable the commit
       button; moving PL2 in advanced then unchecking Advanced sends basic
       semantics (the PL2 edit is not applied).
-- [ ] The AUTOSWITCH card on the Profiles tab mirrors the drawer's section:
-      flip it in one place, the other follows on the next sync; its dropdowns
-      open inside the window, not on the hidden drawer.
+- [ ] There is **no** autoswitch card on the Profiles tab — it moved to the
+      Dashboard, with the other controls that change what the machine is doing
+      rather than what a profile contains.
 - [ ] Reset TDP / Reset Fans sit right-aligned in their cards and still gate:
       Reset Fans is refused above the safe sustained limit with the note under
       the fan card.
@@ -390,6 +390,35 @@ outside.
 - [ ] The drawer's bottom bar holds **only** the theme button now: the two
       firmware switches moved to this tab, and the drawer's gamepad footer is
       one item wide.
+
+### The Dashboard's controls
+
+- [ ] Under the charts: **Profile**, **Autoswitch**, **Battery limit** and
+      **Refresh rate** sit in one row across the window at the default size,
+      with **RGB** as a wide card beneath them in three columns. Nothing is a
+      narrow column down one side, and the charts are not pushed below the fold.
+- [ ] Narrow the window towards its minimum: both the chart grid and the
+      control row reflow to fewer per line, and nothing is clipped or
+      horizontally scrolled.
+- [ ] The controls are a second copy, not a second setting: change the profile
+      here and the drawer follows within a second (and vice versa); the same
+      for the charge limit and the autoswitch pair. `voltaire profile --get`
+      agrees with both.
+- [ ] **Refresh rate** shows what `kscreen-doctor -o` reports for the panel
+      (180 Hz on the Z13). Open it — only the rates available at the *current*
+      resolution are listed, no resolutions. Pick 60 Hz: the screen changes and
+      the dropdown re-reads to `60 Hz`. Put it back to 180 Hz.
+- [ ] With a second screen attached, the card's title names the output it acts
+      on (`REFRESH RATE · eDP-1`); with only the panel, it does not.
+- [ ] RGB: pick an effect, a preset colour, a speed and a brightness — the
+      keyboard and lightbar follow, and the drawer's own RGB section shows the
+      same values next time it opens. Switch the zone tab to Lightbar and
+      confirm the two zones stay independent between the two surfaces.
+- [ ] **Custom** under COLOR 1 opens the HSL picker *inside the window*, as a
+      centred column: no tab is highlighted while it is up, the back arrow
+      returns to the Dashboard, `Escape` closes the window, and **B** on a
+      controller goes back one level rather than closing the window. Reopen the
+      window afterwards — it comes back on a tab, never on the picker.
 
 ## 14. Cleanup
 

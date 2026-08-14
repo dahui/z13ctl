@@ -62,7 +62,21 @@ internal/gui/
   backend.go                    Backend interface (Configure, WrapContent, Show, Hide)
   controls.go                   All GTK widget construction (drawer, views, bottom bar)
   mainwindow.go                 The full window: a real toplevel with a tab per page,
-                                opened by the double-press gui-open-full event
+                                opened by the double-press gui-open-full event, plus the
+                                HSL picker it hosts as a non-tab stack child
+  dashboard.go                  The Dashboard page: the telemetry tile grid, and the live
+                                controls laid out across the width beneath it
+  mainprofile.go                profileSection and autoswitchSection — one instance in the
+                                drawer's main view, one on the Dashboard
+  battery.go                    batterySection: the charge-limit slider, its debounce and
+                                its sync (was three fragments on Window)
+  displayview.go                displaySection: the refresh-rate dropdown. The one control
+                                that does not go through the daemon — rules in
+                                internal/display
+  lightingview.go               lightingView: the RGB block, also built twice; its widgets
+                                are fields so each surface arranges them itself
+  settingsview.go               The Settings page: firmware-toggle rows from the device
+                                document (rules in internal/settingsui)
   viewhost.go                   viewHost — the two things a view must be told about the
                                 surface it was built into (how to leave, am I on screen)
   customview.go                 Custom profile view: the customView struct, TDP + undervolt
@@ -117,6 +131,8 @@ internal/keyrepeat/             Tracker: which held direction owns the gamepad a
 internal/colorconv/             hex <-> HSL/RGB conversion and colour validation
 internal/lighting/              RGB mode resolution, per-mode controls, defaults
 internal/uiscale/               Gamescope UI scale factor (cannot live in the cgo package)
+internal/display/               Refresh rate: which rates the panel offers at its current
+                                resolution, and how to select one (kscreen-doctor)
 internal/panelgeom/             Overlay backend panel rectangle + slide interpolation
 internal/startup/               CLI arg scanning + split-level slog handler
 internal/togglegate/            Debounce helper for duplicate gui-toggle bursts
@@ -595,9 +611,24 @@ All seven are done — `errBarView` (`errbar.go`), `colorView`
 (`colorview.go`), `themeView` (`themeview.go`), `lightingView`
 (`lightingview.go`), `profileSection` and `autoswitchSection`
 (`mainprofile.go`), `dashboardView` (`dashboard.go`, built in this shape from
-the start), and `customView` (`customview.go`). What remains on `Window` is
-process-level: the battery slider, the two footer toggles, the header label,
-the palette, and the poll generation counters.
+the start), and `customView` (`customview.go`). `batterySection`
+(`battery.go`) and `displaySection` (`displayview.go`) joined them when the
+Dashboard grew controls. What remains on `Window` is process-level: the header
+label, the palette, and the poll generation counters.
+
+**Owning its widgets was only half of it; being built more than once is the
+other half**, and that arrived on 2026-08-14 when the Dashboard grew a second
+copy of four drawer sections. The pattern is `newXSection()` returning the
+instance and its widgets, with `buildXSection()` kept as the drawer's
+registration, and a `Window.xSections()` walker feeding the sync — the shape
+`customViews()` established. Three things had been written as if there could
+only be one, and each would have failed *silently*: the RGB swatch CSS ids
+(display-wide selectors two instances would have fought over — now prefixed),
+`Window.updateSwatches/sendApply/queueApply` (a preset click reached
+`w.lighting`, so the window's picker would have applied the drawer's zone —
+`colorInput.owner` replaces them), and `refreshState` not calling
+`syncBattery`/`syncLightingSection` (they were on `syncState`, the *drawer's*
+fetch, so the window's copies would never have moved after being built).
 
 Five rules the moves follow:
 
@@ -716,6 +747,32 @@ per-instance before it was true:
   open and showing me", asked instead of reading `w.viewStack` — a view that
   consults the drawer's stack is a view that cannot live anywhere else. `errBar`
   is the surface's own error strip.
+
+**The HSL picker is a stack child that is not a tab.** The Dashboard's RGB card
+needs a picker and the drawer's lives on the drawer's stack, so `colorView` took
+a `viewHost` like every other shared view. Being a *sub*-page rather than a page
+costs four small rules, each of which is a dead end without it:
+
+- `setActiveButton(m.tabBtns, colorPage)` is called with a name that matches no
+  tab, so **no tab is highlighted** — the honest rendering, since the picker is
+  not one of them.
+- `ActionBack` gets a case **above** the window's own close: B leaves the page
+  before it leaves the surface, the same nesting the drawer's view-stack case
+  already expresses.
+- `hide()` returns the stack to a tab. `show()` syncs whatever child is
+  selected and `syncPage` knows only tabs, so reopening onto the picker would
+  give a page with a stale focus list and no highlight.
+- `newColorView` **always builds its header**, where every other view reads a
+  nil `host.back` as "this surface has a tab bar" and builds none. Here that
+  would leave the page with no way out at all.
+
+Its column is centred at `colorPickerWidth` rather than filling the window:
+stretched across 1200px the eight preset squares become letterboxes and the
+sliders lose all precision per pixel. That is set at the call site, not in the
+view, because it is a fact about the surface — the drawer's instance must keep
+filling its 320px panel. `VOLTAIRE_GUI_OPEN_FULL=color` opens it, for the reason
+that flag's own comment already gives: it is the page a screenshot run is least
+able to reach, two pointer clicks in from the Dashboard.
 
 **One error bar per surface, and reports fan out to all of them.** The drawer's
 bar is hidden whenever the window is up, so a failure reported only to it would
@@ -1106,8 +1163,52 @@ GTK-side facts worth keeping:
   the tick's visible-child guard would catch a page switch a second later, but
   `hide()` leaves no page switch to catch.
 - **Cards are not in the focus grid**, and their `FlowBoxChild`ren are
-  `SetFocusable(false)`. There is nothing to activate on one, so the list is
-  the span selector alone, and a shape change cannot invalidate it.
+  `SetFocusable(false)`. There is nothing to activate on one, so a shape change
+  cannot invalidate the list — which is still true now that the controls under
+  the tiles contribute items, because none of *those* changes shape either.
+
+### The Dashboard's controls (`dashboard.go`, `displayview.go`)
+
+The page grew the live controls on 2026-08-14 ("our telemetry page is actually
+supposed to be a general use dashboard, not just for monitoring"), and the tab
+title changed to match while the ID stayed `dashboard`.
+
+- **Tiles on top, controls beneath, laid out across the width.** The first cut
+  was a 320px rail down the left — the drawer's own width, so every block would
+  be used at the size it was designed for. Jeff rejected it: "you stacked the
+  controls vertically again... we don't need it to be in the same format as the
+  drawer." Reusing a *view* across surfaces is the win the `viewHost` split
+  bought; reusing its *arrangement* is the drawer transplanted into a window.
+- Two regions, both `GtkFlowBox`, so neither holds a breakpoint in Go: the tile
+  grid (homogeneous, `.dash-card` min-width 170) and the short control cards
+  (`.dash-control` min-width 200). RGB is a third region — one wide card whose
+  three columns are zone+effect, the two colours, and speed+brightness.
+- **The control FlowBox is deliberately not homogeneous, where the tile grid
+  is.** `SetHomogeneous(true)` sizes every child to the largest natural size in
+  *both* axes: the profile card's three-button row set the width, so three cards
+  filled a line where four had room, and the fourth was then stretched to the
+  profile card's height with its slider stranded at the top of an empty box.
+- **`.dash-control`'s 200px minimum is a measurement, not a taste.** For three
+  of the four cards the natural width *is* that minimum (a dropdown and a slider
+  are both happy to be narrow), and FlowBox breaks lines on natural width — at
+  250 the four asked for more than a 1200px window has and the last wrapped
+  alone. The cells are `SetHExpand(true)` so a line shares out whatever is left.
+- **`.drawer.main-window .mode-grid.btn-group button` exists because of a
+  specificity tie.** `.drawer .mode-grid.btn-group button` is (0,3,1) — the same
+  weight as the desktop-density rule — and later in the sheet, so it won and left
+  the effect buttons 52px tall in a window whose every other button is 30px.
+- The RGB card supplies its own `RGB` heading. In the drawer that heading comes
+  from `controls.Layout`'s group, which this page does not use, and a card that
+  did not name itself read as the previous one continuing.
+- **The refresh-rate card is the only control in the tree that does not talk to
+  the daemon** (`internal/display`; the root CLAUDE.md has the argument). It
+  returns `nil` when no backend is installed and the card is simply not built —
+  capability by absence, which covers gamescope for free. Its `sync()` runs on
+  page show rather than on the 1 Hz poll: it shells out, and a subprocess per
+  second to redraw a value that only changes when the user changes it would be
+  its own power draw. A failed read goes to the card's block note, not the error
+  bar — this is a background refresh nobody asked for — while a failed *change*
+  is a deliberate action and reports there.
 
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 
@@ -1297,7 +1398,9 @@ Feature-complete for both KDE and gamescope modes:
   - Telemetry: APU temp + fan RPM in header and custom view, polled every 1s
   - Separate save/reset buttons for TDP, fans, and undervolt
 - Battery charge limit slider
-- Panel overdrive and boot sound toggles (footer switches)
+- Firmware toggles (panel overdrive, boot sound) on the full window's Settings
+  tab, rendered from the device document — never from a written list
+- Screen refresh rate on the full window's Dashboard (KDE; absent elsewhere)
 - 15 built-in themes with accent variants + custom theme.toml support
 - Gamescope view switching: theme picker view + HSL color picker view
 - Resolution-based CSS scaling for gamescope (Z13GUI_SCALE override)

@@ -125,13 +125,15 @@ type Window struct {
 	lighting *lightingView
 
 	// Widget references for syncState.
-	battScale       *gtk.Scale
 	headerTelemetry *gtk.Label // "45°C · 3200 RPM" in the header, on every view
 
-	// Main-view sections the control registry can drop independently.
-	// See mainprofile.go.
+	// Drawer main-view sections the control registry can drop independently.
+	// Each is one *instance* of a block the dashboard rail also builds, so
+	// nothing here is the only copy — the Window-level syncs walk both. See
+	// mainprofile.go, battery.go and lightingview.go.
 	profiles   *profileSection
 	autoswitch *autoswitchSection
+	battery    *batterySection
 
 	// telemetryGen and telemetryBusy drive the get-state poll that keeps the
 	// header live. Window-level rather than per-view: it runs for as long as
@@ -430,11 +432,23 @@ func New(app *gtk.Application) *Window {
 	// checked while developing it. A tab id as the value ("profiles") opens
 	// on that page — a page past the first is otherwise reachable only with
 	// a pointer, which a screenshot run does not have.
+	//
+	// "color" opens the window's HSL picker, which is not a tab: it is two
+	// pointer clicks in from the dashboard, so it is the page a screenshot run
+	// is least able to reach and the one whose host wiring is newest.
 	if openFull := startup.GUIEnv("OPEN_FULL"); openFull != "" {
 		glib.IdleAdd(func() bool {
 			w.openFull()
-			if _, ok := mainwin.Lookup(openFull); ok && w.mainWin != nil {
-				w.mainWin.setTab(openFull)
+			m := w.mainWin
+			if m == nil {
+				return false
+			}
+			if _, ok := mainwin.Lookup(openFull); ok {
+				m.setTab(openFull)
+				return false
+			}
+			if openFull == colorPage && m.dashboard != nil && m.dashboard.lighting != nil {
+				m.showColorView(m.dashboard.lighting.color1)
 			}
 			return false
 		})
@@ -473,8 +487,8 @@ func (w *Window) dumpAllFocusLists() {
 		w.buildThemeFocusList()
 	}
 	if w.colorView == nil {
-		w.viewStack.AddNamed(w.buildColorPickerView(), "color")
-		w.buildColorFocusList()
+		w.colorView = newColorView(w, w.drawerHost(colorPage))
+		w.viewStack.AddNamed(w.colorView.root, colorPage)
 	}
 	w.viewStack.SetVisibleChildName("main")
 
@@ -485,6 +499,13 @@ func (w *Window) dumpAllFocusLists() {
 	// alone would collide with the drawer's.
 	if w.mainWin == nil {
 		w.mainWin = newMainWindow(w)
+	}
+	// The window's HSL picker is lazy — it is reached by clicking Custom on the
+	// dashboard rail — so it has to be brought into existence here or the one
+	// grid a person can only reach with a mouse would be the one grid the
+	// fingerprint never covers.
+	if w.mainWin.dashboard != nil && w.mainWin.dashboard.lighting != nil {
+		w.mainWin.ensureColorView()
 	}
 }
 
@@ -659,6 +680,11 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 		// the popup's focus frame over a vanished list.
 		case w.popupOpen():
 			w.closePopup()
+		// Above the window's own close: a sub-page is one level in, so B leaves
+		// the page before it leaves the surface — the same nesting the drawer's
+		// view-stack case below expresses.
+		case w.fullVisible.Load() && w.mainWin != nil && w.mainWin.onColorPage():
+			w.mainWin.leaveColorView()
 		// Above the drawer cases: while the full window is up, the drawer is
 		// hidden, so falling through to w.hide() dismissed nothing — B could
 		// not close the window at all. Same order as Escape and Toggle.

@@ -3,14 +3,44 @@
 
 package gui
 
-// dashboard.go — the telemetry dashboard: one Cairo chart per measured
-// quantity, over the daemon's sample history.
+// dashboard.go — the full window's Dashboard page: a rail of live controls
+// beside one Cairo chart per measured quantity, over the daemon's sample
+// history.
 //
 // Every decision about *what* to draw lives in internal/telemetryplot, which is
 // pure and tested: which series exist at all, where each reading sits in the
 // window, where the line breaks across a suspend, and what the y-axis spans.
 // This file measures the widget, multiplies by the backend scale, and strokes
 // the result — the same split fanCurveEditor has with internal/limits.
+//
+// # The controls below the tiles
+//
+// The page was charts alone until Jeff, 2026-08-14: "our telemetry page is
+// actually supposed to be a general use dashboard, not just for monitoring".
+// So it carries the live controls too — profile, autoswitch, refresh rate,
+// charge limit and RGB — as a second *instance* of each drawer block, never a
+// second implementation. Every one of them is now built twice, and the
+// Window-level syncs walk both.
+//
+// **They are laid out across the width, under the tiles, and that was a
+// correction.** The first cut put them in a 320px rail down the left, on the
+// reasoning that 320 is the drawer's own width so every block would be used at
+// the size it was designed for. Jeff: "you stacked the controls vertically
+// again... we don't need it to be in the same format as the drawer. Adjust the
+// layout so that it takes advantage of the larger window, and keep the
+// telemetry tiles on the top." The rail was the drawer transplanted into a
+// window, which is exactly what the desktop design pass exists to stop — and
+// it pushed the tiles into two thirds of a page they are the reason for.
+//
+// So: tiles first, at full width, then a flowing row of short cards, then RGB
+// as one wide card in three columns. Nothing is stacked that has a horizontal
+// arrangement available to it.
+//
+// What is deliberately *not* here is anything that edits a profile's contents —
+// power limits, the fan curve, the undervolt. Those are the Profiles page. The
+// dividing line is what the control changes: this page changes what the machine
+// is doing now, the editor changes what a saved profile says. Autoswitch moved
+// here from the Profiles page on exactly that reading.
 
 import (
 	"fmt"
@@ -20,7 +50,9 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
+	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
+	"github.com/dahui/voltaire/v2/internal/mainwin"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/telemetryplot"
 	"github.com/dahui/voltaire/v2/internal/theme"
@@ -67,6 +99,15 @@ type dashboardView struct {
 	backBtn  *gtk.Button
 	grid     *gtk.FlowBox
 	emptyLbl *gtk.Label
+
+	// The rail's controls. Each is this surface's instance of a block the
+	// drawer also builds; a nil one is a capability this device lacks, and
+	// every Window-level walker nil-checks before adding it.
+	profiles *profileSection
+	autos    *autoswitchSection
+	dsp      *displaySection
+	battery  *batterySection
+	lighting *lightingView
 
 	spanBtns []*gtk.Button
 	spans    []time.Duration
@@ -139,10 +180,10 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 
 	inner.Append(d.buildSpanRow())
 
-	// The card grid. min-width on .dash-card is what drives the reflow: all
-	// four tiles in one row at the window's 900px default — the at-a-glance
-	// row the dashboard is for — wrapping to two per row at the 560px
-	// minimum. The FlowBox does all of it, so no Go code holds a breakpoint.
+	// The card grid. min-width on .dash-card is what drives the reflow: four
+	// tiles per row across a 1200px window — the at-a-glance grid the dashboard
+	// is for — wrapping down as the window narrows. The FlowBox does all of it,
+	// so no Go code holds a breakpoint.
 	d.grid = gtk.NewFlowBox()
 	d.grid.SetSelectionMode(gtk.SelectionNone)
 	d.grid.SetHomogeneous(true)
@@ -165,6 +206,11 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 	d.emptyLbl.SetVisible(false)
 	inner.Append(d.emptyLbl)
 
+	// The live controls, under the readouts they act on.
+	if ctl := d.buildControls(); ctl != nil {
+		inner.Append(ctl)
+	}
+
 	scroll := newDrawerScroll(inner)
 	d.root.Append(scroll)
 	d.scroll = scroll
@@ -175,6 +221,177 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 
 	d.buildFocusList()
 	return d
+}
+
+// buildControls builds the live-controls region under the tiles, or nil when
+// there is nothing to put in it.
+//
+// Capabilities are asked of the device document directly rather than read off
+// w.controls, the drawer's resolved list. That list is the *quickbar's* — a
+// user who trims their drawer down to two sections has said something about the
+// panel they open in a hurry, not about a desktop window. The capability check
+// is the same one either way, so a machine with no lighting has no RGB card
+// here and no RGB section there.
+func (d *dashboardView) buildControls() *gtk.Box {
+	// The drawer has no dashboard view any more, but the gate is on the host
+	// rather than on that fact: this whole region is laid out for a window's
+	// width, and the answer should not depend on remembering that.
+	if d.host.back != nil {
+		return nil
+	}
+
+	w := d.w
+	region := gtk.NewBox(gtk.OrientationVertical, 12)
+	region.SetMarginTop(16)
+
+	// The short cards flow: four across a 1200px window, wrapping down as it
+	// narrows. Same mechanism as the tile grid above, so the two regions reflow
+	// in step and neither holds a breakpoint in Go.
+	short := gtk.NewFlowBox()
+	short.SetSelectionMode(gtk.SelectionNone)
+	// Deliberately *not* homogeneous, unlike the tile grid above. GtkFlowBox's
+	// homogeneous mode sizes every child to the largest natural size in both
+	// axes: the profile card's three-button row set the width, so only three
+	// cards fitted a line where four had room, and the leftover card was then
+	// stretched to the profile card's height with the slider stranded at the
+	// top of an empty box.
+	short.SetHomogeneous(false)
+	short.SetMinChildrenPerLine(1)
+	short.SetMaxChildrenPerLine(4)
+	short.SetRowSpacing(12)
+	short.SetColumnSpacing(12)
+
+	addShort := func(child gtk.Widgetter) {
+		box := gtk.NewBox(gtk.OrientationVertical, 6)
+		box.AddCSSClass("section-card")
+		box.AddCSSClass("dash-control")
+		box.Append(child)
+		cell := gtk.NewFlowBoxChild()
+		cell.SetFocusable(false)
+		// Top-aligned: a line is as tall as its tallest card, and a two-row
+		// autoswitch beside a one-row dropdown should not stretch the dropdown
+		// down to meet it.
+		cell.SetVAlign(gtk.AlignStart)
+		// Expanding, so a line with room left over shares it out instead of
+		// leaving a ragged edge. Line *breaking* is by natural width, which the
+		// CSS minimum sets — see .dash-control.
+		cell.SetHExpand(true)
+		cell.SetChild(box)
+		short.Insert(cell, -1)
+	}
+
+	has := func(caps ...controls.Capability) bool {
+		return controls.SupportsAll(w.device, caps)
+	}
+
+	if has(controls.CapProfiles) {
+		// Custom goes to the Profiles tab rather than to a view of its own:
+		// this surface already has that page, and two routes to one editor is
+		// how they come to disagree about which profile is being edited.
+		var box *gtk.Box
+		d.profiles, box = w.newProfileSection(func() { d.openProfilesTab() })
+		addShort(box)
+	}
+	if has(controls.CapProfiles, controls.CapBattery) {
+		var box *gtk.Box
+		d.autos, box = w.newAutoswitchSection()
+		addShort(box)
+	}
+	if has(controls.CapBattery) {
+		var box *gtk.Box
+		d.battery, box = w.newBatterySection()
+		addShort(box)
+	}
+	// The refresh rate is not a device capability — it belongs to the
+	// compositor — so it asks its own backend instead of the document.
+	if dsp, box := w.newDisplaySection(); dsp != nil {
+		d.dsp = dsp
+		addShort(box)
+	}
+	if short.FirstChild() != nil {
+		region.Append(short)
+	}
+
+	if has(controls.CapLighting) {
+		region.Append(d.buildLightingCard())
+	}
+
+	if region.FirstChild() == nil {
+		return nil
+	}
+	return region
+}
+
+// buildLightingCard builds the RGB block as one wide card in three columns.
+//
+// It is the one control too tall to sit in the flowing row — six effect
+// buttons, two colour rows, a speed row and a slider is the drawer's whole
+// lower half — and stacking it would have been the rail again in miniature. Its
+// parts split cleanly by what they are: the zone and the effect choose *what is
+// running*, the two colour rows are the effect's inputs, and speed and
+// brightness are how it is played. Each column is one of those.
+func (d *dashboardView) buildLightingCard() *gtk.Box {
+	card := gtk.NewBox(gtk.OrientationVertical, 6)
+	card.AddCSSClass("section-card")
+	card.AddCSSClass("dash-control")
+
+	// The block leads with its zone tabs and carries no title of its own — in
+	// the drawer the "RGB" heading comes from controls.Layout, which this page
+	// does not use. Every other card here names itself, and one that did not
+	// read as the previous card continuing.
+	card.Append(sectionLabel("RGB"))
+
+	d.lighting = d.w.newLightingSection(lightingConfig{
+		// Namespaced so this instance's swatches cannot be repainted by the
+		// drawer's provider, which is registered display-wide.
+		swatchPrefix: "dash-",
+		onCustom:     func(ci *colorInput) { d.openColorPicker(ci) },
+	})
+
+	cols := gtk.NewBox(gtk.OrientationHorizontal, 16)
+	// Equal thirds. The colour column is the widest content (eight presets plus
+	// a Custom button, twice over), so letting natural widths win would give it
+	// most of the card and squeeze the effect grid into two columns.
+	cols.SetHomogeneous(true)
+
+	col := func(children ...gtk.Widgetter) {
+		c := gtk.NewBox(gtk.OrientationVertical, 6)
+		c.SetVAlign(gtk.AlignStart)
+		for _, ch := range children {
+			c.Append(ch)
+		}
+		cols.Append(c)
+	}
+	col(d.lighting.zoneRow, d.lighting.modeBox)
+	col(d.lighting.color1Box, d.lighting.color2Box)
+	col(d.lighting.speedBox, d.lighting.brightBox)
+
+	card.Append(cols)
+	d.lighting.syncModeVis()
+	return card
+}
+
+// openProfilesTab follows the rail's Custom button to the editor.
+func (d *dashboardView) openProfilesTab() {
+	if m := d.w.mainWin; m != nil {
+		m.setTab(mainwin.TabProfiles)
+	}
+}
+
+// openColorPicker follows the rail's Custom colour button to this surface's
+// HSL picker.
+func (d *dashboardView) openColorPicker(ci *colorInput) {
+	if m := d.w.mainWin; m != nil {
+		m.showColorView(ci)
+	}
+}
+
+// syncControls refreshes what the rail cannot learn from daemon state. The
+// profile, autoswitch, charge-limit and RGB blocks are all fed by the
+// Window-level syncs, which walk every instance; the refresh rate is the one
+// control with a source of its own.
+func (d *dashboardView) syncControls() {
+	d.dsp.sync() // nil-safe: the method guards its own receiver
 }
 
 // buildSpanRow builds the history-window selector, offering only spans the
@@ -639,9 +856,14 @@ func rgbOr(hex, fallback string) (r, g, b float64) {
 	return 1, 1, 1
 }
 
-// buildDashboardFocusList builds the gamepad grid: the back button and the
-// span selector. The charts are not navigable — there is nothing to activate
-// on one — so this list is fixed and never rebuilt.
+// buildFocusList builds the gamepad grid: the back button, the span selector,
+// then the rail's controls. The charts are not navigable — there is nothing to
+// activate on one — and no rail block changes shape, so this list is fixed and
+// never rebuilt.
+//
+// The span row comes before the rail because it is the topmost thing on the
+// page, which is the order every other focus list is in. Whichever way round,
+// the bumpers jump between the sections.
 func (d *dashboardView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
@@ -662,6 +884,24 @@ func (d *dashboardView) buildFocusList() {
 			widget: btn, row: coord.Row, col: coord.Col, section: coord.Section,
 			onActivate: func() { d.setSpan(span) },
 		})
+	}
+
+	// Each block appends its own items and names its own section, so the rail's
+	// gamepad order is its visual order by construction — the property
+	// controlBuilder exists to give the drawer, reached here by building both
+	// halves from the same nil-checked instance.
+	if d.profiles != nil {
+		d.profiles.appendFocus(b, &items)
+	}
+	if d.autos != nil {
+		d.autos.appendFocus(b, &items)
+	}
+	if d.battery != nil {
+		d.battery.appendFocus(b, &items)
+	}
+	d.dsp.appendFocus(b, &items) // nil-safe
+	if d.lighting != nil {
+		d.lighting.appendFocus(b, &items)
 	}
 
 	items = append(items, d.host.errBar.focusItem())

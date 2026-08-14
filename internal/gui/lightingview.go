@@ -3,8 +3,8 @@
 
 package gui
 
-// lightingview.go — the RGB section of the main view: zone tabs, effect modes,
-// both colour rows, speed and brightness.
+// lightingview.go — the RGB section: zone tabs, effect modes, both colour rows,
+// speed and brightness.
 //
 // It is one control in the registry rather than several, because its parts are
 // not independently meaningful: syncModeVis already decides which of them the
@@ -16,8 +16,28 @@ package gui
 // lighting capability, so Window.lighting can be nil and every Window-level
 // entry point here nil-guards it. That single guard replaced a dozen per-widget
 // nil checks.
+//
+// # Two instances, and what had to stop being Window-level for that
+//
+// The drawer's main view and the full window's dashboard rail each build one
+// (Jeff, 2026-08-14: the dashboard is a general-use surface, not a monitor).
+// Three things were written as if there could only ever be one, and each would
+// have failed silently rather than loudly:
+//
+//   - the swatch CSS *ids*. Both current-colour squares are painted by a
+//     display-wide provider keyed on "#color1-swatch"/"#color2-swatch", so two
+//     instances editing different zones would have fought over one selector and
+//     both squares would have shown whichever wrote last. Each instance now
+//     carries an id prefix.
+//   - Window.updateSwatches/sendApply/queueApply. A colour preset or an HSL
+//     slider has to reach *its own* section, and those wrappers reached
+//     w.lighting — so the window's picker would have applied the drawer's zone.
+//     colorInput carries its owner instead, and the wrappers are gone.
+//   - which HSL picker "Custom" opens. That is the surface's business, not the
+//     section's, so it arrives as onCustom.
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -41,9 +61,20 @@ var modeOrder = []string{
 // speeds lists the available lighting animation speeds.
 var speeds = []string{"slow", "normal", "fast"}
 
+// lightingConfig is everything that differs between the two instances.
+type lightingConfig struct {
+	// swatchPrefix namespaces this instance's current-colour swatch ids. Empty
+	// for the drawer, whose ids are the historical ones.
+	swatchPrefix string
+
+	// onCustom opens this surface's HSL picker on the given colour input.
+	onCustom func(*colorInput)
+}
+
 // lightingView is the RGB block.
 type lightingView struct {
-	w *Window
+	w   *Window
+	cfg lightingConfig
 
 	// tab is the zone being edited: "keyboard" or "lightbar". It is also the
 	// device name sent to the daemon.
@@ -53,6 +84,12 @@ type lightingView struct {
 	modeButtons  map[string]*gtk.Button
 	speedBtns    map[string]*gtk.Button
 
+	// The six blocks, in display order. They are fields rather than only a
+	// return value because the two surfaces arrange them differently: the
+	// drawer stacks all six in its scrolling column, while the dashboard's card
+	// deals them into three columns by what they do.
+	zoneRow              *gtk.Box
+	modeBox              *gtk.Box
 	color1, color2       *colorInput
 	color1Box, color2Box *gtk.Box // label + row; visibility follows the mode
 	speedBox             *gtk.Box
@@ -69,40 +106,69 @@ type lightingView struct {
 	applyTimer *time.Timer
 }
 
-// buildLightingSection appends the whole RGB block: zone tabs, effect modes,
-// both colour rows, speed and brightness.
+// buildLightingSection appends the drawer main view's RGB block to inner and
+// registers it as w.lighting, which the control registry's focus half reads.
+//
+// It appends the blocks straight to the caller's box rather than wrapping them,
+// which is what keeps the drawer's spacing exactly what it always was: `inner`
+// carries the 8px rhythm every other section is laid out on.
 func (w *Window) buildLightingSection(inner *gtk.Box) {
+	l := w.newLightingSection(lightingConfig{
+		onCustom: func(ci *colorInput) { w.showColorView(ci) },
+	})
+	w.lighting = l
+	for _, b := range l.blocks() {
+		inner.Append(b)
+	}
+}
+
+// blocks is the section's widgets in display order, for a caller that wants
+// them stacked.
+func (l *lightingView) blocks() []gtk.Widgetter {
+	return []gtk.Widgetter{
+		l.zoneRow, l.modeBox, l.color1Box, l.color2Box, l.speedBox, l.brightBox,
+	}
+}
+
+// newLightingSection builds an RGB block. Its widgets are fields on the
+// returned view rather than a container, because the caller decides how they
+// are arranged — stacked down the drawer's scrolling column, or dealt into the
+// dashboard card's three columns.
+func (w *Window) newLightingSection(cfg lightingConfig) *lightingView {
 	l := &lightingView{
 		w:           w,
+		cfg:         cfg,
 		tab:         "keyboard",
 		modeButtons: make(map[string]*gtk.Button),
 		speedBtns:   make(map[string]*gtk.Button),
 	}
-	w.lighting = l
 
 	// The swatch provider is separate from the theme so it can be reloaded
-	// per-colour at runtime.
+	// per-colour at runtime. One per instance: it is registered display-wide, so
+	// two instances sharing a selector would repaint each other's squares.
 	l.swatchProv = gtk.NewCSSProvider()
 	gtk.StyleContextAddProviderForDisplay(
 		gdk.DisplayGetDefault(), l.swatchProv, gtk.STYLE_PROVIDER_PRIORITY_USER+10)
 
-	inner.Append(l.buildTabRow())
-	inner.Append(l.buildModeSection())
+	l.zoneRow = l.buildTabRow()
+	l.modeBox = l.buildModeSection()
 
 	// Initialize color inputs here so syncModeVis can reference them.
-	l.color1 = w.newColorInput("FF0000", "color1-swatch", "COLOR 1")
-	l.color2 = w.newColorInput("000000", "color2-swatch", "COLOR 2")
+	l.color1 = l.newColorInput("FF0000", l.swatchID(1), "COLOR 1")
+	l.color2 = l.newColorInput("000000", l.swatchID(2), "COLOR 2")
 	l.updateSwatches()
 
 	l.color1Box = colorSubBox("COLOR 1", l.color1.row)
 	l.color2Box = colorSubBox("COLOR 2", l.color2.row)
-	inner.Append(l.color1Box)
-	inner.Append(l.color2Box)
-
 	l.speedBox = l.buildSpeedBox()
-	inner.Append(l.speedBox)
 	l.brightBox = l.buildBrightnessBox()
-	inner.Append(l.brightBox)
+
+	return l
+}
+
+// swatchID is this instance's CSS id for the nth current-colour square.
+func (l *lightingView) swatchID(n int) string {
+	return fmt.Sprintf("%scolor%d-swatch", l.cfg.swatchPrefix, n)
 }
 
 // buildTabRow creates the Keyboard / Lightbar tab radio buttons.
@@ -259,8 +325,8 @@ func (l *lightingView) ingestColor(ci *colorInput, value, field string) {
 	}
 }
 
-// updateSwatches refreshes the shared CSS provider so both current-color
-// swatches display the latest hex values.
+// updateSwatches refreshes this instance's CSS provider so both of its
+// current-color swatches display the latest hex values.
 func (l *lightingView) updateSwatches() {
 	if l.swatchProv == nil {
 		return
@@ -274,8 +340,8 @@ func (l *lightingView) updateSwatches() {
 		c2 = l.color2.hex
 	}
 	l.swatchProv.LoadFromString(
-		"#color1-swatch { background-color: #" + c1 + "; }\n" +
-			"#color2-swatch { background-color: #" + c2 + "; }")
+		"#" + l.swatchID(1) + " { background-color: #" + c1 + "; }\n" +
+			"#" + l.swatchID(2) + " { background-color: #" + c2 + "; }")
 }
 
 // queueApply debounces rapid API calls from continuous inputs (colour sliders,
@@ -353,13 +419,16 @@ func (l *lightingView) sendApply() {
 	}()
 }
 
-// focusLightingSection appends the RGB block's focus items.
+// focusLightingSection appends the drawer main view's RGB focus items; the
+// dashboard rail appends its own instance's in the dashboard's focus list.
 func (w *Window) focusLightingSection(b *focusgrid.Builder, items *[]focusItem) {
-	l := w.lighting
-	if l == nil {
-		return
+	if w.lighting != nil {
+		w.lighting.appendFocus(b, items)
 	}
+}
 
+// appendFocus appends this instance's focus items.
+func (l *lightingView) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	// Device tabs — horizontal row.
 	b.Section("tabs")
 	tabs := []*gtk.CheckButton{l.tabKB, l.tabLB}
@@ -401,7 +470,7 @@ func (w *Window) focusLightingSection(b *focusgrid.Builder, items *[]focusItem) 
 		*items = append(*items, focusItem{
 			widget: ci.customBtn, row: cc.Row, col: cc.Col, section: cc.Section,
 			isVisible:  vis,
-			onActivate: func() { w.showColorView(ci) },
+			onActivate: func() { l.openCustom(ci) },
 		})
 	}
 	addColor("color1", l.color1, l.color1Box)
@@ -430,35 +499,43 @@ func (w *Window) focusLightingSection(b *focusgrid.Builder, items *[]focusItem) 
 	})
 }
 
-// Window-level entry points. Each nil-guards the section, which controls.Resolve
-// omits entirely on a device with no lighting capability.
+// openCustom opens the HSL picker on this surface. A section built with no
+// picker behind it simply does nothing rather than reaching for another
+// surface's stack — which is what the Window-level wrapper used to do.
+func (l *lightingView) openCustom(ci *colorInput) {
+	if l.cfg.onCustom != nil {
+		l.cfg.onCustom(ci)
+	}
+}
+
+// Window-level entry points. Each walks every built instance, which is nil-safe
+// on a device with no lighting capability — controls.Resolve omits the section
+// entirely there, and the dashboard rail asks the same question.
+
+// lightingViews returns every RGB block that has been built: the drawer main
+// view's, and the dashboard rail's when the full window exists. Both write the
+// same hardware, so anything that syncs one syncs both — a stale second block
+// showing the previous effect is how a user ends up applying it again by
+// touching an unrelated control.
+func (w *Window) lightingViews() []*lightingView {
+	out := make([]*lightingView, 0, 2)
+	if w.lighting != nil {
+		out = append(out, w.lighting)
+	}
+	if m := w.mainWin; m != nil && m.dashboard != nil && m.dashboard.lighting != nil {
+		out = append(out, m.dashboard.lighting)
+	}
+	return out
+}
 
 func (w *Window) syncLightingSection() {
-	if w.lighting != nil {
-		w.lighting.sync()
+	for _, l := range w.lightingViews() {
+		l.sync()
 	}
 }
 
 func (w *Window) syncModeVis() {
-	if w.lighting != nil {
-		w.lighting.syncModeVis()
-	}
-}
-
-func (w *Window) updateSwatches() {
-	if w.lighting != nil {
-		w.lighting.updateSwatches()
-	}
-}
-
-func (w *Window) sendApply() {
-	if w.lighting != nil {
-		w.lighting.sendApply()
-	}
-}
-
-func (w *Window) queueApply() {
-	if w.lighting != nil {
-		w.lighting.queueApply()
+	for _, l := range w.lightingViews() {
+		l.syncModeVis()
 	}
 }

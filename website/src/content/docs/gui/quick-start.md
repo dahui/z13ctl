@@ -14,9 +14,10 @@ close it.
 ## Opening the full window
 
 Press the **Armoury Crate button twice** — a normal double tap — and the drawer
-is replaced by a full window: a desktop-style window with a **Telemetry** tab
-(the dashboard), a **Profiles** tab (the profile editor) and a **Settings** tab
-(the firmware switches). Switch pages with the tabs under the titlebar. Close it with **Escape**, the window's close
+is replaced by a full window: a desktop-style window with a **Dashboard** tab
+(charts and the everyday controls), a **Profiles** tab (the profile editor) and
+a **Settings** tab (the firmware switches). Switch pages with the tabs under the
+titlebar. Close it with **Escape**, the window's close
 button, or another press of the Armoury Crate button; the drawer is unaffected
 and the next single press opens it as usual.
 
@@ -37,13 +38,13 @@ tabs and B closes it.
 | Section | What it does |
 |---------|-------------|
 | **Profile** | The three firmware profiles (quiet, balanced, performance) and a **Custom** button. The Custom button is labelled with whichever custom profile is running, and opens the custom profile view. |
-| **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. A custom profile with no settings shows greyed out as "(empty)" — give it something to apply and it becomes selectable. |
+| **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. A custom profile with no settings shows greyed out as "(empty)" — give it something to apply and it becomes selectable. Also on the full window's Dashboard. |
 | **Custom profile view** | Every custom profile lives here. The dropdown at the top names the one you are editing — open it and pick a name to switch to it; a dot marks the profile that is currently running. **Activate** applies it to the machine, **+ New** creates an empty named profile, **Save As** copies the active profile under a new name, and **Delete Profile** (tap twice) removes one that is not active or referenced by autoswitch. When a button is greyed out, the reason appears right beneath it. |
 | **Live vs stored edits** | Editing the *active* profile applies changes to the hardware immediately. Editing any other profile stores them, to apply when it is activated — the view says "Not active — changes are stored" when that is what is happening. |
 | **Custom TDP** | Configurable power limits with basic (single slider) and advanced (PL1 sustained / PL2 short boost / PL3 fast boost) modes |
 | **Fan Curve** | Edit the fan response curve per-profile (profile editor, advanced mode) |
 | **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
-| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source. The full history charts live on the full window's Telemetry tab — see [Telemetry dashboard](#telemetry-dashboard). |
+| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source. The full history charts live on the full window's Dashboard tab — see [The Dashboard tab](#the-dashboard-tab). |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
@@ -62,12 +63,13 @@ reach for in a hurry.
 The theme picker button at the bottom-left of the drawer opens the theme
 view. See [Theming](/voltaire/gui/theming/) for details.
 
-## Telemetry dashboard
+## The Dashboard tab
 
-The full window's **Telemetry** tab is a dashboard: a grid of labelled cards,
-one chart per quantity, each with the live reading in its header. The daemon
-samples the machine once a second and keeps the last five minutes, so the
-charts are drawn from readings taken whether or not anything was open.
+The full window's **Dashboard** tab is the page to leave open: a grid of
+labelled charts across the top, and the controls you actually reach for
+underneath them. The daemon samples the machine once a second and keeps the
+last five minutes, so the charts are drawn from readings taken whether or not
+anything was open.
 
 There is one card per *kind* of quantity the machine actually measures — on
 the Z13 that is eight:
@@ -142,14 +144,54 @@ older than the GUI — restart it after upgrading:
 systemctl --user restart voltaire
 ```
 
+### The controls under the charts
+
+Beneath the charts are the settings that change what the machine is doing right
+now — as opposed to the Profiles tab, which edits what a saved profile *says*:
+
+| Control | What it does |
+|---------|-------------|
+| **Profile** | The three firmware profiles, and a **Custom** button that opens the Profiles tab. |
+| **Autoswitch** | The same control as the drawer's: a profile to apply on AC and one on battery. |
+| **Battery limit** | The charge cap, 40–100%. |
+| **Refresh rate** | The rates your screen offers at the resolution it is running (see below). |
+| **RGB** | Zone, effect, both colours, speed and brightness — the drawer's lighting controls, laid out across the card. **Custom** opens the colour picker; the back arrow returns to the Dashboard. |
+
+Everything here is a second copy of a control the drawer also has, not a
+different one: change the profile in either place and both follow within a
+second.
+
+### Refresh rate
+
+The refresh-rate dropdown offers the rates your screen supports **at the
+resolution it is currently running**. It deliberately does not change the
+resolution — that belongs in your desktop's own display settings, which ask you
+to confirm that the new mode works before keeping it.
+
+Two details worth knowing:
+
+- Panels often report a rate like 59.87 for what everything else calls 60, so
+  the list shows rounded labels. Two modes that round to the same number appear
+  once.
+- The control appears only where voltaire can read the display configuration.
+  Today that means a **KDE Plasma** session (it uses `kscreen-doctor`); on other
+  desktops, and in Steam Gaming Mode, the card is simply not shown rather than
+  offering something that would fail.
+
+If you change the rate and the compositor refuses or substitutes a mode, the
+dropdown re-reads afterwards and shows what the screen is actually running — not
+what was asked for.
+
 ## The Profiles tab
 
 The full window's **Profiles** tab is the same profile editor as the drawer's
 custom view, laid out for a desktop: the profile operations (Activate, + New,
 Save As, Delete Profile) in one card, the power limits and undervolt in a
-**POWER** card, the fan curve editor beside them, and the **autoswitch**
-controls beneath it — the same controls as the drawer's Autoswitch section,
-here because autoswitch picks between the profiles this page manages.
+**POWER** card, and the fan curve editor beside them.
+
+Autoswitch is *not* here: it picks which profile the machine runs, which is a
+live setting rather than part of a profile's contents, so it lives on the
+Dashboard with the other live controls.
 
 Instead of the drawer's per-domain save buttons there is **one commit button**
 in the bar along the bottom. Move any slider or drag the curve and the bar
