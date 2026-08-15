@@ -32,9 +32,11 @@ package gui
 // window, which is exactly what the desktop design pass exists to stop — and
 // it pushed the tiles into two thirds of a page they are the reason for.
 //
-// So: tiles first, at full width, then a flowing row of short cards, then RGB
-// as one wide card in three columns. Nothing is stacked that has a horizontal
-// arrangement available to it.
+// So: tiles first at full width, then POWER and DISPLAY as a row of cards, then
+// the lighting zones as a full-width row of their own — one card per zone, side
+// by side, where the drawer switches between them with a pair of tabs. Nothing
+// is stacked that has a horizontal arrangement available to it, and nothing is
+// a mode switch that has room to be two controls.
 //
 // What is deliberately *not* here is anything that edits a profile's contents —
 // power limits, the fan curve, the undervolt. Those are the Profiles page. The
@@ -83,7 +85,12 @@ var dashboardSpans = []struct {
 // restates it so gamescope scales it, exactly as `.fan-curve-area` does.
 // Sparkline height: the card is a glanceable tile, and the trace's job is
 // its shape — nothing in one is dragged or read off precisely.
-const dashboardChartHeight = 64
+//
+// Raised from 64 once the controls moved under the tiles rather than beside
+// them: the two together end well short of the window's height, and the spare
+// pixels are worth more to the trace than to the margin below it. Still a
+// sparkline, not a graph — the axis carries two labels and no gridline values.
+const dashboardChartHeight = 88
 
 // dashboardView is the telemetry dashboard. It is a view rather than a widget
 // tree hanging off Window so that the full window can host the same thing
@@ -107,7 +114,10 @@ type dashboardView struct {
 	autos    *autoswitchSection
 	dsp      *displaySection
 	battery  *batterySection
-	lighting *lightingView
+
+	// lightings is one RGB block per lighting zone, where the drawer has one
+	// block and a pair of zone tabs. Empty on a device with no lighting.
+	lightings []*lightingView
 
 	spanBtns []*gtk.Button
 	spans    []time.Duration
@@ -241,79 +251,73 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	}
 
 	w := d.w
-	region := gtk.NewBox(gtk.OrientationVertical, 12)
-	region.SetMarginTop(16)
-
-	// The short cards flow: four across a 1200px window, wrapping down as it
-	// narrows. Same mechanism as the tile grid above, so the two regions reflow
-	// in step and neither holds a breakpoint in Go.
-	short := gtk.NewFlowBox()
-	short.SetSelectionMode(gtk.SelectionNone)
-	// Deliberately *not* homogeneous, unlike the tile grid above. GtkFlowBox's
-	// homogeneous mode sizes every child to the largest natural size in both
-	// axes: the profile card's three-button row set the width, so only three
-	// cards fitted a line where four had room, and the leftover card was then
-	// stretched to the profile card's height with the slider stranded at the
-	// top of an empty box.
-	short.SetHomogeneous(false)
-	short.SetMinChildrenPerLine(1)
-	short.SetMaxChildrenPerLine(4)
-	short.SetRowSpacing(12)
-	short.SetColumnSpacing(12)
-
-	addShort := func(child gtk.Widgetter) {
-		box := gtk.NewBox(gtk.OrientationVertical, 6)
-		box.AddCSSClass("section-card")
-		box.AddCSSClass("dash-control")
-		box.Append(child)
-		cell := gtk.NewFlowBoxChild()
-		cell.SetFocusable(false)
-		// Top-aligned: a line is as tall as its tallest card, and a two-row
-		// autoswitch beside a one-row dropdown should not stretch the dropdown
-		// down to meet it.
-		cell.SetVAlign(gtk.AlignStart)
-		// Expanding, so a line with room left over shares it out instead of
-		// leaving a ragged edge. Line *breaking* is by natural width, which the
-		// CSS minimum sets — see .dash-control.
-		cell.SetHExpand(true)
-		cell.SetChild(box)
-		short.Insert(cell, -1)
-	}
-
 	has := func(caps ...controls.Capability) bool {
 		return controls.SupportsAll(w.device, caps)
 	}
 
+	// Two columns of boxed lists — the same two-column frame the Profiles page
+	// uses, so the window's pages read as one application rather than two.
+	left := gtk.NewBox(gtk.OrientationVertical, 12)
+	left.SetVAlign(gtk.AlignStart)
+	right := gtk.NewBox(gtk.OrientationVertical, 12)
+	right.SetVAlign(gtk.AlignStart)
+
+	var powerRows []gtk.Widgetter
 	if has(controls.CapProfiles) {
 		// Custom goes to the Profiles tab rather than to a view of its own:
 		// this surface already has that page, and two routes to one editor is
 		// how they come to disagree about which profile is being edited.
-		var box *gtk.Box
-		d.profiles, box = w.newProfileSection(func() { d.openProfilesTab() })
-		addShort(box)
-	}
-	if has(controls.CapProfiles, controls.CapBattery) {
-		var box *gtk.Box
-		d.autos, box = w.newAutoswitchSection()
-		addShort(box)
+		p, row := w.newProfileSection(true, func() { d.openProfilesTab() })
+		d.profiles = p
+		powerRows = append(powerRows, row)
 	}
 	if has(controls.CapBattery) {
-		var box *gtk.Box
-		d.battery, box = w.newBatterySection()
-		addShort(box)
+		b, row := w.newBatterySection(true)
+		d.battery = b
+		powerRows = append(powerRows, row)
 	}
-	// The refresh rate is not a device capability — it belongs to the
-	// compositor — so it asks its own backend instead of the document.
-	if dsp, box := w.newDisplaySection(); dsp != nil {
-		d.dsp = dsp
-		addShort(box)
+	if has(controls.CapProfiles, controls.CapBattery) {
+		// Last in the card: it is the only setting here that acts on its own
+		// later, so it reads as a rule applied to the two above it.
+		a, box := w.newAutoswitchSection(true)
+		d.autos = a
+		powerRows = append(powerRows, box)
 	}
-	if short.FirstChild() != nil {
-		region.Append(short)
+	if len(powerRows) > 0 {
+		left.Append(sectionCard("POWER", powerRows...))
 	}
 
+	// The refresh rate is not a device capability — it belongs to the
+	// compositor — so it asks its own backend instead of the document. It is
+	// the right column's whole content: one row beside POWER's five, which
+	// leaves the row ragged and is fine now that a full-width band closes the
+	// region underneath. It used to sit below LIGHTING for exactly that reason,
+	// and LIGHTING has left this row.
+	if dsp, row := w.newDisplaySection(); dsp != nil {
+		d.dsp = dsp
+		right.Append(sectionCard("DISPLAY", row))
+	}
+
+	region := gtk.NewBox(gtk.OrientationVertical, 12)
+	region.SetMarginTop(16)
+
+	if left.FirstChild() != nil || right.FirstChild() != nil {
+		columns := gtk.NewBox(gtk.OrientationHorizontal, 12)
+		// Equal halves rather than natural widths: the two cards hold different
+		// controls, and letting the wider one win would move the label columns
+		// out of line with each other — which is the one thing this layout is
+		// for.
+		columns.SetHomogeneous(true)
+		columns.Append(left)
+		columns.Append(right)
+		region.Append(columns)
+	}
+
+	// The lighting zones take the full width below, as their own row: two cards
+	// of five form rows each, and each needs the width one half of the window
+	// gives it before the six-effect row starts ellipsizing.
 	if has(controls.CapLighting) {
-		region.Append(d.buildLightingCard())
+		region.Append(d.buildLightingRow())
 	}
 
 	if region.FirstChild() == nil {
@@ -322,67 +326,54 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	return region
 }
 
-// buildLightingCard builds the RGB block as one wide card in three columns.
+// lightingZones is the zone cards this page builds, in display order. The
+// heading is the whole labelling: a card named LIGHTBAR holding Effect, two
+// colours, Speed and Brightness needs no further explanation, and a "LIGHTING"
+// heading over the pair would be a level of nesting to say what both already
+// say.
+var lightingZones = []struct{ zone, title string }{
+	{"keyboard", "KEYBOARD"},
+	{"lightbar", "LIGHTBAR"},
+}
+
+// buildLightingRow builds one RGB card per lighting zone, side by side.
 //
-// It is the one control too tall to sit in the flowing row — six effect
-// buttons, two colour rows, a speed row and a slider is the drawer's whole
-// lower half — and stacking it would have been the rail again in miniature. Its
-// parts split cleanly by what they are: the zone and the effect choose *what is
-// running*, the two colour rows are the effect's inputs, and speed and
-// brightness are how it is played. Each column is one of those.
-func (d *dashboardView) buildLightingCard() *gtk.Box {
-	card := gtk.NewBox(gtk.OrientationVertical, 6)
-	card.AddCSSClass("section-card")
-	card.AddCSSClass("dash-control")
+// The drawer has one block and a pair of zone tabs because 320px fits one set
+// of controls; a window fits both, and a mode switch is a price paid for space
+// that is not scarce here (Jeff, 2026-08-14). Each card is a separate
+// lightingView bound to its zone — a second *instance*, which is what the
+// per-instance swatch ids and colorInput.owner were made possible by, and the
+// reason this is a config field rather than a second widget tree.
+func (d *dashboardView) buildLightingRow() *gtk.Box {
+	row := gtk.NewBox(gtk.OrientationHorizontal, 12)
+	row.SetHomogeneous(true)
+	for _, z := range lightingZones {
+		l := d.w.newLightingSection(lightingConfig{
+			// Namespaced per zone as well as per surface: the swatch provider is
+			// registered display-wide, so any two blocks sharing a selector
+			// repaint each other's squares.
+			swatchPrefix: "dash-" + z.zone + "-",
+			zone:         z.zone,
+			desktop:      true,
+		})
+		d.lightings = append(d.lightings, l)
 
-	// The block leads with its zone tabs and carries no title of its own — in
-	// the drawer the "RGB" heading comes from controls.Layout, which this page
-	// does not use. Every other card here names itself, and one that did not
-	// read as the previous card continuing.
-	card.Append(sectionLabel("RGB"))
+		card := sectionCard(z.title, l.blocks()...)
+		// Top-aligned so the shorter card does not stretch: an effect of "off"
+		// hides that zone's colours, speed and brightness, which is the honest
+		// rendering and makes the two cards genuinely different heights.
+		card.SetVAlign(gtk.AlignStart)
+		row.Append(card)
 
-	d.lighting = d.w.newLightingSection(lightingConfig{
-		// Namespaced so this instance's swatches cannot be repainted by the
-		// drawer's provider, which is registered display-wide.
-		swatchPrefix: "dash-",
-		onCustom:     func(ci *colorInput) { d.openColorPicker(ci) },
-	})
-
-	cols := gtk.NewBox(gtk.OrientationHorizontal, 16)
-	// Equal thirds. The colour column is the widest content (eight presets plus
-	// a Custom button, twice over), so letting natural widths win would give it
-	// most of the card and squeeze the effect grid into two columns.
-	cols.SetHomogeneous(true)
-
-	col := func(children ...gtk.Widgetter) {
-		c := gtk.NewBox(gtk.OrientationVertical, 6)
-		c.SetVAlign(gtk.AlignStart)
-		for _, ch := range children {
-			c.Append(ch)
-		}
-		cols.Append(c)
+		l.syncModeVis()
 	}
-	col(d.lighting.zoneRow, d.lighting.modeBox)
-	col(d.lighting.color1Box, d.lighting.color2Box)
-	col(d.lighting.speedBox, d.lighting.brightBox)
-
-	card.Append(cols)
-	d.lighting.syncModeVis()
-	return card
+	return row
 }
 
 // openProfilesTab follows the rail's Custom button to the editor.
 func (d *dashboardView) openProfilesTab() {
 	if m := d.w.mainWin; m != nil {
 		m.setTab(mainwin.TabProfiles)
-	}
-}
-
-// openColorPicker follows the rail's Custom colour button to this surface's
-// HSL picker.
-func (d *dashboardView) openColorPicker(ci *colorInput) {
-	if m := d.w.mainWin; m != nil {
-		m.showColorView(ci)
 	}
 }
 
@@ -900,8 +891,8 @@ func (d *dashboardView) buildFocusList() {
 		d.battery.appendFocus(b, &items)
 	}
 	d.dsp.appendFocus(b, &items) // nil-safe
-	if d.lighting != nil {
-		d.lighting.appendFocus(b, &items)
+	for _, l := range d.lightings {
+		l.appendFocus(b, &items)
 	}
 
 	items = append(items, d.host.errBar.focusItem())

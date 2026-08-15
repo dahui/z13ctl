@@ -12,6 +12,7 @@ package gui
 // closed over one scale while syncBattery wrote another.
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -25,40 +26,64 @@ import (
 // batteryLimitDebounce is how long a drag settles before the limit is written.
 const batteryLimitDebounce = 200 * time.Millisecond
 
-// batterySection is the BATTERY LIMIT block.
+// batterySection is the charge-limit block.
 type batterySection struct {
 	w     *Window
 	scale *gtk.Scale
+	value *gtk.Label // window only: the inline readout beside the slider
 	timer *time.Timer
 }
 
 // buildBatterySection creates the drawer main view's BATTERY LIMIT section and
 // registers it as w.battery, which the control registry's focus half reads.
 func (w *Window) buildBatterySection() *gtk.Box {
-	b, box := w.newBatterySection()
+	b, box := w.newBatterySection(false)
 	w.battery = b
 	return box
 }
 
-// newBatterySection creates a BATTERY LIMIT block: the charge cap scale
-// (40–100%), debounced.
-func (w *Window) newBatterySection() (*batterySection, *gtk.Box) {
+// newBatterySection creates a charge-limit block: the cap scale (40–100%),
+// debounced.
+//
+// The window shows the percentage in a label beside the slider; the drawer
+// keeps GtkScale's own floating value. That is the one real behavioural
+// difference between the two shapes: the built-in value sits above the handle
+// and travels with it, which is right under a thumb that is already there and
+// wrong on a page you are scanning, where the number you want to read is the
+// one that will not hold still.
+func (w *Window) newBatterySection(desktop bool) (*batterySection, *gtk.Box) {
 	b := &batterySection{w: w}
-
-	box := gtk.NewBox(gtk.OrientationVertical, 4)
-	box.Append(sectionLabel("BATTERY LIMIT"))
 
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 40, 100, 1)
 	sc.SetDigits(0)
-	sc.SetDrawValue(true)
+	sc.SetDrawValue(!desktop)
 	sc.SetValue(80)
 	sc.SetFocusable(false)
 	w.wheelScrollsView(sc)
-	sc.ConnectValueChanged(func() { b.queueSend() })
+	sc.ConnectValueChanged(func() {
+		b.syncValueLabel()
+		b.queueSend()
+	})
 	b.scale = sc
 
+	if desktop {
+		b.value = formValueLabel("")
+		b.syncValueLabel()
+		return b, formRow("Charge limit", formSlider(sc, b.value))
+	}
+
+	box := gtk.NewBox(gtk.OrientationVertical, 4)
+	box.Append(sectionLabel("BATTERY LIMIT"))
 	box.Append(sc)
 	return b, box
+}
+
+// syncValueLabel keeps the inline readout on the slider. A no-op in the drawer,
+// which has no such label.
+func (b *batterySection) syncValueLabel() {
+	if b.value != nil {
+		b.value.SetLabel(fmt.Sprintf("%d%%", int(b.scale.Value())))
+	}
 }
 
 // queueSend debounces the write. The delay is about the drag, not chattiness:
@@ -106,6 +131,7 @@ func (b *batterySection) sync() {
 		return
 	}
 	b.scale.SetValue(float64(st.Battery))
+	b.syncValueLabel()
 }
 
 // appendFocus appends this instance's focus item: the charge-limit slider.

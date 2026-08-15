@@ -304,7 +304,7 @@ func (w *Window) swapFocusList(items []focusItem) {
 }
 
 // activeScroll returns the scroller of the view currently on screen, or nil
-// when that view does not scroll (the colour picker). An open popup's own
+// when that view does not scroll. An open popup's own
 // scroller wins: it is what gamepad navigation and ensureVisible must move
 // while the popup has focus, and the scrim keeps the view behind it still.
 func (w *Window) activeScroll() *gtk.ScrolledWindow {
@@ -374,8 +374,11 @@ func (w *Window) ensureVisible(widget gtk.Widgetter) {
 // A capture-phase controller sees the event before GtkRange's own (bubble)
 // handler, so consuming it there is what keeps the range from acting; the
 // scroll is then applied to the enclosing scroller by hand. Returning false
-// when there is nothing to scroll leaves the colour picker's sliders — the
-// one view with no scroller — responding to the wheel exactly as before.
+// when there is nothing to scroll leaves a slider in a view that does not
+// scroll responding to the wheel exactly as before — which is why the colour
+// picker's own sliders are deliberately not registered here at all: a popup
+// has a scroller with nothing in it to move, so passing them through this
+// would take the wheel away from the one control that wants it.
 func (w *Window) wheelScrollsView(sc *gtk.Scale) {
 	ctl := gtk.NewEventControllerScroll(gtk.EventControllerScrollVertical)
 	ctl.SetPropagationPhase(gtk.PhaseCapture)

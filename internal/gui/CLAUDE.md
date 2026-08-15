@@ -87,7 +87,9 @@ internal/gui/
   fancurve.go                   The 8-point fan curve chart: mapping, hit test, Cairo drawing
   sync.go                       Daemon state sync, refreshState, the get-state telemetry poll,
                                 and API send functions
-  color.go                      colorInput widget + color picker view (math in internal/colorconv)
+  color.go                      colorInput widget: swatch + presets + Custom button
+  colorpopup.go                 the HSL picker itself — one popup for both surfaces
+                                (colour maths in internal/colorconv)
   errbar.go                     Error bar: reportError/clearError, the only user-facing error surface
   focus.go                      Focus widget adaptor (navigation logic in internal/focusgrid)
   layout.css                    Embedded structural CSS (touch targets, sizing) — PRIORITY_APPLICATION
@@ -383,7 +385,8 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
 - `"custom"` — custom profile view (TDP, fan curve, undervolt, telemetry)
 - `"dashboard"` — telemetry charts over the daemon's sample history (`dashboard.go`)
 - `"theme"` — theme picker (radio buttons + accent dots)
-- `"color"` — HSL color picker (H/S/L sliders + presets + preview)
+
+(The HSL colour picker was a sixth page and is now a popup — see below.)
 
 Bottom bar stays visible across all views. `hide()` resets to "main".
 Every page but `"main"` is lazy-built on first navigation.
@@ -420,6 +423,17 @@ picks the layer popups and hints target; `closePopup` and `hideHint` sweep
 motion controller on each layer's own overlay, so pointer coordinates and the
 anchor translation share one tree on every surface — it used to hang off
 `w.gtkWin` and could only ever serve the drawer.
+
+Two rules were added when the colour picker became a popup, and both exist
+because it is the first popup whose body is *shared and long-lived* rather than
+rebuilt per open. `closePopup` **detaches the body** (`p.scroll.SetChild(nil)`),
+or the second surface to open it hits GTK's "widget already has a parent". And a
+body that needs to be wider than it measures asks the layer
+(`popupLayer.minW` / `openPopupSized`) rather than calling `SetSizeRequest` on
+itself: `popupgeom` clamps the rectangle while GTK sizes the child, GTK never
+allocates below a request, and the result is a body that overflows the panel and
+is clipped at the overlay — on the drawer only, so it does not show up in the
+window where the width fits.
 
 Why OS-level popups are a dead end, so nobody re-chases it:
 
@@ -607,8 +621,9 @@ tested for the day that content work happens; until then a user who writes
 moves them into per-view structs, each with its own build, sync and focus list,
 so the full window can host a view without a second implementation of it.
 
-All seven are done — `errBarView` (`errbar.go`), `colorView`
-(`colorview.go`), `themeView` (`themeview.go`), `lightingView`
+All seven are done — `errBarView` (`errbar.go`), `colorView` (`colorview.go`,
+since retired: the picker is a popup now), `themeView` (`themeview.go`),
+`lightingView`
 (`lightingview.go`), `profileSection` and `autoswitchSection`
 (`mainprofile.go`), `dashboardView` (`dashboard.go`, built in this shape from
 the start), and `customView` (`customview.go`). `batterySection`
@@ -748,31 +763,61 @@ per-instance before it was true:
   consults the drawer's stack is a view that cannot live anywhere else. `errBar`
   is the surface's own error strip.
 
-**The HSL picker is a stack child that is not a tab.** The Dashboard's RGB card
-needs a picker and the drawer's lives on the drawer's stack, so `colorView` took
-a `viewHost` like every other shared view. Being a *sub*-page rather than a page
-costs four small rules, each of which is a dead end without it:
+**The HSL picker is a popup, and there is one of it** (`colorpopup.go`; Jeff,
+2026-08-14: "the custom color item still changes to a different page in the main
+window view"). It was a stack page on each surface, which is right in a 320px
+column — a page *is* the drawer's answer to anything wanting a window of its own
+— and wrong in a window, where picking a colour took away the page being
+configured and the tab highlight had to go blank to stay honest about a sub-page
+that is not a tab. The popup layer already solves that shape for dropdowns.
 
-- `setActiveButton(m.tabBtns, colorPage)` is called with a name that matches no
-  tab, so **no tab is highlighted** — the honest rendering, since the picker is
-  not one of them.
-- `ActionBack` gets a case **above** the window's own close: B leaves the page
-  before it leaves the surface, the same nesting the drawer's view-stack case
-  already expresses.
-- `hide()` returns the stack to a tab. `show()` syncs whatever child is
-  selected and `syncPage` knows only tabs, so reopening onto the picker would
-  give a page with a stale focus list and no highlight.
-- `newColorView` **always builds its header**, where every other view reads a
-  nil `host.back` as "this surface has a tab bar" and builds none. Here that
-  would leave the page with no way out at all.
+**Unifying both surfaces on it was the point, not a bonus.** Keeping the page for
+the drawer and adding a popup for the window would have been *two pickers* — the
+one thing every other entry in this file refuses. One body, opened into whichever
+layer `activePopup()` names, routed to the right zone by `colorInput.owner`,
+deleted: `colorview.go`, `colorView`, `colorPage`, `mainWindow.{colorPicker,
+returnTab, ensureColorView, showColorView, leaveColorView, onColorPage}`, the
+`ActionBack` sub-page case, the `hide()` stack reset, `lightingConfig.onCustom` —
+and the four rules the non-tab stack child needed to be usable at all.
 
-Its column is centred at `colorPickerWidth` rather than filling the window:
-stretched across 1200px the eight preset squares become letterboxes and the
-sliders lose all precision per pixel. That is set at the call site, not in the
-view, because it is a fact about the surface — the drawer's instance must keep
-filling its 320px panel. `VOLTAIRE_GUI_OPEN_FULL=color` opens it, for the reason
-that flag's own comment already gives: it is the page a screenshot run is least
-able to reach, two pointer clicks in from the Dashboard.
+Two mechanisms underneath had to change, and both bit:
+
+- **`closePopup` detaches the body** (`p.scroll.SetChild(nil)`). Dropdowns build
+  a fresh list per open and never noticed; a shared body cannot be parented into
+  the second layer while the first still holds it, so the two surfaces would have
+  worked one at a time.
+- **A body may not size itself; it asks the layer** (`popupLayer.minW`,
+  `openPopupSized`). `popupgeom` clamps the *rectangle* to the panel while GTK
+  sizes the *child*, and GTK never allocates below a size request — so a
+  `SetSizeRequest(380)` on the body overflowed the drawer's 320px panel and was
+  clipped at the overlay, taking the readout column and the hex with it. Found by
+  screenshotting the drawer, and invisible in the window, where 380 fits. As a
+  floor handed to `popupgeom`, the existing clamp does the work and the body
+  fills what it is given. Any future popup wider than its natural size wants the
+  same treatment, not a size request.
+
+**The three sliders paint their own troughs** — hue through the spectrum at the
+current saturation and lightness, saturation grey→colour, lightness
+black→colour→white — recomputed per change on the same display-wide provider the
+preview swatch already used. Drawn at the *current* values rather than fixed
+reference ones: a slider that previews its own result is worth more than one that
+is always colourful, and the handle stays visible when a ramp goes black. They
+carry `border: none` because the **desktop** theme's trough border survives
+voltaire's sheet (which sets `background` and nothing else) and is invisible only
+at GTK's default trough height; at the height a gradient needs to be readable it
+drew a 1px frame in Breeze's blue.
+
+The picker's sliders are deliberately **not** passed through `wheelScrollsView`:
+that guard exists because a wheel flick over a slider in a scrolling view
+silently changed a hardware setting, and a popup has a scroller with nothing in
+it to move — registering them would take the wheel away from the one control
+that wants it, which is also how the picker page behaved.
+
+`VOLTAIRE_GUI_OPEN_FULL=color` still opens it, now over the window's dashboard.
+The **drawer's** copy has no such instrument and there is no pointer automation
+on this session's Wayland, so it was verified with a throwaway build that opened
+it on a timer — the same disposable-diagnostic move as the `internal/display`
+probe, and the thing that caught the overflow above.
 
 **One error bar per surface, and reports fan out to all of them.** The drawer's
 bar is hidden whenever the window is up, so a failure reported only to it would
@@ -1179,27 +1224,93 @@ title changed to match while the ID stayed `dashboard`.
   controls vertically again... we don't need it to be in the same format as the
   drawer." Reusing a *view* across surfaces is the win the `viewHost` split
   bought; reusing its *arrangement* is the drawer transplanted into a window.
-- Two regions, both `GtkFlowBox`, so neither holds a breakpoint in Go: the tile
-  grid (homogeneous, `.dash-card` min-width 170) and the short control cards
-  (`.dash-control` min-width 200). RGB is a third region — one wide card whose
-  three columns are zone+effect, the two colours, and speed+brightness.
-- **The control FlowBox is deliberately not homogeneous, where the tile grid
-  is.** `SetHomogeneous(true)` sizes every child to the largest natural size in
-  *both* axes: the profile card's three-button row set the width, so three cards
-  filled a line where four had room, and the fourth was then stretched to the
-  profile card's height with its slider stranded at the top of an empty box.
-- **`.dash-control`'s 200px minimum is a measurement, not a taste.** For three
-  of the four cards the natural width *is* that minimum (a dropdown and a slider
-  are both happy to be narrow), and FlowBox breaks lines on natural width — at
-  250 the four asked for more than a 1200px window has and the last wrapped
-  alone. The cells are `SetHExpand(true)` so a line shares out whatever is left.
+- **The controls are desktop form rows, not drawer blocks** (`formrow.go`; Jeff,
+  2026-08-14: "right now it consists mostly of units that match the drawer.
+  Let's work to find the best possible UX for a window view"). One setting per
+  line, its name in a fixed 104px label column, its control filling the rest —
+  the boxed-list idiom every desktop settings panel uses, and the one the
+  window's own Settings tab already had. The point is alignment: twelve settings
+  are readable when their names line up in a column and unreadable when each
+  sizes to its own label, which is why `formLabelWidth` is fixed rather than
+  natural.
+- **Each shared section takes a `desktop bool` and builds one shape or the
+  other** — a branch inside the section, never a second type. Two types would
+  mean two sync paths and two focus lists for one control. What each branch
+  changes is worth knowing, because none of it is decoration:
+  - **Profile**: four on one line with a trailing `Custom…`. Stacked under the
+    three, Custom reads as a fourth profile you can select; it *navigates*, and
+    the ellipsis is the desktop convention that says so.
+  - **Sliders**: `SetDrawValue(false)` plus a readout label after the scale.
+    GtkScale's own value floats above the handle and travels with it, which is
+    right under a thumb already on it and wrong on a page you are scanning —
+    the number you want to read is the one that will not hold still.
+  - **Brightness** names its four levels (Off/Low/Medium/High). 0–3 is what the
+    hardware takes; "2" is not a brightness anyone asked for, and 0 is *off*,
+    which a bare number never says.
+  - **Effect**: one row of six rather than 3×2. A line of options is read at a
+    glance; a 3×2 block reads as a keypad. `modeColumns()` is the one number,
+    and `appendFocus` takes it too — see below.
+  - **Colour**: presets, current swatch and `Custom…` on one line. The swatch
+    gets a wider margin than the gaps between presets, or it reads as a ninth
+    preset that does nothing when clicked. `Custom…` opens the HSL picker as a
+    popup anchored to itself, so the page stays where it was — the ellipsis was
+    already the right label for it and became literally true.
+  - **Autoswitch**: the switch sits at the *start* of the control column like
+    every other control, not pushed to the far edge as in the drawer's label
+    row; the two targets are `subFormRow`s indented under it, which is what says
+    they depend on it.
+- **Four cards in two rows**: POWER | DISPLAY, then KEYBOARD | LIGHTBAR at full
+  width beneath them. The split is domain — what the machine runs like against
+  what it looks like. DISPLAY used to sit *under* LIGHTING in a right-hand
+  column precisely because one row on its own beside a five-row POWER card left
+  that column stopping half way up the page; with the lighting cards moved to a
+  band of their own, the band closes the region and the raggedness reads as a
+  card grid rather than as a hole.
+- **The lighting zones are two cards, not one card and a zone switch** (Jeff,
+  2026-08-14: "since we have more room in the main window, we can split out the
+  controls for the lightbar and keyboard rather than using a radio button... Do
+  NOT change the drawer, where space is at more of a premium"). A mode switch is
+  a price paid for space; the window has the space, so it does not pay it. Each
+  card is a `lightingView` with `cfg.zone` set — a second *instance*, which is
+  what the per-instance swatch ids and `colorInput.owner` made possible — and a
+  zone-fixed block builds no tab row at all, because a one-of-two control with
+  one legal answer is furniture. The pair genuinely differ in height when one
+  zone is on an effect that uses no colours, and that is the honest rendering:
+  a glance at the page says *keyboard static red, lightbar cycling*, which the
+  radio could never show.
+  Two things the split needed. **`blocks()` drops the zone row rather than
+  appending a nil** — a nil `*gtk.Box` in a `gtk.Widgetter` is a non-nil
+  interface, so it would reach GTK and crash. And **focus sections are
+  namespaced per zone** (`lightingView.section`): `focusgrid.Sections` dedupes
+  by name and `JumpSection` takes the first visible item of the target, so two
+  blocks sharing `mode` would collapse into one bumper target and the second
+  card would be reachable by D-pad and invisible to the gesture that exists to
+  skip past a card. The drawer's block is unnamed and keeps the historical
+  section names byte-for-byte.
+  The grid runs the cards **sequentially, not as parallel columns** — D-pad down
+  from the keyboard's last row reaches the lightbar's first, where the lightbar
+  is visually to the right. That is what the page already did for POWER and
+  DISPLAY, and parallel columns would be wrong the moment the two cards have
+  different visible rows, which is routine here.
+- **The focus grid follows the widgets, and this is where it nearly did not.**
+  `profileSection.appendFocus` was a `Line(3)` plus a `One()` for Custom, which
+  is right for the drawer's two rows and wrong for the window's one — D-pad
+  right would have stopped at Performance while the pointer walked on. It builds
+  one `Line` of four in desktop mode. Same for the effect grid, which takes
+  `modeColumns()` rather than a literal 3. A coordinate that disagrees with
+  what is on screen is the failure nobody notices with a mouse in their hand,
+  which is the whole reason `controlBuilder` pairs the two halves.
 - **`.drawer.main-window .mode-grid.btn-group button` exists because of a
   specificity tie.** `.drawer .mode-grid.btn-group button` is (0,3,1) — the same
   weight as the desktop-density rule — and later in the sheet, so it won and left
   the effect buttons 52px tall in a window whose every other button is 30px.
-- The RGB card supplies its own `RGB` heading. In the drawer that heading comes
-  from `controls.Layout`'s group, which this page does not use, and a card that
-  did not name itself read as the previous one continuing.
+- **`.form-label` is not `.section-label`.** The small-caps style is a heading
+  over a block and read as one here: every row looked like the start of a new
+  group. Sentence case at the body size reads as a field name, which is what it
+  is.
+- `dashboardChartHeight` rose 64 → 88 once the controls moved under the tiles
+  rather than beside them: the two together end short of the window's height,
+  and the spare pixels are worth more to the trace than to the margin below it.
 - **The refresh-rate card is the only control in the tree that does not talk to
   the daemon** (`internal/display`; the root CLAUDE.md has the argument). It
   returns `nil` when no backend is installed and the card is simply not built —

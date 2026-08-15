@@ -48,7 +48,21 @@ type popupLayer struct {
 	body    gtk.Widgetter       // current popup content, child of scroll
 	hint    *gtk.Label          // anchored hint text (hint.go)
 
-	open       bool
+	open bool
+
+	// minW is a width floor the *body* asked for, above the anchor-matching one
+	// every popup gets. Only the colour picker sets it: its natural width is
+	// its eight 28px presets, which would leave a hue slider about 60px long.
+	//
+	// It has to be the layer's floor rather than a SetSizeRequest on the body,
+	// and that is the whole reason this field exists. popupgeom clamps the
+	// *rectangle* to the bounds while GTK sizes the *child*, and GTK never
+	// allocates a widget below its own minimum — so a body that requests 380px
+	// simply overflows the drawer's 320px panel and is clipped at the overlay,
+	// taking the readout column with it. Asking here means popupgeom's existing
+	// clamp does the work and the body fills whatever it is given.
+	minW int
+
 	anchor     gtk.Widgetter // widget the surface is placed against
 	hintAnchor gtk.Widgetter // widget the hint is placed against (hint.go)
 	onClose    func()
@@ -217,9 +231,12 @@ func (w *Window) placeOverlayChild(p *popupLayer, child *gtk.Widget, anchor gtk.
 	gap, margin := int(popupGap*scale), int(popupMargin*scale)
 	bounds := popupgeom.Rect{W: p.overlay.Width(), H: p.overlay.Height()}
 
-	minW := 0
-	if matchAnchorWidth {
+	minW := p.minW
+	if matchAnchorWidth && ab.Width() > minW {
 		minW = ab.Width()
+	}
+	if !matchAnchorWidth {
+		minW = 0 // the hint is placed against its anchor, not sized by the body
 	}
 	// Width at unconstrained height first, then height at the width the
 	// placement will grant — mirroring popupgeom's own clamp, so a wrapping
@@ -247,12 +264,21 @@ func (w *Window) placeOverlayChild(p *popupLayer, child *gtk.Widget, anchor gtk.
 // current focus list in favour of items. onClose runs when the popup closes,
 // on every path — scrim tap, Escape, gamepad B, view switch, drawer hide.
 func (w *Window) openPopup(anchor, body gtk.Widgetter, items []focusItem, onClose func()) {
+	w.openPopupSized(anchor, body, items, 0, onClose)
+}
+
+// openPopupSized is openPopup for a body that needs to be wider than both its
+// own natural width and its anchor. minW is a floor, not a width: popupgeom
+// still clamps it into the surface, so a picker that wants 380px gets the
+// drawer's 320px panel less its margins there and the full 380 in the window.
+func (w *Window) openPopupSized(anchor, body gtk.Widgetter, items []focusItem, minW int, onClose func()) {
 	p := w.activePopup()
 	if p == nil {
 		return
 	}
 	w.closePopup() // one popup at a time
 	w.hideHint()   // the hint never draws over a dropdown list
+	p.minW = minW
 	p.anchor = anchor
 	p.onClose = onClose
 	p.body = body
@@ -277,6 +303,14 @@ func (w *Window) closePopup() {
 		p.scrim.SetVisible(false)
 		p.surface.SetVisible(false)
 		p.anchor = nil
+		// Detach the body. A dropdown builds a fresh list per open and would not
+		// care, but the colour picker is one widget tree shared by both layers,
+		// and GTK refuses to parent a widget that already has a parent — so
+		// opening it on the second surface would fail with nothing in the popup
+		// and a critical in the journal.
+		p.scroll.SetChild(nil)
+		p.body = nil
+		p.minW = 0
 		onClose := p.onClose
 		p.onClose = nil
 		w.popFocusList()

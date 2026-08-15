@@ -393,13 +393,20 @@ outside.
 
 ### The Dashboard's controls
 
-- [ ] Under the charts: **Profile**, **Autoswitch**, **Battery limit** and
-      **Refresh rate** sit in one row across the window at the default size,
-      with **RGB** as a wide card beneath them in three columns. Nothing is a
-      narrow column down one side, and the charts are not pushed below the fold.
-- [ ] Narrow the window towards its minimum: both the chart grid and the
-      control row reflow to fewer per line, and nothing is clipped or
-      horizontally scrolled.
+- [ ] Under the charts: a **POWER** card on the left (Profile, Charge limit,
+      Autoswitch) and **LIGHTING** then **DISPLAY** on the right. Every setting
+      is one line — its name in a column on the left, its control filling the
+      rest — and the names line up down each card. Nothing is a narrow column
+      down one side, and the charts are not pushed below the fold.
+- [ ] The values are readable without touching anything: the charge limit shows
+      `74%` beside its slider (not floating over the handle), and brightness
+      reads `High` rather than `3`.
+- [ ] The Profile row is four buttons on one line, the last reading
+      `<profile>…` — click it and the **Profiles** tab opens; it never applies a
+      profile. Turn Autoswitch on: the two target rows appear *indented* beneath
+      the switch.
+- [ ] Narrow the window towards its minimum: the chart grid reflows to fewer
+      per line, and nothing is clipped or horizontally scrolled.
 - [ ] The controls are a second copy, not a second setting: change the profile
       here and the drawer follows within a second (and vice versa); the same
       for the charge limit and the autoswitch pair. `voltaire profile --get`
@@ -410,15 +417,33 @@ outside.
       the dropdown re-reads to `60 Hz`. Put it back to 180 Hz.
 - [ ] With a second screen attached, the card's title names the output it acts
       on (`REFRESH RATE · eDP-1`); with only the panel, it does not.
-- [ ] RGB: pick an effect, a preset colour, a speed and a brightness — the
-      keyboard and lightbar follow, and the drawer's own RGB section shows the
-      same values next time it opens. Switch the zone tab to Lightbar and
-      confirm the two zones stay independent between the two surfaces.
-- [ ] **Custom** under COLOR 1 opens the HSL picker *inside the window*, as a
-      centred column: no tab is highlighted while it is up, the back arrow
-      returns to the Dashboard, `Escape` closes the window, and **B** on a
-      controller goes back one level rather than closing the window. Reopen the
-      window afterwards — it comes back on a tab, never on the picker.
+- [ ] Lighting is **two cards, KEYBOARD and LIGHTBAR**, side by side with no
+      zone selector, and each shows six effects in **one row**, not a 3×2 block.
+      Set the two zones to different effects and colours — they stay independent,
+      the hardware follows both, and each card hides the rows its effect does not
+      use (so the two are different heights). The drawer still has *one* RGB
+      section with Keyboard/Lightbar tabs; open it and confirm each tab shows
+      what the matching card shows.
+- [ ] On a controller, D-pad **right** from Performance reaches `Custom…` (it is
+      one line, not two), and right along the effect row reaches Off without
+      dropping to another line. The drawer's own grids are unchanged — down from
+      Performance still reaches Custom there.
+- [ ] **Custom…** under Colour 1 opens the HSL picker as a **popup anchored to
+      the button**, not a page: the Dashboard stays behind it, dimmed. All three
+      troughs are painted (hue spectrum, grey→colour, black→colour→white) and
+      follow each other as you drag; the readouts and the hex update live and
+      the LEDs follow. Dismiss with a click outside, `Escape`, or **B** — the
+      window stays open in every case, and the tab highlight never goes blank.
+- [ ] The same **Custom** button in the *drawer's* RGB section opens the same
+      picker there, sized to the 320px panel: nothing clipped at the right
+      edge, the readout column and the hex fully visible.
+- [ ] **In Gaming Mode**, the picker opens *inside* voltaire's own surface on
+      both the quickbar and the hosted full window — it is an overlay child
+      like the dropdowns, so if a dropdown is visible there this must be too.
+      Check the parts that are sized in Go rather than CSS: the two label
+      columns scale with everything else ("Saturation" is not ellipsized), the
+      trough ramps are thicker in proportion, and a *touch* drag on each slider
+      moves it. Dismiss by tapping the scrim and with **B**.
 
 ## 14. Cleanup
 

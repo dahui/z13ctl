@@ -103,22 +103,25 @@
     border-radius: 8px;
 }
 
-/* Dashboard control cards — the live controls under the tiles. min-width is
-   what makes their FlowBox reflow, exactly as .dash-card's does for the tiles
-   above. It is a second class rather than a change to .section-card, which the
-   Profiles page also wears in a fixed two-column box that has no reflow to
-   drive.
+/* Desktop form rows — one setting per line, its name in a fixed label column.
+   The name is deliberately *not* `.section-label`'s small-caps: that style is a
+   heading over a block, and read as one here — every row looked like the start
+   of a new group. Sentence case at the body size reads as a field name, which
+   is what it is. */
+.main-window .form-label {
+    font-size: 12px;
+    font-weight: normal;
+    letter-spacing: 0;
+}
 
-   200 is not a taste figure: the FlowBox breaks lines on *natural* width, and
-   for three of these four cards the natural width is this minimum (their
-   contents are a dropdown or a slider, both of which are happy to be narrow).
-   At 250 the four cards asked for more than a 1200px window has and the last
-   one wrapped alone onto a line of its own, leaving two thirds of it empty —
-   the exact waste of width this layout was rearranged to stop. The cards then
-   expand to fill whatever the line has left over, so the smaller minimum costs
-   nothing at full width and buys a second card per line at the small end. */
+/* Dashboard control cards. A floor rather than a size: a form row is a fixed
+   label column plus a control, so a card narrower than this starts eating the
+   control while the label stays put — a slider with 40px of travel, or a
+   six-way effect row with every word ellipsized to "Sta…". A second class
+   rather than a change to .section-card, which the Profiles page also wears
+   and whose cards hold a chart with its own minimum. */
 .main-window .dash-control {
-    min-width: 200px;
+    min-width: 260px;
 }
 
 .main-window .dash-card-title {
@@ -198,7 +201,7 @@
    bottom axis labels are all the numbers a card carries beyond its header.
    The card supplies the spacing around it. */
 .dash-chart {
-    min-height: 64px;
+    min-height: 88px;
     border-radius: 6px;
 }
 

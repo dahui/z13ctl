@@ -390,6 +390,7 @@ func (b *Backend) scaledCSS() string {
 .setting-desc { font-size: %.0fpx; }
 .main-window .section-card { padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .main-window .dash-control { min-width: %.0fpx; }
+.main-window .form-label { font-size: %.0fpx; }
 .main-window .commit-bar { padding: %.0fpx %.0fpx; }
 .main-window .commit-bar button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
 .custom-actions button { min-height: %.0fpx; padding: %.0fpx %.0fpx; border-radius: %.0fpx; }
@@ -434,7 +435,7 @@ func (b *Backend) scaledCSS() string {
 		2*s, 2*s, // gamepad-editing (outline-width, outline-offset)
 		10*s, 4*s, 4*s, // tdp-warning (font-size, margin-top, margin-bottom)
 		240*s, 6*s, // fan-curve-area (min-height, border-radius)
-		64*s, 6*s, // dash-chart (min-height, border-radius)
+		88*s, 6*s, // dash-chart (min-height, border-radius)
 		// Dashboard cards. The .drawer.main-window desktop-density block in
 		// layout.css is deliberately NOT restated here: this sheet loads at a
 		// higher provider priority, so its 48*s touch rules above win on the
@@ -448,11 +449,11 @@ func (b *Backend) scaledCSS() string {
 		13*s, 11*s, // settings row (name, description) — the hosted full window
 		// shows this page too, and unscaled type there is unreadable
 		10*s, 12*s, 8*s, // section-card (padding-v, padding-h, border-radius)
-		// The Dashboard's control cards. min-width is what breaks their FlowBox
-		// into lines, so it is a layout dimension like .dash-card's and has to
-		// scale — left at 1x it would pack four unreadably narrow cards onto a
-		// line meant to hold two.
+		// The Dashboard's control cards. min-width is the floor below which a
+		// form row starts eating its control, so it is a layout dimension like
+		// .dash-card's and has to scale with everything around it.
 		200*s,     // dash-control min-width
+		12*s,      // form-label font-size — the hosted window shows these rows too
 		8*s, 12*s, // commit-bar (padding-v, padding-h)
 		48*s, 4*s, 16*s, 6*s, // commit-bar button — touch height, like every button here
 		36*s, 4*s, 8*s, 6*s, // custom-actions button (min-height, padding-v, padding-h, border-radius)

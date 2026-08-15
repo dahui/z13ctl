@@ -163,8 +163,12 @@ type Window struct {
 	// Lazily-built stack views. Each owns its widgets, and a nil pointer is
 	// also the built-yet test every show*View uses.
 	custom    *customView // custom profile editor (customview.go, profiles.go, fancurve.go)
-	colorView *colorView  // HSL picker (colorview.go)
 	themeView *themeView  // theme picker (themeview.go)
+
+	// colorPopup is the HSL picker (colorpopup.go). Not a stack view and not
+	// per-surface: it is a popup body the active layer draws, so one serves the
+	// drawer and the full window both.
+	colorPopup *colorPopup
 
 	// Custom theme state (set when theme.toml exists).
 	isCustomTheme bool
@@ -433,9 +437,9 @@ func New(app *gtk.Application) *Window {
 	// on that page — a page past the first is otherwise reachable only with
 	// a pointer, which a screenshot run does not have.
 	//
-	// "color" opens the window's HSL picker, which is not a tab: it is two
-	// pointer clicks in from the dashboard, so it is the page a screenshot run
-	// is least able to reach and the one whose host wiring is newest.
+	// "color" opens the HSL picker over the window's dashboard. It is not a
+	// tab — it is a popup two pointer clicks in from the RGB card — so it is
+	// the thing a screenshot run is least able to reach.
 	if openFull := startup.GUIEnv("OPEN_FULL"); openFull != "" {
 		glib.IdleAdd(func() bool {
 			w.openFull()
@@ -447,8 +451,8 @@ func New(app *gtk.Application) *Window {
 				m.setTab(openFull)
 				return false
 			}
-			if openFull == colorPage && m.dashboard != nil && m.dashboard.lighting != nil {
-				m.showColorView(m.dashboard.lighting.color1)
+			if openFull == "color" && m.dashboard != nil && len(m.dashboard.lightings) > 0 {
+				w.openColorPopup(m.dashboard.lightings[0].color1)
 			}
 			return false
 		})
@@ -486,10 +490,11 @@ func (w *Window) dumpAllFocusLists() {
 		w.viewStack.AddNamed(w.buildThemeView(), "theme")
 		w.buildThemeFocusList()
 	}
-	if w.colorView == nil {
-		w.colorView = newColorView(w, w.drawerHost(colorPage))
-		w.viewStack.AddNamed(w.colorView.root, colorPage)
-	}
+	// The HSL picker is a popup body rather than a view, so it has no surface
+	// to be built into and one instance serves both — but its grid is still the
+	// one a person reaches only by clicking Custom, which is precisely what this
+	// dump exists to cover. Building it logs its list.
+	w.ensureColorPopup()
 	w.viewStack.SetVisibleChildName("main")
 
 	// The full window is a second surface hosting its own instances of two of
@@ -499,13 +504,6 @@ func (w *Window) dumpAllFocusLists() {
 	// alone would collide with the drawer's.
 	if w.mainWin == nil {
 		w.mainWin = newMainWindow(w)
-	}
-	// The window's HSL picker is lazy — it is reached by clicking Custom on the
-	// dashboard rail — so it has to be brought into existence here or the one
-	// grid a person can only reach with a mouse would be the one grid the
-	// fingerprint never covers.
-	if w.mainWin.dashboard != nil && w.mainWin.dashboard.lighting != nil {
-		w.mainWin.ensureColorView()
 	}
 }
 
@@ -680,11 +678,6 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 		// the popup's focus frame over a vanished list.
 		case w.popupOpen():
 			w.closePopup()
-		// Above the window's own close: a sub-page is one level in, so B leaves
-		// the page before it leaves the surface — the same nesting the drawer's
-		// view-stack case below expresses.
-		case w.fullVisible.Load() && w.mainWin != nil && w.mainWin.onColorPage():
-			w.mainWin.leaveColorView()
 		// Above the drawer cases: while the full window is up, the drawer is
 		// hidden, so falling through to w.hide() dismissed nothing — B could
 		// not close the window at all. Same order as Escape and Toggle.

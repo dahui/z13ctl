@@ -62,8 +62,6 @@ func (w *Window) newDisplaySection() (*displaySection, *gtk.Box) {
 	d := &displaySection{w: w}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
-	d.label = sectionLabel("REFRESH RATE")
-	box.Append(d.label)
 
 	row := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	row.AddCSSClass("btn-group")
@@ -84,7 +82,13 @@ func (w *Window) newDisplaySection() (*displaySection, *gtk.Box) {
 	w.setHint(d.dd.btn, "Refresh rate for this screen")
 	d.dd.setLabel("—")
 	row.Append(d.dd.btn)
-	box.Append(row)
+
+	// The row's own name label is kept so applyQuery can add the output name to
+	// it on a multi-screen machine. formRow builds it, so it is fished back out
+	// rather than built here — one construction of a form row, not two.
+	formed := formRow("Refresh rate", row)
+	d.label = firstLabel(formed)
+	box.Append(formed)
 
 	// Failures land in the flow of the card rather than the error bar: this
 	// refreshes whenever the page is shown, and a background read the user did
@@ -147,11 +151,13 @@ func (d *displaySection) applyQuery(outs []display.Output, err error) {
 	// Name the screen only when there is more than one lit, so the common case
 	// is not carrying a connector name nobody needs — and the uncommon one
 	// never leaves the user guessing which screen a click will change.
-	title := "REFRESH RATE"
-	if display.EnabledCount(outs) > 1 {
-		title += " · " + out.Name
+	if d.label != nil {
+		title := "Refresh rate"
+		if display.EnabledCount(outs) > 1 {
+			title += " (" + out.Name + ")"
+		}
+		d.label.SetText(title)
 	}
-	d.label.SetText(title)
 
 	// One rate is not a choice. The panel is told what it is running and the
 	// control is dead rather than absent, because a card that appears and

@@ -37,33 +37,41 @@ type profileSection struct {
 	customBtn *gtk.Button            // opens the custom profiles; labelled with the running one
 
 	// onCustom is where the Custom button goes. It differs by surface — the
-	// drawer's own custom view, or the full window's Profiles tab — and it is
-	// the only thing about this block that does.
+	// drawer's own custom view, or the full window's Profiles tab.
 	onCustom func()
+
+	// desktop selects the window's form row over the drawer's stacked block.
+	desktop bool
 }
 
 // buildProfileSection creates the drawer main view's PROFILE section and
 // registers it as w.profiles, which the control registry's focus half reads.
 func (w *Window) buildProfileSection() *gtk.Box {
-	p, box := w.newProfileSection(func() { w.showCustomView() })
+	p, box := w.newProfileSection(false, func() { w.showCustomView() })
 	w.profiles = p
 	return box
 }
 
-// newProfileSection creates a PROFILE block: the three firmware profiles on one
-// row, and a single Custom button beneath them.
+// newProfileSection creates a PROFILE block: the firmware profiles, and one
+// button standing for the whole custom family.
 //
 // The custom profiles are deliberately not listed here. One row per saved
 // profile pushed the RGB and battery controls off the bottom of a 320px
 // drawer, so the whole family collapses to one button that opens the editor;
 // the button is labelled with the running custom profile, so the surface still
 // says what is in force. Two instances exist — the drawer main view's and the
-// dashboard rail's — and each is synced through Window.profileSections.
-func (w *Window) newProfileSection(onCustom func()) (*profileSection, *gtk.Box) {
-	p := &profileSection{w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom}
-
-	box := gtk.NewBox(gtk.OrientationVertical, 4)
-	box.Append(sectionLabel("PROFILE"))
+// dashboard's — and each is synced through Window.profileSections.
+//
+// The window puts all four on one line, where the drawer stacks the Custom
+// button under the three. That is not only about width. Stacked, Custom reads
+// as a fourth profile you can select, which it is not: it *navigates*, and the
+// desktop convention for a control that opens something else is a trailing
+// ellipsis. On one line with the ellipsis it is unmistakably the odd one out,
+// and the row still says what is running.
+func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSection, *gtk.Box) {
+	p := &profileSection{
+		w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom, desktop: desktop,
+	}
 
 	stockRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	stockRow.AddCSSClass("btn-group")
@@ -82,20 +90,38 @@ func (w *Window) newProfileSection(onCustom func()) (*profileSection, *gtk.Box) 
 		p.btns[r.Name] = btn
 		stockRow.Append(btn)
 	}
-	box.Append(stockRow)
 
+	p.customBtn = gtk.NewButtonWithLabel(p.customLabel(nil))
+	p.customBtn.SetHExpand(true)
+	w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
+	p.customBtn.ConnectClicked(func() { p.openCustom() })
+
+	if desktop {
+		stockRow.Append(p.customBtn)
+		return p, formRow("Profile", stockRow)
+	}
+
+	box := gtk.NewBox(gtk.OrientationVertical, 4)
+	box.Append(sectionLabel("PROFILE"))
+	box.Append(stockRow)
 	// In a .btn-group of its own: the .active style that marks the running
 	// profile is scoped to that class, so a bare button would never highlight.
 	customRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	customRow.AddCSSClass("btn-group")
-	p.customBtn = gtk.NewButtonWithLabel(profileui.Custom(nil).Label)
-	p.customBtn.SetHExpand(true)
-	w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
-	p.customBtn.ConnectClicked(func() { p.openCustom() })
 	customRow.Append(p.customBtn)
 	box.Append(customRow)
-
 	return p, box
+}
+
+// customLabel is the Custom button's text: the running custom profile's name,
+// with the window's trailing ellipsis marking it as a control that opens the
+// editor rather than one that selects a profile.
+func (p *profileSection) customLabel(st *api.State) string {
+	label := profileui.Custom(st).Label
+	if p.desktop {
+		return label + "…"
+	}
+	return label
 }
 
 // openCustom follows the Custom button to whichever profile editor this
@@ -120,7 +146,7 @@ func (p *profileSection) sync() {
 		return
 	}
 	cs := profileui.Custom(st)
-	p.customBtn.SetLabel(cs.Label)
+	p.customBtn.SetLabel(p.customLabel(st))
 	if cs.Active {
 		p.customBtn.AddCSSClass("active")
 	} else {
@@ -145,13 +171,16 @@ type autoswitchSection struct {
 	batt    string
 
 	timer *time.Timer // debounce, so re-picking a target sends once
+
+	// desktop selects the window's form rows over the drawer's stacked block.
+	desktop bool
 }
 
 // buildAutoswitchSection creates the drawer main view's AUTOSWITCH section and
 // registers it as w.autoswitch, which syncAutoswitch and the main view's focus
 // list read.
 func (w *Window) buildAutoswitchSection() *gtk.Box {
-	a, box := w.newAutoswitchSection()
+	a, box := w.newAutoswitchSection(false)
 	w.autoswitch = a
 	return box
 }
@@ -164,13 +193,11 @@ func (w *Window) buildAutoswitchSection() *gtk.Box {
 // (buildAutoswitchSection) and the full window's Profiles page (Jeff,
 // 2026-08-14: autoswitch belongs with the profile controls). Each carries its
 // own debounce timer and mirror fields, so the two cannot interleave a send.
-func (w *Window) newAutoswitchSection() (*autoswitchSection, *gtk.Box) {
-	a := &autoswitchSection{w: w}
+func (w *Window) newAutoswitchSection(desktop bool) (*autoswitchSection, *gtk.Box) {
+	a := &autoswitchSection{w: w, desktop: desktop}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 
-	labelRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	labelRow.Append(sectionLabel("AUTOSWITCH"))
 	sw := gtk.NewSwitch()
 	sw.SetHAlign(gtk.AlignEnd)
 	sw.SetHExpand(true)
@@ -187,13 +214,28 @@ func (w *Window) newAutoswitchSection() (*autoswitchSection, *gtk.Box) {
 		addTouchActivate(sw, func() { sw.SetActive(!sw.Active()) })
 	}
 	a.sw = sw
-	labelRow.Append(sw)
-	box.Append(labelRow)
+
+	if desktop {
+		// The switch sits at the start of the control column like every other
+		// control on the page, not pushed to the far edge as it is in the
+		// drawer's label row — a form's controls line up with each other, and a
+		// switch alone at the right margin reads as belonging to nothing.
+		sw.SetHAlign(gtk.AlignStart)
+		// The two targets are indented under it: they are meaningless without
+		// it, and the indent is what says so on a page where every other row
+		// stands on its own.
+		box.Append(formRow("Autoswitch", sw))
+	} else {
+		labelRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		labelRow.Append(sectionLabel("AUTOSWITCH"))
+		labelRow.Append(sw)
+		box.Append(labelRow)
+	}
 
 	// The two target rows are shown only while autoswitch is enabled: they
-	// are meaningless when it is off, and this is the main view, where three
-	// permanent rows for a feature most users leave alone is exactly the
-	// crowding the profile list was moved out to avoid.
+	// are meaningless when it is off, and in the drawer this is the main view,
+	// where three permanent rows for a feature most users leave alone is
+	// exactly the crowding the profile list was moved out to avoid.
 	a.targets = gtk.NewBox(gtk.OrientationVertical, 4)
 	a.targets.Append(a.buildTargetRow("On AC", &a.ac, &a.acDD))
 	a.targets.Append(a.buildTargetRow("On battery", &a.batt, &a.battDD))
@@ -207,17 +249,6 @@ func (w *Window) newAutoswitchSection() (*autoswitchSection, *gtk.Box) {
 // thread.
 func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst **dropdown) *gtk.Box {
 	w := a.w
-	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	row.AddCSSClass("btn-group")
-	name := gtk.NewLabel(label)
-	name.AddCSSClass("scale-name")
-	name.SetHAlign(gtk.AlignStart)
-	// A size request keeps the two dropdowns aligned: without it "On AC"
-	// and "On battery" are different widths and the triggers start at
-	// different offsets.
-	name.SetSizeRequest(72, -1)
-	row.Append(name)
-
 	var d *dropdown
 	d = w.newDropdown(dropdownConfig{
 		options: func() []dropdownOption {
@@ -245,6 +276,21 @@ func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst *
 	d.setLabel(profileui.TargetLabel(*target))
 	w.setHint(d.btn, "Profile to apply when this power source becomes active")
 	*ddDst = d
+
+	if a.desktop {
+		return subFormRow(label, d.btn)
+	}
+
+	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	row.AddCSSClass("btn-group")
+	name := gtk.NewLabel(label)
+	name.AddCSSClass("scale-name")
+	name.SetHAlign(gtk.AlignStart)
+	// A size request keeps the two dropdowns aligned: without it "On AC"
+	// and "On battery" are different widths and the triggers start at
+	// different offsets.
+	name.SetSizeRequest(72, -1)
+	row.Append(name)
 	row.Append(d.btn)
 	return row
 }
@@ -306,25 +352,40 @@ func (w *Window) focusProfileSection(b *focusgrid.Builder, items *[]focusItem) {
 	}
 }
 
-// appendFocus appends this instance's focus items: the firmware profiles share
-// a row, and the Custom button sits below them.
+// appendFocus appends this instance's focus items.
+//
+// The grid follows the widgets: in the window all four share a line, so D-pad
+// right walks from Performance to Custom…; in the drawer the Custom button is
+// on its own row beneath the three, so D-pad down reaches it. Written as one
+// Line for the window rather than a Line plus a One, because a coordinate that
+// disagrees with what is on screen is the failure nobody notices with a mouse
+// in their hand — the reason controlBuilder pairs the two halves at all.
 func (p *profileSection) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	stock := profileui.StockRows(nil)
+	btns := make([]*gtk.Button, 0, len(stock)+1)
+	for _, r := range stock {
+		btns = append(btns, p.btns[r.Name])
+	}
+
 	b.Section("profile")
-	for i, c := range b.Line(len(stock)) {
-		btn := p.btns[stock[i].Name]
+	if p.desktop && p.customBtn != nil {
+		btns = append(btns, p.customBtn)
+	}
+	for i, c := range b.Line(len(btns)) {
+		btn := btns[i]
 		*items = append(*items, focusItem{
 			widget: btn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: func() { btn.Activate() },
 		})
 	}
-	if btn := p.customBtn; btn != nil {
-		c := b.One()
-		*items = append(*items, focusItem{
-			widget: btn, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: func() { btn.Activate() },
-		})
+	if p.desktop || p.customBtn == nil {
+		return
 	}
+	c := b.One()
+	*items = append(*items, focusItem{
+		widget: p.customBtn, row: c.Row, col: c.Col, section: c.Section,
+		onActivate: func() { p.customBtn.Activate() },
+	})
 }
 
 // focusAutoswitchSection appends the drawer main view's AUTOSWITCH focus

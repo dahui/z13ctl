@@ -46,7 +46,7 @@ tabs and B closes it.
 | **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
 | **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source. The full history charts live on the full window's Dashboard tab — see [The Dashboard tab](#the-dashboard-tab). |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
-| **Keyboard / Lightbar** | Tab between the two lighting zones |
+| **Keyboard / Lightbar** | Tab between the two lighting zones (the full window shows both at once instead) |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
 | **Color 1 / Color 2** | Pick from 8 presets or open the custom color picker |
 | **Speed** | Animation speed for modes that support it: slow, normal, fast |
@@ -147,19 +147,40 @@ systemctl --user restart voltaire
 ### The controls under the charts
 
 Beneath the charts are the settings that change what the machine is doing right
-now — as opposed to the Profiles tab, which edits what a saved profile *says*:
+now — as opposed to the Profiles tab, which edits what a saved profile *says*.
+They are grouped in two cards:
 
-| Control | What it does |
+**Power**
+
+| Setting | What it does |
 |---------|-------------|
-| **Profile** | The three firmware profiles, and a **Custom** button that opens the Profiles tab. |
-| **Autoswitch** | The same control as the drawer's: a profile to apply on AC and one on battery. |
-| **Battery limit** | The charge cap, 40–100%. |
+| **Profile** | The three firmware profiles. **Custom…** opens the Profiles tab — the trailing dots mean it goes somewhere rather than selecting a fourth profile; its label is whichever custom profile is running. |
+| **Charge limit** | The charge cap, 40–100%, with the current value beside the slider. |
+| **Autoswitch** | Turn it on and the two indented rows appear: a profile to apply on AC, and one on battery. |
+
+**Lighting and display**
+
+The keyboard and the lightbar get **a card each**, side by side, with the same
+controls in both. The drawer switches between the two zones with a pair of tabs
+because it is 320px wide; the window has room to show them together, so you can
+see and change both at once.
+
+| Setting | What it does |
+|---------|-------------|
+| **Effect** | Static, breathe, cycle, rainbow, strobe, off. |
+| **Colour 1 / 2** | Eight presets, the current colour, and **Custom…** for the full picker. The second colour appears only for effects that use one. |
+| **Speed / Brightness** | Shown for the effects that have them. Brightness is named rather than numbered — Off, Low, Medium, High. |
 | **Refresh rate** | The rates your screen offers at the resolution it is running (see below). |
-| **RGB** | Zone, effect, both colours, speed and brightness — the drawer's lighting controls, laid out across the card. **Custom** opens the colour picker; the back arrow returns to the Dashboard. |
+
+A card only shows the settings its effect uses, so the two are often different
+heights — a zone on *cycle* has no colours to set. That is deliberate: the page
+tells you at a glance what each zone is doing.
 
 Everything here is a second copy of a control the drawer also has, not a
 different one: change the profile in either place and both follow within a
-second.
+second. They look different because they are laid out for a window — one
+setting per line with its name in a column — where the drawer stacks each
+control under its own heading for a thumb.
 
 ### Refresh rate
 
@@ -222,9 +243,18 @@ and every open surface follows within a second.
 
 ## Custom color picker
 
-Click **Custom** under any color input to open the HSL color picker. Adjust
-the Hue, Saturation, and Lightness sliders to dial in any color. The preview
-swatch updates in real time.
+Click **Custom** under any color input to open the HSL color picker. It opens
+as a panel anchored to the button, over whichever surface you are on — the
+drawer or the full window — so you never leave the page you were working on.
+
+Each slider is painted with what it will do: Hue runs through the spectrum at
+your current saturation and lightness, Saturation from grey to full colour, and
+Lightness from black through the colour to white. The bar along the bottom and
+the hex readout show the result, and the lighting updates live as you drag.
+
+The eight presets are repeated inside the picker so you can jump to one without
+closing it. Click anywhere outside, press `Escape`, or press **B** on a
+controller to dismiss it.
 
 ## Gamepad navigation
 
@@ -253,7 +283,7 @@ The UI scales automatically to match the output resolution. Use
 `VOLTAIRE_GUI_SCALE` to override the auto-detected scale factor if the UI
 appears too large or small.
 
-Dropdowns, their lists, and help hints are drawn inside the drawer's own
-surface, so they work identically in Gaming Mode — gamescope does not composite
-a separate popup window as something you could see and click. The two large
-pickers (theme, HSL color) are full views for the same reason.
+Dropdowns, their lists, the HSL color picker and help hints are all drawn
+inside the drawer's own surface, so they work identically in Gaming Mode —
+gamescope does not composite a separate popup window as something you could see
+and click. The theme picker is a full view for the same reason.

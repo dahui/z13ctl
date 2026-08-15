@@ -3,9 +3,10 @@
 
 package gui
 
-// controls.go — builds the entire drawer widget tree, theme picker view,
-// and HSL color picker view. All views live in a gtk.Stack (both KDE and
-// gamescope modes) for consistent gamepad navigation.
+// controls.go — builds the entire drawer widget tree and the theme picker
+// view. Both live in a gtk.Stack (both KDE and gamescope modes) for consistent
+// gamepad navigation. The HSL colour picker used to be a third page and is now
+// a popup (colorpopup.go).
 
 import (
 	"log/slog"
@@ -99,7 +100,7 @@ func (w *Window) controlBuilders() map[string]controlBuilder {
 }
 
 // buildContent builds the scrolled content box and returns it as the window child.
-// Content, theme view, and color picker view are in a gtk.Stack so views can be
+// The main content and the theme view are in a gtk.Stack so views can be
 // swapped for gamepad navigation (and in gamescope where popovers don't work).
 func (w *Window) buildContent() gtk.Widgetter {
 	outer := gtk.NewBox(gtk.OrientationVertical, 0)
