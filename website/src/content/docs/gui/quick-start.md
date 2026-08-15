@@ -37,14 +37,8 @@ tabs and B closes it.
 
 | Section | What it does |
 |---------|-------------|
-| **Profile** | The three firmware profiles (quiet, balanced, performance) and a **Custom** button. The Custom button is labelled with whichever custom profile is running, and opens the custom profile view. |
+| **Profile** | The three firmware profiles (quiet, balanced, performance), and a **Custom** dropdown listing your saved custom profiles — pick one to switch to it. It is labelled with whichever custom profile is running. A profile with nothing saved in it shows greyed as "(empty)"; if you have none at all, the dropdown is greyed and a note says how to open the profile editor. |
 | **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. A custom profile with no settings shows greyed out as "(empty)" — give it something to apply and it becomes selectable. Also on the full window's Dashboard. |
-| **Custom profile view** | Every custom profile lives here. The dropdown at the top names the one you are editing — open it and pick a name to switch to it; a dot marks the profile that is currently running. **Activate** applies it to the machine, **+ New** creates an empty named profile, **Save As** copies the active profile under a new name, and **Delete Profile** (tap twice) removes one that is not active or referenced by autoswitch. When a button is greyed out, the reason appears right beneath it. |
-| **Live vs stored edits** | Editing the *active* profile applies changes to the hardware immediately. Editing any other profile stores them, to apply when it is activated — the view says "Not active — changes are stored" when that is what is happening. |
-| **Custom TDP** | Configurable power limits with basic (single slider) and advanced (PL1 sustained / PL2 short boost / PL3 fast boost) modes |
-| **Fan Curve** | Edit the fan response curve per-profile (profile editor, advanced mode) |
-| **Undervolt** | CPU Curve Optimizer offset (profile editor, advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
-| **Telemetry** | Live APU temperature and fan RPM readouts (profile editor); the header also shows AC/Battery when the daemon can read the power source. The full history charts live on the full window's Dashboard tab — see [The Dashboard tab](#the-dashboard-tab). |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones (the full window shows both at once instead) |
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
@@ -54,6 +48,11 @@ tabs and B closes it.
 
 Changes take effect immediately and are sent to the voltaire daemon. Settings
 persist across reboots while the daemon is running.
+
+**The drawer switches profiles; it does not edit them.** Power limits, the fan
+curve and the undervolt live on the full window's
+[Profiles tab](#the-profiles-tab), which has room to show them at a size worth
+using. The drawer is for the things you reach for in a hurry.
 
 The firmware switches — panel overdrive and the POST boot sound — live on the
 full window's [Settings tab](#the-settings-tab) rather than in the drawer. They
@@ -126,8 +125,18 @@ The full card set appears the moment the tab opens, with each chart framed and
 "—" beside its name, and the data fills in as it arrives — usually within a
 second.
 
-The buttons above the charts pick how far back to look. Only spans the daemon
-can fill are offered.
+The buttons on the heading line pick how far back to look — **1m, 5m, 15m, 30m
+and 1h**. Only spans the daemon can fill are offered, so a machine whose device
+keeps less history shows fewer buttons.
+
+Longer windows refresh less often, and deliberately: at an hour a dozen readings
+share a pixel, so the chart redraws every twelve seconds instead of every
+second. The numbers beside each card's name are unaffected — they come from a
+separate once-a-second read and stay live at any span.
+
+The history lives in the daemon's memory, so it starts empty when the daemon
+starts. Right after a restart an hour-long chart is mostly blank with the trace
+in the right-hand edge; it fills in as the machine runs.
 
 Two things worth knowing when reading a chart:
 
@@ -245,17 +254,33 @@ It lives in `~/.config/voltaire/config.toml` as `refresh_autoswitch`,
 
 ## The Profiles tab
 
-The full window's **Profiles** tab is the same profile editor as the drawer's
-custom view, laid out for a desktop: the profile operations (Activate, + New,
-Save As, Delete Profile) in one card, the power limits and undervolt in a
-**POWER** card, and the fan curve editor beside them.
+The full window's **Profiles** tab is the profile editor — the only one. The
+profile operations (Activate, + New, Save As, Delete Profile) are in one card,
+the power limits and undervolt in a **POWER** card, and the fan curve editor
+beside them.
+
+The dropdown at the top names the profile you are editing; open it and pick a
+name to switch targets, with a dot marking the one that is currently running.
+**Activate** applies it to the machine, **+ New** creates an empty named
+profile, **Save As** copies the active profile under a new name, and **Delete
+Profile** (click twice) removes one that is not active or referenced by
+autoswitch. When a button is greyed out, the reason appears beneath it.
+
+Editing the *active* profile applies changes to the hardware immediately.
+Editing any other profile stores them, to apply when it is activated — the page
+says "Not active — changes are stored" when that is what is happening.
+
+| Setting | What it does |
+|---------|-------------|
+| **Power limits** | Basic (a single slider) or advanced (PL1 sustained / PL2 short boost / PL3 fast boost). |
+| **Fan curve** | The eight-point fan response curve, dragged directly on the chart (advanced mode). |
+| **Undervolt** | CPU Curve Optimizer offset (advanced mode; requires `ryzen_smu`). iGPU CO is not supported on Strix Halo. |
 
 Autoswitch is *not* here: it picks which profile the machine runs, which is a
 live setting rather than part of a profile's contents, so it lives on the
 Dashboard with the other live controls.
 
-Instead of the drawer's per-domain save buttons there is **one commit button**
-in the bar along the bottom. Move any slider or drag the curve and the bar
+There is **one commit button**, in the bar along the bottom. Move any slider or drag the curve and the bar
 shows what is unsaved; the button sends exactly those changes — **Apply
 Changes** when the target profile is running (applied to hardware
 immediately), **Save Changes** when it is not (stored, applied on

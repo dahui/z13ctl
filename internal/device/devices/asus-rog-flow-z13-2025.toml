@@ -118,7 +118,10 @@ gpu             = "amdgpu"
 cpu_stats       = "procfs"
 npu             = "amdxdna"
 net             = "procfs"
-history_seconds = 300
+# One hour at the sampler's 1 Hz: ~1 MiB of ring, and the longest window the
+# dashboard offers. See device.DefaultHistorySeconds for what bounds it (the
+# client's 4 MiB reply ceiling, not memory).
+history_seconds = 3600
 
 # The Armoury Crate button: KEY_PROG3 on the "Asus WMI hotkeys" input device
 # (older ASUS models use KEY_PROG1). The same node carries SW_TABLET_MODE —

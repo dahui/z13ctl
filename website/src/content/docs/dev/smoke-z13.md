@@ -266,14 +266,26 @@ the drawer paths that cannot run in the hermetic suite (the widget layer is
 cgo); the rules behind them are unit tested in `internal/profileui`.
 
 - [ ] The main view's PROFILE section is quiet/balanced/performance on one row
-      plus a single Custom button, and the **whole main view fits without
-      scrolling** (profile through brightness). The Custom button is labelled
-      with the running custom profile's name, and highlighted, when one is
-      active.
+      plus a single Custom **dropdown**, and the **whole main view fits without
+      scrolling** (profile through brightness). The trigger is labelled with the
+      running custom profile's name, and highlighted, when one is active.
+- [ ] Open it: every saved custom profile is listed, the running one carries the
+      dot marker, and one with nothing saved in it is greyed and suffixed
+      "(empty)". Pick a different profile — the machine switches to it
+      (`voltaire profile --get` agrees) and the drawer stays on the main view.
+      Picking the row already marked as running does nothing at all: no error
+      bar, no daemon call.
+- [ ] The drawer has **no profile editor**. There is no way to reach power
+      limits, the fan curve or the undervolt from it, and gamepad B from the
+      main view does not descend into one.
+- [ ] With no usable custom profile (delete them, or start from a fresh state
+      file), the Custom trigger is **greyed** and a note beneath it says how to
+      open the profile editor — naming a *double* press with the default button
+      preference, and a *single* press once Settings has them swapped.
 - [ ] The mouse wheel over any slider — battery, brightness, TDP, undervolt —
       scrolls the view and leaves the value alone (`batterylimit --get` and
       the PL readouts unchanged afterwards).
-- [ ] Custom view: the selector dropdown names the profile being edited;
+- [ ] Profiles tab (full window): the selector dropdown names the profile being edited;
       opening it dims the view behind a scrim, picking a name re-targets the
       editor and closes the list, and the running profile carries a dot
       marker distinct from the selected highlight. Tapping the scrim,
@@ -287,11 +299,11 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       insensitive for the running profile and for one with no settings — and
       the reason appears as a note directly beneath the button row, readable
       by touch and on a controller (no hover anywhere).
-- [ ] Editor on a profile that is **not** running shows the "Not active —
+- [ ] The editor on a profile that is **not** running shows the "Not active —
       changes are stored…" note, displays the profile's own stored values (not
       the live machine's), and Save TDP does not change `ppt_pl1_spl`.
       Activating the profile afterwards applies what was stored.
-- [ ] Editor on the **running** profile shows no note and Save TDP moves
+- [ ] The editor on the **running** profile shows no note and committing moves
       sysfs, exactly as 1.x did.
 - [ ] Fan floor in a stored edit follows the *profile's* TDP: store 80W in a
       non-running profile — its editor draws the floor line even while the
@@ -302,7 +314,7 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       one.
 - [ ] Delete Profile needs two taps, is insensitive for the active profile
       and for autoswitch targets (the note beneath it names the reason), and
-      returns to the main view on success.
+      leaves the editor pointed at another profile on success.
 - [ ] Hints: hovering the theme button (or any hinted control) for ~half a
       second shows its help text anchored to it, on KDE **and** in Gaming
       Mode; gamepad focus shows the same text immediately; it never appears
@@ -315,8 +327,8 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       unplugged, updating on plug/unplug without reopening (power-source
       event); on a daemon without `source_known` (pre-2.0) it shows no power
       label at all.
-- [ ] Gamepad: D-pad reaches the firmware buttons and Custom in the main view,
-      and in the custom view the selector, Activate/New/Save As, OK/Cancel,
+- [ ] Gamepad: D-pad reaches the firmware buttons and the Custom picker in the
+      main view, and on the Profiles tab the selector, Activate/New/Save As, OK/Cancel,
       and Delete; the autoswitch dropdowns are reachable while enabled and
       skipped while not. Section jump (L1/R1) includes "profile" and
       "autoswitch". Inside an open dropdown, D-pad walks the options, A
@@ -357,6 +369,16 @@ outside.
       reading, not a gap); start a large download and the Down trace and header
       move together, at roughly what Steam or the browser reports. Traffic over
       a VPN charts at its real size, not doubled.
+- [ ] The span selector offers **1m, 5m, 15m, 30m, 1h**. `ask
+      '{"cmd":"device-get"}'` reports `history_seconds: 3600`; drop the device
+      TOML back to a short retention and only the spans it can fill are built
+      (never an empty strip). Switch to **1h** — the chart redraws roughly every
+      twelve seconds, not every second (`-d` logs one `telemetry-history` round
+      trip per redraw), while the card headers keep updating once a second.
+- [ ] Restart the daemon and open **1h** immediately: the traces sit in the
+      right-hand sliver with the rest of the window blank, and fill leftwards as
+      the machine runs. That is the ring being in memory, not a bug — the chart
+      must not stretch a few minutes of samples across the full width.
 - [ ] The Battery card plots the charge percentage on a 0–100 frame, and its
       header follows the pack: at rest above the limit on mains it reads
       `NN% · AC · not charging` (never a bare 0 W); unplug and it becomes

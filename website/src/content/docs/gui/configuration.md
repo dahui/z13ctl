@@ -48,7 +48,7 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 
 | ID | Section |
 |----|---------|
-| `profile` | The three firmware profiles plus the Custom button |
+| `profile` | The three firmware profiles plus the Custom profile picker |
 | `autoswitch` | The AC/battery autoswitch row and its two targets |
 | `battery` | The charge-limit slider |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |

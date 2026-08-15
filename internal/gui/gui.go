@@ -164,8 +164,11 @@ type Window struct {
 
 	// Lazily-built stack views. Each owns its widgets, and a nil pointer is
 	// also the built-yet test every show*View uses.
-	custom    *customView // custom profile editor (customview.go, profiles.go, fancurve.go)
-	themeView *themeView  // theme picker (themeview.go)
+	//
+	// The custom profile editor is deliberately not among them: the drawer
+	// switches profiles from a picker and does not edit them, so the only
+	// instance lives on the full window's Profiles tab (mainWindow.custom).
+	themeView *themeView // theme picker (themeview.go)
 
 	// colorPopup is the HSL picker (colorpopup.go). Not a stack view and not
 	// per-surface: it is a popup body the active layer draws, so one serves the
@@ -517,10 +520,6 @@ func New(app *gtk.Application) *Window {
 func (w *Window) dumpAllFocusLists() {
 	if w.viewStack == nil {
 		return
-	}
-	if w.custom == nil {
-		w.custom = newCustomView(w, w.drawerHost("custom"))
-		w.viewStack.AddNamed(w.custom.root, "custom")
 	}
 	if w.themeView == nil {
 		w.viewStack.AddNamed(w.buildThemeView(), "theme")

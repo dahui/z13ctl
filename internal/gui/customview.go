@@ -593,30 +593,6 @@ func uvLabel(name string, val int) string {
 	return fmt.Sprintf("%s: %d", name, val)
 }
 
-// showCustomView switches the view stack to the custom profile view, opening
-// on the running custom profile when there is one and "custom" otherwise.
-// Lazy-builds the view on first access; a second tap returns to the main view.
-func (w *Window) showCustomView() {
-	if w.viewStack == nil {
-		return
-	}
-	w.closePopup()
-	if w.viewStack.VisibleChildName() == "custom" {
-		w.showMainView()
-		return
-	}
-	if w.custom == nil {
-		w.custom = newCustomView(w, w.drawerHost("custom"))
-		w.viewStack.AddNamed(w.custom.root, "custom")
-	}
-	w.custom.editProfile = profileui.DefaultEditTarget(w.state)
-	w.custom.disarmDelete()
-	w.custom.sync()
-	w.viewStack.SetVisibleChildName("custom")
-	w.swapFocusList(w.custom.focusItems)
-	w.startTelemetryPolling()
-}
-
 // Edit target and fan floor.
 
 // updateEditorFloor recomputes the floor limit for the editor's target from
@@ -1009,16 +985,18 @@ func (c *customView) buildFocusList() {
 // Window-level entry points. Each nil-guards the view, which is built lazily
 // on first navigation.
 
-// customViews returns every custom profile editor that has been built: the
-// drawer's, and the full window's when it exists. Both edit the same daemon
-// state, so anything that refreshes one refreshes both — a stale second editor
-// showing a profile's old power limits is exactly the kind of thing nobody
-// notices until they save from it.
+// customViews returns every custom profile editor that has been built.
+//
+// There is at most one today — the full window's — since the drawer stopped
+// carrying an editor and switches profiles from a picker instead. It stays a
+// slice rather than collapsing to a pointer because that is the shape every
+// caller wants (a loop that does nothing when nothing is built), and because
+// "every editor there is" is the property the callers actually depend on: both
+// would edit the same daemon state, so anything that refreshes one has to
+// refresh all of them. A stale second editor showing a profile's old power
+// limits is exactly the kind of thing nobody notices until they save from it.
 func (w *Window) customViews() []*customView {
-	out := make([]*customView, 0, 2)
-	if w.custom != nil {
-		out = append(out, w.custom)
-	}
+	out := make([]*customView, 0, 1)
 	if w.mainWin != nil && w.mainWin.custom != nil {
 		out = append(out, w.mainWin.custom)
 	}

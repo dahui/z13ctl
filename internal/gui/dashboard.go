@@ -64,23 +64,6 @@ import (
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
-// dashboardSpans are the history windows the user can pick between.
-//
-// The longest is capped by what the daemon actually retains — the device
-// document's telemetry.history_seconds, 300 by default — so an option that
-// could only ever draw a part-filled chart is not offered. dashboardSpans is
-// filtered against that at build time rather than hardcoded, because a device
-// declaring an hour of history should be able to show it.
-var dashboardSpans = []struct {
-	label string
-	span  time.Duration
-}{
-	{"1m", time.Minute},
-	{"5m", 5 * time.Minute},
-	{"15m", 15 * time.Minute},
-	{"1h", time.Hour},
-}
-
 // dashboardChartHeight is the unscaled height of one chart. `.dash-chart`
 // restates it so gamescope scales it, exactly as `.fan-curve-area` does.
 // Sparkline height: the card is a glanceable tile, and the trace's job is
@@ -515,29 +498,31 @@ func (d *dashboardView) buildSpanRow() *gtk.Box {
 	// because the dashboard exists only in the full window.
 	row.SetHAlign(gtk.AlignEnd)
 
-	retained := d.retention()
-	for _, s := range dashboardSpans {
-		// Offer a span only if the daemon retains at least most of it. The
-		// shortest is always offered, or a device with a very short ring would
-		// present no choices at all and the row would be an empty strip.
-		if s.span > retained && len(d.spans) > 0 {
-			continue
-		}
-		span := s.span
-		btn := gtk.NewButtonWithLabel(s.label)
-		btn.ConnectClicked(func() { d.setSpan(span) })
-		d.w.setHint(btn, "Show the last "+s.label+" of telemetry")
+	// Which spans exist, and which of them this device can fill, are both rules
+	// in telemetryplot — where make test reaches them. This builds buttons.
+	for _, sp := range telemetryplot.Offered(d.retention()) {
+		sp := sp
+		btn := gtk.NewButtonWithLabel(sp.Label)
+		btn.ConnectClicked(func() { d.setSpan(sp.D) })
+		d.w.setHint(btn, telemetryplot.SpanHint(sp))
 		row.Append(btn)
 		d.spanBtns = append(d.spanBtns, btn)
-		d.spans = append(d.spans, span)
+		d.spans = append(d.spans, sp.D)
 	}
 	d.syncSpanButtons()
 	return row
 }
 
-// retention is how much history the daemon keeps, from the capability
-// document. A device that declares none falls back to the protocol default
-// rather than offering no spans at all.
+// retention is how much history the daemon keeps, from the capability document.
+//
+// The fallback is deliberately *short* rather than matching the daemon's own
+// default. It is reached only when there is no document at all — no daemon, or
+// one older than the capability protocol — and in that case offering an hour
+// button would promise a window nothing can fill. Under-claiming costs a user
+// with a pre-M2 daemon two buttons they can get back by upgrading; over-claiming
+// draws a part-filled chart, which is the honesty rule the whole package is
+// built on. telemetryplot.Offered always keeps the shortest span, so this can
+// never leave an empty strip.
 func (d *dashboardView) retention() time.Duration {
 	if doc := d.w.device; doc != nil && doc.Telemetry != nil && doc.Telemetry.HistorySeconds > 0 {
 		return time.Duration(doc.Telemetry.HistorySeconds) * time.Second
@@ -551,7 +536,9 @@ func (d *dashboardView) setSpan(span time.Duration) {
 	}
 	d.span = span
 	d.syncSpanButtons()
-	d.refresh()
+	// Restart rather than just refresh: the poll interval is a function of the
+	// span, so a loop armed for the old one would keep its cadence.
+	d.startPolling()
 }
 
 func (d *dashboardView) syncSpanButtons() {
@@ -564,11 +551,12 @@ func (d *dashboardView) syncSpanButtons() {
 	}
 }
 
-// startPolling refreshes the chart once a second while the dashboard is the
-// visible view. It is separate from startTelemetryPolling, which reads
-// get-state for the header's live numbers: this one asks for the *history*,
-// which is a different command and a much larger reply, so running it on every
-// view would be a per-second few-hundred-sample round trip nobody is looking at.
+// startPolling refreshes the chart while the dashboard is the visible view, at
+// a cadence set by the span on screen. It is separate from
+// startTelemetryPolling, which reads get-state for the header's live numbers:
+// this one asks for the *history*, which is a different command and a much
+// larger reply, so running it on every view would be a per-second
+// few-thousand-sample round trip nobody is looking at.
 func (d *dashboardView) startPolling() {
 	d.gen++
 	gen := d.gen
@@ -576,7 +564,13 @@ func (d *dashboardView) startPolling() {
 	// opening the page cost a full second of placeholder frames that the data
 	// was already available to fill.
 	d.refresh()
-	glib.TimeoutAdd(1000, func() bool {
+	// Scaled to the window on screen (telemetryplot.RefreshInterval): a minute
+	// wants every sample, an hour wants one refresh in twelve, because at that
+	// width a dozen readings share a pixel and the other eleven refetch ~1.5 MiB
+	// to redraw an identical chart. The card headers' live numbers are not
+	// affected — they come from the 1 Hz get-state poll every view runs.
+	every := telemetryplot.RefreshInterval(d.span)
+	glib.TimeoutAdd(uint(every.Milliseconds()), func() bool {
 		if gen != d.gen || !d.host.current() {
 			return false
 		}

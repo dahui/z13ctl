@@ -9,19 +9,20 @@ Crate button and it slides in from the right edge of the screen.
 
 ## What voltaire-gui does
 
-- **Profile switching** — quiet, balanced and performance in the main drawer,
-  with every saved custom profile behind the Custom button. Named profiles can
-  be created, copied (Save As), edited without activating them, and deleted
+- **Profile switching** — quiet, balanced and performance in the drawer, with
+  every saved custom profile behind the Custom dropdown beside them. Named
+  profiles can be created, copied (Save As), edited without activating them,
+  and deleted from the full window's Profiles tab
 - **Autoswitch** — pick a profile per power source and the daemon switches
   when the charger is plugged or unplugged; the header shows AC/Battery
-- **Custom TDP control** — configurable power limits (PL1/PL2/PL3) in the
-  custom profile view, with basic and advanced modes
-- **Fan curve editor** — per-profile fan response curve editing (custom
-  profile view, advanced mode)
+- **Custom TDP control** — configurable power limits (PL1/PL2/PL3) on the full
+  window's Profiles tab, with basic and advanced modes
+- **Fan curve editor** — per-profile fan response curve editing (Profiles tab,
+  advanced mode)
 - **Undervolt** — CPU Curve Optimizer offset (requires `ryzen_smu` kernel
   module; iGPU CO is not supported on Strix Halo)
-- **APU telemetry** — live temperature and fan RPM readouts in the custom
-  profile view
+- **APU telemetry** — live temperature and fan RPM in the drawer's header, and
+  charted over time on the full window's Dashboard
 - **Battery charge limit** — set the charge cap (40–100%) from the drawer
 - **RGB lighting** — mode, color, speed, and brightness for the keyboard
   backlight and edge lightbar

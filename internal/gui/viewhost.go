@@ -50,16 +50,17 @@ type viewHost struct {
 // focusName is the name a view built into this surface logs its grid under.
 func (h viewHost) focusName(view string) string { return h.prefix + view }
 
-// drawerHost is the host a view gets when it is built into the drawer's view
-// stack under the given child name.
-func (w *Window) drawerHost(child string) viewHost {
-	return viewHost{
-		errBar: w.errView,
-		back:   func() { w.showMainView() },
-		current: func() bool {
-			return w.visible.Load() &&
-				w.viewStack != nil &&
-				w.viewStack.VisibleChildName() == child
-		},
-	}
-}
+// No constructor produces a non-nil back any more.
+//
+// The drawer used to build two views into its stack — the dashboard and the
+// custom profile editor — and drawerHost gave each a back button to the main
+// view. Both have since moved to the full window, which navigates by tabs and
+// supplies no back, so every viewHost in the tree now carries back == nil.
+//
+// The field stays, and so do the `if host.back != nil` branches in
+// dashboardView, settingsView and customView, and customView.hosted() — which
+// is `host.back == nil` and is therefore constant true. They are unreachable
+// rather than wrong, and removing them is a deletion of the drawer-shaped
+// layout inside the window's own editor: a separate pass with its own
+// verification, not a side effect of moving a view. This comment is here so the
+// next reader does not mistake them for a live second surface.

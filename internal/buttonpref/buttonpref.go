@@ -101,3 +101,19 @@ func Summary(single Surface) string {
 	return "One press opens the " + strings.ToLower(single.Label()) +
 		"; a double press opens the " + strings.ToLower(single.Other().Label()) + "."
 }
+
+// OpenGesture names the press that raises want, given which surface a single
+// press opens. It is a sentence-initial phrase, so a caller can put it in front
+// of "to open the profile editor".
+//
+// It exists because a surface that tells the user where to go has to know how
+// this machine is configured to get there: the double press is the half nobody
+// discovers on their own, and it is the *other* gesture once the preference is
+// reversed. Naming it as "double press" in a GTK literal would be right for the
+// default and wrong for anyone who swapped them.
+func OpenGesture(single, want Surface) string {
+	if single == want {
+		return "Press the Armoury Crate button"
+	}
+	return "Press the Armoury Crate button twice"
+}

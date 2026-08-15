@@ -107,3 +107,32 @@ func TestSummaryNamesBothGestures(t *testing.T) {
 		}
 	}
 }
+
+// A surface that points the user at another one has to name the gesture this
+// machine is actually configured for — the whole reason the preference exists is
+// that either gesture can reach either surface.
+func TestOpenGesture(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		single, want buttonpref.Surface
+		twice        bool
+	}{
+		// The default: the window is the double press.
+		{buttonpref.Quickbar, buttonpref.Window, true},
+		{buttonpref.Quickbar, buttonpref.Quickbar, false},
+		// Reversed: now the quickbar is.
+		{buttonpref.Window, buttonpref.Quickbar, true},
+		{buttonpref.Window, buttonpref.Window, false},
+	}
+	for _, tc := range cases {
+		got := buttonpref.OpenGesture(tc.single, tc.want)
+		if twice := strings.HasSuffix(got, "twice"); twice != tc.twice {
+			t.Errorf("OpenGesture(%q, %q) = %q, want twice=%v", tc.single, tc.want, got, tc.twice)
+		}
+		if !strings.HasPrefix(got, "Press the Armoury Crate button") {
+			t.Errorf("OpenGesture(%q, %q) = %q, want a sentence-initial phrase",
+				tc.single, tc.want, got)
+		}
+	}
+}

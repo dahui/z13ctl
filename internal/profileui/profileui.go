@@ -200,3 +200,71 @@ func Label(name string) string {
 	}
 	return name
 }
+
+// PickerRow is one row of the drawer's custom-profile picker.
+//
+// The picker replaced the drawer's whole profile editor (Jeff, 2026-08-14: the
+// drawer is for quick actions and the full window now has the editor), so its
+// rows answer one question — which custom profile should be running — where the
+// editor's Row answered several. Deriving it from CustomRows rather than from
+// the state directly is what keeps the two lists from disagreeing about which
+// profiles exist.
+type PickerRow struct {
+	Name string
+	// Label is the display text, "(empty)"-suffixed for a profile with nothing
+	// to apply — the same suffix TargetRows uses, for the same reason.
+	Label string
+	// Active marks the running profile. It is the row the trigger stands on,
+	// and selecting it is a no-op rather than a refusal.
+	Active bool
+	// Disabled marks a profile that cannot be activated. Shown greyed rather
+	// than hidden: a list silently missing the user's profiles reads as broken,
+	// which is the rule the autoswitch targets already follow one section down.
+	Disabled bool
+}
+
+// PickerRows returns the rows the drawer's custom-profile picker offers: the
+// whole custom family, with the ones that have nothing to apply marked.
+func PickerRows(s *api.State) []PickerRow {
+	rows := CustomRows(s)
+	out := make([]PickerRow, 0, len(rows))
+	for _, r := range rows {
+		row := PickerRow{Name: r.Name, Label: r.Label, Active: r.Active}
+		if emptyProfile(s, r.Name) {
+			row.Disabled = true
+			// The same word `profile --list` uses for the same fact.
+			row.Label += " (empty)"
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// AnyCustomProfile reports whether the picker has anything to offer — whether
+// any custom profile has settings to apply.
+//
+// Derived from PickerRows so the note that replaces the picker and the list
+// inside it cannot disagree, exactly as TargetOptions is derived from
+// TargetRows. A fresh install has one row, the reserved "custom", and it is
+// empty: a dropdown of one dead entry is worse than a sentence saying where to
+// make a profile.
+func AnyCustomProfile(s *api.State) bool {
+	for _, r := range PickerRows(s) {
+		if !r.Disabled {
+			return true
+		}
+	}
+	return false
+}
+
+// NoCustomProfilesNote is what the drawer shows in place of the picker when
+// there is nothing to pick. gesture names the press that opens the full window
+// on this machine — see buttonpref.OpenGesture, which is where that depends on
+// the user's own preference.
+//
+// It names *where* to go rather than only saying the list is empty, because the
+// drawer no longer has an editor and a user who has only ever used the drawer
+// has no reason to know a second surface exists.
+func NoCustomProfilesNote(gesture string) string {
+	return "No custom profiles yet. " + gesture + " to open the profile editor."
+}

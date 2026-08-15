@@ -4,6 +4,8 @@
 package profileui_test
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -210,6 +212,91 @@ func TestLabel(t *testing.T) {
 	for in, want := range cases {
 		if got := profileui.Label(in); got != want {
 			t.Errorf("Label(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPickerRows(t *testing.T) {
+	t.Parallel()
+
+	st := &api.State{
+		Profile: "gaming",
+		CustomProfiles: map[string]api.CustomProfile{
+			"custom": {Name: "custom"}, // saved but never populated
+			"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 60}},
+			"quiet2": {Name: "quiet2"},
+		},
+	}
+	rows := profileui.PickerRows(st)
+
+	// The whole family, "custom" first then the named ones sorted — CustomRows'
+	// order, which is what deriving from it buys.
+	var names []string
+	for _, r := range rows {
+		names = append(names, r.Name)
+	}
+	want := []string{"custom", "gaming", "quiet2"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+
+	byName := map[string]profileui.PickerRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	// Greyed and labelled, never hidden: a list silently missing the user's
+	// profiles reads as broken rather than as a rule.
+	if !byName["custom"].Disabled || !strings.HasSuffix(byName["custom"].Label, "(empty)") {
+		t.Errorf("empty profile = %+v, want disabled and (empty)-suffixed", byName["custom"])
+	}
+	if byName["gaming"].Disabled {
+		t.Error("the running populated profile is disabled")
+	}
+	if !byName["gaming"].Active {
+		t.Error("the running profile is not marked active")
+	}
+	if strings.Contains(byName["gaming"].Label, "(empty)") {
+		t.Errorf("populated profile labelled %q", byName["gaming"].Label)
+	}
+}
+
+// The note replaces the picker, so "is there anything to pick" and "what does
+// the list contain" have to be one answer.
+func TestAnyCustomProfile(t *testing.T) {
+	t.Parallel()
+
+	if profileui.AnyCustomProfile(nil) {
+		t.Error("nil state reports a profile to switch to")
+	}
+	// A fresh install: the reserved "custom" exists and is empty, so the picker
+	// would be one dead row.
+	fresh := &api.State{Profile: "balanced"}
+	if profileui.AnyCustomProfile(fresh) {
+		t.Error("a fresh install reports a profile to switch to")
+	}
+	if profileui.AnyCustomProfile(&api.State{
+		CustomProfiles: map[string]api.CustomProfile{"a": {Name: "a"}},
+	}) {
+		t.Error("a saved but empty profile reports something to switch to")
+	}
+	populated := &api.State{CustomProfiles: map[string]api.CustomProfile{
+		"a": {Name: "a", Undervolt: &api.UndervoltState{CPUCO: -20}},
+	}}
+	if !profileui.AnyCustomProfile(populated) {
+		t.Error("a populated profile reports nothing to switch to")
+	}
+}
+
+func TestNoCustomProfilesNote(t *testing.T) {
+	t.Parallel()
+
+	note := profileui.NoCustomProfilesNote("Press the Armoury Crate button twice")
+	// It has to say where to go, not just that the list is empty: the drawer no
+	// longer has an editor, and a drawer-only user has no reason to know a
+	// second surface exists.
+	for _, want := range []string{"No custom profiles", "twice", "profile editor"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note = %q, want it to mention %q", note, want)
 		}
 	}
 }

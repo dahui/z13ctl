@@ -220,6 +220,9 @@ internal/
     header.go                per-card heading and live readout (HeaderTitle/HeaderValue/FormatValue)
     placeholder.go           the framed, trace-less loading cards + which kinds a device's
                              declarations justify framing at all
+    span.go                  the history windows a dashboard offers (Spans/Offered, filtered
+                             against what the device retains) and how often each is worth
+                             redrawing (RefreshInterval — cost must not grow with the window)
   uiscale/                   UI scale factor for gamescope, where GTK cannot be asked
   togglegate/                debounce window for the toggle signal
   startup/                   pre-GTK process startup: argument scan + log filtering
@@ -1973,7 +1976,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
 - **`telemetry-history` is a typed `history` field, not JSON stuffed into
   `value`.** `Value`'s embedded-JSON convention exists for the commands that
   predate a structured reply; `device-get` established the typed field, and
-  double-encoding hurts most at exactly this size — a full window is 300 samples
+  double-encoding hurts most at exactly this size — a full window is 3600 samples
   whose every quote would be escaped to travel as a string. Sending it also
   raised `api.sendCommand`'s reader ceiling: `bufio.Scanner` defaults to 64 KiB,
   which every command fitted under until this one, and a device declaring an hour
@@ -1981,6 +1984,12 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   failure that looks like a broken daemon and depends on device data. The ceiling
   is raised to 4 MiB rather than removed, since it is what stops a wedged daemon
   growing the client's memory without bound.
+  **That hypothetical is now the shipped configuration**: the Z13 declares 3600
+  seconds, and a whole-window reply is ~1.5 MiB at the measured 440 bytes per
+  sample. The ceiling is therefore also the real bound on how much history a
+  device may declare — about two and a half hours — and `device.DefaultHistorySeconds`
+  says so where someone would go to raise it. Growing the ring past that needs
+  the reply paged first; it is not a number to raise on its own.
   The **wire default differs from the ring's on purpose**: absent `seconds` means
   the whole retained window, while `telemetryring.Since` refuses a non-positive
   duration. The ring cannot tell a caller that meant "everything" from one that
@@ -2011,6 +2020,43 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   moment it matters, and testing nothing draws one flat at zero on a desktop
   with no pack — the exact false measurement rule (3) exists to prevent
   (`TestBatteryZeroIsAReadingButAbsenceIsNot`).
+- **The dashboard offers five history windows, and the refresh cadence scales
+  with the one on screen** (`internal/telemetryplot/span.go`; Jeff, 2026-08-14:
+  "I imagine people may want to see longer history"). 1m, 5m, 15m, 30m, 1h,
+  filtered by `Offered` against what the device actually retains — a span the
+  ring cannot fill would only ever draw a part-filled chart. The shortest is
+  always kept, so a device with a tiny ring gets one button rather than an empty
+  strip that reads as a broken control.
+  **The buttons already existed; what was missing was the history.** The device
+  declared 300 seconds, so 15m and 1h were filtered out at build time and had
+  never once appeared. The change is `history_seconds = 3600`, and the cost was
+  measured rather than assumed: `driver.Sample` is 288 bytes plus a two-int RPM
+  slice, so an hour is ~1 MiB of ring. Memory was never the constraint.
+  **The wire was.** `telemetry-history` is ~440 bytes per sample, so an hour is
+  ~1.5 MiB *per poll*, and the dashboard polled every second — 1.5 MB/s of socket
+  traffic and JSON decoding, on a tool whose purpose is managing the machine's
+  power, to animate a chart that had not changed. `RefreshInterval` is
+  `span / 300` with a one-second floor (300 being about the horizontal pixels a
+  card resolves), so an hour refreshes every twelve seconds and the per-second
+  cost stops growing at 5m: 129 KiB/s at every span from there up, measured.
+  Only the *trace* slows — the card headers' live numbers come from the separate
+  1 Hz `get-state` poll every view runs, so the readouts stay current at any
+  span. `setSpan` restarts the loop rather than only refreshing, or a loop armed
+  for the old span would keep its cadence.
+  `TestRefreshCostDoesNotGrowWithTheSpan` is the guard, and **its first version
+  passed with the scaling deleted**: it derived its ceiling from
+  `RefreshInterval` itself, so the ceiling moved with the bug. It anchors to a
+  fixed reference now — five minutes of samples at 1 Hz, the most this feature
+  has ever cost. The negative control is the only thing that caught it, which is
+  the second time in two days a source-shaped or self-referential guard needed
+  one.
+  One consequence worth knowing rather than fixing: **right after a daemon
+  restart a long span looks nearly empty**, because the ring is in memory and
+  holds only what has been sampled since. That is the honest rendering — points
+  are placed by timestamp, so the trace occupies the right-hand sliver and the
+  rest is genuinely unmeasured — and it is why the list stops at an hour rather
+  than offering a day. Anything longer wants a store on disk, which is a
+  different feature.
 - **The axis is framed per *kind*, not per series, and the nominal frame is a
   starting point that expands rather than a clamp.** Two fans are drawn on one
   chart, so separate axes would make their line heights incomparable — which is
@@ -2092,15 +2138,49 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   indistinguishable from running on battery. Clients must claim nothing when
   it is false (`profileui.PowerLabel` returns ""), and a pre-2.0 daemon omits
   the field, so old daemons read as unknown by construction.
-- **The custom profiles live in the custom view, not the main view.** The main
-  view offers the three firmware profiles and one `Custom` button standing for
-  the whole family (`profileui.StockRows` / `profileui.Custom`); the custom
-  view's selector offers the profiles themselves (`profileui.CustomRows`). One
-  row per saved profile pushed RGB and battery off the bottom of a 320px
-  drawer — with the split, the entire main view fits on screen without
-  scrolling, which is the property to preserve when adding to it. The `Custom`
-  button is labelled with the *running* custom profile, so the main view still
-  says what is in force without listing anything.
+- **The custom profiles are one control on the main view, never one row each.**
+  The main view offers the three firmware profiles and a single control standing
+  for the whole family (`profileui.StockRows` / `profileui.Custom`). One row per
+  saved profile pushed RGB and battery off the bottom of a 320px drawer, and the
+  entire main view fitting on screen without scrolling is the property to
+  preserve when adding to it. Either surface's control is labelled with the
+  *running* custom profile, so it still says what is in force without listing
+  anything.
+- **The drawer has no profile editor; it has a profile *picker*** (Jeff,
+  2026-08-14: "profile editing can be done via the main window, and the drawer
+  can be used for quick actions, as intended"). The drawer's `Custom` control
+  used to open a second instance of the whole editor — a page of sliders and a
+  Cairo fan-curve chart in a 320px column reached in a hurry — and the full
+  window now carries that editor at a size worth using. It is a dropdown of the
+  saved custom profiles instead (`profileui.PickerRows`), and choosing one
+  activates it.
+  This is the same removal as the drawer's dashboard, for the same reason and
+  with the same evidence: the view had exactly one caller, `VOLTAIRE_GUI_DUMP_FOCUS`
+  diffed to exactly one removed grid (`view=custom`, n=23), and every other line
+  — `main` included, since the picker's trigger occupies the focus slot the
+  button did — was byte-identical. It is also what makes quickbar customization
+  tractable: a drawer whose sections are all quick controls is a list you can
+  reorder, where one that contains a whole editor is not.
+  Three rules in the picker. **Empty profiles are shown greyed and
+  "(empty)"-suffixed, not hidden** — the autoswitch targets' rule, one section
+  down, and for the same reason. **Selecting the running profile is a no-op**
+  rather than a send: the daemon refuses it with "already the active profile",
+  and an error bar for tapping the row already marked as current would be
+  reporting a failure the user could not have avoided. And **when nothing can be
+  picked the trigger is dead with a note in its place** — a dropdown that opens
+  onto one dead row is worse than a sentence — which names the *gesture* that
+  opens the editor (`buttonpref.OpenGesture`), because the drawer no longer has
+  one and a drawer-only user has no reason to know a second surface exists. The
+  gesture depends on the user's own button preference, so it cannot be a GTK
+  literal: naming it "double press" is right for the default and wrong for
+  anyone who swapped them.
+  **The knock-on is that `viewHost.back` no longer has a producer.**
+  `drawerHost` was its only one and `make lint` deleted it; every `host.back !=
+  nil` branch in `dashboardView`, `settingsView` and `customView`, and
+  `customView.hosted()` — which *is* `host.back == nil` — are therefore
+  unreachable rather than wrong. `viewhost.go` says so at the point of use.
+  Removing them is a deletion of the drawer-shaped layout inside the window's
+  own editor and wants its own pass; it is not a side effect of moving a view.
 - **The profile selector expands in the flow of the view; it is not a
   `GtkDropDown`.** It reads as a dropdown — one row collapsed, `▾`/`▴`, the
   current target highlighted — but a real dropdown's popup is a separate

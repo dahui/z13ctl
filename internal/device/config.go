@@ -195,10 +195,22 @@ type TelemetryConfig struct {
 	HistorySeconds int    `toml:"history_seconds"`
 }
 
-// DefaultHistorySeconds is the sample history a device keeps when its data
-// does not say: five minutes at the sampler's 1 Hz, which is the window the
-// dashboard graphs were specified against.
-const DefaultHistorySeconds = 300
+// DefaultHistorySeconds is the sample history a device keeps when its data does
+// not say: one hour at the sampler's 1 Hz.
+//
+// Raised from five minutes when the dashboard grew longer windows (Jeff,
+// 2026-08-14: "I imagine people may want to see longer history"). The cost is
+// measured rather than assumed: driver.Sample is 288 bytes plus a two-int RPM
+// slice, so an hour is ~1 MiB of ring per device — nothing, for a machine the
+// daemon is managing the power of.
+//
+// The bound that does exist is on the *wire*, not the ring. telemetry-history
+// runs ~440 bytes per sample, and api.sendCommand reads replies through a
+// 4 MiB ceiling, so a device declaring much past two hours would make a
+// whole-window request fail as "token too long" — which presents as a broken
+// daemon rather than as too much history. An hour leaves ample margin; anything
+// substantially longer needs the reply paged before the ring is grown.
+const DefaultHistorySeconds = 3600
 
 // Info returns the telemetry description this device declares, with the
 // history default applied. A negative history_seconds is treated as zero —

@@ -22,22 +22,34 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
+	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
-// profileSection is a PROFILE block: the firmware profiles, and one button
+// profileSection is a PROFILE block: the firmware profiles, and one control
 // standing for the whole custom family.
 type profileSection struct {
 	w *Window
 
-	btns      map[string]*gtk.Button // firmware profile buttons by name
-	customBtn *gtk.Button            // opens the custom profiles; labelled with the running one
+	btns map[string]*gtk.Button // firmware profile buttons by name
 
-	// onCustom is where the Custom button goes. It differs by surface — the
-	// drawer's own custom view, or the full window's Profiles tab.
+	// customBtn is the control standing for the custom family: on the window a
+	// button that opens the editor, in the drawer the trigger of customDD. It
+	// is one field because everything that treats it as a widget — the focus
+	// item, the .active highlight — is the same either way.
+	customBtn *gtk.Button
+
+	// customDD and customNote are the drawer's only. The drawer switches
+	// profiles and does not edit them, so its Custom control is a picker with a
+	// note where the list would be when there is nothing to pick.
+	customDD   *dropdown
+	customNote *gtk.Label
+
+	// onCustom is where the window's Custom button goes: its own Profiles tab.
+	// nil in the drawer, which has no editor to open.
 	onCustom func()
 
 	// desktop selects the window's form row over the drawer's stacked block.
@@ -47,27 +59,38 @@ type profileSection struct {
 // buildProfileSection creates the drawer main view's PROFILE section and
 // registers it as w.profiles, which the control registry's focus half reads.
 func (w *Window) buildProfileSection() *gtk.Box {
-	p, box := w.newProfileSection(false, func() { w.showCustomView() })
+	p, box := w.newProfileSection(false, nil)
 	w.profiles = p
 	return box
 }
 
 // newProfileSection creates a PROFILE block: the firmware profiles, and one
-// button standing for the whole custom family.
+// control standing for the whole custom family.
 //
-// The custom profiles are deliberately not listed here. One row per saved
-// profile pushed the RGB and battery controls off the bottom of a 320px
-// drawer, so the whole family collapses to one button that opens the editor;
-// the button is labelled with the running custom profile, so the surface still
-// says what is in force. Two instances exist — the drawer main view's and the
-// dashboard's — and each is synced through Window.profileSections.
+// The custom profiles are deliberately not listed as rows here. One row per
+// saved profile pushed the RGB and battery controls off the bottom of a 320px
+// drawer, so the whole family collapses to one control — which is what makes
+// the drawer's a dropdown rather than a list: the rows exist, they are just
+// behind one line instead of occupying one each. Two instances exist, the
+// drawer main view's and the dashboard's, each synced through
+// Window.profileSections.
 //
-// The window puts all four on one line, where the drawer stacks the Custom
-// button under the three. That is not only about width. Stacked, Custom reads
-// as a fourth profile you can select, which it is not: it *navigates*, and the
-// desktop convention for a control that opens something else is a trailing
-// ellipsis. On one line with the ellipsis it is unmistakably the odd one out,
-// and the row still says what is running.
+// The two surfaces' Custom controls differ in kind, not only in shape, because
+// the two surfaces do different jobs with it (Jeff, 2026-08-14: "profile editing
+// can be done via the main window, and the drawer can be used for quick actions,
+// as intended").
+//
+//   - The window's is a *button* that opens the Profiles tab, on one line with
+//     the three firmware profiles and carrying the trailing ellipsis that says
+//     it navigates rather than selects.
+//   - The drawer's is a *picker*: a dropdown of the saved custom profiles that
+//     switches to the one you choose. The drawer used to open its own copy of
+//     the editor, which is a page of sliders and a fan curve chart in a 320px
+//     column reached in a hurry — and the full window now has that editor at a
+//     size worth using.
+//
+// Both are labelled with the running custom profile, so either surface still
+// says what is in force without listing anything.
 func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSection, *gtk.Box) {
 	p := &profileSection{
 		w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom, desktop: desktop,
@@ -91,31 +114,66 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 		stockRow.Append(btn)
 	}
 
-	p.customBtn = gtk.NewButtonWithLabel(p.customLabel(nil))
-	p.customBtn.SetHExpand(true)
-	w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
-	p.customBtn.ConnectClicked(func() { p.openCustom() })
-
 	if desktop {
+		p.customBtn = gtk.NewButtonWithLabel(p.customLabel(nil))
+		p.customBtn.SetHExpand(true)
+		w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
+		p.customBtn.ConnectClicked(func() { p.openCustom() })
 		stockRow.Append(p.customBtn)
 		return p, formRow("Profile", stockRow)
 	}
+
+	p.customDD = w.newDropdown(dropdownConfig{
+		options: func() []dropdownOption {
+			rows := profileui.PickerRows(w.state)
+			opts := make([]dropdownOption, len(rows))
+			for i, r := range rows {
+				opts[i] = dropdownOption{
+					value: r.Name, label: r.Label,
+					disabled: r.Disabled, selected: r.Active, running: r.Active,
+				}
+			}
+			return opts
+		},
+		onSelect: func(name string) {
+			// Selecting the running profile is a no-op, not a request: the
+			// daemon refuses it with "already the active profile", and an error
+			// bar for tapping the row already marked as current would be the
+			// drawer reporting a failure the user could not have avoided.
+			if st := w.state; st != nil && st.Profile == name {
+				return
+			}
+			setActiveButton(p.btns, "") // the firmware highlight moves off
+			w.sendProfileSet(name)
+		},
+	})
+	p.customBtn = p.customDD.btn
+	w.setHint(p.customBtn, "Switch to a saved custom profile")
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 	box.Append(sectionLabel("PROFILE"))
 	box.Append(stockRow)
 	// In a .btn-group of its own: the .active style that marks the running
-	// profile is scoped to that class, so a bare button would never highlight.
+	// profile is scoped to that class, so a bare trigger would never highlight —
+	// and the trigger's own padding is scoped to it too (see formDropdown).
 	customRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	customRow.AddCSSClass("btn-group")
 	customRow.Append(p.customBtn)
 	box.Append(customRow)
+
+	// Shown only when the picker has nothing to offer, in place of a dropdown
+	// that would open onto one dead row. It names the gesture that opens the
+	// editor because the drawer no longer has one, and a drawer-only user has no
+	// reason to know a second surface exists.
+	p.customNote = blockNote()
+	box.Append(p.customNote)
 	return p, box
 }
 
-// customLabel is the Custom button's text: the running custom profile's name,
-// with the window's trailing ellipsis marking it as a control that opens the
-// editor rather than one that selects a profile.
+// customLabel is the window's Custom button text: the running custom profile's
+// name plus the trailing ellipsis marking it as a control that opens the editor
+// rather than one that selects a profile. The drawer's trigger takes the bare
+// label — it *does* select a profile, so an ellipsis there would be a lie.
 func (p *profileSection) customLabel(st *api.State) string {
 	label := profileui.Custom(st).Label
 	if p.desktop {
@@ -146,12 +204,31 @@ func (p *profileSection) sync() {
 		return
 	}
 	cs := profileui.Custom(st)
-	p.customBtn.SetLabel(p.customLabel(st))
+	if p.customDD != nil {
+		p.customDD.setLabel(cs.Label)
+	} else {
+		p.customBtn.SetLabel(p.customLabel(st))
+	}
 	if cs.Active {
 		p.customBtn.AddCSSClass("active")
 	} else {
 		p.customBtn.RemoveCSSClass("active")
 	}
+
+	if p.customNote == nil {
+		return
+	}
+	// A picker with nothing to pick is dead, with the note in its place. The
+	// focus grid skips an insensitive widget, so this also keeps a controller
+	// from landing on a dropdown that would open onto one dead row.
+	canPick := profileui.AnyCustomProfile(st)
+	p.customBtn.SetSensitive(canPick)
+	note := ""
+	if !canPick {
+		note = profileui.NoCustomProfilesNote(
+			buttonpref.OpenGesture(p.w.press, buttonpref.Window))
+	}
+	setBlockNote(p.customNote, note)
 }
 
 // autoswitchSection is the main view's AUTOSWITCH block: an enable switch and

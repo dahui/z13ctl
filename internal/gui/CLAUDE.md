@@ -380,11 +380,14 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
 
 ### View switching
 
-`buildContent()` wraps content in a `gtk.Stack` with 5 pages, in **both** backends:
+`buildContent()` wraps content in a `gtk.Stack`, in **both** backends. Two pages
+remain:
 - `"main"` — normal drawer (profiles, RGB, battery, etc.)
-- `"custom"` — custom profile view (TDP, fan curve, undervolt, telemetry)
-- `"dashboard"` — telemetry charts over the daemon's sample history (`dashboard.go`)
 - `"theme"` — theme picker (radio buttons + accent dots)
+
+(The `"custom"` and `"dashboard"` pages were the drawer's own editor and charts.
+Both moved to the full window — see the removals below — so the drawer's stack
+is two pages now.)
 
 (The HSL colour picker was a sixth page and is now a popup — see below.)
 
@@ -882,6 +885,53 @@ matches the standing rule that the dashboard belongs to the full window — the
 drawer is quick controls, and a chart at 320px is not one. The focus dump
 diffed to exactly one removed grid, every other list byte-identical.
 
+**The drawer's custom profile editor went the same way** (Jeff, 2026-08-14:
+"profile editing can be done via the main window, and the drawer can be used
+for quick actions, as intended"). The argument is the dashboard's, one step
+further: an editor is a page of sliders, a Cairo fan-curve chart and a commit
+bar, and a 320px column reached in a hurry is the wrong place for all of it now
+that the window has the same editor at a usable size. `showCustomView`,
+`Window.custom` and the `"custom"` stack page are gone; `customViews()` returns
+the window's instance alone.
+
+**In its place the drawer's `Custom` control became a picker** — a dropdown of
+the saved custom profiles (`profileui.PickerRows`) that *activates* the one you
+choose, where the window's stays a button that opens the editor. That is the
+first time the two instances of `profileSection` differ in **kind** rather than
+in arrangement, and the `desktop bool` branch carries it. `customBtn` stays one
+field holding either the plain button or the dropdown's trigger, because
+everything that treats it as a widget — the focus item, the `.active`
+highlight — is the same either way. The drawer's trigger deliberately drops the
+window's trailing ellipsis: it selects a profile rather than navigating, so the
+ellipsis would be a lie.
+
+Three rules in the picker, each with something it would otherwise get wrong:
+empty profiles are **greyed and "(empty)"-suffixed rather than hidden** (the
+autoswitch targets' rule, one section down, and the same reasoning: a list
+silently missing the user's profiles reads as broken); selecting the **running**
+profile is a **no-op** rather than a send, because the daemon refuses it with
+"already the active profile" and an error bar for tapping the row already marked
+current would be reporting a failure the user could not have avoided; and when
+nothing can be picked the trigger is **insensitive with a note in its place**,
+since a dropdown that opens onto one dead row is worse than a sentence. The note
+names the *gesture* that opens the editor via `buttonpref.OpenGesture` — it
+cannot be a GTK literal, because "double press" is right for the default
+preference and wrong for anyone who swapped them.
+
+Two things this bought, and one it left behind. `main` stayed **byte-identical**
+in the focus dump (n=40) because the trigger occupies the slot the button did,
+and `view=custom` (n=23) is the single removed grid — the same one-line diff the
+dashboard removal produced. It is also what makes quickbar customization
+tractable: a drawer whose sections are all quick controls is a list you can
+reorder, where one containing a whole editor is not. What it left behind is
+`viewHost.back`: `drawerHost` was its only producer and `make lint` deleted it,
+so every `host.back != nil` branch here and in `dashboardView`/`settingsView`,
+plus `customView.hosted()` (which *is* `host.back == nil`, and is now constant
+true), are unreachable rather than wrong. `viewhost.go` says so at the point of
+use. Removing them means deleting the drawer-shaped layout inside the window's
+own editor — its own pass, with its own verification, not a side effect of
+moving a view.
+
 **The gamescope path is unverified**: there is no Gaming Mode session on the
 development machine, so it compiles and is structured correctly but has not been
 seen working. It needs a hardware pass before release.
@@ -1169,8 +1219,9 @@ is achieved is load-bearing:
 The full window's Telemetry tab draws the daemon's sample history as a **row
 of compact cards** — a `GtkFlowBox` of `.dash-card` tiles, one per measured
 quantity, each a header row (kind name left, live readout right) over a
-sparkline-height Cairo chart — refreshed once a second while it is the visible
-page. **The cards are glanceable tiles, not panels** (Jeff, 2026-08-13: "the
+sparkline-height Cairo chart — refreshed while it is the visible page, at a
+cadence `telemetryplot.RefreshInterval` sets from the span on screen (every
+second at 1m, every twelve at 1h; the root CLAUDE.md has why). **The cards are glanceable tiles, not panels** (Jeff, 2026-08-13: "the
 idea is information at a glance" — the first cut at 400×180 read as half-window
 panels and was sent back; a second at 200×96 was still "a bit too big", so the
 chart is 64px and the type a step smaller). `.dash-card`'s 170px CSS
@@ -1324,7 +1375,9 @@ title changed to match while the ID stayed `dashboard`.
   directly beneath it. Splitting it in two was the alternative and is worse —
   DISPLAY would be a band heading over a card heading over a single row.
   **The span selector rides the TELEMETRY heading's line** rather than taking a
-  row of its own. It belongs to that band and to nothing else, and a heading row
+  row of its own. Five buttons fit there comfortably (1m/5m/15m/30m/1h) — which
+  is what it took to make the longer windows a layout question rather than a
+  space one. It belongs to that band and to nothing else, and a heading row
   with its control at the far end costs one line instead of two.
   **A band with no content must not render its heading at all** — a title and a
   rule over nothing is the tab-onto-an-empty-page trap, and here a missing band
@@ -1475,9 +1528,8 @@ restructure must reproduce *this* drawer, and a future reader finding the main
 view 28px taller than 1.x should not "fix" it.
 
 The main view must still fit without scrolling on the documented baseline
-(that is why the custom profiles live in their own view — see the profile
-selector notes above), so this spends real headroom. Check it before adding
-another main-view row.
+(that is why the custom profiles are one dropdown rather than a row each), so
+this spends real headroom. Check it before adding another main-view row.
 
 The coupling is worth understanding if the height is ever revisited: the
 `.dropdown-trigger` padding rule is scoped `.drawer .btn-group
