@@ -1064,8 +1064,32 @@ is achieved is load-bearing:
   surface — the old wiring translated against `w.gtkWin` and could only ever
   serve the drawer.
 
-### The Settings tab (`settingsview.go`, `internal/settingsui`)
+### The Settings tab (`settingsview.go`, `internal/settingsui`, `internal/buttonpref`)
 
+- **Two cards, and only the second is a renderer.** VOLTAIRE holds this
+  application's own preferences — ours, finite, each written by name — and
+  FIRMWARE holds the device's toggles, which are data. The distinction is worth
+  keeping because the second card's entire design is that it cannot be written
+  by hand: putting an app preference into it would have been the first hardcoded
+  row in a renderer built to have none. The app card's text still lives outside
+  `internal/gui` (`internal/buttonpref`), on the same grounds
+  `api.ToggleInfo.Description` is device data — the page that draws a setting is
+  not the place its behaviour is described.
+- **The button preference is a pair of buttons, not a switch** (Jeff,
+  2026-08-14). A switch has to be labelled for one outcome ("single press opens
+  the full window"), so the other arrangement exists only as its negation and
+  the off position describes nothing. Two named buttons say what both choices
+  are. Not a dropdown either: two options do not earn a list that has to be
+  opened. The row carries *two* lines of prose — what the setting is for, then
+  what the current choice does — because the double press is the half nobody
+  discovers on their own, and only the second line names it. The focus grid
+  gives the pair one `Line`, not a `One()` each: they sit side by side, and the
+  dashboard's profile row was written the wrong way round first.
+- **It has no get-state to sync from.** Every other row on this page is fed by
+  the daemon; this one is the client's own, so `syncPress` runs at build time
+  and after a click and by nothing else. The change takes effect immediately —
+  the dispatcher reads the preference at press time — so there is nothing to
+  restart and nothing to save separately.
 - **It is a renderer, and it knows nothing about any particular toggle.** Every
   row's id, label and prose comes from `DeviceInfo.Toggles`; the rules (which
   rows exist, what each may claim, what an empty page says) live in

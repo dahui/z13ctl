@@ -3,13 +3,26 @@
 
 package gui
 
-// settingsview.go — the full window's Settings tab: one row per firmware
-// toggle the device declares.
+// settingsview.go — the full window's Settings tab: voltaire's own preferences,
+// then one row per firmware toggle the device declares.
 //
-// Every rule about *which* rows exist and what each may claim lives in
+// Every rule about *which* toggle rows exist and what each may claim lives in
 // internal/settingsui, which is pure and tested — the same split dashboardView
 // has with internal/telemetryplot. This file builds a label, a switch and a
 // send.
+//
+// # Two cards, and only one of them is a renderer
+//
+// VOLTAIRE holds preferences that belong to this application: they are ours,
+// there is a finite known set of them, and each is written by name. FIRMWARE
+// holds the device's toggles, which are *data* — id, label and prose all come
+// from the capability document, and nothing in that half knows what a boot
+// sound is. The distinction matters because the second card's whole design is
+// that it cannot be written by hand; putting an app preference into it would
+// have been the first hardcoded row in a renderer built to have none.
+// Their text still lives outside this file (internal/buttonpref) on the same
+// grounds api.ToggleInfo.Description is device data: the page that draws a
+// setting is not the place its behaviour is described.
 //
 // # Generic rows, not two named switches
 //
@@ -26,6 +39,7 @@ package gui
 // and both stay in step because both sync from the same get-state.
 
 import (
+	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/settingsui"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -45,6 +59,12 @@ type settingsView struct {
 	emptyLbl *gtk.Label
 
 	rows []*settingsRow
+
+	// The button-preference row: one button per surface, and the summary line
+	// beneath them, which is rewritten on every choice because it names the
+	// selection.
+	pressBtns map[buttonpref.Surface]*gtk.Button
+	pressDesc *gtk.Label
 }
 
 // settingsRow is one toggle: its label and prose, and the switch that writes it.
@@ -93,8 +113,11 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	inner.SetMarginTop(10)
 	inner.SetMarginBottom(8)
 
+	inner.Append(s.buildAppCard())
+
 	s.card = gtk.NewBox(gtk.OrientationVertical, 6)
 	s.card.AddCSSClass("section-card")
+	s.card.SetMarginTop(12)
 	heading := gtk.NewLabel("FIRMWARE")
 	heading.SetHAlign(gtk.AlignStart)
 	heading.AddCSSClass("section-label")
@@ -120,6 +143,93 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 
 	s.buildFocusList()
 	return s
+}
+
+// buildAppCard builds voltaire's own preferences — today, which surface the
+// hardware button opens.
+//
+// The control is a pair of buttons rather than a switch: a switch would have to
+// be labelled for one of the two outcomes ("single press opens the full
+// window"), so the *other* arrangement would only exist as its negation, and
+// the off position would describe nothing. Two named buttons say what both
+// choices are. It is also not a dropdown — see popup.go for why the drawer has
+// none, and two options do not earn a list that has to be opened.
+func (s *settingsView) buildAppCard() *gtk.Box {
+	card := gtk.NewBox(gtk.OrientationVertical, 6)
+	card.AddCSSClass("section-card")
+	heading := gtk.NewLabel("VOLTAIRE")
+	heading.SetHAlign(gtk.AlignStart)
+	heading.AddCSSClass("section-label")
+	card.Append(heading)
+
+	line := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	line.SetMarginTop(4)
+
+	text := gtk.NewBox(gtk.OrientationVertical, 2)
+	text.SetHExpand(true)
+	label := gtk.NewLabel(buttonpref.RowLabel)
+	label.SetHAlign(gtk.AlignStart)
+	label.AddCSSClass("setting-name")
+	text.Append(label)
+
+	// Two lines of prose: what the setting is for, then what the current
+	// choice actually does. The second is the one that changes, and it is the
+	// one that tells the user about the double press at all.
+	desc := gtk.NewLabel(buttonpref.RowDescription)
+	desc.SetHAlign(gtk.AlignStart)
+	desc.SetXAlign(0)
+	desc.SetWrap(true)
+	desc.AddCSSClass("setting-desc")
+	text.Append(desc)
+
+	s.pressDesc = gtk.NewLabel("")
+	s.pressDesc.SetHAlign(gtk.AlignStart)
+	s.pressDesc.SetXAlign(0)
+	s.pressDesc.SetWrap(true)
+	s.pressDesc.AddCSSClass("setting-desc")
+	text.Append(s.pressDesc)
+	line.Append(text)
+
+	group := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	group.AddCSSClass("btn-group")
+	group.SetVAlign(gtk.AlignCenter)
+	s.pressBtns = map[buttonpref.Surface]*gtk.Button{}
+	for _, opt := range buttonpref.Options() {
+		opt := opt
+		btn := gtk.NewButtonWithLabel(opt.Label())
+		btn.ConnectClicked(func() { s.selectPress(opt) })
+		s.pressBtns[opt] = btn
+		group.Append(btn)
+	}
+	line.Append(group)
+	card.Append(line)
+
+	s.syncPress()
+	return card
+}
+
+// selectPress applies a choice. It takes effect immediately — the dispatcher
+// reads the preference at press time — so there is nothing to restart and
+// nothing to save separately.
+func (s *settingsView) selectPress(opt buttonpref.Surface) {
+	s.w.setButtonPress(opt)
+	s.syncPress()
+}
+
+// syncPress moves the highlight and rewrites the summary. It is not driven by
+// daemon state: this preference is the client's, so unlike every other row on
+// this page it has no get-state to be told about it.
+func (s *settingsView) syncPress() {
+	for opt, btn := range s.pressBtns {
+		if opt == s.w.press {
+			btn.AddCSSClass("active")
+		} else {
+			btn.RemoveCSSClass("active")
+		}
+	}
+	if s.pressDesc != nil {
+		s.pressDesc.SetLabel(buttonpref.Summary(s.w.press))
+	}
 }
 
 // buildRows creates one row per declared toggle, or the empty text when there
@@ -232,6 +342,23 @@ func (s *settingsView) buildFocusList() {
 		items = append(items, focusItem{
 			widget: s.backBtn, row: c.Row, col: c.Col, section: c.Section,
 			onActivate: s.host.back,
+		})
+	}
+
+	// One Line, not a One() each: the two buttons sit side by side, so D-pad
+	// right has to reach the second. A coordinate that disagrees with what is on
+	// screen is the failure nobody notices with a mouse in their hand — the
+	// profile row on the dashboard was written the wrong way round first.
+	opts := buttonpref.Options()
+	b.Section("voltaire")
+	for i, c := range b.Line(len(opts)) {
+		btn := s.pressBtns[opts[i]]
+		if btn == nil {
+			continue
+		}
+		items = append(items, focusItem{
+			widget: btn, row: c.Row, col: c.Col, section: c.Section,
+			onActivate: func() { btn.Activate() },
 		})
 	}
 

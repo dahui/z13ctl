@@ -21,6 +21,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
+	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/gui/fonts"
 	"github.com/dahui/voltaire/v2/internal/gui/gamepad"
@@ -170,6 +171,12 @@ type Window struct {
 	// drawer and the full window both.
 	colorPopup *colorPopup
 
+	// press is which surface a single press of the hardware button opens; the
+	// double press opens the other. Read and written on the GTK thread only —
+	// the subscribe goroutine dispatches through IdleAdd and the decision is
+	// made inside that closure, so this needs no atomic. See internal/buttonpref.
+	press buttonpref.Surface
+
 	// Custom theme state (set when theme.toml exists).
 	isCustomTheme bool
 	customColors  theme.Colors
@@ -303,6 +310,22 @@ func resolveEdge(cfg controls.Config) panelgeom.Edge {
 	return edge
 }
 
+// resolveButtonPress reads which surface a single press of the hardware button
+// opens. Like the edge, an unrecognised value costs a warning and the default
+// rather than a button that does nothing — and unlike the edge this one is
+// written by a control in Settings, so a value here that the parser rejects
+// would be one the UI itself had produced.
+func resolveButtonPress() buttonpref.Surface {
+	raw := theme.LoadAppConfig().ButtonPress
+	s, ok := buttonpref.Parse(raw)
+	if !ok && raw != "" {
+		slog.Warn("button preference not recognised, using the default",
+			"value", raw, "using", s)
+	}
+	slog.Info("button preference", "single_press_opens", s)
+	return s
+}
+
 // New creates the overlay window and attaches it to app. Called from the
 // GTK Activate signal.
 func New(app *gtk.Application) *Window {
@@ -314,6 +337,7 @@ func New(app *gtk.Application) *Window {
 		limits:    deviceLimits(doc),
 		controls:  resolveControls(cfg, doc),
 		edge:      resolveEdge(cfg),
+		press:     resolveButtonPress(),
 		colors:    theme.DefaultColors,
 		gamescope: os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 	}
@@ -530,30 +554,87 @@ func (w *Window) Toggle() {
 	if w.visible.Load() {
 		slog.Info("toggle", "action", "hide")
 		w.hide()
-	} else {
-		slog.Info("toggle", "action", "show")
-		w.show()
-		fetchStart := time.Now()
-		go func() {
-			ok, state, rawErr := api.SendGetState()
-			slog.Debug("SendGetState returned", "ok", ok, "err", rawErr, "elapsed", time.Since(fetchStart))
-			// A missing daemon arrives as ok=false with a nil error, so testing err
-			// alone opened the drawer on stale defaults with nothing to say. That is
-			// the worst moment to stay quiet: every control is about to lie.
-			if err := apiresult.Err(ok, rawErr); err != nil {
-				w.reportError("Read daemon state", err)
-				return
-			}
-			if state == nil {
-				return
-			}
-			glib.IdleAdd(func() {
-				slog.Debug("syncState dispatched", "totalElapsed", time.Since(fetchStart))
-				w.state = state
-				w.syncState()
-			})
-		}()
+		return
 	}
+	// Nothing is up, so this press opens the primary surface — which the user
+	// chooses (internal/buttonpref). Everything above is unconditional: putting
+	// away what is in front means the same thing whichever surface that is.
+	if w.press == buttonpref.Window {
+		slog.Info("toggle", "action", "show full window")
+		w.openFull()
+		return
+	}
+	slog.Info("toggle", "action", "show")
+	w.openQuickbar()
+}
+
+// openQuickbar shows the drawer and fetches state into it.
+//
+// The fetch is here rather than in show() because show() is also the animation
+// entry point the backends and the full window's hosted path call; this is the
+// "a press asked for the quickbar" path, and it is the one that owes a refresh.
+func (w *Window) openQuickbar() {
+	w.show()
+	fetchStart := time.Now()
+	go func() {
+		ok, state, rawErr := api.SendGetState()
+		slog.Debug("SendGetState returned", "ok", ok, "err", rawErr, "elapsed", time.Since(fetchStart))
+		// A missing daemon arrives as ok=false with a nil error, so testing err
+		// alone opened the drawer on stale defaults with nothing to say. That is
+		// the worst moment to stay quiet: every control is about to lie.
+		if err := apiresult.Err(ok, rawErr); err != nil {
+			w.reportError("Read daemon state", err)
+			return
+		}
+		if state == nil {
+			return
+		}
+		glib.IdleAdd(func() {
+			slog.Debug("syncState dispatched", "totalElapsed", time.Since(fetchStart))
+			w.state = state
+			w.syncState()
+		})
+	}()
+}
+
+// pressDouble is the consumer for api.EventGUIOpenFull: the daemon saw a second
+// press inside the double-press window. It opens whichever surface a *single*
+// press does not — so the event's name describes the historical default rather
+// than what it now means, and it stays that name because it is a published
+// protocol string every existing subscriber keys on.
+func (w *Window) pressDouble() {
+	if w.press == buttonpref.Window {
+		w.openQuickbarOverFull()
+		return
+	}
+	w.openFull()
+}
+
+// openQuickbarOverFull is the escalation when a single press opens the full
+// window: the second press replaces it with the quickbar.
+//
+// It does not assume the single press's Toggle already ran, even though it
+// always has — both handlers fire for the same press, in order, so by the time
+// this runs the window is usually already down. Written to be idempotent
+// instead, because the alternative is a behaviour that depends on the *other*
+// handler's internals staying what they are.
+func (w *Window) openQuickbarOverFull() {
+	if w.mainWin != nil && w.fullVisible.Load() {
+		w.mainWin.hide()
+	}
+	if !w.visible.Load() {
+		w.openQuickbar()
+	}
+}
+
+// setButtonPress records a new button preference and persists it.
+func (w *Window) setButtonPress(s buttonpref.Surface) {
+	if s == w.press {
+		return
+	}
+	w.press = s
+	theme.UpdateAppConfig(func(cfg *theme.AppConfig) { cfg.ButtonPress = string(s) })
+	slog.Info("button preference changed", "single_press_opens", s)
 }
 
 // show delegates to the display backend.
@@ -761,7 +842,7 @@ func (w *Window) subscribeLoop() {
 				// twice on purpose.
 				slog.Debug("gui-open-full received, dispatching")
 				glib.TimeoutAdd(0, func() bool {
-					w.openFull()
+					w.pressDouble()
 					return false
 				})
 				glib.MainContextDefault().Wakeup()
@@ -887,7 +968,12 @@ func (w *Window) applyTheme(id, accentID string) {
 	w.colors = colors
 	w.themeProvider.LoadFromString(theme.BuildThemeCSS(colors, defaultThemeCSS))
 	gtk.StyleContextAddProviderForDisplay(display, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
-	theme.SaveAppConfig(theme.AppConfig{Theme: id, Accent: accentID})
+	// Read-modify-write, never a fresh value: SaveAppConfig writes the whole
+	// file, so constructing one here would discard every preference this
+	// function does not happen to know about.
+	theme.UpdateAppConfig(func(cfg *theme.AppConfig) {
+		cfg.Theme, cfg.Accent = id, accentID
+	})
 	w.redrawFanCurve()
 	slog.Info("theme changed", "id", id, "accent", accentID)
 }
@@ -914,10 +1000,8 @@ func (w *Window) applyCustomAccent(accentID string) {
 	// Change only the accent. Saving AppConfig{Accent: …} wrote an empty theme
 	// key, discarding the user's built-in theme choice — invisible while
 	// theme.toml exists, since it wins on load, and a silent reset to rog-dark the
-	// moment they remove it.
-	cfg := theme.LoadAppConfig()
-	cfg.Accent = accentID
-	theme.SaveAppConfig(cfg)
+	// moment they remove it. UpdateAppConfig is that lesson made structural.
+	theme.UpdateAppConfig(func(cfg *theme.AppConfig) { cfg.Accent = accentID })
 	w.redrawFanCurve()
 }
 

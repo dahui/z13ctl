@@ -135,3 +135,48 @@ func TestXDGConfigHome_Fallback(t *testing.T) {
 		t.Errorf("XDGConfigHome() = %q, want %q", got, want)
 	}
 }
+
+// UpdateAppConfig exists so that changing one preference cannot discard
+// another — SaveAppConfig writes the whole file, so a caller that builds a
+// fresh AppConfig drops every field it does not happen to set. Both GUI
+// writers did exactly that once (see the function's own comment), and the
+// second field added to this struct is when it stops being theoretical.
+func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	SaveAppConfig(AppConfig{Theme: "nord", Accent: "sapphire", ButtonPress: "window"})
+
+	UpdateAppConfig(func(cfg *AppConfig) { cfg.Accent = "lavender" })
+
+	loaded := LoadAppConfig()
+	if loaded.Accent != "lavender" {
+		t.Errorf("Accent = %q, want lavender", loaded.Accent)
+	}
+	if loaded.Theme != "nord" {
+		t.Errorf("Theme = %q, want nord — an unrelated update discarded it", loaded.Theme)
+	}
+	if loaded.ButtonPress != "window" {
+		t.Errorf("ButtonPress = %q, want window — an unrelated update discarded it", loaded.ButtonPress)
+	}
+}
+
+// The button preference travels through the same file as the theme, and it is
+// written by a control rather than by hand, so a value that does not survive a
+// round trip would reset itself on the next restart.
+func TestButtonPressRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	SaveAppConfig(AppConfig{Theme: "nord", ButtonPress: "window"})
+	if got := LoadAppConfig().ButtonPress; got != "window" {
+		t.Errorf("ButtonPress = %q, want window", got)
+	}
+
+	// Absent means "the default", which is buttonpref's to decide, not this
+	// package's — so it comes back empty rather than filled in.
+	SaveAppConfig(AppConfig{Theme: "nord"})
+	if got := LoadAppConfig().ButtonPress; got != "" {
+		t.Errorf("ButtonPress = %q, want empty when unset", got)
+	}
+}

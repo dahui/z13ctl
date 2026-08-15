@@ -225,8 +225,23 @@ firmware.
 
 ## The Settings tab
 
-The full window's **Settings** tab lists the firmware switches your machine
-exposes — on the Z13, the POST boot sound and panel overdrive — each with the
+The full window's **Settings** tab has two cards: **Voltaire**, for the app's
+own preferences, and **Firmware**, for the switches your machine exposes.
+
+### Which surface the button opens
+
+**Armoury Crate button** decides what a single press of the hardware button
+raises — the **Quickbar** (the default) or the **Full window**. A double press
+opens the other one, whichever way round you set it, so both surfaces stay one
+gesture away.
+
+The change takes effect at once; there is nothing to restart and nothing to
+save. It is stored in `~/.config/voltaire/config.toml` as `button_press`, beside
+your theme.
+
+### Firmware switches
+
+The Firmware card lists the switches your machine exposes — on the Z13, the POST boot sound and panel overdrive — each with the
 description that comes from voltaire's own device data, so a warning like "may
 cause ghosting" is attached to the setting rather than left to be remembered.
 
@@ -236,7 +251,7 @@ with none says so. A switch voltaire cannot read the current value of is shown
 greyed rather than defaulting to off — off would be a claim about your hardware.
 
 Changes apply immediately and are BIOS settings, so they persist across reboots
-on their own; the daemon does not need to restore them. This page is the only
+on their own; the daemon does not need to restore them. This card is the only
 place in the GUI that offers them — the drawer used to carry the same two
 switches in its bottom bar and no longer does. Change one here or with the CLI
 and every open surface follows within a second.

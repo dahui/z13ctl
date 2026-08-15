@@ -437,6 +437,14 @@ outside.
 - [ ] The same **Custom** button in the *drawer's* RGB section opens the same
       picker there, sized to the 320px panel: nothing clipped at the right
       edge, the readout column and the hex fully visible.
+- [ ] Settings → **Armoury Crate button**: the summary line under it names both
+      gestures and changes with the choice. Set it to **Full window**, then press
+      the hardware button once — the full window opens, not the quickbar — and
+      double-press it: the quickbar replaces the window. Set it back to
+      **Quickbar** and confirm the original behaviour returns. The choice
+      survives a `systemctl --user restart voltaire-gui`, and
+      `~/.config/voltaire/config.toml` keeps your theme line alongside the new
+      `button_press` one (changing the theme afterwards must not drop it).
 - [ ] **In Gaming Mode**, the picker opens *inside* voltaire's own surface on
       both the quickbar and the hosted full window — it is an overlay child
       like the dropdowns, so if a dropdown is visible there this must be too.
