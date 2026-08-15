@@ -293,6 +293,19 @@ func (l Limits) FanFloorPWM(pl1 int) int {
 // linearly. An empty floor is PWMMin everywhere. The mirroring is the point:
 // what this accepts and what the daemon accepts must be the same set of curves.
 func FloorPWMAt(floor []api.FanCurvePoint, temp int) int {
+	return PWMAt(floor, temp)
+}
+
+// PWMAt is the PWM a curve commands at a temperature, interpolated
+// piecewise-linearly between its points and clamped to the first and last PWM
+// outside the range it covers.
+//
+// FloorPWMAt is this function under the name its first caller needed. The
+// arithmetic was never specific to the floor — any non-decreasing point list is
+// read the same way — and the fan-curve editor needs it for the *user's* curve,
+// where calling something named "Floor" would misdescribe what it computes.
+func PWMAt(curve []api.FanCurvePoint, temp int) int {
+	floor := curve
 	if len(floor) == 0 {
 		return PWMMin
 	}

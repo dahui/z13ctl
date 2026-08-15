@@ -260,7 +260,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 		cr.ShowText(fmt.Sprintf("%d–100%% min (TDP > %dW)", pwmPct(floor[0].PWM), fc.limits().TDPMaxSafe))
 	}
 
-	// Current APU temperature indicator line.
+	// Current APU temperature indicator line, and the operating point on it.
 	if fc.c != nil && fc.c.w.state != nil && fc.c.w.state.Temperature > 0 {
 		apuTemp := fc.c.w.state.Temperature
 		if apuTemp >= tLo && apuTemp <= tHi {
@@ -273,6 +273,37 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 			cr.LineTo(tx, fc.chartY+fc.chartH)
 			cr.Stroke()
 			cr.SetDash(nil, 0)
+
+			// Where that temperature meets the curve: the PWM this curve is
+			// asking for right now, with its percentage beside it. The line
+			// alone says *where you are*; the dot says what that means, which
+			// is the half a curve editor exists to show — reading a duty cycle
+			// off a line by eye is exactly the work the chart should be doing.
+			//
+			// It marks what the *drawn* curve commands, not what the fans are
+			// doing: the curve under edit may not be the one in force, and the
+			// high-TDP floor (drawn separately above) can raise the effective
+			// value. Claiming the latter would need the applied curve, which
+			// this widget deliberately does not have.
+			pwm := limits.PWMAt(fc.points[:], apuTemp)
+			py := fc.pwmToY(pwm)
+			cr.SetSourceRGBA(tr, tg, tb, 0.85)
+			cr.Arc(tx, py, fc.pointRadius()*0.75, 0, 2*math.Pi)
+			cr.Fill()
+
+			// Above the dot, or below it when the curve is near the top of the
+			// chart and the label would be clipped.
+			label := fmt.Sprintf("%d%%", pwmPct(pwm))
+			cr.SetFontSize(fontSize)
+			ext := cr.TextExtents(label)
+			lx := tx - ext.Width/2
+			lx = math.Max(fc.chartX+2*s, math.Min(lx, fc.chartX+fc.chartW-ext.Width-2*s))
+			ly := py - 8*s
+			if ly-ext.Height < fc.chartY {
+				ly = py + 8*s + ext.Height
+			}
+			cr.MoveTo(lx, ly)
+			cr.ShowText(label)
 		}
 	}
 

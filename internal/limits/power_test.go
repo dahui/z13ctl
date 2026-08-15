@@ -875,3 +875,41 @@ func TestEnforceCurveOnNarrowestAcceptedAxis(t *testing.T) {
 		}
 	}
 }
+
+// PWMAt and FloorPWMAt are one function under two names; the second exists only
+// because the floor was the first caller. If they ever diverge, the curve
+// editor's operating-point dot and the daemon's floor stop agreeing about what
+// a curve says at a temperature.
+func TestPWMAtAndFloorPWMAtAgree(t *testing.T) {
+	t.Parallel()
+
+	curve := []api.FanCurvePoint{
+		{Temp: 35, PWM: 0}, {Temp: 50, PWM: 60}, {Temp: 70, PWM: 150}, {Temp: 90, PWM: 255},
+	}
+	for temp := 20; temp <= 110; temp++ {
+		if a, b := PWMAt(curve, temp), FloorPWMAt(curve, temp); a != b {
+			t.Fatalf("at %d°C PWMAt=%d FloorPWMAt=%d", temp, a, b)
+		}
+	}
+}
+
+func TestPWMAtInterpolatesAndClamps(t *testing.T) {
+	t.Parallel()
+
+	curve := []api.FanCurvePoint{{Temp: 40, PWM: 0}, {Temp: 60, PWM: 100}}
+	cases := []struct{ temp, want int }{
+		{20, 0},   // below the first point: clamped, never extrapolated negative
+		{40, 0},   // on the first point
+		{50, 50},  // halfway
+		{60, 100}, // on the last point
+		{95, 100}, // above the last: clamped, not extrapolated past full speed
+	}
+	for _, tc := range cases {
+		if got := PWMAt(curve, tc.temp); got != tc.want {
+			t.Errorf("PWMAt(%d) = %d, want %d", tc.temp, got, tc.want)
+		}
+	}
+	if got := PWMAt(nil, 50); got != PWMMin {
+		t.Errorf("PWMAt(nil) = %d, want PWMMin", got)
+	}
+}
