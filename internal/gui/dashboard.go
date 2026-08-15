@@ -813,7 +813,24 @@ func (c *dashboardChart) sync(p telemetryplot.Plot) {
 // chart's right-hand edge agree by construction.
 func (d *dashboardView) pollTick(st *api.State) {
 	d.batteryStatus = profileui.BatteryStatus(st)
+	// Which input is supplying the machine, appended rather than folded into
+	// BatteryStatus: that line drops its own state word to stay legible, so it
+	// has no room, and the charger is a property of the *supply* rather than of
+	// what the pack is doing. Empty on battery and on any device with one way
+	// to take power, which is most of them.
+	if c := profileui.ChargerLabel(st); c != "" {
+		d.batteryStatus = joinHeader(d.batteryStatus, c)
+	}
 	d.syncBatteryHeader()
+}
+
+// joinHeader joins two header fragments with the card headers' separator,
+// tolerating an empty left half.
+func joinHeader(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + " · " + b
 }
 
 // syncBatteryHeader writes the stored battery status to the battery card's

@@ -526,6 +526,35 @@ func SendTdpResetFor(profile string) (bool, error) {
 	return true, nil
 }
 
+// SendTuningReset clears every tuning override at once — fan curve, power
+// limits and Curve Optimizer offset — and lands on the "balanced" profile.
+//
+// It is not the same as issuing the three resets in sequence. Each of those has
+// to lower power before releasing the fans, so doing it by hand in the wrong
+// order leaves a window at a high sustained limit with no fan floor; sending one
+// command puts that ordering inside the daemon where it cannot be got wrong.
+//
+// Returns (false, nil) if the daemon is not running. A daemon older than this
+// command answers "unknown command", so a client offering it should be prepared
+// to fall back to the three individual resets.
+func SendTuningReset() (bool, error) {
+	return SendTuningResetFor("")
+}
+
+// SendTuningResetFor clears every tuning override from the named custom
+// profile. An empty profile means the active one, which also writes hardware;
+// naming a profile that is not running stores the change only.
+func SendTuningResetFor(profile string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "tuning-reset", Profile: profile})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, respErr(resp)
+	}
+	return true, nil
+}
+
 // SendUndervoltGet queries the daemon for the current Curve Optimizer offsets.
 // Returns JSON value string. Returns (false, "", nil) if the daemon is not running.
 func SendUndervoltGet() (handled bool, value string, err error) {

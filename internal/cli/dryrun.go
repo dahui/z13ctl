@@ -362,6 +362,23 @@ func DryRunTdpReset(env driver.PowerEnvelope) {
 	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before)")
 }
 
+// DryRunTuningReset prints what clearing every tuning override would do.
+//
+// The order shown is the order it happens in, because the order is the safety
+// property: power comes down before the fans are released, so the machine is
+// never at a high sustained limit with no floor.
+func DryRunTuningReset(env driver.PowerEnvelope) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Println("Would clear every tuning override: fan curve, power limits, Curve Optimizer")
+	fmt.Println("Would reset the CPU Curve Optimizer to stock (only if an offset is applied)")
+	fmt.Println("Would switch profile to balanced")
+	stock := env.StockProfilePPT["balanced"]
+	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
+		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
+	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before)")
+	fmt.Println("Would forget the saved fan curve, power limits and offset in the edited profile")
+}
+
 // DryRunUndervolt prints the SMU commands that would be sent for a Curve
 // Optimizer change.
 //

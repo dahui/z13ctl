@@ -1,12 +1,19 @@
 package cmd
 
 // status.go — "status" subcommand: display a summary of all system metrics.
-// Read-only command, no flags. Aggregates APU temperature, fan RPM, profile,
-// TDP, and battery information into a single dashboard view.
+// Read-only. Aggregates APU temperature, fan RPM, profile, TDP, and battery
+// information into a single dashboard view, once or (with --watch) repeatedly.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
@@ -24,26 +31,49 @@ limits, and battery charge level and limit. All values are read directly
 from sysfs.`,
 	Args: cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
+		if statusWatchFlag {
+			return runStatusWatch(statusIntervalFlag)
+		}
 		return runStatus()
 	},
 }
 
+var (
+	statusWatchFlag    bool
+	statusIntervalFlag time.Duration
+)
+
 func runStatus() error {
+	return statusReport(os.Stdout)
+}
+
+// statusReport writes one status snapshot to out.
+//
+// It takes a writer so --watch can render into a buffer and emit each frame in
+// one write: printing field by field straight to the terminal lets a redraw be
+// seen half-finished, which at one frame a second reads as flicker.
+func statusReport(out io.Writer) error {
 	hw, err := hardware()
 	if err != nil {
 		return err
 	}
 
+	// Writing to os.Stdout or to a bytes.Buffer; neither yields an error a
+	// status report could act on, and threading one through fourteen call sites
+	// would say otherwise.
+	outf := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format, a...) }
+	outln := func(a ...any) { _, _ = fmt.Fprintln(out, a...) }
+
 	// APU temperature.
 	tempShown := false
 	if hw.Telemetry != nil {
 		if s, sErr := hw.Telemetry.Sample(); sErr == nil {
-			fmt.Printf("APU:     %d°C\n", s.TempC)
+			outf("APU:     %d°C\n", s.TempC)
 			tempShown = true
 		}
 	}
 	if !tempShown {
-		fmt.Println("APU:     N/A")
+		outln("APU:     N/A")
 	}
 
 	// Fan RPM and mode. The mode is folded across every readable fan, as the
@@ -58,16 +88,16 @@ func runStatus() error {
 			modeStr = ", mode: " + driver.FanModeName(mode)
 		}
 	}
-	fmt.Printf("Fans:    %s%s\n", rpmStr, modeStr)
+	outf("Fans:    %s%s\n", rpmStr, modeStr)
 
 	// Performance profile. platform_profile is never a custom profile name, so
 	// the effective profile comes from the daemon when it is running; show the
 	// firmware profile underneath it when the two differ.
 	profile := effectiveProfileForTDP(hw)
 	if hwProf := readCurrentProfile(hw); hwProf != profile && hwProf != "unknown" {
-		fmt.Printf("Profile: %s (platform: %s)\n", profile, hwProf)
+		outf("Profile: %s (platform: %s)\n", profile, hwProf)
 	} else {
-		fmt.Printf("Profile: %s\n", profile)
+		outf("Profile: %s\n", profile)
 	}
 
 	// One battery reading serves the power-source line here and the charge
@@ -89,20 +119,20 @@ func runStatus() error {
 		if onAC {
 			source = "AC"
 		}
-		fmt.Printf("Power:   %s%s\n", source, autoswitchNote(onAC))
+		outf("Power:   %s%s\n", source, autoswitchNote(onAC))
 	}
 
 	// TDP power limits.
 	tdpShown := false
 	if hw.Power != nil {
 		if tdp, tErr := hw.Power.ReadEffective(profile); tErr == nil {
-			fmt.Printf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
+			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
 			tdpShown = true
 		}
 	}
 	if !tdpShown {
-		fmt.Println("TDP:     N/A")
+		outln("TDP:     N/A")
 	}
 
 	// Undervolt (Curve Optimizer). Ask the daemon, which probed once at startup
@@ -116,10 +146,10 @@ func runStatus() error {
 	// CO values have no sysfs readback, so current values need daemon state.
 	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil {
 		if st.UndervoltAvailable {
-			fmt.Println("UV:      available (use 'undervolt --get' for current values)")
+			outln("UV:      available (use 'undervolt --get' for current values)")
 		}
 	} else if hw.Undervolt != nil && hw.Undervolt.Present() {
-		fmt.Println("UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)")
+		outln("UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)")
 	}
 
 	// Battery: current charge level and charge limit.
@@ -129,9 +159,69 @@ func runStatus() error {
 			limitStr = fmt.Sprintf(" (limit: %d%%)", limit)
 		}
 	}
-	fmt.Printf("Battery: %s%s\n", capStr, limitStr)
+	outf("Battery: %s%s\n", capStr, limitStr)
 
 	return nil
+}
+
+// runStatusWatch redraws the status report every interval until interrupted.
+//
+// Deliberately not a TUI: no alternate screen, no raw mode, no input handling,
+// no dependency. It redraws in place by walking the cursor back over the lines
+// it printed last time and clearing from there down — so the scrollback above
+// is untouched, unlike a full clear, and Ctrl-C leaves the last frame on screen
+// where you can still read it. A third party already fills the TUI niche over
+// the same socket (ayixiayi/z13-panel); competing with it would be worse than
+// pointing at it.
+//
+// It does not require the daemon. status reads sysfs directly by design, the
+// device handle is cached for the process, and one pass costs what the daemon's
+// own 1 Hz sampler costs — so refusing without a daemon would be a restriction
+// with nothing behind it.
+func runStatusWatch(interval time.Duration) error {
+	if interval < 100*time.Millisecond {
+		return fmt.Errorf("--interval %s is too short; the sensors do not update faster than about 1s", interval)
+	}
+
+	// Piped or redirected output gets plain frames with no escape codes: cursor
+	// movement written to a file is noise, and someone capturing `status --watch`
+	// wants something readable at the end of it.
+	tty := false
+	if fi, err := os.Stdout.Stat(); err == nil {
+		tty = fi.Mode()&os.ModeCharDevice != 0
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	lines := 0
+	for {
+		var buf bytes.Buffer
+		if err := statusReport(&buf); err != nil {
+			return err
+		}
+		frame := buf.String()
+
+		if tty && lines > 0 {
+			// Up over the previous frame, then clear from the cursor to the end
+			// of the screen. Clearing is what keeps a shorter frame from leaving
+			// the tail of a longer one behind — the fields here come and go
+			// (Power and UV are omitted when unknown).
+			fmt.Printf("\033[%dA\033[J", lines)
+		}
+		fmt.Print(frame)
+		lines = strings.Count(frame, "\n")
+
+		select {
+		case <-stop:
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 // autoswitchNote returns a parenthetical naming the profile autoswitch selects
@@ -157,5 +247,9 @@ func autoswitchNote(onAC bool) string {
 }
 
 func init() {
+	statusCmd.Flags().BoolVarP(&statusWatchFlag, "watch", "w", false, "Redraw the status continuously until interrupted")
+	// One second matches the daemon's sampler, so a shorter interval would redraw
+	// faster than the numbers can change.
+	statusCmd.Flags().DurationVar(&statusIntervalFlag, "interval", time.Second, "How often to redraw with --watch")
 	rootCmd.AddCommand(statusCmd)
 }

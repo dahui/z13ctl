@@ -133,6 +133,27 @@ func (d *Daemon) readFeatures() map[string]int {
 	return out
 }
 
+// readPendingReboot reports whether a firmware setting is waiting on a restart,
+// or nil when this device cannot say.
+//
+// Nil covers three cases that a client must treat alike: no toggles at all, a
+// Toggles driver that does not implement driver.RebootPending, and a read that
+// failed. None of them is evidence that nothing is pending.
+func (d *Daemon) readPendingReboot() *bool {
+	if d.hw == nil || d.hw.Toggles == nil {
+		return nil
+	}
+	rp, ok := d.hw.Toggles.(driver.RebootPending)
+	if !ok {
+		return nil
+	}
+	pending, err := rp.PendingReboot()
+	if err != nil {
+		return nil
+	}
+	return &pending
+}
+
 // featureSpec resolves a request's toggle ID against the device's declared
 // set, returning the spec or the rejection response. Resolving against List
 // rather than passing the ID straight to Get/Set is what turns the driver's

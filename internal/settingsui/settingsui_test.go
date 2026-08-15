@@ -4,6 +4,7 @@
 package settingsui_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -136,5 +137,49 @@ func TestEmptyReason(t *testing.T) {
 	if noDaemon == noToggles || noToggles == unknownKind || noDaemon == unknownKind {
 		t.Error("the three empty states must not share a message: one is fixed by " +
 			"starting the daemon, one by nothing, and one is a voltaire limitation")
+	}
+}
+
+func TestRebootNotice(t *testing.T) {
+	t.Parallel()
+
+	yes, no := true, false
+	cases := []struct {
+		name string
+		st   *api.State
+		want bool // whether a banner is shown
+	}{
+		// The three shapes of "cannot say" must all stay silent. Absent is not
+		// "nothing pending" — it is no evidence either way, and a banner that
+		// claimed otherwise would be the absent-is-not-false rule broken one
+		// layer up from the daemon that exists to preserve it.
+		{"no state at all", nil, false},
+		{"daemon too old to report it", &api.State{}, false},
+		{"device says nothing is pending", &api.State{PendingReboot: &no}, false},
+		{"device says something is pending", &api.State{PendingReboot: &yes}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := settingsui.RebootNotice(tc.st)
+			if (got != "") != tc.want {
+				t.Errorf("RebootNotice = %q, want shown=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The firmware reports one flag for the whole interface, not one per attribute,
+// so the banner must not promise to name the setting that changed.
+func TestRebootNoticeDoesNotNameASetting(t *testing.T) {
+	t.Parallel()
+
+	yes := true
+	got := settingsui.RebootNotice(&api.State{PendingReboot: &yes})
+	for _, forbidden := range []string{"boot_sound", "panel_overdrive", "Boot Sound", "Panel Overdrive"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("banner names %q; asus-armoury exposes one flag for the whole "+
+				"interface and cannot say which setting is pending", forbidden)
+		}
 	}
 }

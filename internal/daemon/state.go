@@ -273,6 +273,10 @@ func cloneState(s api.State) api.State {
 		b := *s.CPUBoost
 		c.CPUBoost = &b
 	}
+	if s.PendingReboot != nil {
+		p := *s.PendingReboot
+		c.PendingReboot = &p
+	}
 	return c
 }
 

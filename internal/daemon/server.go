@@ -179,6 +179,8 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleTDPGet()
 	case "tdp-reset":
 		return d.handleTDPReset(req)
+	case "tuning-reset":
+		return d.handleTuningReset(req)
 	case "undervolt":
 		return d.handleUndervolt(req)
 	case "undervolt-get":
@@ -211,6 +213,7 @@ func (d *Daemon) dispatch(req request) response {
 			// reports a correct 0 W that reads as a broken sensor.
 			s.BatteryLevel = bat.Capacity
 			s.BatteryState = string(bat.State)
+			s.Charger = string(bat.Charger)
 			// The pair a client divides the flow into for a time estimate;
 			// zero when the pack reports neither energy form.
 			s.BatteryEnergyWh = bat.EnergyWh
@@ -227,6 +230,10 @@ func (d *Daemon) dispatch(req request) response {
 		s.Features = d.readFeatures()
 		s.BootSound = s.Features["boot_sound"]
 		s.PanelOverdrive = s.Features["panel_overdrive"]
+		// Left nil when the device's firmware interface has no such flag or the
+		// read fails — a client renders that as unknown, never as "nothing
+		// pending", which would be a claim about the firmware.
+		s.PendingReboot = d.readPendingReboot()
 		// Boost from the kernel rather than from the state we just cloned:
 		// cpufreq's switch is writable by anything with the grant and resets
 		// across a reboot, so cached state is an instruction and not a reading.
@@ -927,7 +934,32 @@ func (d *Daemon) handleTDP(req request) response {
 
 // handleTDPReset lands on the balanced firmware profile when it targets the
 // live profile, and merely clears the stored limits when it targets another.
+// handleTDPReset clears the custom power limits and lands on "balanced".
 func (d *Daemon) handleTDPReset(req request) response {
+	return d.resetToStock(req, "tdp-reset", false)
+}
+
+// handleTuningReset clears every tuning override at once — fan curve, power
+// limits and Curve Optimizer offset — in one command instead of three.
+//
+// Three separate resets are not equivalent to this one, and the reason is
+// ordering: each has to lower power before releasing the fans, so issuing them
+// by hand in the wrong order leaves a window at a high limit with no floor.
+// Making the whole thing one daemon operation is what removes that from the
+// caller's hands, which is also why the GUI button sends this rather than three
+// requests.
+func (d *Daemon) handleTuningReset(req request) response {
+	return d.resetToStock(req, "tuning-reset", true)
+}
+
+// resetToStock is the one release sequence, shared by tdp-reset and
+// tuning-reset. They differ in exactly one thing: whether the profile's *saved*
+// fan curve and Curve Optimizer offset are cleared along with its power limits.
+// tdp-reset keeps the saved offset so "profile --set custom" can recall it;
+// tuning-reset is the command that says to forget all of it.
+//
+// The ordering below is the safety property and is not free to rearrange.
+func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
 
@@ -935,18 +967,35 @@ func (d *Daemon) handleTDPReset(req request) response {
 	target, err := d.resolveEditTargetLocked(req.Profile)
 	if err != nil {
 		d.mu.Unlock()
-		return response{OK: false, Error: "tdp-reset: " + err.Error()}
+		return response{OK: false, Error: cmd + ": " + err.Error()}
 	}
 	d.mu.Unlock()
 
-	if !target.Live {
-		p := target.Profile
+	// What a reset removes from a stored profile. tdp-reset drops the curve only
+	// on the live path, because the hardware release that justifies dropping it
+	// only happened there; tuning-reset drops everything by definition.
+	cleared := func(p api.CustomProfile, live bool) api.CustomProfile {
 		p.TDP = nil
+		if live || clearAll {
+			p.FanCurve = nil
+		}
+		if clearAll {
+			p.Undervolt = nil
+		}
+		return p
+	}
+
+	if !target.Live {
+		// No fan-floor check is needed even though this can drop a stored curve:
+		// it drops that profile's TDP in the same edit, so the profile cannot be
+		// left in the "high limit, no floor" state CheckFanFloorReleaseAt exists
+		// to refuse. handleFanCurveReset needs the check because it clears the
+		// curve and leaves the limit.
 		d.mu.Lock()
-		s := d.commitEditLocked(target, p)
+		s := d.commitEditLocked(target, cleared(target.Profile, false))
 		d.mu.Unlock()
 		d.saveAndNotify(s)
-		slog.Info("tdp-reset", "profile", target.Name, "applied", false)
+		slog.Info(cmd, "profile", target.Name, "applied", false)
 		return response{OK: true}
 	}
 
@@ -960,25 +1009,36 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// every other route to a stock profile clears CO — leaving it applied here
 	// would leak a custom setting into a stock profile (the defect class behind
 	// #12) and leave undervolt --get reporting "active" on a stock profile.
-	// Saved values are kept in state so "custom" stays re-selectable.
-	if d.uvAvailable() {
+	// tdp-reset keeps the saved value in state so "custom" stays re-selectable.
+	//
+	// Step markers, not decoration. The 2026-08-14 lockup left no evidence of how
+	// far this sequence got, because it logged only on completion and the reset
+	// paths log only on failure — so "no line" meant both "skipped" and "wrote to
+	// the mailbox and survived". The SMU step is the one with a hard-hang mode,
+	// so it says which branch it took either way. The daemon does not configure
+	// slog, so this is Info or it is invisible; one line per explicit reset is
+	// not a cadence worth economising on.
+	if d.uvApplied() {
+		slog.Info(cmd+": clearing the Curve Optimizer offset", "profile", target.Name)
 		if err := d.hw.Undervolt.Reset(); err != nil {
-			slog.Warn("failed to reset undervolt after TDP reset", "err", err)
+			slog.Warn("failed to reset undervolt", "cmd", cmd, "err", err)
 		}
+	} else {
+		slog.Info(cmd + ": no Curve Optimizer offset applied; skipping the SMU write")
 	}
 	if d.hw == nil || d.hw.Profiles == nil {
-		return response{OK: false, Error: "tdp-reset: no platform profile control on this device"}
+		return response{OK: false, Error: cmd + ": no platform profile control on this device"}
 	}
 	if err := d.hw.Profiles.Set("balanced"); err != nil {
-		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
+		return response{OK: false, Error: cmd + ": switching to balanced profile: " + err.Error()}
 	}
 	d.restoreStockPPT("balanced")
 	if d.hw.Fans != nil {
 		if err := d.hw.Fans.Release(); err != nil {
-			slog.Warn("failed to reset fan curves after TDP reset", "err", err)
+			slog.Warn("failed to reset fan curves", "cmd", cmd, "err", err)
 		}
 	}
-	slog.Info("tdp-reset", "profile", "balanced")
+	slog.Info(cmd, "profile", "balanced")
 	d.mu.Lock()
 	// Clear the limits and curve from the profile that was running, not from a
 	// global slot: switching back to it later must not resurrect the TDP this
@@ -991,13 +1051,10 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// nothing in the output to say so. The hardware reset above is still right;
 	// there is simply no profile here to edit.
 	if !target.implicit() {
-		p := target.Profile
-		p.TDP = nil
-		p.FanCurve = nil
 		if d.state.CustomProfiles == nil {
 			d.state.CustomProfiles = make(map[string]api.CustomProfile, 1)
 		}
-		d.state.CustomProfiles[target.Name] = p
+		d.state.CustomProfiles[target.Name] = cleared(target.Profile, true)
 	}
 	d.state.Profile = "balanced"
 	setUndervoltActive(d.state, false)
@@ -1103,12 +1160,20 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 	}
 	d.mu.Unlock()
 
-	if target.Live {
+	switch {
+	case target.Live && d.uvApplied():
 		if err := d.hw.Undervolt.Reset(); err != nil {
 			return response{OK: false, Error: "undervolt-reset: " + err.Error()}
 		}
 		slog.Info("undervolt-reset", "profile", target.Name)
-	} else {
+	case target.Live:
+		// Asked for explicitly, but nothing is applied, so there is nothing to
+		// clear in hardware and the SMU write would be the speculative one that
+		// hard-locked this machine (see uvApplied). "No offset applied" is
+		// already the requested end state, so this succeeds; the stored value
+		// below is still cleared, which is the half the user can observe.
+		slog.Info("undervolt-reset", "profile", target.Name, "hardware", "skipped: no offset applied")
+	default:
 		slog.Info("undervolt-reset", "profile", target.Name, "applied", false)
 	}
 

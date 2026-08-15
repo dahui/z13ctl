@@ -201,3 +201,33 @@ func TestBatteryStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestChargerLabel(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		st   *api.State
+		want string
+	}{
+		{"no state", nil, ""},
+		// A device with one power input says nothing, which is most of them.
+		{"device cannot say", &api.State{}, ""},
+		// Both observed on hardware, charger physically swapped.
+		{"proprietary adapter", &api.State{Charger: "adapter"}, "Adapter"},
+		{"usb-c pd", &api.State{Charger: "usb-c"}, "USB-C"},
+		// "no charger attached" is a real reading, but PowerLabel already says
+		// the machine is on battery and naming the absent charger adds nothing.
+		{"nothing attached", &api.State{Charger: "none"}, ""},
+		// Firmware may grow a kind before voltaire does.
+		{"kind this build does not know", &api.State{Charger: "wireless"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := profileui.ChargerLabel(tc.st); got != tc.want {
+				t.Errorf("ChargerLabel = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

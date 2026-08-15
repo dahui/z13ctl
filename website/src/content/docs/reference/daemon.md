@@ -305,6 +305,7 @@ profiles.
 | Set TDP | `{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}` | `ok` |
 | Get TDP | `{"cmd":"tdp-get"}` | `ok`, `value` (JSON) |
 | Reset TDP | `{"cmd":"tdp-reset"}` | `ok` |
+| Reset all tuning | `{"cmd":"tuning-reset"}` | `ok` |
 | Set undervolt | `{"cmd":"undervolt","set":"-20"}` | `ok` |
 | Get undervolt | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
 | Reset undervolt | `{"cmd":"undervolt-reset"}` | `ok` |
@@ -493,6 +494,8 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `on_ac` | whether the charger is plugged in |
 | `source_known` | whether `on_ac` reflects a real reading |
 | `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
+| `pending_reboot` | whether a changed firmware setting needs a restart; **absent** when the device cannot say |
+| `charger` | which power input is supplying the machine: `adapter`, `usb-c`, or `none`; **absent** when the device cannot say |
 | `battery_health` | full-charge capacity as a percentage of design capacity |
 | `battery_energy_wh` | the pack's remaining energy in watt-hours |
 | `battery_energy_full_wh` | the pack's full-charge energy in watt-hours |

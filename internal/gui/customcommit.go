@@ -45,6 +45,21 @@ func (c *customView) buildCommitBar() *gtk.Box {
 	bar := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	bar.AddCSSClass("commit-bar")
 
+	// Reset All sits at the bar's left edge, away from Commit, because the two
+	// are opposites and this one is destructive. It is a whole-profile action
+	// like Commit and Delete — the per-card "Reset TDP"/"Reset Fans"/"Reset UV"
+	// each remove one subsystem, while this removes all three and lands the
+	// machine on balanced — so it belongs in the bar rather than in a card.
+	//
+	// One daemon command, not three sends: each individual reset has to lower
+	// power before releasing the fans, so a button that issued them in sequence
+	// would put that ordering in the GUI. See api.SendTuningReset.
+	c.resetAllBtn = gtk.NewButtonWithLabel("Reset All")
+	c.resetAllBtn.SetHAlign(gtk.AlignStart)
+	c.w.setHint(c.resetAllBtn, "Clear the fan curve, power limits and undervolt from this profile")
+	c.resetAllBtn.ConnectClicked(func() { c.resetAllTuning() })
+	bar.Append(c.resetAllBtn)
+
 	c.commitNote = gtk.NewLabel("")
 	c.commitNote.AddCSSClass("scale-value")
 	c.commitNote.SetHAlign(gtk.AlignStart)

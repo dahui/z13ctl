@@ -10,6 +10,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/daemon"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/safety"
@@ -254,7 +255,7 @@ func runTdpSet() error {
 // two: with no custom curve at all the whole built-in floor curve is written, and
 // saying "points below 127 PWM were raised; every other point is unchanged" there
 // described points the user never set. DryRunTdp already distinguished the case.
-func printFloorNotice(env driver.PowerEnvelope, pl1 int, want []api.FanCurvePoint, daemon bool) {
+func printFloorNotice(env driver.PowerEnvelope, pl1 int, want []api.FanCurvePoint, viaDaemon bool) {
 	if pl1 <= env.TDPMaxSafe || len(env.FloorCurve) == 0 {
 		return
 	}
@@ -271,7 +272,7 @@ func printFloorNotice(env driver.PowerEnvelope, pl1 int, want []api.FanCurvePoin
 	default:
 		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
 	}
-	if daemon {
+	if viaDaemon {
 		fmt.Println("  (the daemon keeps the floor in force if a power profile change releases it)")
 	}
 }
@@ -308,20 +309,35 @@ func runTdpReset() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
+	if err := runTdpResetDirect(); err != nil {
+		return err
+	}
+	fmt.Println("TDP reset: switched to balanced profile")
+	return nil
+}
+
+// runTdpResetDirect is the no-daemon release sequence, shared by tdp --reset and
+// tuning --reset. Without a daemon there are no saved profiles to edit, so the
+// two commands do exactly the same thing to hardware and there is no reason for
+// two copies of an ordering that has to be right.
+//
+// Switch to balanced, write its stock PPT values back, and only then release the
+// fans to firmware auto — so they are never dropped to auto while a high custom
+// TDP is still in force. The firmware manages fan curves on a profile change but
+// does not restore PPT, so that part has to be explicit.
+//
+// Reset the undervolt as well: this lands on a stock profile, and every other
+// route to one clears CO. Guarded on Present (a stat, never the destructive
+// probe) so machines without ryzen_smu do not get a spurious warning, and on
+// daemon.UndervoltApplied so an offset that was never applied is never
+// "cleared" — a speculative MP1 write is the one with a known hard-hang mode
+// (see Daemon.uvApplied).
+func runTdpResetDirect() error {
 	hw, err := hardware()
 	if err != nil {
 		return err
 	}
-	// Direct path (no daemon): switch to balanced, write its stock PPT values
-	// back to hardware, and only then release the fans to firmware auto — so
-	// they are never dropped to auto while a high custom TDP is still in force.
-	// The firmware manages fan curves on a profile change but does not restore
-	// PPT, so that part has to be explicit.
-	// Reset the undervolt as well: this lands on a stock profile, and every
-	// other route to one clears CO. Guarded on Present (a stat, never the
-	// destructive probe) so machines without ryzen_smu do not get a spurious
-	// warning.
-	if hw.Undervolt != nil && hw.Undervolt.Present() {
+	if hw.Undervolt != nil && hw.Undervolt.Present() && daemon.UndervoltApplied() {
 		if err := hw.Undervolt.Reset(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
 		}
@@ -338,7 +354,6 @@ func runTdpReset() error {
 			fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
 		}
 	}
-	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
 }
 

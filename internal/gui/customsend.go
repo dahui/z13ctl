@@ -228,6 +228,40 @@ func (c *customView) resetFanCurve() {
 	}()
 }
 
+// resetAllTuning clears the fan curve, power limits and Curve Optimizer offset
+// together: from hardware and the profile for a live target, from the profile
+// alone for one that is not running.
+//
+// One send, not three. Each individual reset has to lower power before
+// releasing the fans, so three sends from here would put that ordering in the
+// GUI — and a failure partway would leave the machine in the state the ordering
+// exists to prevent. The daemon does the whole sequence under one hwMu hold.
+//
+// No confirmation dialog, matching Delete one row down: popups do not composite
+// under gamescope, and the recovery here is milder than Delete's — the profile
+// survives, only its settings are cleared.
+func (c *customView) resetAllTuning() {
+	w := c.w
+	plan := c.editPlan()
+	go func() {
+		if err := probeStoredTarget(plan); err != nil {
+			w.reportError("Reset all", err)
+			return
+		}
+		if err := apiresult.Err(api.SendTuningResetFor(plan.WireProfile())); err != nil {
+			// A daemon older than tuning-reset answers "unknown command". That
+			// reads plainly enough to leave as-is: the three per-card resets are
+			// still there, and silently falling back to them would reintroduce
+			// the ordering hazard this command exists to remove.
+			w.reportError("Reset all", err)
+			return
+		}
+		w.clearErrorAsync()
+		slog.Info("tuning reset", "profile", plan.Target, "live", plan.Live)
+		w.refreshState()
+	}()
+}
+
 // saveUndervolt commits the current Curve Optimizer offset.
 func (c *customView) saveUndervolt() {
 	w := c.w

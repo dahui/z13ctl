@@ -221,6 +221,23 @@ type Toggles interface {
 	Set(id string, value int) error
 }
 
+// RebootPending is an optional interface a Toggles implementation may also
+// satisfy, reporting whether a firmware setting has been changed but will not
+// take effect until the machine restarts.
+//
+// Optional rather than part of Toggles because it is a property of the firmware
+// *interface*, not of any one toggle, and a device whose toggles apply
+// immediately has nothing to implement — two no-op methods would suggest a
+// choice where there is none. Callers type-assert; absence means "this device
+// cannot say", which is not the same as "nothing is pending" and must not be
+// rendered as it.
+//
+// It exists because a BIOS setting that silently needs a reboot is
+// indistinguishable, from the UI, from one that did not work.
+type RebootPending interface {
+	PendingReboot() (bool, error)
+}
+
 // CPUBoost turns the CPU's opportunistic boost clocks on and off.
 //
 // It is its own capability rather than a Toggles entry, and the reason is
@@ -261,6 +278,18 @@ type BatteryStatus struct {
 	OnAC          bool    // mains power attached; meaningless unless ACKnown
 	ACKnown       bool    // whether the power source could be observed
 	PowerNowW     float64 // instantaneous draw or charge rate, watts
+
+	// Charger names *which* power input is supplying the machine, when the
+	// device can distinguish more than one: one of the Charger* constants, or
+	// ChargerUnknown.
+	//
+	// It is separate from OnAC because OnAC cannot answer it. The Z13 takes
+	// power two ways — a proprietary high-wattage adapter and USB-C PD — and
+	// the Mains supply reads online for *both*, which is correct (mains power
+	// is attached either way) and is exactly why it cannot tell them apart.
+	// The two have very different ceilings, so which one is attached is a real
+	// distinction to a user deciding what the machine can sustain.
+	Charger Charger
 
 	// State is what the pack is doing: one of the BatteryState constants, or
 	// BatteryStateUnknown when the device does not say.
@@ -305,6 +334,23 @@ const (
 	BatteryStateDischarging BatteryState = "discharging"
 	BatteryStateFull        BatteryState = "full"
 	BatteryStateNotCharging BatteryState = "not-charging"
+)
+
+// Charger names which power input is supplying the machine.
+//
+// A device with one power input never sets this, and ChargerUnknown is the zero
+// value, so saying nothing is the default and costs nothing on the wire.
+type Charger string
+
+// The charger kinds. ChargerNone means observed-and-nothing-attached, which is
+// not the same as ChargerUnknown (the device cannot say) — the standing
+// absent-is-not-false rule, in the one place where "no charger" is itself a
+// real reading.
+const (
+	ChargerUnknown Charger = ""
+	ChargerNone    Charger = "none"
+	ChargerAdapter Charger = "adapter" // proprietary high-wattage DC input
+	ChargerUSBC    Charger = "usb-c"   // USB-C Power Delivery
 )
 
 // BatteryCaps is what a device's battery interface offers. Like every other

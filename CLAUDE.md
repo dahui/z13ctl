@@ -493,6 +493,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | tdp get | `{"cmd":"tdp-get"}` | `ok`, `value` (JSON) |
   | tdp set | `{"cmd":"tdp","set":"60","pl1":"55","pl2":"65","pl3":"70","force":true}` | `ok` |
   | tdp reset | `{"cmd":"tdp-reset"}` | `ok` |
+  | tuning reset | `{"cmd":"tuning-reset"}` | `ok` |
   | undervolt set | `{"cmd":"undervolt","set":"-20"}` | `ok` |
   | undervolt get | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
   | undervolt reset | `{"cmd":"undervolt-reset"}` | `ok` |
@@ -502,11 +503,11 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
   | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live telemetry + undervolt_available + on_ac/source_known + battery_health) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live telemetry + undervolt_available + on_ac/source_known + battery_health + pending_reboot) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
   (events: `gui-toggle`, `gui-open-full`, `power-source`, `state-changed`)
 
-  `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `undervolt` and
+  `fancurve`, `fancurve-reset`, `tdp`, `tdp-reset`, `tuning-reset`, `undervolt` and
   `undervolt-reset` take an optional `"profile"` field naming the custom profile
   to edit; absent/empty means the active one. `profile --set` now *rejects* a
   name that is neither a firmware profile nor a saved custom profile, where it
@@ -795,6 +796,121 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   set true in exactly one place — `applyCustomHW`, and only when the SMU write
   succeeded — so a profile copied while CO was live never claims to be applied
   before anything was written.
+- **…but it must clear it only when something is actually applied:
+  `d.uvApplied()`, never `d.uvAvailable()` alone.** `uvAvailable()` answers "is
+  the module loaded and does this fork support CO on this platform" — a property
+  of the *machine*, true on every Z13 with ryzen_smu installed. Gating a reset on
+  it meant every route to a stock profile sent a live MP1 mailbox write to clear
+  an offset that was never set. On 2026-08-14 one of those hard-locked the SoC:
+  total freeze, power cycle, no kernel output, no pstore record, while state
+  showed profile `balanced` with no undervolt saved or active anywhere. The
+  mechanism is the known ryzenadj-class hang — a userspace MP1 message colliding
+  with the kernel's own PMFW traffic — and the onexplayer work records the
+  aggravating factor: *"the driver shares one argument buffer across mailboxes,
+  so concurrent commands corrupt each other's arguments"*. A colliding command is
+  not merely wasted.
+  `Undervolt.Active` is the closest thing to a readback that exists, because CO
+  has none, and it is trustworthy for exactly the reason the entry above gives:
+  it is set in one place, after a successful write. `undervoltActive()` walks
+  precisely what `setUndervoltActive` stamps — they are the read and the write of
+  one fact, and a getter reading a different field would drift silently.
+  **The trade is real and deliberate**: an offset present in hardware but absent
+  from state (lost state file, `ryzenadj` by hand) now survives a reset that
+  should have cleared it. That is recoverable — CO is volatile, so a reboot or
+  suspend clears it and the daemon re-applies from state on resume — while the
+  hang is not. `handleUndervoltReset` succeeds rather than erroring when nothing
+  is applied: "no offset applied" is already the requested end state, and the
+  stored value, which is the half the user can observe, is still cleared.
+  `internal/daemon/undervolt_gate_test.go` is the guard. It is source-shaped, so
+  it strips comments before matching — every one of these call sites *mentions*
+  `uvAvailable` in prose — and its negative control was run: reverting any single
+  site to `uvAvailable()` fails it.
+- **`tuning-reset` exists because the *ordering* is the feature, not the
+  convenience.** Clearing the fan curve, power limits and Curve Optimizer offset
+  by hand means three commands, and each of them has to lower power before
+  releasing the fans — so issuing them in the wrong order leaves the machine at a
+  high sustained limit with no floor, and a failure partway leaves it there. One
+  daemon operation under one `hwMu` hold takes that out of the caller's hands,
+  which is why the GUI's Reset All button sends one request rather than three.
+  It shares its whole body with `tdp-reset` (`resetToStock`), because they *are*
+  the same sequence: `handleTDPReset` already cleared the curve, the limits and
+  CO in hardware. They differ in one thing — whether the profile's **saved** fan
+  curve and offset go too. `tdp-reset` keeps the offset so `profile --set custom`
+  can recall it; `tuning-reset` is the command that says to discard all of it.
+  Two copies of that sequence is exactly how the fan-floor rules drifted apart.
+  The `implicit()` guard applies unchanged: a reset resolved from a *firmware*
+  profile must not commit a cleared `custom`, which is the silent-data-loss rule.
+  The non-live path needs no fan-floor check even though it can drop a stored
+  curve, because it drops that profile's TDP in the same edit — unlike
+  `handleFanCurveReset`, which clears the curve and leaves the limit.
+  In the GUI it is a **bar** action beside Commit, not a card action: the
+  per-card resets each remove one subsystem, this removes all three and lands on
+  balanced. `full:custom` re-baselined 19 → 20 (`13:0:commit 13:1:commit`), every
+  other focus line byte-identical.
+- **`pending_reboot` is a property of the firmware *interface*, not of any one
+  toggle, so it is an optional interface rather than a `Toggles` method.**
+  `driver.RebootPending` is type-asserted; a device whose settings apply
+  immediately has nothing to implement, and two no-op methods would suggest a
+  choice where there is none — the same reasoning as `fullSurfaceHost` in the
+  GUI. asus-armoury exposes it as a plain file *beside* the attribute
+  directories (`attributes/pending_reboot`), not as an attribute, which is why
+  it is read directly rather than through `togglePaths`.
+  `api.State.PendingReboot` is a `*bool` on the established rule: absent means
+  the device cannot say — no firmware interface, a pre-2.0 daemon, or a failed
+  read — and rendering that as "nothing pending" would be a claim nothing
+  established. `settingsui.RebootNotice` gates on a *known* true, and the banner
+  deliberately does **not** name the setting, because the firmware reports one
+  flag for the whole interface and promising more would send the user looking
+  for a row to fix. It is updated *before* `sync`'s no-rows return: the flag can
+  be set on a device whose toggles this build cannot render, and that is exactly
+  the user who most needs telling why the machine did not change.
+  **Unexercised on this hardware.** Toggling `boot_sound` does not raise the
+  flag — the Z13's two toggles both apply immediately — so the true branch was
+  verified with a throwaway build forcing it, and never on real firmware. New
+  pointer on `api.State` ⇒ `cloneState` got it.
+- **`charge_mode` is the only thing that can tell the Z13's two power inputs
+  apart, and its vocabulary was established by swapping the charger — not by
+  inference.** The machine takes power two ways: the proprietary high-wattage DC
+  adapter shared with the Zephyrus line, and USB-C PD. **The Mains supply reads
+  `online=1` for both**, which is correct — mains power is attached either way —
+  and is exactly why `OnACPower` cannot answer this. `OnAC` says "is it plugged
+  in"; `charge_mode` says "into what", and the two inputs have very different
+  ceilings.
+  Observed, with the cable physically changed (Jeff, 2026-08-14): on the DC
+  adapter `charge_mode = 1` with both `ucsi-source-psy-*` offline; on USB-C
+  `charge_mode = 2` with a ucsi port `online=1` and its `usb_type` showing
+  `[PD]` active. `0` is documented by `possible_values` and is the only
+  remaining case, but has **not** been observed — a machine with no charger is
+  on battery, where nobody is watching this attribute. An unrecognised value
+  reports `ChargerUnknown` rather than a guess.
+  I first deferred this on the stated grounds that "the Z13 has no barrel jack",
+  which is **wrong** — the premise, not the reasoning, was the error, and it
+  inverted the conclusion: `1` on mains is *consistent* with the standard
+  asus-wmi mapping rather than contradicting it. Worth remembering as the shape
+  of the mistake: a confident hardware claim, used to reject the obvious reading
+  of an attribute.
+  **The negotiated PD wattage is not available.** `current_max`/`voltage_max`
+  read 0 on both ucsi ports even with PD live; only `current_now` (5 A) is
+  populated, and without a voltage there are no watts. So a charger-class rule
+  can distinguish adapter from USB-C but *not* a 65 W brick from a 100 W one.
+  `profileui.ChargerLabel` is deliberately empty for `none` and for an unknown
+  kind: `PowerLabel` already says the machine is on battery, and naming a
+  charger wrongly is worse than saying nothing. It is rendered *beside*
+  `BatteryStatus` rather than inside it, because that line already drops its own
+  state word to stay legible.
+- **A power limit cannot be verified on an idle machine.** Twice in one session
+  the pm_table PPT rails were read at idle and concluded to be inert — first that
+  they did not track our writes at all, then that `ppt_pl1_spl` specifically
+  reached nothing. Both were artifacts of the method: a *sustained* limit has
+  nothing to bind against when the package draws 12 W, so the SMU's limit
+  registers report firmware defaults (84/84/70 here) regardless of what was
+  written. Under 32-worker load with RAPL as ground truth the same attribute is
+  unambiguous — `pl1_spl` 52 → 35 → 20 measured 70.0 → 48.9 → 27.3 W package —
+  so `safety.Engine` reasons about the right number and the fan floor is sound.
+  Measured power sits *above* the set PL1 because STAPM is a moving average and
+  RAPL package covers SoC/iGPU/uncore beyond the rail STAPM governs; direction
+  and magnitude are the signal, not equality. Any future PPT or SMU
+  investigation starts by putting the machine under sustained load.
 - **A corrupt state file is preserved, not silently replaced.** `loadState`
   renames an unparseable `state.json` to `state.json.corrupt` and logs before
   returning defaults; the next `saveState` would otherwise overwrite it, taking

@@ -98,6 +98,19 @@ type State struct {
 	// reported as zero — zero is "off", which is a claim about the hardware.
 	Features map[string]int `json:"features,omitempty"`
 
+	// PendingReboot reports whether a changed firmware setting is waiting on a
+	// restart to take effect.
+	//
+	// A pointer for the same reason CPUBoost is one: absent means the device
+	// cannot say, which is not "nothing is pending" and must not be rendered as
+	// it. A pre-2.0 daemon, or a device whose firmware interface has no such
+	// flag, omits the field entirely.
+	//
+	// It exists because a BIOS setting that silently needs a reboot looks
+	// exactly like one that did not work — the switch moves, the machine does
+	// not change, and nothing on screen accounts for the gap.
+	PendingReboot *bool `json:"pending_reboot,omitempty"`
+
 	// BatteryLevel is the pack's current charge as a percentage, zero when the
 	// device has no battery.
 	//
@@ -121,6 +134,18 @@ type State struct {
 	// BatteryLevel and Battery lets a client say "81%, holding at your 75%
 	// limit" instead of showing a bare zero.
 	BatteryState string `json:"battery_state,omitempty"`
+
+	// Charger names which power input is supplying the machine: "adapter"
+	// (a proprietary high-wattage DC input), "usb-c", or "none". Absent when
+	// the device cannot say, which includes every device with only one way to
+	// take power.
+	//
+	// It is not derivable from OnAC and does not replace it. The Z13 takes power
+	// two ways and its Mains supply reads online for *both* — correctly, since
+	// mains power is attached either way — so OnAC answers "is it plugged in"
+	// and this answers "into what". The two inputs have very different ceilings,
+	// which is what makes the distinction worth carrying.
+	Charger string `json:"charger,omitempty"`
 
 	// BatteryHealth is full-charge capacity as a percentage of design
 	// capacity, or zero when the device does not report it — which is what

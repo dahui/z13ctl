@@ -105,3 +105,22 @@ func EmptyReason(doc *api.DeviceInfo) string {
 		return "This device exposes no firmware settings voltaire can change."
 	}
 }
+
+// RebootNotice is the banner text for a firmware setting that is waiting on a
+// restart, or "" when there is nothing to say.
+//
+// It is gated on a *known* true, which is the whole point of api.State's
+// PendingReboot being a pointer. Absent means the device cannot say — no
+// firmware interface, a pre-2.0 daemon, or a failed read — and drawing
+// "everything is applied" from that would be a claim nothing established. The
+// banner appears only when the firmware positively reports something pending.
+//
+// The wording avoids naming which setting, because the firmware does not say:
+// asus-armoury exposes one flag for the whole interface, not one per attribute.
+// Promising more than that would send the user looking for a row to fix.
+func RebootNotice(st *api.State) string {
+	if st == nil || st.PendingReboot == nil || !*st.PendingReboot {
+		return ""
+	}
+	return "A firmware setting has changed and takes effect after a restart."
+}

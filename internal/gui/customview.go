@@ -108,6 +108,7 @@ type customView struct {
 	// drawer. The commit bar's button and indicator, and the widget baseline
 	// each sync captures so commitDirty can tell an edit from a re-display.
 	commitBtn    *gtk.Button
+	resetAllBtn  *gtk.Button
 	commitNote   *gtk.Label
 	baseBasic    int    // basic TDP slider at last sync
 	baseAdv      [3]int // PL1/PL2/PL3 sliders at last sync
@@ -908,7 +909,9 @@ func (c *customView) buildFocusList() {
 		buttonLine(c.resetFanBtn)
 
 		b.Section("commit")
-		buttonLine(c.commitBtn)
+		// Same line as Commit because they share the bar. A focus line that did
+		// not match the visual row is the thing the D-pad user cannot see.
+		buttonLine(c.resetAllBtn, c.commitBtn)
 
 		items = append(items, c.host.errBar.focusItem())
 		logFocusList(c.host.focusName("custom"), items)

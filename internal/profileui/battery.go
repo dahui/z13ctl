@@ -175,3 +175,27 @@ func joinStatus(parts ...string) string {
 	}
 	return out
 }
+
+// ChargerLabel names which power input is supplying the machine, or "" when
+// the device cannot say or nothing is attached.
+//
+// Separate from BatteryStatus rather than folded into it, because that line is
+// already at its limit — it drops the state word when an estimate is present
+// specifically to stay legible, so a fourth element would undo the rule its own
+// doc comment states. The caller renders this alongside.
+//
+// Empty on battery: "which charger" has no answer when there is no charger, and
+// PowerLabel already says the machine is on battery. Empty for an unrecognised
+// kind too — naming it wrongly is worse than saying nothing.
+func ChargerLabel(s *api.State) string {
+	if s == nil {
+		return ""
+	}
+	switch s.Charger {
+	case "adapter":
+		return "Adapter"
+	case "usb-c":
+		return "USB-C"
+	}
+	return ""
+}

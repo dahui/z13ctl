@@ -174,6 +174,18 @@ func (t toggles) Set(id string, value int) error {
 	return p.set(value)
 }
 
+// PendingReboot reports whether a changed firmware setting is waiting on a
+// restart. asus-armoury exposes this once for the whole interface, as a plain
+// file beside the attribute directories rather than as an attribute of its own —
+// so it is read directly here rather than through togglePaths.
+func (t toggles) PendingReboot() (bool, error) {
+	v, err := readIntFile(sysFirmwareAttrDir + "/pending_reboot")
+	if err != nil {
+		return false, err
+	}
+	return v != 0, nil
+}
+
 // NewBattery returns the power_supply battery driver with the capabilities
 // device data declares.
 func NewBattery(caps driver.BatteryCaps) driver.Battery {
@@ -220,6 +232,9 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 	if now, full, err := ReadBatteryEnergyWh(); err == nil {
 		st.EnergyWh, st.EnergyFullWh = now, full
 	}
+	// Best-effort like the rest: a machine whose firmware cannot say which
+	// input is live still reports its charge level.
+	st.Charger = ReadCharger()
 	return st, nil
 }
 

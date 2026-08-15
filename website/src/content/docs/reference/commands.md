@@ -603,6 +603,44 @@ voltaire tdp --set 85 --force
 voltaire tdp --reset
 ```
 
+## tuning
+
+Manage the tuning overrides — fan curve, power limits and Curve Optimizer
+offset — as one group.
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--reset` | Clear the fan curve, power limits and Curve Optimizer offset |
+| `--profile <name>` | Clear them from a profile you are NOT running (stores only) |
+
+`--reset` returns the machine to the `balanced` profile with firmware fan
+control and stock power limits, and forgets the saved fan curve, limits and
+offset in the profile it edits.
+
+**This is not the same as running the three resets by hand.** Each of
+`fancurve --reset`, `tdp --reset` and `undervolt --reset` has to lower power
+before releasing the fans; issuing them in the wrong order leaves the machine at
+a high sustained limit with no fan floor. `tuning --reset` is a single daemon
+operation, so the ordering cannot be got wrong.
+
+It also differs from `tdp --reset` in what it *forgets*: `tdp --reset` keeps the
+saved Curve Optimizer offset so it can be recalled with `profile --set custom`,
+while `tuning --reset` is the command that says to discard all of it.
+
+```bash
+# Clear every tuning override and return to stock behaviour
+voltaire tuning --reset
+
+# Clear them from a profile you are not running
+voltaire tuning --reset --profile gaming
+```
+
+Without the daemon running, `--profile` is refused (only the daemon owns the
+saved profiles) and the bare form performs the same hardware sequence as
+`tdp --reset`.
+
 ## undervolt
 
 Get or set CPU Curve Optimizer (CO) offsets via the `ryzen_smu` kernel module.
@@ -672,11 +710,18 @@ battery charge level with charge limit.
 voltaire status
 ```
 
-This command is read-only and takes no flags. Values are read directly from
-sysfs, with two exceptions: undervolt has no sysfs readback, so the line
-reports availability rather than the active offset; and the TDP line asks the
-daemon which profile is active, because a custom TDP of exactly 5 W is
-otherwise indistinguishable from the kernel's stale 5 W boot cache.
+This command is read-only. Values are read directly from sysfs, with two
+exceptions: undervolt has no sysfs readback, so the line reports availability
+rather than the active offset; and the TDP line asks the daemon which profile is
+active, because a custom TDP of exactly 5 W is otherwise indistinguishable from
+the kernel's stale 5 W boot cache.
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `-w`, `--watch` | Redraw continuously until interrupted |
+| `--interval <duration>` | How often to redraw with `--watch` (default `1s`) |
 
 ```sh
 voltaire status
@@ -700,6 +745,30 @@ is loaded and says so:
 writing a zero offset, which is the same command as
 [`undervolt --reset`](#undervolt), so a `status` that ran it would clear an
 active undervolt every time.
+
+### Watching
+
+`--watch` redraws the report in place until you interrupt it:
+
+```sh
+voltaire status --watch
+voltaire status --watch --interval 5s
+```
+
+The default interval is one second, matching the daemon's sampler — redrawing
+faster than that shows the same numbers again. Intervals under 100 ms are
+refused for the same reason.
+
+It is deliberately not a full-screen interface: no alternate screen, no raw
+mode, no key handling. It walks the cursor back over the previous frame and
+clears from there down, so your scrollback is untouched and `Ctrl-C` leaves the
+last reading on screen. Piped or redirected output gets plain frames with no
+escape sequences, so `voltaire status --watch > log.txt` stays readable.
+
+The daemon is not required — `status` reads sysfs directly either way.
+
+For a richer terminal view, [z13-panel](https://github.com/ayixiayi/z13-panel)
+is a third-party TUI built on the same daemon socket.
 
 ## list
 

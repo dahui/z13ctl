@@ -233,7 +233,7 @@ func Run(ctx context.Context, opts Options) error {
 	// and undervolt while the daemon reports a firmware profile, and the
 	// reconcile watcher stays inert because the profile is no longer custom.
 	if leftCustom {
-		if d.uvAvailable() {
+		if d.uvApplied() {
 			if uvErr := d.hw.Undervolt.Reset(); uvErr != nil {
 				slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
 			}
@@ -619,6 +619,43 @@ func (d *Daemon) batteryStatus() (driver.BatteryStatus, bool) {
 // path at startup, never speculatively — this is a plain bool read.
 func (d *Daemon) uvAvailable() bool {
 	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.ProbeAvailable()
+}
+
+// uvApplied reports whether the Curve Optimizer offset is believed to be
+// applied in hardware right now. It is the gate on every Undervolt.Reset(),
+// and uvAvailable() is emphatically not enough on its own.
+//
+// uvAvailable() answers "is the module loaded and does this fork support CO on
+// this platform" — a property of the *machine*, not of its state. Gating a
+// reset on it alone means every route to a stock profile sends a live MP1
+// mailbox write on a machine that has never had an offset applied, to clear
+// something that was never set. One of those hard-locked this SoC on
+// 2026-08-14: total freeze, power cycle, no kernel output, while state showed
+// profile `balanced` with no undervolt saved or active anywhere. The known
+// ryzenadj-class hang is a userspace MP1 message colliding with the kernel's
+// own PMFW traffic, and the driver additionally shares one argument buffer
+// across mailboxes, so a collision corrupts arguments rather than merely
+// wasting a write.
+//
+// Active is the closest thing to a readback that exists here — the Curve
+// Optimizer has none — because it is set in exactly one place (applyCustomHW,
+// and only after the SMU write succeeded).
+//
+// The trade, stated because it is real: if hardware carries an offset that
+// state does not know about (a lost state file, or ryzenadj run by hand) this
+// skips a reset that was genuinely needed and leaves that offset applied. That
+// is recoverable — CO is volatile, so a reboot or a suspend clears it and the
+// daemon re-applies from state on resume — whereas the hang it avoids is not.
+//
+// Takes d.mu, so callers must not hold it. Every current caller reaches this
+// while holding hwMu only, which is the documented order (hwMu then d.mu).
+func (d *Daemon) uvApplied() bool {
+	if !d.uvAvailable() {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return undervoltActive(d.state)
 }
 
 // profileHW reads the platform profile from hardware, or "" when the device

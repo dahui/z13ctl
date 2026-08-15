@@ -10,6 +10,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/daemon"
 
 	"github.com/spf13/cobra"
 )
@@ -194,6 +195,14 @@ func runUndervoltReset() error {
 	}
 	if hw.Undervolt == nil {
 		return fmt.Errorf("no undervolt control on this device")
+	}
+	// Asked for explicitly — but if no offset is applied there is nothing to
+	// clear, and the write would be the speculative MP1 message with a known
+	// hard-hang mode (see Daemon.uvApplied). "Reset" is already the state the
+	// machine is in, so this succeeds rather than erroring.
+	if !daemon.UndervoltApplied() {
+		fmt.Println("Curve Optimizer already at stock (0) — nothing applied")
+		return nil
 	}
 	if err := hw.Undervolt.Reset(); err != nil {
 		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)

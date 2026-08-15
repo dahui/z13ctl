@@ -52,11 +52,12 @@ type settingsView struct {
 
 	focusItems []focusItem
 
-	root     *gtk.Box
-	scroll   *gtk.ScrolledWindow
-	backBtn  *gtk.Button
-	card     *gtk.Box
-	emptyLbl *gtk.Label
+	root      *gtk.Box
+	scroll    *gtk.ScrolledWindow
+	backBtn   *gtk.Button
+	card      *gtk.Box
+	emptyLbl  *gtk.Label
+	rebootLbl *gtk.Label
 
 	rows []*settingsRow
 
@@ -122,6 +123,21 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	heading.SetHAlign(gtk.AlignStart)
 	heading.AddCSSClass("section-label")
 	s.card.Append(heading)
+
+	// Inside the FIRMWARE card and above its rows, because it is about those
+	// rows: a BIOS setting that silently needs a restart looks exactly like one
+	// that did not work — the switch moves and nothing changes. Hidden until the
+	// firmware positively reports something pending; "cannot say" stays silent.
+	//
+	// Not focusable and not a control, so it costs no focus-list entry — the
+	// Settings grid is unchanged by it.
+	s.rebootLbl = gtk.NewLabel("")
+	s.rebootLbl.AddCSSClass("block-note")
+	s.rebootLbl.SetWrap(true)
+	s.rebootLbl.SetXAlign(0)
+	s.rebootLbl.SetVisible(false)
+	s.card.Append(s.rebootLbl)
+
 	inner.Append(s.card)
 
 	// Shown in place of the rows, and it says which kind of nothing this is:
@@ -315,6 +331,15 @@ func (s *settingsView) buildRow(r settingsui.Row) *gtk.Box {
 // widget is one the gamepad grid skips, so a controller cannot land on a
 // control it could not operate anyway.
 func (s *settingsView) sync() {
+	// Before the no-rows return: the flag is reported for the firmware interface
+	// as a whole, so it can be set on a device whose toggles this build cannot
+	// render — and that is exactly the user who most needs telling why the
+	// machine did not change.
+	if s.rebootLbl != nil {
+		notice := settingsui.RebootNotice(s.w.state)
+		s.rebootLbl.SetLabel(notice)
+		s.rebootLbl.SetVisible(notice != "")
+	}
 	if len(s.rows) == 0 {
 		return
 	}
