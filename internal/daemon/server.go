@@ -159,6 +159,10 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleBootSound(req)
 	case "bootsound-get":
 		return d.handleBootSoundGet()
+	case "cpuboost":
+		return d.handleCPUBoost(req)
+	case "cpuboost-get":
+		return d.handleCPUBoostGet()
 	case "paneloverdrive":
 		return d.handlePanelOverdrive(req)
 	case "paneloverdrive-get":
@@ -223,6 +227,12 @@ func (d *Daemon) dispatch(req request) response {
 		s.Features = d.readFeatures()
 		s.BootSound = s.Features["boot_sound"]
 		s.PanelOverdrive = s.Features["panel_overdrive"]
+		// Boost from the kernel rather than from the state we just cloned:
+		// cpufreq's switch is writable by anything with the grant and resets
+		// across a reboot, so cached state is an instruction and not a reading.
+		// Left nil when the read fails, which a client renders as unknown —
+		// false would say the CPU is not boosting.
+		s.CPUBoost = d.readCPUBoost()
 		// Populate fan curve from hardware for ground truth.
 		s.FanCurve = d.readFanCurveHW()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
@@ -547,6 +557,76 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	// notify identically rather than one of them open-coding it.
 	d.notifyToggleChanged("panel_overdrive", value)
 	return response{OK: true}
+}
+
+// readCPUBoost reports the live boost state, or nil when the device has no
+// boost control or the read failed. Deliberately not under hwMu, on the same
+// grounds every *-get handler avoids it: blocking a dashboard read behind a
+// fan write sequence is the regression, not the protection.
+func (d *Daemon) readCPUBoost() *bool {
+	if d.hw == nil || d.hw.CPUBoost == nil {
+		return nil
+	}
+	on, err := d.hw.CPUBoost.Get()
+	if err != nil {
+		slog.Debug("cpu boost read failed", "err", err)
+		return nil
+	}
+	return &on
+}
+
+// handleCPUBoostGet reads the boost state from the kernel, not from cached
+// state — the same ground-truth rule every other *-get handler follows, and it
+// matters more here than most: cpufreq's switch is writable by anything with
+// the grant, and it resets itself across a reboot.
+func (d *Daemon) handleCPUBoostGet() response {
+	if d.hw == nil || d.hw.CPUBoost == nil {
+		return response{OK: false, Error: "reading cpu boost: not supported on this device"}
+	}
+	on, err := d.hw.CPUBoost.Get()
+	if err != nil {
+		return response{OK: false, Error: "reading cpu boost: " + err.Error()}
+	}
+	return response{OK: true, Value: boolValue(on)}
+}
+
+// handleCPUBoost turns boost clocks on or off and records the choice.
+//
+// The state write is not a cache of the hardware — it is the *instruction* the
+// daemon replays at startup, because cpufreq comes back boosting on every boot
+// and a preference nobody restores is one the user has to set again every day.
+// That is the same contract fan curves, PPT limits and the Curve Optimizer
+// have, and it is why this is not a firmware toggle.
+func (d *Daemon) handleCPUBoost(req request) response {
+	value, err := strconv.Atoi(strings.TrimSpace(req.Set))
+	if err != nil || (value != 0 && value != 1) {
+		return response{OK: false, Error: "cpu boost must be 0 or 1"}
+	}
+	if d.hw == nil || d.hw.CPUBoost == nil {
+		return response{OK: false, Error: "cpuboost: not supported on this device"}
+	}
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+	on := value == 1
+	if err := d.hw.CPUBoost.Set(on); err != nil {
+		return response{OK: false, Error: "cpuboost: " + err.Error()}
+	}
+	slog.Info("cpuboost", "set", on)
+
+	d.mu.Lock()
+	d.state.CPUBoost = &on
+	snapshot := cloneState(d.state)
+	d.mu.Unlock()
+	d.saveAndNotify(snapshot)
+	return response{OK: true}
+}
+
+// boolValue is the wire form of a bool for a Value field, which is a string.
+func boolValue(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
 
 // handleFanCurveGet reads the current fan curve from hardware (both fans).

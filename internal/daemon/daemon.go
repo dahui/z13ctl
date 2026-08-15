@@ -288,6 +288,20 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	// Restore CPU boost. cpufreq comes up boosting on every boot regardless of
+	// what the user last chose, so this is the whole reason the setting is kept
+	// in state at all — without the replay, "boost off" is a decision that
+	// silently expires overnight. Only a stored *false* is acted on: a nil
+	// means the user never expressed a preference, and writing the default back
+	// would be voltaire claiming a setting it was never given.
+	if d.state.CPUBoost != nil && !*d.state.CPUBoost && d.hw.CPUBoost != nil {
+		if bErr := d.hw.CPUBoost.Set(false); bErr != nil {
+			slog.Warn("failed to restore cpu boost", "err", bErr)
+		} else {
+			slog.Info("cpu boost restored", "on", false)
+		}
+	}
+
 	// Restore fan curve + TDP + undervolt if the last profile was a custom one.
 	// This goes through the same helper the socket command and the autoswitch
 	// watcher use, so startup cannot drift from them — in particular it clears

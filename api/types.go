@@ -23,14 +23,24 @@ type State struct {
 	PanelOverdrive     int                      `json:"panel_overdrive,omitempty"`
 	CustomProfiles     map[string]CustomProfile `json:"custom_profiles,omitempty"` // saved custom profiles keyed by name
 	Autoswitch         *AutoswitchState         `json:"autoswitch,omitempty"`
-	FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`    // projection; see the type doc
-	TDP                *TDPState                `json:"tdp,omitempty"`          // projection; see the type doc
-	Undervolt          *UndervoltState          `json:"undervolt,omitempty"`    // projection; see the type doc
-	UndervoltAvailable bool                     `json:"undervolt_available"`    // true if ryzen_smu is loaded
-	OnAC               bool                     `json:"on_ac"`                  // true when running on mains power
-	SourceKnown        bool                     `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
-	Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
-	FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+	FanCurve           *FanCurveState           `json:"fan_curve,omitempty"` // projection; see the type doc
+	TDP                *TDPState                `json:"tdp,omitempty"`       // projection; see the type doc
+	Undervolt          *UndervoltState          `json:"undervolt,omitempty"` // projection; see the type doc
+	UndervoltAvailable bool                     `json:"undervolt_available"` // true if ryzen_smu is loaded
+
+	// CPUBoost is whether the CPU's opportunistic boost clocks are enabled.
+	//
+	// A pointer, and absent rather than false when it could not be read — the
+	// same rule State.Features follows for a toggle whose value is unknown, and
+	// for the same reason: false is "boost is off", a claim about the machine,
+	// and a client showing a switch has to be able to render "I do not know".
+	// A device with no boost control omits it too, so a client that hides the
+	// control on absence is right on both counts.
+	CPUBoost    *bool `json:"cpu_boost,omitempty"`
+	OnAC        bool  `json:"on_ac"`                  // true when running on mains power
+	SourceKnown bool  `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
+	Temperature int   `json:"temperature,omitempty"`  // APU temp, degrees Celsius
+	FanRPM      int   `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 
 	// RPM is every fan the device reports, in the driver's order; FanRPM is
 	// RPM[0]. Both are carried because they answer different questions and one

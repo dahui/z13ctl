@@ -312,6 +312,14 @@ func (t telemetry) Sample() (driver.Sample, error) {
 	return s, nil
 }
 
+// NewCPUBoost returns the cpufreq boost driver.
+func NewCPUBoost() driver.CPUBoost { return cpuBoost{} }
+
+type cpuBoost struct{}
+
+func (cpuBoost) Get() (bool, error) { return ReadCPUBoost() }
+func (cpuBoost) Set(on bool) error  { return SetCPUBoost(on) }
+
 // NewUndervolter returns the ryzen_smu Curve Optimizer driver with bounds from
 // device data. All the destructive-probe caveats on SMUProbeUndervolt apply.
 func NewUndervolter(lo, hi int) driver.Undervolter {

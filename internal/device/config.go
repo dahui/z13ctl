@@ -25,6 +25,7 @@ type Config struct {
 	Toggles   *TogglesConfig   `toml:"toggles"`
 	Battery   *BatteryConfig   `toml:"battery"`
 	Undervolt *UndervoltConfig `toml:"undervolt"`
+	CPU       *CPUConfig       `toml:"cpu"`
 	Telemetry *TelemetryConfig `toml:"telemetry"`
 	Button    *ButtonConfig    `toml:"button"`
 }
@@ -155,6 +156,18 @@ func (c BatteryConfig) Caps() driver.BatteryCaps {
 		limit = *c.ChargeLimit
 	}
 	return driver.BatteryCaps{ChargeLimit: limit, Health: c.Health}
+}
+
+// CPUConfig declares CPU-level controls. It is a section rather than a bool
+// for the reason [battery] and [telemetry] are: its contents are independently
+// absent, so a machine that offers boost control today and core parking
+// tomorrow can say which without the block meaning two different things.
+//
+// Boost names the driver behind the boost switch ("cpufreq") and is empty when
+// the device offers none — a block declaring nothing at all is a validation
+// error, matching the empty-toggles rule: drop the block instead.
+type CPUConfig struct {
+	Boost string `toml:"boost"`
 }
 
 // UndervoltConfig selects the undervolt driver and its offset bounds.
@@ -341,6 +354,9 @@ func (c Config) Validate() error {
 		if caps := c.Battery.Caps(); !caps.ChargeLimit && !caps.Health {
 			fail("battery block offers neither charge_limit nor health; drop the block instead")
 		}
+	}
+	if c.CPU != nil && c.CPU.Boost == "" {
+		fail("[cpu] declares nothing; drop the block instead")
 	}
 	if c.Undervolt != nil {
 		if c.Undervolt.Method == "" {

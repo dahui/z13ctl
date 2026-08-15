@@ -76,6 +76,9 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 			})
 		}
 	}
+	if hw.CPUBoost != nil {
+		info.CPU = &api.CPUInfo{Boost: true}
+	}
 	if hw.Undervolt != nil {
 		lo, hi := hw.Undervolt.Range()
 		info.Undervolt = &api.UndervoltInfo{Min: lo, Max: hi}

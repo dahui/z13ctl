@@ -65,9 +65,10 @@ view. See [Theming](/voltaire/gui/theming/) for details.
 
 ## The Dashboard tab
 
-The full window's **Dashboard** tab is the page to leave open: a grid of
-labelled charts across the top, and the controls you actually reach for
-underneath them. The daemon samples the machine once a second and keeps the
+The full window's **Dashboard** tab is the page to leave open. It reads in
+three bands, each under its own heading: **Telemetry** — what the machine is
+doing — then **System** — what it is set to — then **RGB** — what it looks
+like. The daemon samples the machine once a second and keeps the
 last five minutes, so the charts are drawn from readings taken whether or not
 anything was open.
 
@@ -146,9 +147,10 @@ systemctl --user restart voltaire
 
 ### The controls under the charts
 
+### System
+
 Beneath the charts are the settings that change what the machine is doing right
 now — as opposed to the Profiles tab, which edits what a saved profile *says*.
-They are grouped in two cards:
 
 **Power**
 
@@ -156,9 +158,10 @@ They are grouped in two cards:
 |---------|-------------|
 | **Profile** | The three firmware profiles. **Custom…** opens the Profiles tab — the trailing dots mean it goes somewhere rather than selecting a fourth profile; its label is whichever custom profile is running. |
 | **Charge limit** | The charge cap, 40–100%, with the current value beside the slider. |
+| **CPU boost** | Turns the CPU's boost clocks on or off. Off caps every core at its base clock — 3.0 GHz instead of 5.19 GHz on the Z13 — for less peak power and heat. The kernel re-enables boost at every boot, so voltaire remembers your choice and restores it. |
 | **Autoswitch** | Turn it on and the two indented rows appear: a profile to apply on AC, and one on battery. |
 
-**Lighting and display**
+### RGB
 
 The keyboard and the lightbar get **a card each**, side by side, with the same
 controls in both. The drawer switches between the two zones with a pair of tabs

@@ -25,7 +25,7 @@ ordinary one-shot CLI invocations cannot:
   (see [API](/voltaire/reference/api/)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`, `feature`, `fancurve`, `tdp`, `undervolt`,
+`bootsound`, `paneloverdrive`, `cpuboost`, `feature`, `fancurve`, `tdp`, `undervolt`,
 `status`) automatically route through the daemon socket when it is running. If
 the daemon is not running they fall back to direct hardware or sysfs access
 transparently — there is no user-visible difference other than persistence.
@@ -226,6 +226,8 @@ for all zones. `brightness` is 0–3.
 | Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
 | Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
 | Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+| Set CPU boost | `{"cmd":"cpuboost","set":"0"}` | `ok` |
+| Get CPU boost | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
 | Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
 | Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
 | Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |

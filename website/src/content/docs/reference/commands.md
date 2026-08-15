@@ -329,6 +329,39 @@ voltaire paneloverdrive --get
 voltaire paneloverdrive --set 1
 ```
 
+## cpuboost
+
+Get or set the CPU's opportunistic boost clocks, through cpufreq's global boost
+switch (`/sys/devices/system/cpu/cpufreq/boost`). Root or group access
+required; see [setup](#setup).
+
+Disabling boost caps every core at its base clock — on the Z13's Ryzen AI Max+
+395 that is 3.0 GHz instead of 5.19 GHz — which lowers peak power and heat at
+the cost of peak single-thread performance. One write moves every cpufreq
+policy at once.
+
+Unlike the firmware toggles it resembles, this is a **kernel runtime setting**:
+the kernel re-enables boost on every boot. The daemon records your choice and
+restores it at startup, so setting it with the daemon stopped changes the
+hardware now but will not survive a reboot — the command says so when that
+happens.
+
+```
+voltaire cpuboost [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print whether boost is enabled |
+| `--set <value>` | `0` = disabled, `1` = enabled |
+
+```sh
+voltaire cpuboost --get
+voltaire cpuboost --set 0
+```
+
+The same switch is on the full window's Dashboard, in the **Power** card.
+
 ## feature
 
 Get or set the device's firmware toggles (BIOS switches) by their id — the

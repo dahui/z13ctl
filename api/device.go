@@ -23,6 +23,7 @@ type DeviceInfo struct {
 	Lighting  *LightingInfo  `json:"lighting,omitempty"`
 	Toggles   []ToggleInfo   `json:"toggles,omitempty"`
 	Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
+	CPU       *CPUInfo       `json:"cpu,omitempty"`
 	Battery   *BatteryInfo   `json:"battery,omitempty"`
 	Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
@@ -121,6 +122,18 @@ const (
 type UndervoltInfo struct {
 	Min int `json:"min"`
 	Max int `json:"max"`
+}
+
+// CPUInfo says what CPU-level controls the device offers. A section rather
+// than a bool for the same reason BatteryInfo is one: its contents are
+// independently absent, so a machine that gains a second CPU control later can
+// say so without this field having meant two things.
+type CPUInfo struct {
+	// Boost is true when cpuboost get/set work. Boost clocks are a kernel
+	// runtime setting rather than a firmware one — they come back on at every
+	// boot — so unlike a toggle in Toggles the daemon persists and restores the
+	// user's choice.
+	Boost bool `json:"boost,omitempty"`
 }
 
 // BatteryInfo says what the device's battery interface offers. The section

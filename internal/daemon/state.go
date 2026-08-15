@@ -269,6 +269,10 @@ func cloneState(s api.State) api.State {
 		w := *s.BatteryPowerW
 		c.BatteryPowerW = &w
 	}
+	if s.CPUBoost != nil {
+		b := *s.CPUBoost
+		c.CPUBoost = &b
+	}
 	return c
 }
 

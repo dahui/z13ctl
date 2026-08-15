@@ -221,6 +221,25 @@ type Toggles interface {
 	Set(id string, value int) error
 }
 
+// CPUBoost turns the CPU's opportunistic boost clocks on and off.
+//
+// It is its own capability rather than a Toggles entry, and the reason is
+// volatility. A firmware toggle is a BIOS setting the machine keeps by itself,
+// which is why nothing persists one; boost is a kernel runtime control that
+// comes back enabled on every boot, so a user's choice survives only if the
+// daemon restores it — the same contract fan curves, PPT limits and the Curve
+// Optimizer have. Rendering it beside the BIOS switches would have said the
+// opposite about who is responsible for keeping it.
+//
+// The value is a plain bool because there is nothing else it can be: the
+// hardware either boosts or it does not. Whether it can be *read* is the
+// error's job, exactly as elsewhere — a device that cannot report its own
+// state must not be shown as "off".
+type CPUBoost interface {
+	Get() (bool, error)
+	Set(on bool) error
+}
+
 // BatteryStatus is a point-in-time battery reading. Fields the hardware does
 // not report are zero.
 //

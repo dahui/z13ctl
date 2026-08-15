@@ -29,6 +29,9 @@ type (
 	BatteryFactory func(BatteryConfig) (driver.Battery, error)
 	// UndervoltFactory builds an undervolter.
 	UndervoltFactory func(UndervoltConfig) (driver.Undervolter, error)
+
+	// CPUBoostFactory builds a CPU boost switch.
+	CPUBoostFactory func(CPUConfig) (driver.CPUBoost, error)
 	// TelemetryFactory builds a telemetry source.
 	TelemetryFactory func(TelemetryConfig) (driver.Telemetry, error)
 	// ButtonsFactory builds a hardware-buttons watcher.
@@ -46,6 +49,7 @@ var (
 	togglesFactories   = map[string]TogglesFactory{}
 	batteryFactories   = map[string]BatteryFactory{}
 	undervoltFactories = map[string]UndervoltFactory{}
+	cpuBoostFactories  = map[string]CPUBoostFactory{}
 	telemetryFactories = map[string]TelemetryFactory{}
 	buttonsFactories   = map[string]ButtonsFactory{}
 )
@@ -89,6 +93,11 @@ func RegisterBattery(method string, f BatteryFactory) {
 // RegisterUndervolt registers an undervolter factory under a method name.
 func RegisterUndervolt(method string, f UndervoltFactory) {
 	register("undervolt", undervoltFactories, method, f)
+}
+
+// RegisterCPUBoost registers a CPU boost factory under a method name.
+func RegisterCPUBoost(method string, f CPUBoostFactory) {
+	register("cpu boost", cpuBoostFactories, method, f)
 }
 
 // RegisterTelemetry registers a telemetry factory under a method name.

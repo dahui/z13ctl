@@ -364,6 +364,7 @@ func registerFakeFactories(t *testing.T) {
 	togglesFactories["asus-armoury"] = func(TogglesConfig) (driver.Toggles, error) { return fakeToggles{}, nil }
 	batteryFactories["power-supply"] = func(BatteryConfig) (driver.Battery, error) { return fakeBattery{}, nil }
 	undervoltFactories["ryzen-smu-co"] = func(UndervoltConfig) (driver.Undervolter, error) { return fakeUndervolt{}, nil }
+	cpuBoostFactories["cpufreq"] = func(CPUConfig) (driver.CPUBoost, error) { return fakeCPUBoost{}, nil }
 	telemetryFactories["hwmon-rapl"] = func(TelemetryConfig) (driver.Telemetry, error) { return fakeTelemetry{}, nil }
 	buttonsFactories["evdev-key"] = func(ButtonConfig) (driver.Buttons, error) { return fakeButtons{}, nil }
 	t.Cleanup(func() {
@@ -374,6 +375,7 @@ func registerFakeFactories(t *testing.T) {
 		delete(togglesFactories, "asus-armoury")
 		delete(batteryFactories, "power-supply")
 		delete(undervoltFactories, "ryzen-smu-co")
+		delete(cpuBoostFactories, "cpufreq")
 		delete(telemetryFactories, "hwmon-rapl")
 		delete(buttonsFactories, "evdev-key")
 	})
@@ -430,6 +432,11 @@ func (fakeUndervolt) ProbeAvailable() bool { return false }
 func (fakeUndervolt) Range() (lo, hi int)  { return -40, 0 }
 func (fakeUndervolt) Apply(int) error      { return nil }
 func (fakeUndervolt) Reset() error         { return nil }
+
+type fakeCPUBoost struct{}
+
+func (fakeCPUBoost) Get() (bool, error) { return true, nil }
+func (fakeCPUBoost) Set(bool) error     { return nil }
 
 type fakeTelemetry struct{}
 

@@ -112,8 +112,14 @@ type dashboardView struct {
 	// every Window-level walker nil-checks before adding it.
 	profiles *profileSection
 	autos    *autoswitchSection
-	dsp      *displaySection
-	battery  *batterySection
+
+	// boostSw is the CPU boost switch, nil on a device that offers none. Its
+	// row is in the POWER card beside the profile, because boost is the other
+	// control on this page that changes how hard the machine is allowed to
+	// work — the charge limit and autoswitch below it are about the battery.
+	boostSw *gtk.Switch
+	dsp     *displaySection
+	battery *batterySection
 
 	// lightings is one RGB block per lighting zone, where the drawer has one
 	// block and a pair of zone tabs. Empty on a device with no lighting.
@@ -188,7 +194,13 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 	inner.SetMarginEnd(14)
 	inner.SetMarginBottom(8)
 
-	inner.Append(d.buildSpanRow())
+	// The page is three labelled bands: what the machine is doing, what it is
+	// set to, and what it looks like (Jeff, 2026-08-14). The span selector
+	// rides on the TELEMETRY heading's own line rather than taking a row of its
+	// own — it belongs to that band and nothing else, and a heading row with
+	// its control at the far end is a line the page would otherwise spend
+	// twice.
+	inner.Append(dashSectionHeader("TELEMETRY", d.buildSpanRow()))
 
 	// The card grid. min-width on .dash-card is what drives the reflow: four
 	// tiles per row across a 1200px window — the at-a-glance grid the dashboard
@@ -276,6 +288,13 @@ func (d *dashboardView) buildControls() *gtk.Box {
 		d.battery = b
 		powerRows = append(powerRows, row)
 	}
+	// Below the charge limit rather than above it (Jeff, 2026-08-14: "I think
+	// it will present better there"). A switch between two rows that are both
+	// wide controls reads as an interruption; under them it closes the block,
+	// and the eye runs down the two sliders-and-selectors first.
+	if has(controls.CapCPUBoost) {
+		powerRows = append(powerRows, d.buildBoostRow())
+	}
 	if has(controls.CapProfiles, controls.CapBattery) {
 		// Last in the card: it is the only setting here that acts on its own
 		// later, so it reads as a rule applied to the two above it.
@@ -299,9 +318,14 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	}
 
 	region := gtk.NewBox(gtk.OrientationVertical, 12)
-	region.SetMarginTop(16)
 
 	if left.FirstChild() != nil || right.FirstChild() != nil {
+		// SYSTEM rather than POWER: the band holds the refresh rate as well as
+		// the profile, the charge limit and boost, and POWER would both
+		// under-describe it and repeat the heading of the card directly beneath
+		// it. Splitting it into two bands was the alternative and is worse —
+		// DISPLAY would be a band heading over a card heading over one row.
+		region.Append(dashSectionHeader("SYSTEM", nil))
 		columns := gtk.NewBox(gtk.OrientationHorizontal, 12)
 		// Equal halves rather than natural widths: the two cards hold different
 		// controls, and letting the wider one win would move the label columns
@@ -317,6 +341,7 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	// of five form rows each, and each needs the width one half of the window
 	// gives it before the six-effect row starts ellipsizing.
 	if has(controls.CapLighting) {
+		region.Append(dashSectionHeader("RGB", nil))
 		region.Append(d.buildLightingRow())
 	}
 
@@ -324,6 +349,63 @@ func (d *dashboardView) buildControls() *gtk.Box {
 		return nil
 	}
 	return region
+}
+
+// buildBoostRow builds the CPU boost switch.
+//
+// A switch rather than a pair of buttons, unlike the button preference in
+// Settings: this one genuinely has an off state that describes something ("the
+// cores are capped at base clock"), where that one had two arrangements and no
+// natural negation. The switch also matches the Settings page's rows, which is
+// what a reader coming from there expects an on/off hardware setting to look
+// like.
+func (d *dashboardView) buildBoostRow() *gtk.Box {
+	sw := gtk.NewSwitch()
+	sw.SetHAlign(gtk.AlignStart)
+	sw.SetVAlign(gtk.AlignCenter)
+	// Insensitive until a value has been read, exactly as the settings rows
+	// are: State.CPUBoost is absent rather than false when the daemon could not
+	// read it, and a switch sitting at "off" would be a claim about the CPU.
+	sw.SetSensitive(false)
+	sw.ConnectStateSet(func(state bool) bool {
+		// gtk.Switch fires state-set on a programmatic SetActive too, so an
+		// unguarded sync writes every row back to the daemon.
+		if !d.w.syncing {
+			d.w.sendCPUBoostSet(state)
+		}
+		return false
+	})
+	if d.w.gamescope {
+		addTouchActivate(sw, func() { sw.SetActive(!sw.Active()) })
+	}
+	d.boostSw = sw
+	return formRow("CPU boost", sw)
+}
+
+// syncCPUBoost re-syncs the boost switch wherever it has been built. A
+// Window-level walker on the pattern syncBattery and syncLightingSection set,
+// so a second surface growing one is an addition rather than a new sync path.
+func (w *Window) syncCPUBoost() {
+	if m := w.mainWin; m != nil && m.dashboard != nil {
+		m.dashboard.syncBoost()
+	}
+}
+
+// syncBoost moves the switch to the daemon's reading. Absent means the value
+// could not be read, which is insensitive rather than off — and an insensitive
+// widget is one the gamepad grid skips, so a controller cannot land on a
+// control that would fail.
+func (d *dashboardView) syncBoost() {
+	if d.boostSw == nil {
+		return
+	}
+	st := d.w.state
+	if st == nil || st.CPUBoost == nil {
+		d.boostSw.SetSensitive(false)
+		return
+	}
+	d.boostSw.SetSensitive(true)
+	d.boostSw.SetActive(*st.CPUBoost)
 }
 
 // lightingZones is the zone cards this page builds, in display order. The
@@ -383,6 +465,43 @@ func (d *dashboardView) openProfilesTab() {
 // control with a source of its own.
 func (d *dashboardView) syncControls() {
 	d.dsp.sync() // nil-safe: the method guards its own receiver
+	d.syncBoost()
+}
+
+// dashSectionHeader builds one band heading: the title, an optional control
+// aligned to its right, and the rule under both.
+//
+// .section-group is the drawer's own group heading — the class "TDP AND POWER"
+// and "RGB" already use — so a theme styles these without knowing the dashboard
+// exists, and gamescope's scaledCSS already carries it. The rule is a plain
+// GtkSeparator for the same reason: .drawer separator is themed, so the line
+// takes the palette's border colour on every theme including a hand-written
+// one.
+//
+// A band whose content is empty must not call this at all. A heading with a
+// rule under it and nothing below is the same trap as a tab onto an empty page:
+// it describes something that is not there, and on this page a missing band
+// means the device lacks the capability rather than that anything failed.
+func dashSectionHeader(title string, trailing gtk.Widgetter) *gtk.Box {
+	box := gtk.NewBox(gtk.OrientationVertical, 2)
+	box.SetMarginTop(14)
+
+	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	lbl := gtk.NewLabel(title)
+	lbl.AddCSSClass("section-group")
+	lbl.SetXAlign(0)
+	lbl.SetHExpand(true)
+	lbl.SetVAlign(gtk.AlignCenter)
+	row.Append(lbl)
+	if trailing != nil {
+		row.Append(trailing)
+	}
+	box.Append(row)
+
+	sep := gtk.NewSeparator(gtk.OrientationHorizontal)
+	sep.SetMarginBottom(6)
+	box.Append(sep)
+	return box
 }
 
 // buildSpanRow builds the history-window selector, offering only spans the
@@ -390,8 +509,6 @@ func (d *dashboardView) syncControls() {
 func (d *dashboardView) buildSpanRow() *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	row.AddCSSClass("btn-group")
-	row.SetMarginTop(6)
-	row.SetMarginBottom(4)
 
 	// Right-aligned, natural-width buttons: a compact desktop control above
 	// the grid, not the drawer's full-width touch strip. Safe to change here
@@ -881,14 +998,30 @@ func (d *dashboardView) buildFocusList() {
 	// gamepad order is its visual order by construction — the property
 	// controlBuilder exists to give the drawer, reached here by building both
 	// halves from the same nil-checked instance.
+	// In the POWER card's own reading order. It was profile → autoswitch →
+	// battery for as long as this page has existed, while the card has always
+	// shown profile → charge limit → autoswitch: D-pad down from Profile landed
+	// on the autoswitch switch and skipped the charge limit entirely, and
+	// nothing on screen looked wrong. Same class as the profile row's Line(3)
+	// and the settings buttons' One()-each — a coordinate that disagrees with
+	// the widgets is the failure nobody notices with a mouse in their hand, and
+	// this one predated all of them.
 	if d.profiles != nil {
 		d.profiles.appendFocus(b, &items)
 	}
-	if d.autos != nil {
-		d.autos.appendFocus(b, &items)
-	}
 	if d.battery != nil {
 		d.battery.appendFocus(b, &items)
+	}
+	if d.boostSw != nil {
+		c := b.Section("boost").One()
+		sw := d.boostSw
+		items = append(items, focusItem{
+			widget: sw, row: c.Row, col: c.Col, section: c.Section,
+			onActivate: func() { sw.SetActive(!sw.Active()) },
+		})
+	}
+	if d.autos != nil {
+		d.autos.appendFocus(b, &items)
 	}
 	d.dsp.appendFocus(b, &items) // nil-safe
 	for _, l := range d.lightings {

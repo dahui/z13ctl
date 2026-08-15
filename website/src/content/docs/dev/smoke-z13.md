@@ -437,6 +437,23 @@ outside.
 - [ ] The same **Custom** button in the *drawer's* RGB section opens the same
       picker there, sized to the 320px panel: nothing clipped at the right
       edge, the readout column and the hex fully visible.
+- [ ] The Dashboard reads as three headed bands — **TELEMETRY** (with the span
+      buttons on its heading line), **SYSTEM**, **RGB** — each title over a full
+      width rule that takes the theme's border colour. Switch themes with the
+      window open and the rules follow.
+- [ ] Dashboard → **CPU boost**: turn it off and
+      `cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq` drops to
+      the base clock (3000000 on this machine); turn it back on and it returns
+      to 5187500. `voltaire cpuboost --get` agrees with the switch either way.
+- [ ] The choice is *replayed*, which is the whole reason it is not a firmware
+      toggle: set it off, then
+      `echo 1 | sudo tee /sys/devices/system/cpu/cpufreq/boost` (what a reboot
+      does) and `systemctl --user restart voltaire` — the daemon puts it back to
+      0 and logs `cpu boost restored`. With no stored preference it must write
+      nothing at all.
+- [ ] On a machine that has not re-run `sudo voltaire setup`, the switch is
+      present and every write fails with a permission error rather than
+      silently doing nothing.
 - [ ] Settings → **Armoury Crate button**: the summary line under it names both
       gestures and changes with the choice. Set it to **Full window**, then press
       the hardware button once — the full window opens, not the quickbar — and

@@ -214,6 +214,18 @@ func DryRunBootSound(value int) {
 	fmt.Printf("Would write %d to %s\n", value, asusz13.FindBootSoundPath())
 }
 
+// DryRunCPUBoost prints the sysfs write that would be performed for a CPU
+// boost change.
+func DryRunCPUBoost(on bool) {
+	v := 0
+	if on {
+		v = 1
+	}
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	fmt.Printf("Would write %d to %s\n", v, asusz13.CPUBoostPath())
+	fmt.Println("  (this moves every cpufreq policy at once)")
+}
+
 // DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")

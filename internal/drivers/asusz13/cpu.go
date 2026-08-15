@@ -125,3 +125,61 @@ func firstInt(line string) int {
 	}
 	return 0
 }
+
+// CPUBoostAvailable reports whether this kernel exposes the cpufreq boost
+// switch at all. A stat, not a read: it is asked to decide whether to declare
+// the capability, and a driver that cannot answer must not be the reason a
+// control is hidden.
+func CPUBoostAvailable() bool {
+	_, err := os.Stat(sysCPUBoostPath)
+	return err == nil
+}
+
+// ReadCPUBoost reports whether opportunistic boost clocks are enabled.
+//
+// The file holds 0 or 1 and is global to cpufreq, so this is the whole answer
+// for every core. Anything else is an error rather than a guess — "off" is a
+// claim about the hardware, and the caller renders an unreadable value as
+// unknown.
+func ReadCPUBoost() (bool, error) {
+	v, err := readIntFile(sysCPUBoostPath)
+	if err != nil {
+		return false, err
+	}
+	return v != 0, nil
+}
+
+// SetCPUBoost enables or disables boost clocks.
+//
+// It reads the value back, because a silently-ignored write is the failure
+// mode this project has been bitten by before (SetBothFanCurves verifies for
+// exactly that reason): the amd-pstate driver refuses the write in some modes,
+// and the write itself succeeds either way. A caller that is told "on" must be
+// able to believe it.
+func SetCPUBoost(on bool) error {
+	v := "0"
+	if on {
+		v = "1"
+	}
+	if err := os.WriteFile(sysCPUBoostPath, []byte(v), 0o644); err != nil {
+		return fmt.Errorf("write cpu boost: %w", err)
+	}
+	got, err := ReadCPUBoost()
+	if err != nil {
+		// The write landed and the readback did not. Reporting failure here
+		// would be worse than saying nothing: the setting is probably applied,
+		// and the caller's fallback is to show it as unknown anyway.
+		return nil
+	}
+	if got != on {
+		return fmt.Errorf("cpu boost did not take: asked %v, reads %v "+
+			"(the scaling driver may not support toggling it in this mode)", on, got)
+	}
+	return nil
+}
+
+// CPUBoostPath is the cpufreq boost switch's path, for dry-run output and for
+// setup's permission grant. Exported rather than duplicated at the call sites
+// so there is one string: a grant that names a different path from the one the
+// driver writes is a permission that silently does nothing.
+func CPUBoostPath() string { return sysCPUBoostPath }

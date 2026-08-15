@@ -46,6 +46,7 @@ type Device struct {
 	Toggles   driver.Toggles
 	Battery   driver.Battery
 	Undervolt driver.Undervolter
+	CPUBoost  driver.CPUBoost
 	Telemetry driver.Telemetry
 	Buttons   driver.Buttons
 }
@@ -199,6 +200,15 @@ func Assemble(c Config) (*Device, error) {
 		}
 		if d.Undervolt, err = f(*c.Undervolt); err != nil {
 			return nil, fmt.Errorf("undervolt (%s): %w", c.Undervolt.Method, err)
+		}
+	}
+	if c.CPU != nil && c.CPU.Boost != "" {
+		f, err := lookup("cpu boost", cpuBoostFactories, c.CPU.Boost)
+		if err != nil {
+			return nil, err
+		}
+		if d.CPUBoost, err = f(*c.CPU); err != nil {
+			return nil, fmt.Errorf("cpu boost (%s): %w", c.CPU.Boost, err)
 		}
 	}
 	if c.Telemetry != nil {

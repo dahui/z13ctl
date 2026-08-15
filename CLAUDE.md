@@ -42,6 +42,7 @@ cmd/                         Cobra subcommands
   paneloverdrive.go          get/set panel refresh overdrive (asus-armoury firmware-attributes)
   feature.go                 generic firmware-toggle access by id (--list/--get/--set id=value)
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs)
+  cpuboost.go                get/set cpufreq boost clocks
   tdp.go                     get/set/reset TDP power limits (asus-nb-wmi PPT sysfs)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
   status.go                  display system status (temperature, fans, profile, TDP, battery)
@@ -129,7 +130,8 @@ internal/
                              (power_now, or current x voltage; energy_now, or charge x voltage)
       gpu.go                 amdgpu: edge temp, busy %, sclk, VRAM carveout, and the pure
                              gpu_metrics v3.0 parser (GFX power at 124, UCLK at 186)
-      cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory
+      cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory,
+                             and the global boost switch (read/write/verify)
       npu.go                 amdxdna NPU power/util/clock over DRM ioctls; queried only
                              while runtime_status reads active (opening it resumes the NPU)
       net.go                 /proc/net/dev byte counters, summed over physical interfaces
@@ -472,6 +474,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | telemetry history | `{"cmd":"telemetry-history","seconds":60}` | `ok`, `history` (typed array; absent `seconds` = the whole window) |
   | feature set | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
   | feature get | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
+  | cpu boost set | `{"cmd":"cpuboost","set":"0"}` | `ok` |
+  | cpu boost get | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
   | panel overdrive set | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
   | panel overdrive get | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
   | fan curve get | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |
@@ -1251,6 +1255,38 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   *skips* when the counter exists but is unreadable, because that is a machine
   that has not run setup rather than a defect, and the skip message says which.
   Any new capability field with a reading behind it wants the same guard.
+- **CPU boost is a capability of its own, not a firmware toggle, and the
+  difference is who keeps the setting** (`driver.CPUBoost`; Jeff, 2026-08-14).
+  It looks exactly like one: a 0/1 sysfs file, an on/off switch, a `--set 0`.
+  But a firmware toggle is a BIOS setting the *machine* keeps, which is why
+  nothing persists one — while cpufreq comes up boosting on every boot, so a
+  user's "off" survives only if the daemon replays it. Rendering it beside the
+  BIOS switches would have said the opposite about who is responsible, and
+  nothing would have restored it. It sits with fan curves, PPT and the Curve
+  Optimizer instead: recorded in state, restored in `Run()`.
+  **Only a stored `false` is replayed.** `State.CPUBoost` is a `*bool`, and nil
+  means the user never expressed a preference — writing the default back there
+  would be voltaire claiming a setting it was never given, and it is the same
+  absent-is-not-false rule `State.Features` follows for an unreadable toggle.
+  `get-state` reads the kernel rather than serving the stored value, because
+  anything with the grant can write that file; the stored value is an
+  *instruction*, not a cache. New pointer on `api.State` ⇒ `cloneState` got it.
+  **The write verifies.** `SetCPUBoost` reads back and errors when the value
+  did not take — amd-pstate refuses it in some modes and the write succeeds
+  anyway, which is the `SetBothFanCurves` lesson by another route. A failed
+  *readback* is deliberately not an error: the write probably landed, and the
+  caller's fallback is "unknown" regardless.
+  **The grant is service-only, and it is the first one that has to be.** Every
+  other target has a udev rule as a best-effort first pass with the perms unit
+  behind it; `/sys/devices/system/cpu/cpufreq/boost` is a plain kobject rather
+  than a device, so `udevadm info` answers "Unknown device" and no rule can
+  match it at all. `cmd/setup_test.go`'s grant table records that asymmetry,
+  and the negative control was run — deleting the line from the packaged unit
+  fails the guard. **Existing installs need `sudo voltaire setup` again**, or
+  the switch is there and every write is EACCES.
+  Measured on this machine: boost off drops `scaling_max_freq` from 5187500 to
+  3000000 across all 33 policies, and one write to the global file moves every
+  one of them.
 - **The powercap grant is the only read-only one, and that is not an
   accident.** Every other target `voltaire setup` touches is `chmod g+w`
   because voltaire writes it. `/sys/class/powercap` holds the package power

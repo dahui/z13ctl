@@ -337,6 +337,46 @@ func SendPanelOverdriveSet(value int) (bool, error) {
 	return true, nil
 }
 
+// SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off.
+// Returns (false, nil) if the daemon is not running.
+//
+// Unlike the firmware toggles this looks like, the setting is not kept by the
+// machine: cpufreq comes back with boost enabled on every boot, so the daemon
+// records the choice and restores it at startup.
+func SendCPUBoostSet(on bool) (bool, error) {
+	v := "0"
+	if on {
+		v = "1"
+	}
+	handled, resp, err := sendCommand(request{Cmd: "cpuboost", Set: v})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, respErr(resp)
+	}
+	return true, nil
+}
+
+// SendCPUBoostGet reads whether boost clocks are currently enabled, from the
+// hardware rather than from cached state. Returns (false, false, nil) if the
+// daemon is not running.
+func SendCPUBoostGet() (handled, on bool, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "cpuboost-get"})
+	if !handled || err != nil {
+		return handled, false, err
+	}
+	if !resp.OK {
+		return true, false, respErr(resp)
+	}
+	v, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, false, fmt.Errorf("invalid cpu boost value %q: %w", resp.Value, parseErr)
+	}
+	return true, v != 0, nil
+}
+
 // SendBootSoundGet queries the daemon for the current boot sound setting by
 // reading sysfs. Returns (false, 0, nil) if the daemon is not running.
 func SendBootSoundGet() (handled bool, value int, err error) {

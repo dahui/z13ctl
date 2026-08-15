@@ -38,6 +38,11 @@ var sysfsGrants = []struct {
 	{name: "panel overdrive", match: "attributes/panel_overdrive/current_value", rules: true, service: true},
 	{name: "PPT power limits", match: "/sys/devices/platform/asus-nb-wmi/ppt_*", rules: true, service: true},
 	{name: "ryzen_smu", match: "/sys/kernel/ryzen_smu_drv/", service: true},
+	// Service only, and unusually so: cpufreq's boost switch is a plain kobject
+	// rather than a device, so udevadm cannot even name it and no rule can
+	// grant it. Everything else in this table that the unit covers has a rule
+	// beside it as a best-effort first pass; this one has the unit or nothing.
+	{name: "cpufreq boost", match: "/sys/devices/system/cpu/cpufreq/boost", service: true},
 	// The one read-only grant. energy_uj is 0400 root:root under the Platypus
 	// mitigation, so package power is unreadable without it; the rule matches
 	// the package-0 domain and the unit globs, because the counter can exist

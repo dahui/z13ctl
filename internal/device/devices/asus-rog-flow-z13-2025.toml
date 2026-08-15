@@ -80,6 +80,14 @@ description = "Faster pixel response for the display (may cause ghosting)"
 method = "power-supply"
 health = true
 
+# cpufreq's global boost switch (/sys/devices/system/cpu/cpufreq/boost). Writing
+# it moves every policy at once: measured here, 0 drops scaling_max_freq from
+# 5187500 to 3000000 across all 33 policies and 1 restores it. udev cannot see
+# the path — it is a plain kobject, not a device — so the group-write grant comes
+# from voltaire-perms.service rather than a rule.
+[cpu]
+boost = "cpufreq"
+
 # CPU Curve Optimizer via ryzen_smu (amkillam fork required on Strix Halo);
 # iGPU CO is unsupported on this silicon.
 [undervolt]

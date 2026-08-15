@@ -72,6 +72,11 @@ const (
 	// there" — a settings page gated on an empty list would be the tab that
 	// opens onto an empty page.
 	CapToggles Capability = "toggles"
+
+	// CapCPUBoost is the boost switch. Like CapToggles it is not simply "the
+	// section exists": [cpu] can declare a control this build does not have,
+	// so the question is whether *boost* specifically is offered.
+	CapCPUBoost Capability = "cpu-boost"
 )
 
 // The group headings the drawer prints, exactly as they are shown.
@@ -251,6 +256,8 @@ func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 		return info.Telemetry != nil
 	case CapUndervolt:
 		return info.Undervolt != nil
+	case CapCPUBoost:
+		return info.CPU != nil && info.CPU.Boost
 	case CapToggles:
 		return len(info.Toggles) > 0
 	}

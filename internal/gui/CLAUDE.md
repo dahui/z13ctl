@@ -1283,6 +1283,55 @@ title changed to match while the ID stayed `dashboard`.
     every other control, not pushed to the far edge as in the drawer's label
     row; the two targets are `subFormRow`s indented under it, which is what says
     they depend on it.
+- **The CPU boost switch is in the POWER card, under the charge limit** (Jeff,
+  2026-08-14: "I think it will present better there"). It went above it first,
+  on the reasoning that boost and the profile are the two controls that change
+  how hard the machine may work — but a switch wedged between two wide controls
+  reads as an interruption, and under them it closes the block and sits beside
+  the autoswitch switch, so the card ends with its two toggles together.
+  A `gtk.Switch` rather than the button pair
+  the Settings tab's preference uses, because this one has a real off state
+  that describes something ("cores capped at base clock") where that one was
+  two arrangements with no natural negation — and it matches the Settings rows,
+  which is what a reader arriving from there expects an on/off hardware setting
+  to look like. Absent from `State.CPUBoost` renders **insensitive, not off**,
+  the established rule, and `syncCPUBoost` hangs off `refreshState` as well as
+  `syncControls`: the settings page was found stale for exactly the want of
+  that second call site.
+- **Moving it exposed an older mismatch: the POWER card's focus order was not
+  its visual order, and had not been since the card was written.** The list ran
+  profile → autoswitch → battery while the card showed profile → charge limit →
+  autoswitch, so D-pad down from Profile landed on the autoswitch switch and
+  skipped the charge limit — with nothing on screen looking wrong. It is the
+  third instance of this class in two days (`profileSection.appendFocus`'s
+  `Line(3)`, the settings buttons' `One()`-each) and the only one that predated
+  them. `buildFocusList` now appends in the card's reading order; the fix is
+  visible in the dump as `battery`/`boost` moving ahead of `autoswitch`.
+- **The page is three labelled bands — TELEMETRY, SYSTEM, RGB — each a title
+  over a rule** (Jeff, 2026-08-14). Four cards in two rows read as one
+  undifferentiated slab once there were four of them; the bands say what each
+  group is for, in the page's own order: what the machine is *doing*, what it
+  is *set to*, what it *looks like*.
+  `dashSectionHeader` reuses `.section-group` — the drawer's own group-heading
+  class, the one "TDP AND POWER" and "RGB" already wear — so a theme styles
+  these without knowing the dashboard exists and gamescope's `scaledCSS`
+  already carries it. The rule is a plain `GtkSeparator` for the same reason:
+  `.drawer separator` is themed, so the line takes the palette's border colour
+  even under a hand-written sheet. No new CSS.
+  **The middle band is SYSTEM, and the name was the only real choice here.** It
+  holds the profile, the charge limit, CPU boost, autoswitch *and* the refresh
+  rate; POWER would both under-describe it and repeat the heading of the card
+  directly beneath it. Splitting it in two was the alternative and is worse —
+  DISPLAY would be a band heading over a card heading over a single row.
+  **The span selector rides the TELEMETRY heading's line** rather than taking a
+  row of its own. It belongs to that band and to nothing else, and a heading row
+  with its control at the far end costs one line instead of two.
+  **A band with no content must not render its heading at all** — a title and a
+  rule over nothing is the tab-onto-an-empty-page trap, and here a missing band
+  means the device lacks the capability rather than that something failed. Both
+  bands are behind the same capability checks their cards were.
+  The whole change is a reparent: `VOLTAIRE_GUI_DUMP_FOCUS` came back
+  byte-identical on all seven lines.
 - **Four cards in two rows**: POWER | DISPLAY, then KEYBOARD | LIGHTBAR at full
   width beneath them. The split is domain — what the machine runs like against
   what it looks like. DISPLAY used to sit *under* LIGHTING in a right-hand

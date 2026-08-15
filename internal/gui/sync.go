@@ -116,6 +116,12 @@ func (w *Window) refreshState() {
 		// the page was built and never move again.
 		w.syncBattery()
 		w.syncLightingSection()
+		// The dashboard's boost switch, for the same reason and with the
+		// same syncing guard: it is a gtk.Switch, and refreshState is the
+		// funnel every write path and daemon event ends in. syncControls
+		// alone would leave it correct only at the moment the tab is opened
+		// — which is exactly how the settings page was found stale.
+		w.syncCPUBoost()
 		w.syncing = false
 		w.updateHeader()
 	})
@@ -217,6 +223,22 @@ func (w *Window) sendProfileSet(prof string) {
 // The error names the toggle's id rather than a prose label because this
 // function does not have one: the label is device data the page renders, and
 // an id is what the user would grep the daemon's log for.
+// sendCPUBoostSet turns boost clocks on or off through the daemon.
+//
+// Deliberately not sendFeatureSet: boost is not one of the device's firmware
+// toggles, and routing it through the generic feature command would need the
+// daemon to invent an id for something that is not in its toggle list.
+func (w *Window) sendCPUBoostSet(on bool) {
+	go func() {
+		slog.Debug("sendCPUBoostSet: calling daemon", "on", on)
+		if err := apiresult.Err(api.SendCPUBoostSet(on)); err != nil {
+			w.reportError("Set CPU boost", err)
+			return
+		}
+		w.clearErrorAsync()
+	}()
+}
+
 func (w *Window) sendFeatureSet(id string, value int) {
 	go func() {
 		slog.Debug("sendFeatureSet: calling daemon", "id", id, "value", value)

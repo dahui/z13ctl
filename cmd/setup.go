@@ -37,6 +37,7 @@ func buildRulesContent(group string) string {
 #   - asus-nb-wmi battery charge_control_end_threshold for battery limit control
 #   - Armoury Crate button input device for daemon button watcher
 #   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
+#   - cpufreq's global boost switch (perms unit only — udev cannot see it)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
 #   - asus-nb-wmi PPT power limit attributes for TDP control
 #   - powercap RAPL energy_uj for package-power telemetry (read only)
@@ -70,12 +71,15 @@ ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 
 // or fmt.Sprintf escaping — a bare "$f" expands to the empty string.
 func buildServiceContent(group string) string {
 	return fmt.Sprintf(`[Unit]
-Description=voltaire sysfs permissions (battery + firmware-attributes + PPT + ryzen_smu + powercap)
+Description=voltaire sysfs permissions (battery + firmware-attributes + PPT + cpufreq boost + ryzen_smu + powercap)
 # charge_control_end_threshold on BAT0 is created by asus_nb_wmi late in probe(),
 # after all observable udev child-device events. udev RUN+= cannot catch it.
 # firmware-attributes current_value files may be created after the parent ADD event.
 # ppt_* on the asus-nb-wmi platform device are created late in the same probe(),
 # so the udev rule for them is best-effort only and this service is the reliable path.
+# cpufreq's global boost switch is not a udev device at all — the path is a
+# plain kobject, so udevadm info answers "Unknown device" and no rule can
+# grant it. This unit is the only path.
 # ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 # powercap energy_uj is 0400 root:root under the Platypus mitigation and is
 # granted READ only — write would hand out the package power caps themselves.
@@ -87,17 +91,25 @@ RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f" || true; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/powercap/*/energy_uj; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+r "$$f"; done'
 
 [Install]
 WantedBy=multi-user.target
-`, group, group, group, group, group)
+`, group, group, group, group, group, group)
 }
 
 // applySysfsPerms scans live sysfs for files managed by voltaire and either
 // applies chgrp/chmod immediately (dryRun=false) or prints what would be done
 // (dryRun=true). Errors are silently skipped for missing/inaccessible paths.
+// cpuBoostPath is cpufreq's global boost switch, granted group-write so the
+// daemon (which runs as the user) can toggle it. The grant is narrow on
+// purpose: it is one file, and the only thing it confers is the ability to turn
+// boost clocks off — not the power *caps* beside it, which is the same
+// distinction that keeps the powercap grant read-only.
+const cpuBoostPath = "/sys/devices/system/cpu/cpufreq/boost"
+
 func applySysfsPerms(group string, dryRun bool) {
 	chgrpChmod := func(p, mode string) {
 		if dryRun {
@@ -177,6 +189,14 @@ func applySysfsPerms(group string, dryRun bool) {
 				chgrpChmod("/sys/devices/platform/asus-nb-wmi/"+f.Name(), "g+w")
 			}
 		}
+	}
+
+	// cpufreq's global boost switch. Not reachable by udev at all — the path is
+	// a plain kobject under /sys/devices/system/cpu, not a device, so
+	// `udevadm info` answers "Unknown device" — which makes the perms unit the
+	// only path for it and is why there is no matching rule below.
+	if _, bErr := os.Stat(cpuBoostPath); bErr == nil {
+		chgrpChmod(cpuBoostPath, "g+w")
 	}
 
 	// ryzen_smu sysfs files for Curve Optimizer (undervolt).
@@ -373,8 +393,8 @@ This command must be run with sudo (unless --dry-run is used).`,
 
 		fmt.Printf("\nDone. Members of the '%s' group can now run voltaire without sudo.\n", setupGroup)
 		fmt.Println("This covers RGB control, performance profiles, battery charge limiting,")
-		fmt.Println("the Armoury Crate button, boot sound, panel overdrive, fan curves, TDP,")
-		fmt.Println("and undervolt (if ryzen_smu is installed).")
+		fmt.Println("the Armoury Crate button, boot sound, panel overdrive, fan curves,")
+		fmt.Println("TDP, CPU boost, and undervolt (if ryzen_smu is installed).")
 		fmt.Printf("If your user is not in '%s', add it with:\n", setupGroup)
 		fmt.Printf("  sudo usermod -aG %s $USER\n", setupGroup)
 		fmt.Println("Then log out and back in for the group change to take effect.")

@@ -42,6 +42,14 @@ func init() {
 	device.RegisterUndervolt("ryzen-smu-co", func(c device.UndervoltConfig) (driver.Undervolter, error) {
 		return asusz13.NewUndervolter(c.Min, c.Max), nil
 	})
+	// Not an ASUS interface at all — cpufreq's boost switch is generic Linux,
+	// and any future device driver can register the same method name against
+	// its own config. It lives here because this is the only binary that drives
+	// hardware today; when a second device wants it, the factory moves to a
+	// shared package rather than being copied.
+	device.RegisterCPUBoost("cpufreq", func(device.CPUConfig) (driver.CPUBoost, error) {
+		return asusz13.NewCPUBoost(), nil
+	})
 	device.RegisterTelemetry("hwmon-rapl", func(c device.TelemetryConfig) (driver.Telemetry, error) {
 		return asusz13.NewTelemetry(c.Info()), nil
 	})
