@@ -23,6 +23,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/controls"
+	"github.com/dahui/voltaire/v2/internal/display"
 	"github.com/dahui/voltaire/v2/internal/gui/fonts"
 	"github.com/dahui/voltaire/v2/internal/gui/gamepad"
 	"github.com/dahui/voltaire/v2/internal/gui/gamescope"
@@ -177,6 +178,16 @@ type Window struct {
 	// made inside that closure, so this needs no atomic. See internal/buttonpref.
 	press buttonpref.Surface
 
+	// refreshPrefs is the screen refresh rate to select on each power source,
+	// and onAC/sourceKnown are the latch that makes the switch edge-triggered.
+	// They live on Window rather than on the DISPLAY card because the switch
+	// runs whether or not the full window was ever opened; the card is a view
+	// of the pair. All main-thread-owned — refreshState's idle closure is the
+	// only writer. See displayview.go.
+	refreshPrefs display.Prefs
+	onAC         bool
+	sourceKnown  bool
+
 	// Custom theme state (set when theme.toml exists).
 	isCustomTheme bool
 	customColors  theme.Colors
@@ -214,13 +225,13 @@ type Window struct {
 // Diagnosing issue #16 was hard enough without the fix adding its own scary
 // line to the logs.
 func layerShellUsable() bool {
-	display := gdk.DisplayGetDefault()
-	if display == nil {
+	gdkDisplay := gdk.DisplayGetDefault()
+	if gdkDisplay == nil {
 		slog.Warn("no GDK display available; assuming layer-shell is unusable")
 		return false
 	}
 	// e.g. "GdkWaylandDisplay", "GdkX11Display".
-	if backend := display.TypeFromInstance().Name(); !strings.Contains(backend, "Wayland") {
+	if backend := gdkDisplay.TypeFromInstance().Name(); !strings.Contains(backend, "Wayland") {
 		slog.Debug("GDK is not using the Wayland backend, so layer-shell cannot apply",
 			"gdkDisplay", backend)
 		return false
@@ -333,13 +344,14 @@ func New(app *gtk.Application) *Window {
 	doc := deviceDocument()
 	cfg := guiConfig()
 	w := &Window{
-		device:    doc,
-		limits:    deviceLimits(doc),
-		controls:  resolveControls(cfg, doc),
-		edge:      resolveEdge(cfg),
-		press:     resolveButtonPress(),
-		colors:    theme.DefaultColors,
-		gamescope: os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
+		device:       doc,
+		limits:       deviceLimits(doc),
+		controls:     resolveControls(cfg, doc),
+		edge:         resolveEdge(cfg),
+		press:        resolveButtonPress(),
+		refreshPrefs: resolveRefreshPrefs(),
+		colors:       theme.DefaultColors,
+		gamescope:    os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 	}
 
 	w.win = gtk.NewApplicationWindow(app)
@@ -867,11 +879,11 @@ func (w *Window) subscribeLoop() {
 //  3. config.toml theme = "id"    — built-in theme selection
 //  4. embedded "rog-dark"         — compiled-in default
 func (w *Window) loadCSS() {
-	display := gdk.DisplayGetDefault()
+	gdkDisplay := gdk.DisplayGetDefault()
 
 	layout := gtk.NewCSSProvider()
 	layout.LoadFromString(layoutCSS)
-	gtk.StyleContextAddProviderForDisplay(display, layout, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+	gtk.StyleContextAddProviderForDisplay(gdkDisplay, layout, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 	w.themeProvider = gtk.NewCSSProvider()
 	base := theme.XDGConfigHome()
@@ -943,16 +955,16 @@ func (w *Window) loadCSS() {
 		slog.Info("theme loaded", "source", "builtin", "theme", cfg.Theme, "accent", cfg.Accent)
 	}
 
-	gtk.StyleContextAddProviderForDisplay(display, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
+	gtk.StyleContextAddProviderForDisplay(gdkDisplay, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
 }
 
 // applyTheme hot-swaps the theme CSS provider and persists the selection to
 // config.toml. accentID may be "" to use the theme's default accent.
 // Must be called from the GTK main thread.
 func (w *Window) applyTheme(id, accentID string) {
-	display := gdk.DisplayGetDefault()
+	gdkDisplay := gdk.DisplayGetDefault()
 	if w.themeProvider != nil {
-		gtk.StyleContextRemoveProviderForDisplay(display, w.themeProvider)
+		gtk.StyleContextRemoveProviderForDisplay(gdkDisplay, w.themeProvider)
 	}
 	w.themeProvider = gtk.NewCSSProvider()
 	colors, ok := theme.BuiltinByID(id)
@@ -967,7 +979,7 @@ func (w *Window) applyTheme(id, accentID string) {
 	}
 	w.colors = colors
 	w.themeProvider.LoadFromString(theme.BuildThemeCSS(colors, defaultThemeCSS))
-	gtk.StyleContextAddProviderForDisplay(display, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
+	gtk.StyleContextAddProviderForDisplay(gdkDisplay, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
 	// Read-modify-write, never a fresh value: SaveAppConfig writes the whole
 	// file, so constructing one here would discard every preference this
 	// function does not happen to know about.
@@ -989,14 +1001,14 @@ func (w *Window) applyCustomAccent(accentID string) {
 			break
 		}
 	}
-	display := gdk.DisplayGetDefault()
+	gdkDisplay := gdk.DisplayGetDefault()
 	if w.themeProvider != nil {
-		gtk.StyleContextRemoveProviderForDisplay(display, w.themeProvider)
+		gtk.StyleContextRemoveProviderForDisplay(gdkDisplay, w.themeProvider)
 	}
 	w.themeProvider = gtk.NewCSSProvider()
 	w.colors = colors
 	w.themeProvider.LoadFromString(theme.BuildThemeCSS(colors, defaultThemeCSS))
-	gtk.StyleContextAddProviderForDisplay(display, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
+	gtk.StyleContextAddProviderForDisplay(gdkDisplay, w.themeProvider, gtk.STYLE_PROVIDER_PRIORITY_USER)
 	// Change only the accent. Saving AppConfig{Accent: …} wrote an empty theme
 	// key, discarding the user's built-in theme choice — invisible while
 	// theme.toml exists, since it wins on load, and a silent reset to rog-dark the

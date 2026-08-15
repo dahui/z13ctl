@@ -66,6 +66,31 @@ func formRowIndented(name string, control gtk.Widgetter, indent int) *gtk.Box {
 	return row
 }
 
+// formDropdown wraps a dropdown trigger so a form row can hold one.
+//
+// It exists because the trigger has no styling of its own: `.dropdown-trigger`
+// sets padding, and every *colour* a button gets in this tree comes from
+// `.drawer .btn-group button`. A trigger with no `.btn-group` ancestor therefore
+// falls straight through voltaire's sheet to the desktop GTK theme — which on
+// Breeze is a white pill sitting in the middle of a dark card, and on any other
+// theme is something else again.
+//
+// That is not hypothetical: the dashboard's two autoswitch target rows were
+// `subFormRow(label, d.btn)` from the day the desktop branch was written and had
+// been rendering in stock Breeze ever since. The drawer's own version always
+// wrapped its trigger in a `.btn-group` row, which is why the drawer looked
+// right and the window did not. Same failure as the retired
+// `.bottom-bar menubutton > button` rules: a selector that stops matching says
+// nothing, and the result reads as a theming gap rather than as a bug.
+//
+// Every form row holding a dropdown must go through here.
+func formDropdown(btn *gtk.Button) *gtk.Box {
+	row := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	row.AddCSSClass("btn-group")
+	row.Append(btn)
+	return row
+}
+
 // firstLabel returns a row's name label, for the one control whose name is not
 // fixed (the refresh rate names its output on a multi-screen machine). Asking
 // the built row beats returning the label from formRow: every other caller

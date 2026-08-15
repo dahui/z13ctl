@@ -278,7 +278,10 @@ func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst *
 	*ddDst = d
 
 	if a.desktop {
-		return subFormRow(label, d.btn)
+		// formDropdown, not the bare trigger: a trigger outside a .btn-group
+		// gets no colour from voltaire's sheet at all. See its doc — this row is
+		// the one that was wrong.
+		return subFormRow(label, formDropdown(d.btn))
 	}
 
 	row := gtk.NewBox(gtk.OrientationHorizontal, 8)

@@ -19,8 +19,9 @@ import (
 // comments.
 //
 // Values are kept as plain strings and validated by whoever consumes them —
-// Theme against the built-in table, ButtonPress through buttonpref.Parse — so
-// this package stays a carrier and does not have to know what any of them mean.
+// Theme against the built-in table, ButtonPress through buttonpref.Parse, the
+// refresh trio through display.ParseEnabled/ParsePref — so this package stays a
+// carrier and does not have to know what any of them mean.
 type AppConfig struct {
 	Theme  string // built-in theme ID; empty = use default
 	Accent string // accent ID within the theme; "" = use theme default
@@ -28,6 +29,20 @@ type AppConfig struct {
 	// ButtonPress is which surface a single press of the hardware button
 	// opens; "" means the default. See internal/buttonpref.
 	ButtonPress string
+
+	// RefreshAutoswitch turns the refresh-rate switch on; "" is off, which is
+	// what makes it opt-in. RefreshAC and RefreshBattery are the rate to select
+	// when the machine moves onto mains and onto battery, in whole hertz.
+	//
+	// Three keys rather than two because the on/off state has to be its own
+	// value: deriving it from "are both rates set" would mean switching off had
+	// to erase them, and there would be nothing to restore on switching back on.
+	// Stored as a rate rather than as the compositor's mode id, because a mode
+	// id does not survive the panel's mode list changing and means nothing on a
+	// second screen; internal/display has the argument and does the resolving.
+	RefreshAutoswitch string
+	RefreshAC         string
+	RefreshBattery    string
 }
 
 // LoadAppConfig reads ~/.config/voltaire/config.toml.
@@ -62,6 +77,12 @@ func LoadAppConfig() AppConfig {
 			cfg.Accent = v
 		case "button_press":
 			cfg.ButtonPress = v
+		case "refresh_autoswitch":
+			cfg.RefreshAutoswitch = v
+		case "refresh_ac":
+			cfg.RefreshAC = v
+		case "refresh_battery":
+			cfg.RefreshBattery = v
 		}
 	}
 	return cfg
@@ -80,6 +101,15 @@ func SaveAppConfig(cfg AppConfig) {
 	}
 	if cfg.ButtonPress != "" {
 		content += "button_press = \"" + cfg.ButtonPress + "\"\n"
+	}
+	if cfg.RefreshAutoswitch != "" {
+		content += "refresh_autoswitch = \"" + cfg.RefreshAutoswitch + "\"\n"
+	}
+	if cfg.RefreshAC != "" {
+		content += "refresh_ac = \"" + cfg.RefreshAC + "\"\n"
+	}
+	if cfg.RefreshBattery != "" {
+		content += "refresh_battery = \"" + cfg.RefreshBattery + "\"\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o644); err != nil {
 		slog.Warn("failed to write config", "err", err)

@@ -417,6 +417,23 @@ outside.
       the dropdown re-reads to `60 Hz`. Put it back to 180 Hz.
 - [ ] With a second screen attached, the card's title names the output it acts
       on (`REFRESH RATE · eDP-1`); with only the panel, it does not.
+- [ ] **Autoswitch** sits under it, off, with no target rows — the same shape as
+      the Power card's autoswitch. Turn it on: two indented rows appear reading
+      `180 Hz` (On AC, the rate already running) and `60 Hz` (On battery, the
+      lowest offered), the screen does *not* change, and
+      `~/.config/voltaire/config.toml` gains `refresh_autoswitch = "true"`,
+      `refresh_ac = "180"`, `refresh_battery = "60"`.
+- [ ] **Unplug the charger.** The screen drops to 60 Hz within a couple of
+      seconds and the **Refresh rate** row re-reads to `60 Hz`; the journal has
+      `refresh rate switched source=battery rate="60 Hz"`. Plug back in — it
+      goes back to 180 Hz.
+- [ ] Turn the switch off: the two rows disappear but the config keeps both
+      rates. Cycle the charger — nothing touches the screen and the journal logs
+      no `refresh rate switched`. Turn it back on: the rows return at 180/60
+      rather than being re-guessed.
+- [ ] Restart `voltaire-gui` while on battery with a rate configured: the screen
+      is **left where it is** (the journal says `power source latched`, not
+      `switched`) — a rate set by hand has to survive a restart.
 - [ ] Lighting is **two cards, KEYBOARD and LIGHTBAR**, side by side with no
       zone selector, and each shows six effects in **one row**, not a 3×2 block.
       Set the two zones to different effects and colours — they stay independent,

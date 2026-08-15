@@ -145,7 +145,10 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
-	SaveAppConfig(AppConfig{Theme: "nord", Accent: "sapphire", ButtonPress: "window"})
+	SaveAppConfig(AppConfig{
+		Theme: "nord", Accent: "sapphire", ButtonPress: "window",
+		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
+	})
 
 	UpdateAppConfig(func(cfg *AppConfig) { cfg.Accent = "lavender" })
 
@@ -153,11 +156,15 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	if loaded.Accent != "lavender" {
 		t.Errorf("Accent = %q, want lavender", loaded.Accent)
 	}
-	if loaded.Theme != "nord" {
-		t.Errorf("Theme = %q, want nord — an unrelated update discarded it", loaded.Theme)
+	want := AppConfig{
+		Theme: "nord", Accent: "lavender", ButtonPress: "window",
+		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
 	}
-	if loaded.ButtonPress != "window" {
-		t.Errorf("ButtonPress = %q, want window — an unrelated update discarded it", loaded.ButtonPress)
+	// Compared whole rather than field by field: every previous field here was
+	// added by hand, and a new one that nobody remembers to assert is exactly
+	// the field the next unrelated update silently drops.
+	if loaded != want {
+		t.Errorf("config = %+v, want %+v — an unrelated update discarded a field", loaded, want)
 	}
 }
 
@@ -178,5 +185,32 @@ func TestButtonPressRoundTrip(t *testing.T) {
 	SaveAppConfig(AppConfig{Theme: "nord"})
 	if got := LoadAppConfig().ButtonPress; got != "" {
 		t.Errorf("ButtonPress = %q, want empty when unset", got)
+	}
+}
+
+// The refresh preferences travel through the same file as the theme and are
+// written by a control, so a value that does not survive a round trip would
+// reset itself on the next login — and this pair is one a user only notices
+// when their screen stops dropping to 60 on battery.
+func TestRefreshPrefsRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	SaveAppConfig(AppConfig{
+		Theme: "nord", RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
+	})
+	got := LoadAppConfig()
+	if got.RefreshAutoswitch != "true" || got.RefreshAC != "180" || got.RefreshBattery != "60" {
+		t.Errorf("refresh = %q %q/%q, want true 180/60",
+			got.RefreshAutoswitch, got.RefreshAC, got.RefreshBattery)
+	}
+
+	// Unset writes no key, and reads back empty — "leave the screen alone" is
+	// display's default to decide, not this package's to fill in.
+	SaveAppConfig(AppConfig{Theme: "nord"})
+	got = LoadAppConfig()
+	if got.RefreshAutoswitch != "" || got.RefreshAC != "" || got.RefreshBattery != "" {
+		t.Errorf("refresh = %q %q/%q, want empty when unset",
+			got.RefreshAutoswitch, got.RefreshAC, got.RefreshBattery)
 	}
 }

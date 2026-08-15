@@ -307,11 +307,11 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	}
 
 	// The refresh rate is not a device capability — it belongs to the
-	// compositor — so it asks its own backend instead of the document. It is
-	// the right column's whole content: one row beside POWER's five, which
-	// leaves the row ragged and is fine now that a full-width band closes the
-	// region underneath. It used to sit below LIGHTING for exactly that reason,
-	// and LIGHTING has left this row.
+	// compositor — so it asks its own backend instead of the document. It is the
+	// right column's whole content: the live rate plus an autoswitch block of
+	// its own, which reads as a column against POWER's rather than the single
+	// stranded row it was before that block joined it. It used to sit below
+	// LIGHTING for that reason, and LIGHTING has left this row.
 	if dsp, row := w.newDisplaySection(); dsp != nil {
 		d.dsp = dsp
 		right.Append(sectionCard("DISPLAY", row))

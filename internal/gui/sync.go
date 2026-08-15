@@ -124,6 +124,14 @@ func (w *Window) refreshState() {
 		w.syncCPUBoost()
 		w.syncing = false
 		w.updateHeader()
+		// The screen's refresh rate, if the power source has actually moved.
+		// Here rather than in the subscribe loop's power-source case because
+		// the event carries no payload — the source is in the state this
+		// function just fetched — and here rather than in syncState because
+		// this is the funnel the daemon's event reaches, on every surface and
+		// whether or not anything is on screen. Edge-triggered inside; see
+		// displayview.go.
+		w.refreshForPowerSource(state)
 	})
 }
 

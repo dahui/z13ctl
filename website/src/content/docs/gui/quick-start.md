@@ -161,6 +161,13 @@ now — as opposed to the Profiles tab, which edits what a saved profile *says*.
 | **CPU boost** | Turns the CPU's boost clocks on or off. Off caps every core at its base clock — 3.0 GHz instead of 5.19 GHz on the Z13 — for less peak power and heat. The kernel re-enables boost at every boot, so voltaire remembers your choice and restores it. |
 | **Autoswitch** | Turn it on and the two indented rows appear: a profile to apply on AC, and one on battery. |
 
+**Display**
+
+| Setting | What it does |
+|---------|-------------|
+| **Refresh rate** | The rates your screen offers at the resolution it is running (see below). |
+| **Autoswitch** | Off by default. Turn it on and the two indented rows appear: the rate to use on AC, and the rate to use on battery. |
+
 ### RGB
 
 The keyboard and the lightbar get **a card each**, side by side, with the same
@@ -173,7 +180,6 @@ see and change both at once.
 | **Effect** | Static, breathe, cycle, rainbow, strobe, off. |
 | **Colour 1 / 2** | Eight presets, the current colour, and **Custom…** for the full picker. The second colour appears only for effects that use one. |
 | **Speed / Brightness** | Shown for the effects that have them. Brightness is named rather than numbered — Off, Low, Medium, High. |
-| **Refresh rate** | The rates your screen offers at the resolution it is running (see below). |
 
 A card only shows the settings its effect uses, so the two are often different
 heights — a zone on *cycle* has no colours to set. That is deliberate: the page
@@ -205,6 +211,37 @@ Two details worth knowing:
 If you change the rate and the compositor refuses or substitutes a mode, the
 dropdown re-reads afterwards and shows what the screen is actually running — not
 what was asked for.
+
+#### Dropping the rate on battery
+
+A 180 Hz panel costs real battery life at 180 Hz, so **Autoswitch** under the
+rate dropdown changes it with the charger. It works exactly like the profile
+autoswitch in the Power card beside it: one switch, and two indented rows saying
+what to use on each power source.
+
+Turning it on fills those rows in for you — **On AC** takes the rate you are
+already running, so nothing changes under you, and **On battery** takes the
+lowest rate your screen offers, which is the whole point of the feature. Change
+either one from its dropdown. Turning the switch off keeps both, so switching
+back on picks up where you left off.
+
+Some things worth knowing:
+
+- **Nothing happens when you pick a rate.** These rows say what should happen
+  when the power source *changes*; the **Refresh rate** row above is how you
+  change the rate now. Same as the autoswitch profile targets.
+- **The rate is stored, not the display mode.** Set *60 Hz* and voltaire looks
+  for a 60 Hz mode at the moment it needs one. Dock a screen that has no 60 Hz
+  mode and it leaves that screen alone rather than picking something near it —
+  the card says so too.
+- **Nothing changes at login.** Your desktop already remembers the rate it was
+  running; voltaire only acts on a change of power source while it is running,
+  so a rate you set by hand survives a restart.
+- **It needs the daemon**, because the daemon is what reports the power source.
+  It does not need the window to be open.
+
+It lives in `~/.config/voltaire/config.toml` as `refresh_autoswitch`,
+`refresh_ac` and `refresh_battery` — the last two in whole hertz.
 
 ## The Profiles tab
 

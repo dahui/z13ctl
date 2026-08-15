@@ -1393,6 +1393,69 @@ title changed to match while the ID stayed `dashboard`.
   its own power draw. A failed read goes to the card's block note, not the error
   bar — this is a background refresh nobody asked for — while a failed *change*
   is a deliberate action and reports there.
+- **The card's other rows are a second autoswitch block — a switch and two
+  targets — and they are in DISPLAY rather than in the POWER card's autoswitch**
+  (Jeff, 2026-08-14). Autoswitch was where the request put them, and three
+  things pointed the other way. The card already owns the rates snapshot and the
+  capability check, so building them here needs no wiring between two sections
+  and no second `kscreen-doctor` call — the target dropdowns read `d.rates`,
+  which the live control's own `sync()` fills. Hanging them off the *profile*
+  autoswitch switch would make "why is my screen not switching?" answerable only
+  by a control in a different card, and would tie a client-side preference to a
+  daemon-side flag for no mechanical reason. And they cost the drawer nothing,
+  because the drawer has no DISPLAY card — its main view is one row from needing
+  a scrollbar, and this is configuration rather than a control you reach for in
+  a hurry.
+  **The block is deliberately built to be the same block**: `gtk.Switch` at the
+  start of the control column, `formRow("Autoswitch", …)`, a `targets` box shown
+  only while it is on, `subFormRow` targets labelled "On AC" and "On battery",
+  and an `appendFocus` that is `autoswitchSection`'s branch for branch — switch
+  first, then the two rows gated on `boxVisible(d.targets)`. A user who has met
+  one should not have to work out that the other is it again. The rules
+  (`display.Prefs`, `DefaultPrefs`, `PrefOptions`, `PrefLabel`, `PrefNote`) are
+  all in `internal/display`; this file builds three dropdowns and a switch.
+  **The switch needs a `syncing` guard, and it is the section's own, not
+  `Window.syncing`.** `gtk.Switch` fires `state-set` on a programmatic
+  `SetActive`, so an unguarded `syncPrefs` would write the config straight back
+  — the settings page's lesson. It cannot borrow `w.syncing` because this card's
+  data comes from the compositor rather than from daemon state, so its syncs run
+  outside every `w.syncing` block (`applyQuery`'s IdleAdd, the page-show
+  `syncControls`).
+  **`setSensitive` moves the whole card together, and the card starts dead.**
+  A screen with fewer than two rates has nothing to choose now *and* nothing to
+  switch to later; the switch most of all, since turning it on asks
+  `DefaultPrefs` for two rates. It is set insensitive at construction because
+  the card is built long before `Query` returns, and a switch flipped in that
+  window would store a pair it could not compute.
+  **The switch itself is Window-level, not the card's** (`refreshForPowerSource`
+  / `applyRefreshFor`, at the foot of `displayview.go`). It has to run whether or
+  not the full window was ever opened, which is most of the time — the window
+  needs a double press. `refreshState` is where it hangs, because that is the
+  funnel the daemon's `power-source` event reaches and the event carries no
+  payload, so the source has to come from the state that function just fetched.
+  Everything else about it — edge-triggered, latch-without-acting on the first
+  observation, store-don't-apply on selection — is in the root CLAUDE.md.
+  It re-baselined `full:dashboard` (n=69 → 72: `display` goes from one item to
+  four, everything below shifted three rows); the other six lines are
+  byte-identical.
+- **A dropdown trigger in a form row must go through `formDropdown`, and the two
+  autoswitch rows had not been.** The trigger has no colour of its own:
+  `.dropdown-trigger` sets padding, and every button colour in this tree comes
+  from `.drawer .btn-group button`, so a trigger with no `.btn-group` ancestor
+  falls straight through voltaire's sheet to the desktop GTK theme — a **white
+  pill in the middle of a dark card** under Breeze, and something else again
+  under anything else. The dashboard's `On AC`/`On battery` profile rows were
+  `subFormRow(label, d.btn)` from the day the desktop branch was written and had
+  rendered that way ever since; the drawer's version always wrapped its trigger
+  in a `.btn-group` row, which is exactly why the drawer looked right and the
+  window did not. Found by screenshotting the new refresh-rate rows, which
+  reproduced it faithfully by copying the same shape.
+  Same failure as the retired `.bottom-bar menubutton > button` rules and the
+  same lesson: a selector that stops matching says nothing, so the result reads
+  as a theming gap rather than as a bug. `formDropdown` makes it one call rather
+  than a convention, and it also brings the rows to the desktop 30px height
+  instead of GTK's default — the pair had been taller than every other control
+  on the card.
 
 ### Control sizing: 48px is the touch target, and the autoswitch rows now match
 
