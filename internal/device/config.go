@@ -7,6 +7,7 @@ package device
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
@@ -59,11 +60,48 @@ type FansConfig struct {
 	Points  int    `toml:"points"`
 	TempMin int    `toml:"temp_min"` // curve editor axis, Celsius
 	TempMax int    `toml:"temp_max"`
+
+	Presets []FanPresetConfig `toml:"presets"`
+}
+
+// FanPresetConfig is one named starting-point curve, as [[fans.presets]].
+//
+// Curve is [[temp, pwm], ...] with exactly the fans block's Points entries, and
+// must satisfy the same rules a user's curve does — strictly increasing
+// temperatures, non-decreasing PWMs — because applying a preset *is* an ordinary
+// curve write. Validate enforces that here, at load, since device data is
+// compiled in: a malformed preset is a build defect, not a runtime error.
+type FanPresetConfig struct {
+	Name        string  `toml:"name"`
+	Label       string  `toml:"label"`
+	Description string  `toml:"description"`
+	Curve       [][]int `toml:"curve"`
 }
 
 // Shape returns the driver.FanShape this config describes.
 func (c FansConfig) Shape() driver.FanShape {
-	return driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255}
+	s := driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255}
+	for _, p := range c.Presets {
+		preset := api.FanPreset{Name: p.Name, Label: p.Label, Description: p.Description}
+		for _, pt := range p.Curve {
+			if len(pt) == 2 {
+				preset.Curve = append(preset.Curve, api.FanCurvePoint{Temp: pt[0], PWM: pt[1]})
+			}
+		}
+		s.Presets = append(s.Presets, preset)
+	}
+	return s
+}
+
+// FanPreset returns the preset with the given name, matched case-insensitively
+// as profile names are, and whether one exists.
+func (c FansConfig) FanPreset(name string) (api.FanPreset, bool) {
+	for _, p := range c.Shape().Presets {
+		if strings.EqualFold(p.Name, name) {
+			return p, true
+		}
+	}
+	return api.FanPreset{}, false
 }
 
 // StockRow is one profile's firmware PPT defaults, measured on hardware.
@@ -278,6 +316,42 @@ func (c Config) Validate() error {
 		// temperatures — the same bound the GUI's Sanitized enforces.
 		if c.Fans.TempMax-c.Fans.TempMin < c.Fans.Points-1 {
 			fail("fans temperature range %d–%d is too narrow for %d points", c.Fans.TempMin, c.Fans.TempMax, c.Fans.Points)
+		}
+		seen := make(map[string]bool, len(c.Fans.Presets))
+		for i, p := range c.Fans.Presets {
+			if p.Name == "" || p.Label == "" {
+				fail("fans.presets[%d] needs both name and label", i)
+			}
+			// Case-insensitively unique, because lookup folds case: two presets
+			// differing only in case would make one of them unreachable.
+			if key := strings.ToLower(p.Name); seen[key] {
+				fail("fans.presets[%d]: duplicate name %q", i, p.Name)
+			} else {
+				seen[key] = true
+			}
+			if c.Fans.Points > 0 && len(p.Curve) != c.Fans.Points {
+				fail("fans.presets[%d] (%s) has %d points, want the fans block's %d", i, p.Name, len(p.Curve), c.Fans.Points)
+			}
+			for j, pt := range p.Curve {
+				if len(pt) != 2 {
+					fail("fans.presets[%d] (%s) point %d must be a [temp, pwm] pair", i, p.Name, j)
+					continue
+				}
+				if pt[0] < 0 || pt[0] > 120 {
+					fail("fans.presets[%d] (%s) temp %d outside [0, 120]", i, p.Name, pt[0])
+				}
+				if pt[1] < 0 || pt[1] > 255 {
+					fail("fans.presets[%d] (%s) PWM %d outside [0, 255]", i, p.Name, pt[1])
+				}
+				if j > 0 && len(p.Curve[j-1]) == 2 {
+					if pt[0] <= p.Curve[j-1][0] {
+						fail("fans.presets[%d] (%s) temperatures must strictly increase (index %d)", i, p.Name, j)
+					}
+					if pt[1] < p.Curve[j-1][1] {
+						fail("fans.presets[%d] (%s) PWMs must not decrease (index %d)", i, p.Name, j)
+					}
+				}
+			}
 		}
 	}
 

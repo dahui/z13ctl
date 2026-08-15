@@ -404,6 +404,9 @@ func (c *customView) newFanCurveEditor() *fanCurveEditor {
 		// The completed drag is the curve's edit boundary for the window's
 		// commit button (customcommit.go); a no-op in the drawer.
 		c.refreshCommitDirty()
+		// A drag off a preset's points must clear its highlight, or the row
+		// keeps claiming a curve the user has since changed.
+		c.syncPresetHighlight()
 	})
 
 	fc.area.AddController(drag)
@@ -429,4 +432,80 @@ func (c *customView) newFanCurveEditor() *fanCurveEditor {
 	fc.area.AddController(motion)
 
 	return fc
+}
+
+// buildPresetRow builds the row of named starting-point curves above the
+// chart, or (nil, nil) when the device declares none — a device with no
+// presets gets no row rather than an empty one, the same capability-by-absence
+// rule the rest of the tree follows.
+//
+// Choosing a preset only loads the editor. Nothing is sent, so the curve is
+// visible, draggable and revertible before the commit bar writes it — which is
+// what keeps a preset from being an invisible mode the profile remembers. It
+// is also why this is the one place in the GUI that may write fc.points
+// outside a drag.
+func (c *customView) buildPresetRow() (*gtk.Box, []*gtk.Button) {
+	presets := c.w.limits.Presets
+	if len(presets) == 0 {
+		return nil, nil
+	}
+
+	row := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	row.AddCSSClass("btn-group")
+	row.AddCSSClass("preset-row")
+	row.SetHomogeneous(true)
+
+	btns := make([]*gtk.Button, 0, len(presets))
+	for _, p := range presets {
+		btn := gtk.NewButtonWithLabel(p.Label)
+		if p.Description != "" {
+			c.w.setHint(btn, p.Description)
+		}
+		name := p.Name
+		btn.ConnectClicked(func() { c.applyPreset(name) })
+		row.Append(btn)
+		btns = append(btns, btn)
+	}
+	return row, btns
+}
+
+// applyPreset loads a preset's points into the editor as an ordinary edit.
+func (c *customView) applyPreset(name string) {
+	if c.fanCurve == nil {
+		return
+	}
+	pts, ok := c.w.limits.PresetCurve(name)
+	if !ok {
+		return
+	}
+	c.fanCurve.points = pts
+	// The floor still governs what may be committed, exactly as it does for a
+	// dragged curve: a preset below it at the profile's own limit is raised
+	// here rather than refused on send. enforceConstraints is the one place
+	// that rule lives, so a preset cannot route around it.
+	c.fanCurve.enforceConstraints(0)
+	c.fanCurve.area.QueueDraw()
+	c.syncPresetHighlight()
+	c.refreshCommitDirty()
+}
+
+// syncPresetHighlight marks the preset the editor's curve currently equals, or
+// none when it equals no preset. Equality is exact (limits.PresetMatching): a
+// curve one drag away from a preset is a curve the user drew, and labelling it
+// otherwise would misreport what the commit button is about to send.
+func (c *customView) syncPresetHighlight() {
+	if len(c.presetBtns) == 0 || c.fanCurve == nil {
+		return
+	}
+	active := c.w.limits.PresetMatching(c.fanCurve.points)
+	for i, btn := range c.presetBtns {
+		if i >= len(c.w.limits.Presets) {
+			break
+		}
+		if c.w.limits.Presets[i].Name == active && active != "" {
+			btn.AddCSSClass("active")
+		} else {
+			btn.RemoveCSSClass("active")
+		}
+	}
 }

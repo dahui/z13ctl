@@ -8,6 +8,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
@@ -18,10 +19,12 @@ import (
 )
 
 var (
-	fanCurveGetFlag     bool
-	fanCurveSetFlag     string
-	fanCurveResetFlag   bool
-	fanCurveProfileFlag string
+	fanCurveGetFlag         bool
+	fanCurveSetFlag         string
+	fanCurveResetFlag       bool
+	fanCurveProfileFlag     string
+	fanCurvePresetFlag      string
+	fanCurveListPresetsFlag bool
 )
 
 var fancurveCmd = &cobra.Command{
@@ -59,10 +62,25 @@ minimum. Lower the limit first with 'voltaire tdp --reset'. A curve stored in a
 profile you are not running is checked against that profile's own power limit.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if !fanCurveGetFlag && fanCurveSetFlag == "" && !fanCurveResetFlag {
+		if fanCurveListPresetsFlag {
+			return runFanCurveListPresets()
+		}
+		if fanCurvePresetFlag != "" && fanCurveSetFlag != "" {
+			return fmt.Errorf("--preset and --set both name a curve; use one")
+		}
+		if !fanCurveGetFlag && fanCurveSetFlag == "" && !fanCurveResetFlag && fanCurvePresetFlag == "" {
 			return cmd.Help()
 		}
 
+		// A preset resolves to the very same curve string --set takes, so
+		// everything below this line — the floor check, the dry run, the
+		// daemon send, the no-daemon fallback — is the one path. A preset is
+		// sugar for a curve, never a second way to write one.
+		if fanCurvePresetFlag != "" {
+			if err := resolveFanPreset(fanCurvePresetFlag); err != nil {
+				return err
+			}
+		}
 		if fanCurveSetFlag != "" {
 			return runFanCurveSet()
 		}
@@ -71,6 +89,59 @@ profile you are not running is checked against that profile's own power limit.`,
 		}
 		return runFanCurveGet()
 	},
+}
+
+// fanPresets returns the device's declared presets, or an error naming why
+// there are none to choose from.
+func fanPresets() ([]api.FanPreset, error) {
+	hw, err := hardware()
+	if err != nil {
+		return nil, err
+	}
+	if hw.Fans == nil {
+		return nil, fmt.Errorf("no fan control on this device")
+	}
+	presets := hw.Fans.Shape().Presets
+	if len(presets) == 0 {
+		return nil, fmt.Errorf("this device declares no fan curve presets")
+	}
+	return presets, nil
+}
+
+// resolveFanPreset turns --preset into the equivalent --set curve string.
+func resolveFanPreset(name string) error {
+	presets, err := fanPresets()
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(presets))
+	for _, p := range presets {
+		if strings.EqualFold(p.Name, name) {
+			fanCurveSetFlag = api.FormatFanCurve(p.Curve)
+			return nil
+		}
+		names = append(names, p.Name)
+	}
+	return fmt.Errorf("unknown fan preset %q (this device offers: %s)", name, strings.Join(names, ", "))
+}
+
+func runFanCurveListPresets() error {
+	presets, err := fanPresets()
+	if err != nil {
+		return err
+	}
+	for _, p := range presets {
+		fmt.Printf("%s — %s\n", p.Name, p.Label)
+		if p.Description != "" {
+			fmt.Printf("  %s\n", p.Description)
+		}
+		fmt.Printf("  %s\n", api.FormatFanCurve(p.Curve))
+	}
+	fmt.Println()
+	fmt.Println("Apply one with 'voltaire fancurve --preset <name>'. A preset is a starting")
+	fmt.Println("point: it is applied exactly like a curve you drew, and nothing re-applies it")
+	fmt.Println("when the profile changes.")
+	return nil
 }
 
 func runFanCurveGet() error {
@@ -244,6 +315,8 @@ func init() {
 	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curve, mode, and RPM")
 	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm or temp:pct%,...)")
 	fancurveCmd.Flags().BoolVar(&fanCurveResetFlag, "reset", false, "Restore firmware auto fan mode")
+	fancurveCmd.Flags().StringVar(&fanCurvePresetFlag, "preset", "", "Apply a named preset curve (see --list-presets)")
+	fancurveCmd.Flags().BoolVar(&fanCurveListPresetsFlag, "list-presets", false, "List the preset curves this device offers")
 	fancurveCmd.Flags().StringVar(&fanCurveProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(fancurveCmd)
 }

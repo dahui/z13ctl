@@ -135,7 +135,9 @@ render controls against, instead of hardcoding one device's numbers:
 ```json
 {"ok":true,"device":{
   "id":"asus-rog-flow-z13-2025","model":"GZ302",
-  "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255},
+  "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255,
+          "presets":[{"name":"quiet","label":"Quiet","description":"Fans stopped until 60°C, ...",
+                      "curve":[{"temp":35,"pwm":0},{"temp":50,"pwm":0}, "..."]}, "..."]},
   "power":{"tdp_min":5,"tdp_max_safe":75,"tdp_max_forced":93,
            "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."],
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
@@ -159,6 +161,18 @@ display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].id` is the wire identifier the `feature` commands
 below take.
+
+`fans.presets` lists the device's named starting-point curves, in the order to
+offer them. There is **no preset command** — applying one is an ordinary
+`fancurve` set with the preset's points, so every rule that governs a
+hand-drawn curve governs a preset too, and a client that offers presets needs
+no new protocol. The list is absent on a device that declares none, in which
+case show no preset control rather than an empty one. `name` is the identifier
+(matched case-insensitively by the CLI), `label` is what to display, and
+`description` is optional prose: what a curve does to *this* machine is device
+knowledge a client cannot derive. Note there is deliberately no preset for
+firmware auto — that is a fan *mode*, not a curve, and `fancurve-reset` is how
+you reach it.
 
 Each toggle also carries `label` and an optional `description` — prose to show
 beside the control, including any consequence worth warning about ("may cause

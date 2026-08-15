@@ -17,7 +17,35 @@ func z13Document() *api.DeviceInfo {
 	return &api.DeviceInfo{
 		ID:    "asus-rog-flow-z13-2025",
 		Model: "GZ302",
-		Fans:  &api.FanInfo{Points: 8, TempMin: 35, TempMax: 105, PWMMax: 255},
+		Fans: &api.FanInfo{
+			Points: 8, TempMin: 35, TempMax: 105, PWMMax: 255,
+			Presets: []api.FanPreset{
+				{
+					Name: "quiet", Label: "Quiet",
+					Description: "Fans stopped until 60°C, then a late ramp. Quietest option; lets the package run hot.",
+					Curve: []api.FanCurvePoint{
+						{Temp: 35, PWM: 0}, {Temp: 50, PWM: 0}, {Temp: 60, PWM: 0}, {Temp: 70, PWM: 60},
+						{Temp: 80, PWM: 110}, {Temp: 90, PWM: 170}, {Temp: 95, PWM: 215}, {Temp: 105, PWM: 255},
+					},
+				},
+				{
+					Name: "balanced", Label: "Balanced",
+					Description: "Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo.",
+					Curve: []api.FanCurvePoint{
+						{Temp: 35, PWM: 0}, {Temp: 45, PWM: 0}, {Temp: 55, PWM: 55}, {Temp: 65, PWM: 90},
+						{Temp: 75, PWM: 130}, {Temp: 85, PWM: 180}, {Temp: 95, PWM: 225}, {Temp: 105, PWM: 255},
+					},
+				},
+				{
+					Name: "turbo", Label: "Turbo",
+					Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.",
+					Curve: []api.FanCurvePoint{
+						{Temp: 35, PWM: 127}, {Temp: 45, PWM: 140}, {Temp: 55, PWM: 165}, {Temp: 65, PWM: 190},
+						{Temp: 75, PWM: 235}, {Temp: 85, PWM: 255}, {Temp: 95, PWM: 255}, {Temp: 105, PWM: 255},
+					},
+				},
+			},
+		},
 		Power: &api.PowerInfo{
 			TDPMin: 5, TDPMaxSafe: 75, TDPMaxForced: 93,
 			FloorCurve: []api.FanCurvePoint{

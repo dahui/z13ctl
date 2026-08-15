@@ -40,6 +40,34 @@ type FanInfo struct {
 	TempMin int `json:"temp_min"` // degrees Celsius
 	TempMax int `json:"temp_max"`
 	PWMMax  int `json:"pwm_max"`
+
+	// Presets are named starting-point curves the device data ships, in the
+	// order a client should offer them. Empty means the device declares none,
+	// in which case a client shows no preset control at all rather than an
+	// empty list — capability by absence, as everywhere else in this document.
+	//
+	// A preset is only ever a curve: applying one is the ordinary fancurve set
+	// with the preset's points, so every check that governs a hand-drawn curve
+	// governs a preset too. There is deliberately no preset for firmware auto,
+	// which is a fan *mode* rather than a curve and has its own command
+	// (fancurve --reset).
+	Presets []FanPreset `json:"presets,omitempty"`
+}
+
+// FanPreset is one named fan curve offered as a starting point. Name is the
+// wire/CLI identifier (lowercase, matched case-insensitively); Label is what to
+// show; Description is optional prose for a tooltip.
+//
+// Both strings are device data rather than client-side text for the same reason
+// ToggleInfo.Description is: what a curve does to a *particular* machine — where
+// its fans stop, how hot it lets the package run — is hardware knowledge a
+// client rendering these generically cannot derive, and a name is not always
+// title-case ("zero-rpm" is "Zero RPM", not "Zero-Rpm").
+type FanPreset struct {
+	Name        string          `json:"name"`
+	Label       string          `json:"label"`
+	Description string          `json:"description,omitempty"`
+	Curve       []FanCurvePoint `json:"curve"`
 }
 
 // PowerInfo is the device's power-limit envelope. Sustained limits above

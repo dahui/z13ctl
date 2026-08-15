@@ -4,6 +4,11 @@
 // voltaire daemon over its Unix socket.
 package api
 
+import (
+	"strconv"
+	"strings"
+)
+
 // State holds the last-applied settings for all controllable subsystems.
 // It is returned by SendGetState and broadcast as part of daemon responses.
 //
@@ -345,6 +350,18 @@ type LightingState struct {
 type FanCurvePoint struct {
 	Temp int `json:"temp"` // degrees Celsius
 	PWM  int `json:"pwm"`  // 0–255 duty cycle
+}
+
+// FormatFanCurve renders points in the "temp:pwm,temp:pwm,..." form that
+// SendFanCurveSet and the fancurve command take. It is the inverse of the
+// daemon's own parser and lives here so that a client holding a curve — a
+// FanPreset's, or one it built — never has to restate the wire format.
+func FormatFanCurve(points []FanCurvePoint) string {
+	parts := make([]string, 0, len(points))
+	for _, p := range points {
+		parts = append(parts, strconv.Itoa(p.Temp)+":"+strconv.Itoa(p.PWM))
+	}
+	return strings.Join(parts, ",")
 }
 
 // FanCurveState captures the fan curve and mode applied to both fans.

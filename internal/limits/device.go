@@ -76,6 +76,14 @@ func FromDevice(info *api.DeviceInfo) Limits {
 
 	if f := info.Fans; f != nil {
 		l.TempMin, l.TempMax = f.TempMin, f.TempMax
+		// Copied per preset, not just the outer slice: the document is cached
+		// for the process lifetime and Sanitized hands this straight to the
+		// caller, so a shared points slice would let the editor's own repairs
+		// rewrite the preset it loaded from.
+		for _, p := range f.Presets {
+			p.Curve = append([]api.FanCurvePoint(nil), p.Curve...)
+			l.Presets = append(l.Presets, p)
+		}
 	}
 
 	return l.Sanitized()

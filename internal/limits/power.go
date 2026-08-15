@@ -34,7 +34,6 @@
 package limits
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -98,6 +97,17 @@ type Limits struct {
 	// limits the drawer displays are listed; the daemon also tracks APU/Platform
 	// sPPT, which it mirrors from PL2 and which no UI shows.
 	StockProfilePPT map[string]api.TDPState
+
+	// Presets are the device's named starting-point curves, in the order to
+	// offer them. Empty means offer no preset control at all.
+	//
+	// Unlike every other field here, Sanitized does *not* fill this in from
+	// DefaultLimits when it is empty. The others describe bounds, where a
+	// missing value has no honest reading but the default; this one is content,
+	// and a device that declares no presets has none — substituting another
+	// machine's curves would offer the user a fan profile designed for hardware
+	// they are not running.
+	Presets []api.FanPreset
 }
 
 // DefaultLimits returns the 2025 ROG Flow Z13 (GZ302) values. These mirror
@@ -132,7 +142,74 @@ func DefaultLimits() Limits {
 			"balanced":    {PL1SPL: 52, PL2SPPT: 71, FPPT: 70},
 			"performance": {PL1SPL: 70, PL2SPPT: 86, FPPT: 86},
 		},
+		// The [[fans.presets]] block of the Z13 device file, copied here on the
+		// same terms as the floor curve above and guarded the same way.
+		Presets: []api.FanPreset{
+			{
+				Name: "quiet", Label: "Quiet",
+				Description: "Fans stopped until 60°C, then a late ramp. Quietest option; lets the package run hot.",
+				Curve: []api.FanCurvePoint{
+					{Temp: 35, PWM: 0}, {Temp: 50, PWM: 0}, {Temp: 60, PWM: 0}, {Temp: 70, PWM: 60},
+					{Temp: 80, PWM: 110}, {Temp: 90, PWM: 170}, {Temp: 95, PWM: 215}, {Temp: 105, PWM: 255},
+				},
+			},
+			{
+				Name: "balanced", Label: "Balanced",
+				Description: "Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo.",
+				Curve: []api.FanCurvePoint{
+					{Temp: 35, PWM: 0}, {Temp: 45, PWM: 0}, {Temp: 55, PWM: 55}, {Temp: 65, PWM: 90},
+					{Temp: 75, PWM: 130}, {Temp: 85, PWM: 180}, {Temp: 95, PWM: 225}, {Temp: 105, PWM: 255},
+				},
+			},
+			{
+				Name: "turbo", Label: "Turbo",
+				Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.",
+				Curve: []api.FanCurvePoint{
+					{Temp: 35, PWM: 127}, {Temp: 45, PWM: 140}, {Temp: 55, PWM: 165}, {Temp: 65, PWM: 190},
+					{Temp: 75, PWM: 235}, {Temp: 85, PWM: 255}, {Temp: 95, PWM: 255}, {Temp: 105, PWM: 255},
+				},
+			},
+		},
 	}
+}
+
+// PresetCurve returns the named preset's points as an editor Curve, matching
+// case-insensitively. Sanitized has already dropped any preset whose length
+// does not fit, so a hit always fills the array exactly.
+func (l Limits) PresetCurve(name string) (Curve, bool) {
+	for _, p := range l.Presets {
+		if !strings.EqualFold(p.Name, name) || len(p.Curve) != CurvePoints {
+			continue
+		}
+		var c Curve
+		copy(c[:], p.Curve)
+		return c, true
+	}
+	return Curve{}, false
+}
+
+// PresetMatching returns the name of the preset c is exactly equal to, or "" if
+// it matches none. It is how the editor can mark which preset is loaded, and it
+// deliberately requires equality on both axes: a curve one drag away from a
+// preset is a curve the user drew, and labelling it with the preset's name
+// would misreport what is about to be committed.
+func (l Limits) PresetMatching(c Curve) string {
+	for _, p := range l.Presets {
+		if len(p.Curve) != CurvePoints {
+			continue
+		}
+		match := true
+		for i, pt := range p.Curve {
+			if pt != c[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return p.Name
+		}
+	}
+	return ""
 }
 
 // Sanitized returns l with any unset field replaced by its default.
@@ -202,7 +279,51 @@ func (l Limits) Sanitized() Limits {
 	if len(l.FloorCurve) > 0 {
 		l.HighTDPMinPWM = l.FloorCurve[0].PWM
 	}
+
+	l.Presets = sanitizedPresets(l.Presets)
 	return l
+}
+
+// sanitizedPresets drops every preset the editor cannot load or the daemon
+// would refuse, and leaves the rest untouched.
+//
+// It drops rather than repairs, which is the opposite of sanitizedFloor's
+// policy and deliberate: a floor is a safety rule, so a suspect one is worth
+// keeping in degraded form, while a preset is a convenience — silently
+// offering the user a *repaired* curve under a name the device chose would put
+// our arithmetic behind the device's label. The length test is the one that
+// earns its keep: Curve is a fixed CurvePoints array, so a preset of any other
+// length cannot be loaded into the editor at all.
+func sanitizedPresets(in []api.FanPreset) []api.FanPreset {
+	var out []api.FanPreset
+	for _, p := range in {
+		if p.Name == "" || len(p.Curve) != CurvePoints {
+			continue
+		}
+		ok := true
+		for i, pt := range p.Curve {
+			if pt.PWM < PWMMin || pt.PWM > PWMMax {
+				ok = false
+				break
+			}
+			if i > 0 && (pt.Temp <= p.Curve[i-1].Temp || pt.PWM < p.Curve[i-1].PWM) {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		// A button has to say something. The daemon's own device-data
+		// validation requires a label, so this only covers a client talking to
+		// something that does not.
+		if p.Label == "" {
+			p.Label = p.Name
+		}
+		p.Curve = append([]api.FanCurvePoint(nil), p.Curve...)
+		out = append(out, p)
+	}
+	return out
 }
 
 // sanitizedFloor returns a well-formed copy of floor: PWMs inside the hwmon
@@ -410,13 +531,7 @@ func (l Limits) DefaultCurve() Curve {
 }
 
 // String renders the curve in the daemon's "temp:pwm,temp:pwm,..." wire format.
-func (c Curve) String() string {
-	parts := make([]string, 0, len(c))
-	for _, p := range c {
-		parts = append(parts, fmt.Sprintf("%d:%d", p.Temp, p.PWM))
-	}
-	return strings.Join(parts, ",")
-}
+func (c Curve) String() string { return api.FormatFanCurve(c[:]) }
 
 // EnforceCurve repairs the curve after point idx has been moved, so that it
 // always satisfies what the firmware and daemon require:

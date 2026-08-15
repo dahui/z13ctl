@@ -40,6 +40,16 @@ type FanShape struct {
 	TempMin int // curve temperature axis, Celsius
 	TempMax int
 	PWMMax  int // hwmon PWM ceiling (255)
+
+	// Presets are the device's named starting-point curves, in declaration
+	// order. They ride here rather than on the FanController because they are
+	// device *data*, like PowerEnvelope's FloorCurve and StockProfilePPT: a
+	// driver method would mean every implementation restating the same table.
+	//
+	// This is also the struct they have to satisfy — a preset must hold exactly
+	// Points points inside the PWMMax ceiling — so the curves and the shape they
+	// are checked against are one value rather than two that can drift.
+	Presets []api.FanPreset
 }
 
 // FanController drives a device's fan-curve hardware.

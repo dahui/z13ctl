@@ -347,6 +347,55 @@ func TestToggleDescriptionsReachTheWire(t *testing.T) {
 	}
 }
 
+// TestFanPresetsReachTheWire guards the same four-hop path as the toggle
+// descriptions above — device TOML → registry → driver.FanShape → wire — for
+// the preset curves.
+//
+// A preset dropped at any hop degrades quietly: the drawer shows no preset row
+// and the CLI reports "this device declares no fan curve presets", both of
+// which read as a device that never had any rather than as plumbing that lost
+// them. TestDocumentMatchesTheDrawersFallback would also fail, but it compares
+// whole Limits values and would say only that two large structs differ.
+func TestFanPresetsReachTheWire(t *testing.T) {
+	info := deviceInfoFor(testDev)
+	if info.Fans == nil {
+		t.Fatal("no fans section in the document")
+	}
+	if len(info.Fans.Presets) == 0 {
+		t.Fatal("no fan presets on the wire, but the Z13 device file declares three")
+	}
+	for _, p := range info.Fans.Presets {
+		if p.Name == "" || p.Label == "" {
+			t.Errorf("preset %+v is missing a name or label; a client cannot render or apply it", p)
+		}
+		if p.Description == "" {
+			t.Errorf("preset %q has no description — what a curve does to *this* machine is "+
+				"device knowledge a client cannot derive", p.Name)
+		}
+		if got, want := len(p.Curve), info.Fans.Points; got != want {
+			t.Errorf("preset %q crossed the wire with %d points, want the shape's %d", p.Name, got, want)
+		}
+	}
+}
+
+// The document must not hand out the device definition's own slices: it is
+// built per request but the drawer caches it for the process lifetime, and a
+// client that repaired a curve in place would be editing what every later
+// caller reads. The outer slice being fresh is not enough — each preset owns a
+// points slice of its own.
+func TestFanPresetCurvesAreCopiedNotAliased(t *testing.T) {
+	first := deviceInfoFor(testDev)
+	if first.Fans == nil || len(first.Fans.Presets) == 0 {
+		t.Fatal("no presets to check")
+	}
+	first.Fans.Presets[0].Curve[0].PWM = 199
+
+	second := deviceInfoFor(testDev)
+	if got := second.Fans.Presets[0].Curve[0].PWM; got == 199 {
+		t.Error("mutating a served preset changed the device definition; the curve slice is aliased")
+	}
+}
+
 // TestPanelOverdriveKeepsItsGhostingWarning pins the specific consequence that
 // motivated the field. It is a fact about this panel, not UI copy: a client has
 // no way to derive it, so if device data stops carrying it every client stops

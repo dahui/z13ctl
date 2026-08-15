@@ -401,6 +401,8 @@ voltaire fancurve [flags]
 |------|-------------|
 | `--get` | Print the current fan curve, mode, RPM, and APU temperature |
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
+| `--preset <name>` | Apply a named preset curve (see `--list-presets`) |
+| `--list-presets` | List the preset curves this device offers |
 | `--reset` | Reset both fans to firmware auto mode |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
@@ -429,6 +431,47 @@ mixed in the same curve.
 - Exactly 8 points required
 - Temperatures must be monotonically increasing (0–120 °C)
 - Speed values must be non-decreasing (0–255 PWM or 0–100%)
+
+### Presets
+
+Named starting points, so you do not have to draw a curve from scratch. A
+preset is applied exactly as if you had typed its points into `--set`: the same
+validation, the same fan-floor rules, the same profile it lands in. Nothing
+re-applies one later — switching profiles does **not** select a preset, and a
+preset you have edited is simply your curve.
+
+```
+$ voltaire fancurve --list-presets
+quiet — Quiet
+  Fans stopped until 60°C, then a late ramp. Quietest option; lets the package run hot.
+  35:0,50:0,60:0,70:60,80:110,90:170,95:215,105:255
+balanced — Balanced
+  Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo.
+  35:0,45:0,55:55,65:90,75:130,85:180,95:225,105:255
+turbo — Turbo
+  Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.
+  35:127,45:140,55:165,65:190,75:235,85:255,95:255,105:255
+
+$ voltaire fancurve --preset quiet
+```
+
+Which presets exist is device data, served in the
+[`device-get` document](/voltaire/reference/daemon/#device-capabilities); a device
+that declares none offers no presets rather than a fixed list. On the Flow Z13:
+
+- **Quiet** and **Balanced** hold 0 across the idle range deliberately. The
+  firmware's zero-RPM idle survives only while the curve commands 0 there, so a
+  nominally gentle curve that starts at 15% is *louder* at idle than firmware
+  auto.
+- **Turbo** is the only one that already satisfies the high-TDP fan floor at
+  every point, so raising the sustained limit past 75 W leaves it exactly as
+  drawn. The other two sit below the floor when cool and are raised there —
+  correctly, and with a notice saying so.
+
+In the GUI the presets are a row of buttons above the fan curve chart on the
+Profiles page. Choosing one loads its points into the editor without writing
+anything, so you can drag them before committing; the button stays highlighted
+only while the curve still matches it exactly.
 
 :::caution[A power profile change wipes your custom curve]
 The kernel's `asus-wmi` driver disables custom fan curves on every

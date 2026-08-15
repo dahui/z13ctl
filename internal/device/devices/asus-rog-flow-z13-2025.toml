@@ -23,6 +23,41 @@ points   = 8
 temp_min = 35
 temp_max = 105
 
+# Named starting points, offered only when the user picks one — never applied by
+# a profile switch. That coupling is what the z13ctl-plus fork shipped and then
+# deleted: its Quiet profile auto-applied a quiet curve, and any curve with a
+# non-zero bottom defeats the firmware's zero-RPM idle, so selecting Quiet made
+# the machine audible where firmware auto had been silent.
+#
+# Unlike every other block in this file these curves are *starting points*, not
+# measurements — the user drags them from here. Two facts about this machine do
+# constrain them, and both are load-bearing:
+#
+#   - Zero-RPM idle survives only while the low points are 0. "quiet" and
+#     "balanced" hold 0 across the idle range for that reason; a nominally
+#     gentle curve that starts at 15% is louder at idle than firmware auto.
+#   - "turbo" is the one preset that already satisfies power.floor_curve at
+#     every point, so raising the sustained limit past tdp_max_safe leaves it
+#     exactly as drawn. The others are below the floor at low temperatures and
+#     the daemon raises them there — correctly, and visibly.
+[[fans.presets]]
+name        = "quiet"
+label       = "Quiet"
+description = "Fans stopped until 60°C, then a late ramp. Quietest option; lets the package run hot."
+curve       = [[35, 0], [50, 0], [60, 0], [70, 60], [80, 110], [90, 170], [95, 215], [105, 255]]
+
+[[fans.presets]]
+name        = "balanced"
+label       = "Balanced"
+description = "Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo."
+curve       = [[35, 0], [45, 0], [55, 55], [65, 90], [75, 130], [85, 180], [95, 225], [105, 255]]
+
+[[fans.presets]]
+name        = "turbo"
+label       = "Turbo"
+description = "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W."
+curve       = [[35, 127], [45, 140], [55, 165], [65, 190], [75, 235], [85, 255], [95, 255], [105, 255]]
+
 # PPT limits via the asus-nb-wmi platform device attributes (NOT
 # firmware-attributes, whose calibration data is empty on this machine).
 # Limits are G-Helper's for the GZ302E. The floor curve is what the fans must

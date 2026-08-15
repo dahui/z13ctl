@@ -83,6 +83,10 @@ type customView struct {
 
 	fanCurve *fanCurveEditor
 
+	// One button per device-declared preset, in declaration order. Empty when
+	// the device declares none, which is also when no row was built.
+	presetBtns []*gtk.Button
+
 	// Undervolt; the box is hidden when the daemon reports no CO support.
 	uvBox      *gtk.Box
 	uvCpuScale *gtk.Scale
@@ -377,6 +381,19 @@ func newCustomView(w *Window, host viewHost) *customView {
 	sec = newSection(rightCol)
 	fanSec := sec
 	sec.Append(sectionLabel("FAN CURVE"))
+
+	// Presets sit above the chart, and choosing one is an ordinary edit: the
+	// points land in the editor, the commit bar goes dirty, and nothing has
+	// been written. That is the whole design — a preset is a starting point
+	// you can drag before committing, never a mode the profile remembers.
+	//
+	// The device declares them (rules in internal/limits), so nothing here
+	// knows what "quiet" means; a device with none gets no row at all.
+	if row, btns := c.buildPresetRow(); row != nil {
+		c.presetBtns = btns
+		sec.Append(row)
+	}
+
 	c.fanCurve = c.newFanCurveEditor()
 	sec.Append(c.fanCurve.area)
 
@@ -706,6 +723,9 @@ func (c *customView) sync() {
 		// accept.
 		c.fanCurve.enforceConstraints(0)
 		c.fanCurve.area.QueueDraw()
+		// The profile's own curve may happen to be a preset — that is how a
+		// preset applied earlier still reads as one after a restart.
+		c.syncPresetHighlight()
 	}
 
 	c.syncFanResetSensitivity()
@@ -902,6 +922,12 @@ func (c *customView) buildFocusList() {
 		buttonLine(c.resetTdpBtn)
 
 		b.Section("fan")
+		// The preset row is above the chart on screen, so it is above it here:
+		// a focus order that disagrees with the reading order is the failure
+		// nobody notices with a pointer in their hand.
+		if len(c.presetBtns) > 0 {
+			buttonLine(c.presetBtns...)
+		}
 		fc = b.One()
 		items = append(items, focusItem{
 			widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
@@ -958,9 +984,14 @@ func (c *customView) buildFocusList() {
 		sliderLine(sc, 1, advVis)
 	}
 
-	// Fan curve (navigable, dragged by touch/mouse).
+	// Fan curve (navigable, dragged by touch/mouse), with the preset row above
+	// it as on screen.
 	if c.fanCurve != nil {
-		fc = b.Section("fan").One()
+		b.Section("fan")
+		if len(c.presetBtns) > 0 {
+			buttonLine(c.presetBtns...)
+		}
+		fc = b.One()
 		items = append(items, focusItem{
 			widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
 		})
