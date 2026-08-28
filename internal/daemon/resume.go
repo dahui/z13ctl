@@ -461,7 +461,19 @@ func (d *Daemon) restoreVolatileState() {
 	d.mu.Lock()
 	state := cloneState(d.state)
 	if d.hw != nil && d.hw.Lighting != nil {
-		if err := d.applyLightingState(); err != nil {
+		// USB re-enumerates across suspend, so the handle opened at startup (or
+		// at the last reattach) usually points at a device node that no longer
+		// exists — the write then fails with ENODEV and the lighting is never
+		// restored. The hotplug watcher does not cover this: it fires on an
+		// absent -> present transition, and the keyboard comes back faster than
+		// its 2 s poll can observe it missing, so the stale handle is never
+		// replaced. Reopen here, the same call reopenAndRestore makes.
+		//
+		// A failed reopen leaves the handle as it was, which is exactly the
+		// previous behaviour, so this can only improve on it.
+		if err := d.hw.Lighting.Reopen(); err != nil {
+			slog.Warn("resume: failed to reopen HID device", "err", err)
+		} else if err := d.applyLightingState(); err != nil {
 			slog.Warn("resume: failed to restore lighting", "err", err)
 		} else {
 			slog.Info("resume: lighting restored")
