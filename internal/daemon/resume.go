@@ -24,6 +24,11 @@ package daemon
 //   - PrepareForSleep(true) is advisory unless someone holds a delay inhibitor.
 //     Without one, logind is free to freeze userspace before these writes land,
 //     which looks exactly like the bug being fixed — hence takeSleepInhibitor.
+//   - PrepareForSleep(false) arrives early in the resume path, before the
+//     platform drivers have finished re-initialising. Restoring immediately can
+//     drive a PPT write into an embedded controller that is not answering yet,
+//     which wedges the ACPI global mutex and hard-locks the machine — hence
+//     waitForEC.
 
 import (
 	"context"
@@ -31,6 +36,7 @@ import (
 	"fmt"
 	"log/slog"
 	"syscall"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 
@@ -120,14 +126,24 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				releaseSleepInhibitor(&inhibitor)
 				continue
 			}
-			slog.Info("system resumed from sleep, restoring volatile state")
-			d.restoreVolatileState()
+			slog.Info("system resumed from sleep")
+			// Re-taken here rather than after the restore: waitForEC below can
+			// block for seconds, and logind must not be free to run an unheld
+			// suspend cycle in that window — that is the same gap
+			// takeSleepInhibitor exists to close.
+			//
 			// Release before re-taking. The sleep branch normally leaves this at -1,
 			// but nothing guarantees the two edges alternate — a (false) with no
 			// preceding (true) would otherwise overwrite a still-open fd, leaking it
 			// and leaving logind counting a delay lock nobody can release.
 			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
+
+			if !d.waitForEC(ctx) {
+				continue
+			}
+			slog.Info("restoring volatile state")
+			d.restoreVolatileState()
 		}
 	}
 }
@@ -350,6 +366,75 @@ func releaseSleepInhibitor(fd *int) {
 		slog.Debug("failed to close the sleep delay inhibitor", "err", err)
 	}
 	*fd = -1
+}
+
+// EC settling after resume. logind emits PrepareForSleep(false) as soon as the
+// kernel returns from suspend, which is before the ASUS platform drivers have
+// finished re-initialising. Writing a PPT limit through the driver in that window
+// blocks inside acpi_evaluate_object holding the ACPI global mutex; because that
+// mutex serialises every ACPI operation on the system, the EC event handler and
+// anything else touching thermals or battery pile up behind it and the NMI
+// watchdog starts reporting hard lockups across every core.
+const (
+	// ecSettleDelay is the unconditional pause before the EC is first probed.
+	ecSettleDelay = 3 * time.Second
+	// ecProbeInterval is how often the EC is probed after that pause.
+	ecProbeInterval = 1 * time.Second
+	// ecProbeTimeout bounds the total wait before restoring regardless.
+	ecProbeTimeout = 20 * time.Second
+)
+
+// ecResponds reports whether the EC is answering, via the cheapest sysfs signal
+// the driver exposes. driver.Battery.Status reads the battery capacity attribute
+// first and returns its error immediately, so a nil error means that single read
+// succeeded — and it never takes the ACPI/WMI path this whole wait exists to stay
+// off. While the EC is still coming up the attribute is present but its device is
+// not, so the read fails fast with ENODEV rather than blocking on the mutex.
+//
+// A device with no battery capability has nothing cheap to probe, so it proceeds
+// rather than blocking a restore the machine still needs.
+func (d *Daemon) ecResponds() bool {
+	if d.hw == nil || d.hw.Battery == nil {
+		return true
+	}
+	_, err := d.hw.Battery.Status()
+	return err == nil
+}
+
+// waitForEC blocks until the EC answers, ctx is cancelled, or ecProbeTimeout
+// elapses. Returns false only on cancellation.
+func (d *Daemon) waitForEC(ctx context.Context) bool {
+	return waitForECWith(ctx, d.ecResponds, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
+}
+
+// waitForECWith is waitForEC with its probe and timings injected, so the policy
+// can be tested without real sysfs or real delays.
+//
+// On timeout it returns true and lets the restore proceed rather than skipping
+// it: a machine with no battery at all (bench supply, pack removed) reports the
+// same way as a wedged EC, and must still get its profile back.
+func waitForECWith(ctx context.Context, responds func() bool, settle, interval, timeout time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(settle):
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if responds() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("EC still unresponsive after resume; restoring anyway", "waited", timeout)
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+	}
 }
 
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
