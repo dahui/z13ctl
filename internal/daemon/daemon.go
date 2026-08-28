@@ -479,21 +479,34 @@ func (d *Daemon) reopenAndRestore() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	dev, err := hid.FindDevice("")
-	if err != nil {
+	if err := d.reopenDeviceLocked(); err != nil {
 		slog.Warn("hotplug: failed to reopen HID device", "err", err)
 		return false
 	}
-	if d.dev != nil {
-		d.dev.Close()
-	}
-	d.dev = dev
 	if err := d.applyLightingState(); err != nil {
 		slog.Warn("hotplug: failed to restore lighting", "err", err)
 		return false
 	}
 	slog.Info("keyboard reattached; lighting restored")
 	return true
+}
+
+// reopenDeviceLocked replaces d.dev with a freshly opened handle, closing the
+// previous one. Split out of reopenAndRestore because the resume path needs the
+// reopen without the hotplug logging and while already holding d.mu.
+//
+// The caller must hold d.mu: d.dev is read by applyLightingState and by every
+// socket handler that touches lighting.
+func (d *Daemon) reopenDeviceLocked() error {
+	dev, err := hid.FindDevice("")
+	if err != nil {
+		return err
+	}
+	if d.dev != nil {
+		d.dev.Close()
+	}
+	d.dev = dev
+	return nil
 }
 
 // applyLightingState restores lighting from the saved state. d.dev must be non-nil.
