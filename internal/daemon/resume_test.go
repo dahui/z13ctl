@@ -9,6 +9,7 @@ package daemon
 // their fan mode.
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -239,5 +240,53 @@ func TestSuspendCeilingExceedsInhibitDelay(t *testing.T) {
 		t.Errorf("stand-down budget is %v, which does not exceed a %v InhibitDelayMaxSec: "+
 			"the ceiling would fire inside a real pre-freeze window",
 			budget, longestPlausibleInhibitDelay)
+	}
+}
+
+func TestWaitForECWaitsForTheECToAnswer(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	responds := func() bool {
+		calls++
+		return calls >= 3
+	}
+	if !waitForECWith(t.Context(), responds, 0, time.Millisecond, time.Second) {
+		t.Fatal("waitForECWith reported cancellation for a probe that answered")
+	}
+	if calls != 3 {
+		t.Errorf("probed %d times, want 3: the loop must retry until the EC answers", calls)
+	}
+}
+
+func TestWaitForECRestoresAnywayOnTimeout(t *testing.T) {
+	t.Parallel()
+	// A machine with no battery reports exactly like a wedged EC. Skipping the
+	// restore there would strand it on whatever the firmware left behind.
+	never := func() bool { return false }
+	if !waitForECWith(t.Context(), never, 0, time.Millisecond, 5*time.Millisecond) {
+		t.Error("timeout returned false; a batteryless machine would never be restored")
+	}
+}
+
+func TestWaitForECAbandonsOnCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if waitForECWith(ctx, func() bool { return false }, time.Hour, time.Hour, time.Hour) {
+		t.Error("a cancelled context must abandon the wait, not restore")
+	}
+}
+
+func TestECWaitFitsInsideSuspendCeiling(t *testing.T) {
+	t.Parallel()
+	// restoreVolatileState clears the suspending flag, so the EC wait holds it
+	// set for its whole duration. If that could outlast the reconcile watcher's
+	// stand-down budget the watcher would log a stale-flag warning and start
+	// defending the fans mid-resume — against the very EC being waited on.
+	worst := ecSettleDelay + ecProbeTimeout
+	budget := time.Duration(reconcileSuspendMaxTicks) * reconcilePollInterval
+	if worst >= budget {
+		t.Errorf("worst-case EC wait is %v but the reconcile stand-down budget is %v: "+
+			"the watcher would wake up inside a resume", worst, budget)
 	}
 }
