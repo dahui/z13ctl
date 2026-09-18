@@ -10,6 +10,8 @@ package daemon
 
 import (
 	"context"
+	"io/fs"
+	"syscall"
 	"testing"
 	"time"
 
@@ -243,28 +245,83 @@ func TestSuspendCeilingExceedsInhibitDelay(t *testing.T) {
 	}
 }
 
+func TestClassifyECReadSeparatesAbsentFromWedged(t *testing.T) {
+	t.Parallel()
+	// The whole fix turns on this distinction. ENOENT is a machine with no
+	// battery, which must still be restored; ENODEV is a registered power_supply
+	// whose EC is not answering, which must not be written to. Collapsing both
+	// into "did the read fail" is what let a wedged EC through to a PPT write.
+	cases := []struct {
+		name string
+		err  error
+		want ecStatus
+	}{
+		{"read succeeded", nil, ecReady},
+		{"no battery at all", fs.ErrNotExist, ecAbsent},
+		{"wrapped ENOENT", &fs.PathError{Err: syscall.ENOENT}, ecAbsent},
+		{"EC not answering", &fs.PathError{Err: syscall.ENODEV}, ecWedged},
+		{"read timed out", &fs.PathError{Err: syscall.ETIMEDOUT}, ecWedged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := classifyECRead(tc.err); got != tc.want {
+				t.Errorf("classifyECRead(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWaitForECWaitsForTheECToAnswer(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	responds := func() bool {
+	probe := func() ecStatus {
 		calls++
-		return calls >= 3
+		if calls >= 3 {
+			return ecReady
+		}
+		return ecWedged
 	}
-	if !waitForECWith(t.Context(), responds, 0, time.Millisecond, time.Second) {
+	status, ok := waitForECWith(t.Context(), probe, 0, time.Millisecond, time.Second)
+	if !ok {
 		t.Fatal("waitForECWith reported cancellation for a probe that answered")
+	}
+	if status != ecReady {
+		t.Errorf("status = %v, want ecReady", status)
 	}
 	if calls != 3 {
 		t.Errorf("probed %d times, want 3: the loop must retry until the EC answers", calls)
 	}
 }
 
-func TestWaitForECRestoresAnywayOnTimeout(t *testing.T) {
+func TestWaitForECRestoresAnywayWhenThereIsNoBattery(t *testing.T) {
 	t.Parallel()
-	// A machine with no battery reports exactly like a wedged EC. Skipping the
-	// restore there would strand it on whatever the firmware left behind.
-	never := func() bool { return false }
-	if !waitForECWith(t.Context(), never, 0, time.Millisecond, 5*time.Millisecond) {
-		t.Error("timeout returned false; a batteryless machine would never be restored")
+	// A bench supply or a removed pack never answers, but it is not a wedged EC:
+	// the attribute is missing rather than failing. Skipping the restore there
+	// would strand the machine on whatever the firmware left behind.
+	absent := func() ecStatus { return ecAbsent }
+	status, ok := waitForECWith(t.Context(), absent, 0, time.Millisecond, 5*time.Millisecond)
+	if !ok {
+		t.Fatal("a batteryless machine reported cancellation")
+	}
+	if status != ecAbsent {
+		t.Errorf("status = %v, want ecAbsent: a batteryless machine must still be restored", status)
+	}
+}
+
+func TestWaitForECReportsAWedgedECOnTimeout(t *testing.T) {
+	t.Parallel()
+	// The regression this whole wait exists for: the attribute is present and the
+	// read keeps failing, so the EC is up but not answering. Reporting ecReady —
+	// or the old blanket "restore anyway" — drives a WMI write into the stalled
+	// ACPI mutex and hard-locks every core.
+	wedged := func() ecStatus { return ecWedged }
+	status, ok := waitForECWith(t.Context(), wedged, 0, time.Millisecond, 5*time.Millisecond)
+	if !ok {
+		t.Fatal("a wedged EC reported cancellation rather than a timeout")
+	}
+	if status != ecWedged {
+		t.Errorf("status = %v, want ecWedged: the profile restore must be held back", status)
 	}
 }
 
@@ -272,7 +329,8 @@ func TestWaitForECAbandonsOnCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if waitForECWith(ctx, func() bool { return false }, time.Hour, time.Hour, time.Hour) {
+	probe := func() ecStatus { return ecWedged }
+	if _, ok := waitForECWith(ctx, probe, time.Hour, time.Hour, time.Hour); ok {
 		t.Error("a cancelled context must abandon the wait, not restore")
 	}
 }
