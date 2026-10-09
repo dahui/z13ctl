@@ -289,7 +289,7 @@ func TestUnwritableArmouryFallsBack(t *testing.T) {
 // writes.
 func TestProfileControllerNamesThePolicyAttributes(t *testing.T) {
 	newFakeSysfs(t)
-	n, ok := NewProfileController(nil).(driver.PolicyWriteNotifier)
+	n, ok := NewProfileController(nil, "", "", nil).(driver.PolicyWriteNotifier)
 	if !ok {
 		t.Fatal("the platform-profile driver does not implement driver.PolicyWriteNotifier")
 	}

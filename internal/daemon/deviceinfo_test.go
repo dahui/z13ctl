@@ -269,6 +269,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs","history_seconds":3600}`,
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true`,
+		`"profiles":{"names":["quiet","balanced","performance"],"default":"balanced","entries":[{"name":"quiet","label":"Quiet"},`,
 	} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("document does not contain %s\ngot: %s", want, data)

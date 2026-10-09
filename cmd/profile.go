@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -35,10 +36,8 @@ var profileCmd = &cobra.Command{
 	Short: "Get or set the performance profile, or manage custom profiles",
 	Long: `Get or set the performance profile, or manage named custom profiles.
 
-Firmware profiles (written to platform_profile via asus-wmi):
-  quiet        — Silent/Eco mode (low power, low noise)
-  balanced     — Balanced mode   (default)
-  performance  — Turbo mode      (maximum performance)
+Firmware profiles are the ones this machine's firmware offers, written to
+platform_profile; 'voltaire profile --list' shows them, least power first.
 
 Custom profiles are voltaire's own: a named set of fan curve, TDP and undervolt
 settings that voltaire applies itself and never writes to platform_profile, so
@@ -52,7 +51,9 @@ the change takes effect and persists immediately — there is no save step.
 which is how you build the profile that 'voltaire autoswitch' selects on battery
 without applying it first.
 
-The firmware profile names are reserved and cannot name a custom profile.
+Every kernel firmware profile name (low-power, cool, quiet, balanced,
+balanced-performance, performance, max-power) is reserved and cannot name a
+custom profile, on this machine or any other.
 Custom profiles require the daemon, which is what recalls and applies them.
 
 Examples:
@@ -89,7 +90,7 @@ func runProfileSet() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunProfile(powerEnvFor(hw), profile)
+		cli.DryRunProfile(powerEnvFor(hw), firmwareProfiles(hw), profile)
 		return nil
 	}
 
@@ -104,19 +105,18 @@ func runProfileSet() error {
 		return nil
 	}
 
-	// No daemon: only firmware profiles can be applied, since recalling a custom
-	// profile means reading daemon state.
-	if !api.IsStockProfileName(profile) {
-		return fmt.Errorf("custom profiles require the daemon to recall their saved settings; start the daemon first\n"+
-			"  (%q is not one of quiet, balanced, performance)", profile)
-	}
-
 	hw, err := hardware()
 	if err != nil {
 		return err
 	}
 	if hw.Profiles == nil {
 		return fmt.Errorf("no profile control on this device")
+	}
+	// No daemon: only firmware profiles can be applied, since recalling a custom
+	// profile means reading daemon state — and only the ones this device offers.
+	if names := firmwareProfiles(hw); !slices.Contains(names, profile) {
+		return fmt.Errorf("custom profiles require the daemon to recall their saved settings; start the daemon first\n"+
+			"  (%q is not one of this machine's firmware profiles: %s)", profile, strings.Join(names, ", "))
 	}
 	// Direct path (no daemon): write platform_profile, then HandBackToFirmware —
 	// the stock row first, so a high custom TDP is down before the fans drop to
@@ -173,7 +173,7 @@ func runProfileList() error {
 		return fmt.Errorf("parsing profile list: %w", err)
 	}
 
-	fmt.Println("Firmware profiles: quiet, balanced, performance")
+	fmt.Println("Firmware profiles: " + strings.Join(firmwareProfilesOrNone(), ", "))
 	fmt.Println("Custom profiles:")
 	for _, r := range rows {
 		marker := " "
@@ -265,8 +265,8 @@ func runProfileDelete() error {
 
 func init() {
 	profileCmd.Flags().BoolVar(&profileGetFlag, "get", false, "Print the active profile")
-	profileCmd.Flags().StringVar(&profileSetFlag, "set", "", "Set the profile (quiet, balanced, performance, or a custom profile name)")
-	profileCmd.Flags().BoolVar(&profileListFlag, "list", false, "List saved custom profiles")
+	profileCmd.Flags().StringVar(&profileSetFlag, "set", "", "Set the profile: a firmware profile (see --list) or a custom profile name")
+	profileCmd.Flags().BoolVar(&profileListFlag, "list", false, "List the firmware profiles and saved custom profiles")
 	profileCmd.Flags().StringVar(&profileCreateFlag, "create", "", "Create an empty custom profile (does not activate it)")
 	profileCmd.Flags().StringVar(&profileSaveAsFlag, "save-as", "", "Copy the active custom profile under a new name")
 	profileCmd.Flags().StringVar(&profileDeleteFlag, "delete", "", "Delete a saved custom profile")

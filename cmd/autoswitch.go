@@ -28,8 +28,8 @@ var autoswitchCmd = &cobra.Command{
 	Short: "Apply a different profile on AC and on battery",
 	Long: `Apply a different profile automatically when the charger is plugged or unplugged.
 
-Each side takes any profile name: a firmware profile (quiet, balanced,
-performance) or a custom profile. Setting --ac or --battery enables autoswitch
+Each side takes any profile name: one of this machine's firmware profiles
+('voltaire profile --list' shows them) or a custom profile. Setting --ac or --battery enables autoswitch
 unless --off is given.
 
 An empty target leaves that side alone, which hands it back to your desktop's

@@ -107,16 +107,27 @@ voltaire profile [flags]
 |------|-------------|
 | `--get` | Print the active profile |
 | `--set <profile>` | Set the profile (firmware or custom) |
-| `--list` | List saved custom profiles |
+| `--list` | List the firmware profiles and saved custom profiles |
 | `--create <name>` | Create an empty custom profile (does not activate it) |
 | `--save-as <name>` | Copy the active custom profile under a new name |
 | `--delete <name>` | Delete a saved custom profile |
 
 ### Firmware profiles
 
-`quiet`, `balanced`, and `performance` are written to `platform_profile` via
-asus-wmi. These three names are **reserved**: a custom profile can never take
-one, so `--set balanced` always reaches the firmware profile.
+The firmware profiles are whatever your machine's firmware offers, and they are
+written to `platform_profile`. voltaire reads the list from the kernel, filtered
+by the device data, and `profile --list` prints it. On the Z13 they are `quiet`,
+`balanced` and `performance`; another machine may offer `low-power` or
+`balanced-performance` instead.
+
+Every kernel firmware profile name is **reserved**, not only the ones your
+machine offers: `low-power`, `cool`, `quiet`, `balanced`,
+`balanced-performance`, `performance`, `max-power`. A custom profile can never
+take one, so `--set balanced` always reaches the firmware profile, and a profile
+created on one machine stays valid on another. A custom profile saved under one
+of those names before 2.0 is renamed to `user-<name>` on first start, with a log
+line; its settings are kept, and an autoswitch target pointing at it follows
+the rename.
 
 Setting a firmware profile resets the CPU undervolt to stock and hands the power
 limits and fans back to the firmware: voltaire writes that profile's stock PPT
@@ -194,7 +205,8 @@ voltaire profile --save-as gaming    # copy the active profile
 ```
 
 Profile names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, and `_`,
-and may not be `quiet`, `balanced`, `performance`, or `custom`.
+and may not be `custom` or any kernel firmware profile name (see
+[Firmware profiles](#firmware-profiles)).
 
 :::note
 When the daemon is running, setting a firmware profile also updates
@@ -506,8 +518,8 @@ below its bottom (127 PWM on the GZ302EA).
 
 `--reset` is refused outright — firmware auto mode has no floor at all, and
 dropping to it would remove the cooling the power limit depends on. Lower the
-limit first with [`voltaire tdp --reset`](#tdp), which restores the balanced
-profile before releasing the fans.
+limit first with [`voltaire tdp --reset`](#tdp), which restores the device's
+default firmware profile (`balanced` on the Z13) before releasing the fans.
 :::
 
 ```sh
@@ -539,7 +551,7 @@ voltaire tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values and the range the kernel accepts for each |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile, reset the undervolt to stock, and hand the power limits and fans back to the firmware |
+| `--reset` | Switch to the device's default firmware profile (`balanced` on the Z13), reset the undervolt to stock, and hand the power limits and fans back to the firmware |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -702,8 +714,8 @@ offset — as one group.
 | `--reset` | Clear the fan curve, power limits and Curve Optimizer offset |
 | `--profile <name>` | Clear them from a profile you are NOT running (stores only) |
 
-`--reset` returns the machine to the `balanced` profile with firmware fan
-control and stock power limits, and forgets the saved fan curve, limits and
+`--reset` returns the machine to the device's default firmware profile
+(`balanced` on the Z13) with firmware fan control and stock power limits, and forgets the saved fan curve, limits and
 offset in the profile it edits.
 
 **This is not the same as running the three resets by hand.** Each of
@@ -747,7 +759,7 @@ voltaire undervolt [flags]
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 CO values have no sysfs readback — `--get` returns the last-applied values
-from daemon state. If a stock profile is active (quiet/balanced/performance),
+from daemon state. If a firmware profile is active,
 the output indicates that the saved offsets are not currently applied. If the
 daemon is not running, reports "not set".
 

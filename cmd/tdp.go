@@ -65,9 +65,10 @@ own limits, and a profile change also releases custom fan curves; the daemon
 notices and restores both. Without it, the limit and the fan floor are lost
 until the next 'tdp --set'.
 
-With --reset, switches to the balanced profile, writes balanced's stock PPT
-values (bringing a high custom limit down first), and then resets fan curves to
-auto mode, which puts the firmware's own balanced limits back in force.
+With --reset, switches to the device's default firmware profile (balanced on
+the Z13), writes that profile's stock PPT values (bringing a high custom limit
+down first), and then resets fan curves to auto mode, which puts the firmware's
+own limits back in force.
 
 PPT attributes:
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
@@ -331,7 +332,7 @@ func runTdpReset() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunTdpReset(powerEnvFor(hw))
+		cli.DryRunTdpReset(powerEnvFor(hw), defaultProfile(hw))
 		return nil
 	}
 
@@ -346,17 +347,18 @@ func runTdpReset() error {
 			fmt.Printf("Cleared the power limits from profile %s\n", tdpProfileFlag)
 			return nil
 		}
-		fmt.Println("TDP reset: switched to balanced profile (firmware power limits restored)")
+		fmt.Printf("TDP reset: switched to the %s profile (firmware power limits restored)\n", landingProfileName())
 		return nil
 	}
 
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
-	if err := runTdpResetDirect(); err != nil {
+	landing, err := runTdpResetDirect()
+	if err != nil {
 		return err
 	}
-	fmt.Println("TDP reset: switched to balanced profile")
+	fmt.Printf("TDP reset: switched to the %s profile\n", landing)
 	return nil
 }
 
@@ -365,9 +367,11 @@ func runTdpReset() error {
 // two commands do exactly the same thing to hardware and there is no reason for
 // two copies of an ordering that has to be right.
 //
-// Switch to balanced, then HandBackToFirmware — the stock row first, so a high
-// custom TDP is down before the fans drop to auto, and the release last, so
-// balanced's own limits end in force.
+// Switch to the device's default firmware profile, then HandBackToFirmware —
+// the stock row first, so a high custom TDP is down before the fans drop to
+// auto, and the release last, so that profile's own limits end in force. The
+// landing profile is resolved before anything is touched, and returned for the
+// caller's message.
 //
 // Reset the undervolt as well: this lands on a stock profile, and every other
 // route to one clears CO. Guarded on Present (a stat, never the destructive
@@ -375,26 +379,30 @@ func runTdpReset() error {
 // daemon.UndervoltApplied so an offset that was never applied is never
 // "cleared" — a speculative MP1 write is the one with a known hard-hang mode
 // (see Daemon.uvApplied).
-func runTdpResetDirect() error {
+func runTdpResetDirect() (string, error) {
 	hw, err := hardware()
 	if err != nil {
-		return err
+		return "", err
+	}
+	if hw.Profiles == nil {
+		return "", fmt.Errorf("no profile control on this device")
+	}
+	landing := hw.Profiles.Default()
+	if landing == "" {
+		return "", fmt.Errorf("this device names no default firmware profile to reset to")
 	}
 	if hw.Undervolt != nil && hw.Undervolt.Present() && daemon.UndervoltApplied() {
 		if err := hw.Undervolt.Reset(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
 		}
 	}
-	if hw.Profiles == nil {
-		return fmt.Errorf("no profile control on this device")
+	if err := hw.Profiles.Set(landing); err != nil {
+		return "", fmt.Errorf("switching to the %s profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", landing, err)
 	}
-	if err := hw.Profiles.Set("balanced"); err != nil {
-		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+	if err := hw.HandBackToFirmware(landing); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore the %s power limits: %v\n", landing, err)
 	}
-	if err := hw.HandBackToFirmware("balanced"); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to restore balanced's power limits: %v\n", err)
-	}
-	return nil
+	return landing, nil
 }
 
 // parsePLOverrides returns the effective PL1/PL2/PL3 values, applying
@@ -425,7 +433,7 @@ func parsePLOverrides(watts int) (pl1, pl2, pl3 int, err error) {
 func init() {
 	tdpCmd.Flags().BoolVar(&tdpGetFlag, "get", false, "Print current TDP power limits")
 	tdpCmd.Flags().StringVar(&tdpSetFlag, "set", "", "Set TDP power limit in watts")
-	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and hand the power limits back to the firmware")
+	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to the device's default firmware profile and hand the power limits back to the firmware")
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")

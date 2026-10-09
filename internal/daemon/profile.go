@@ -41,7 +41,7 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 	// four layers that keep a custom profile from shadowing a firmware one, and
 	// the only one that still holds if a hand-edited state file gets past the
 	// other three.
-	if api.IsStockProfileName(profile) {
+	if d.isFirmwareProfile(profile) {
 		return d.applyStockHW(profile)
 	}
 
@@ -347,8 +347,8 @@ func (d *Daemon) resolveEditTargetLocked(name string) (editTarget, error) {
 		}
 		return d.editTargetLocked(name, true, active), nil
 	}
-	if api.IsStockProfileName(name) {
-		return editTarget{}, fmt.Errorf("%q is a firmware profile and has no custom settings to edit", name)
+	if api.IsKernelProfileName(name) {
+		return editTarget{}, fmt.Errorf("%q is a firmware profile name and has no custom settings to edit", name)
 	}
 	if name != api.DefaultCustomProfile && !d.state.IsCustomProfile(name) {
 		return editTarget{}, fmt.Errorf("unknown profile %q; create it with 'voltaire profile --create %s'", name, name)
@@ -583,4 +583,23 @@ func (d *Daemon) handleProfileList() response {
 	}
 	data, _ := json.Marshal(out)
 	return response{OK: true, Value: string(data)}
+}
+
+// isFirmwareProfile reports whether name is a firmware profile this device
+// offers — the only names that may ever be written to platform_profile
+// (driver.ProfileController's contract, enforced here rather than trusted to
+// every caller). A kernel profile name the device does not offer is neither
+// firmware nor custom, so it is refused as unknown. Names lists the handler's
+// cached choices; it never reaches the EC.
+func (d *Daemon) isFirmwareProfile(name string) bool {
+	return slices.Contains(d.firmwareProfiles(), name)
+}
+
+// firmwareProfiles is the device's firmware profile names, nil without
+// profile control.
+func (d *Daemon) firmwareProfiles() []string {
+	if d.hw == nil || d.hw.Profiles == nil {
+		return nil
+	}
+	return d.hw.Profiles.Names()
 }

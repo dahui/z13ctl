@@ -63,18 +63,20 @@ func TestSanitizedPresetsDropsCurvesTheDaemonWouldRefuse(t *testing.T) {
 	}
 }
 
-// Absence is a real answer here, unlike every other field Sanitized touches: a
-// device that declares no presets has none, and filling in another machine's
+// Absence is a real answer for content, unlike the bounds Sanitized fills in:
+// a device that declares no presets has none, and filling in another machine's
 // curves would offer a fan profile designed for hardware the user is not
-// running. The contrast with StockProfilePPT — which *does* fall back — is the
-// point of this test.
+// running. StockProfilePPT is content on the same terms — one machine's
+// firmware values — and used to fall back; labelling another machine's limits
+// "stock" against the Z13's table was the defect (2026-10-09 device-values
+// audit).
 func TestSanitizedLeavesAbsentPresetsAbsent(t *testing.T) {
 	l := Limits{}.Sanitized()
 	if len(l.Presets) != 0 {
 		t.Errorf("Sanitized invented %d presets for a device that declared none", len(l.Presets))
 	}
-	if len(l.StockProfilePPT) == 0 {
-		t.Error("StockProfilePPT did not fall back; the contrast this test documents no longer holds")
+	if len(l.StockProfilePPT) != 0 {
+		t.Errorf("Sanitized lent a device with no stock rows %d of the Z13's", len(l.StockProfilePPT))
 	}
 }
 

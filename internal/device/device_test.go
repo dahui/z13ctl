@@ -80,14 +80,14 @@ func TestZ13StockPPTSanity(t *testing.T) {
 // ReadEffective relies on: any name absent from the stock table is treated as
 // custom, with the stale-cache fallback disabled. Every key in the file's
 // table must therefore be a name the reservation layers refuse for custom
-// profiles — a new firmware profile added to the TOML without extending
-// api.IsStockProfileName would misreport power limits the moment a custom
-// profile took its name.
+// profiles. Config.Validate requires every profiles.names entry to be a kernel
+// name, and the whole kernel vocabulary is reserved, so this holds for any
+// device file that validates.
 func TestZ13StockTableNamesAreReserved(t *testing.T) {
 	env := z13Config(t).Power.Envelope()
 	for name := range env.StockProfilePPT {
-		if !api.IsStockProfileName(name) {
-			t.Errorf("stock_ppt key %q is not reserved by api.IsStockProfileName", name)
+		if !api.IsReservedProfileName(name) {
+			t.Errorf("stock_ppt key %q is not reserved by api.IsReservedProfileName", name)
 		}
 		if err := cli.ValidateProfileName(name); err == nil {
 			t.Errorf("ValidateProfileName(%q) = nil, want an error — a custom profile may not shadow a stock table row", name)
@@ -427,9 +427,11 @@ func (p fakePower) Envelope() driver.PowerEnvelope { return p.env }
 
 type fakeProfiles struct{}
 
-func (fakeProfiles) Names() []string      { return []string{"quiet", "balanced", "performance"} }
-func (fakeProfiles) Get() (string, error) { return "balanced", nil }
-func (fakeProfiles) Set(string) error     { return nil }
+func (fakeProfiles) Names() []string       { return []string{"quiet", "balanced", "performance"} }
+func (fakeProfiles) Get() (string, error)  { return "balanced", nil }
+func (fakeProfiles) Set(string) error      { return nil }
+func (fakeProfiles) Default() string       { return "balanced" }
+func (fakeProfiles) Label(n string) string { return n }
 
 type fakeLighting struct{}
 

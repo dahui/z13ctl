@@ -64,10 +64,15 @@ func TestOnACPowerAnyMainsOnlineWins(t *testing.T) {
 
 // TestOnACPowerWithNoMainsSupply pins the contract the watcher depends on: no
 // adapter is *unknown*, not "on battery". Returning false here would have the
-// daemon apply the battery profile on a machine that has no battery.
+// daemon apply the battery profile on a machine that has no battery — so this
+// case has no battery either. (A machine with a battery and no Mains supply is
+// USB-C-powered and answers from its USB supplies: TestOnACPowerUSBOnly.)
 func TestOnACPowerWithNoMainsSupply(t *testing.T) {
 	f := newFakeSysfs(t)
 	if err := os.RemoveAll(f.ac); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.RemoveAll(f.battery); err != nil {
 		t.Fatalf("RemoveAll: %v", err)
 	}
 

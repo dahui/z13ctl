@@ -29,10 +29,10 @@ func TestPlanEdit(t *testing.T) {
 		{"custom with nil state", nil, "custom", true, ""},
 		// Everything else is a stored edit through the ...For variants.
 		{"named not active", stateWith("balanced", gaming), "gaming", false, "gaming"},
-		{"named while other named active", stateWith("cool", gaming, api.CustomProfile{Name: "cool", TDP: tdp(30)}), "gaming", false, "gaming"},
+		{"named while other named active", stateWith("silent", gaming, api.CustomProfile{Name: "silent", TDP: tdp(30)}), "gaming", false, "gaming"},
 		// The trap case: "custom" while a NAMED profile runs. A bare send
-		// would edit the running "cool" profile, not "custom".
-		{"custom while named active", stateWith("cool", api.CustomProfile{Name: "cool", TDP: tdp(30)}), "custom", false, "custom"},
+		// would edit the running "silent" profile, not "custom".
+		{"custom while named active", stateWith("silent", api.CustomProfile{Name: "silent", TDP: tdp(30)}), "custom", false, "custom"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

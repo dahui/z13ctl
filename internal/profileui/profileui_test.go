@@ -41,7 +41,7 @@ func rowByName(t *testing.T, rows []profileui.Row, name string) profileui.Row {
 }
 
 func TestStockRows(t *testing.T) {
-	rows := profileui.StockRows(nil)
+	rows := profileui.StockRows(nil, z13)
 	want := []string{"quiet", "balanced", "performance"}
 	if len(rows) != len(want) {
 		t.Fatalf("StockRows(nil) = %d rows, want %d", len(rows), len(want))
@@ -60,7 +60,7 @@ func TestStockRows(t *testing.T) {
 			t.Errorf("firmware profile %q reported deletable", name)
 		}
 	}
-	if !rowByName(t, profileui.StockRows(stateWith("balanced")), "balanced").Active {
+	if !rowByName(t, profileui.StockRows(stateWith("balanced"), z13), "balanced").Active {
 		t.Error("active firmware profile not marked Active")
 	}
 }
@@ -74,10 +74,10 @@ func TestCustomRowsOrderAndKinds(t *testing.T) {
 
 	s := stateWith("balanced",
 		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
-		api.CustomProfile{Name: "cool", TDP: tdp(30)},
+		api.CustomProfile{Name: "silent", TDP: tdp(30)},
 	)
 	rows := profileui.CustomRows(s)
-	wantOrder := []string{"custom", "cool", "gaming"}
+	wantOrder := []string{"custom", "gaming", "silent"}
 	if len(rows) != len(wantOrder) {
 		t.Fatalf("got %d rows, want %d", len(rows), len(wantOrder))
 	}
@@ -105,14 +105,14 @@ func TestActivateBlock(t *testing.T) {
 	s := stateWith("gaming",
 		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
 		api.CustomProfile{Name: "empty"}, // created, never populated
-		api.CustomProfile{Name: "cool", TDP: tdp(30)},
+		api.CustomProfile{Name: "silent", TDP: tdp(30)},
 	)
 	cases := []struct {
 		name    string
 		blocked bool
 	}{
 		{"balanced", false}, // firmware profiles are always activatable
-		{"cool", false},
+		{"silent", false},
 		{"gaming", true}, // already running
 		{"empty", true},  // nothing to apply
 		{"custom", true}, // never populated

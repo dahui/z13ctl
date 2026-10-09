@@ -152,11 +152,26 @@ func (c PowerConfig) Envelope() driver.PowerEnvelope {
 	return env
 }
 
-// ProfilesConfig selects the platform-profile driver and names the firmware
-// profiles — which are also the reserved names no custom profile may take.
+// ProfilesConfig selects the platform-profile driver and describes the
+// firmware profiles.
+//
+// The kernel is the first source: the driver offers what the handler's
+// `choices` lists, and Names filters and orders that (kernel ∩ Names) — so a
+// name here the kernel does not offer is dropped with a warning, and one the
+// kernel offers that is not here is not offered. Names is also the fallback
+// when sysfs cannot be read. Every entry must be a kernel profile name
+// (api.KernelProfileNames).
+//
+// Handler names the platform-profile class device that owns the profile
+// (its `name` file, "asus-wmi" on the Z13); empty picks one heuristically.
+// Default is the profile a reset lands on, and must have a stock power row
+// within the safe sustained maximum. Labels overrides display labels per name.
 type ProfilesConfig struct {
-	Method string   `toml:"method"`
-	Names  []string `toml:"names"`
+	Method  string            `toml:"method"`
+	Names   []string          `toml:"names"`
+	Handler string            `toml:"handler"`
+	Default string            `toml:"default"`
+	Labels  map[string]string `toml:"labels"`
 }
 
 // LightingConfig selects the lighting driver.
@@ -171,10 +186,15 @@ type LightingConfig struct {
 // label cannot — most usefully a consequence ("may cause ghosting"). It lives in
 // device data because it is a fact about the hardware, so every client gets the
 // same warning without restating it.
+//
+// The driver decides which toggles exist — the kernel's attributes, through an
+// allowlist in code — so an entry is wording for one of them; Hidden withholds
+// an allowlisted attribute this device should not offer.
 type ToggleEntry struct {
 	ID          string `toml:"id"`
 	Label       string `toml:"label"`
 	Description string `toml:"description"`
+	Hidden      bool   `toml:"hidden"`
 }
 
 // TogglesConfig selects the firmware-toggles driver and lists its toggles.
@@ -198,6 +218,12 @@ type BatteryConfig struct {
 	// so this is the one place it can come from; zero means the default below.
 	ChargeLimitMin int `toml:"charge_limit_min"`
 	ChargeLimitMax int `toml:"charge_limit_max"`
+
+	// Charger is where the charger kind (adapter or USB-C) is read: empty for
+	// the generic power_supply view, "asus-armoury" for ASUS's charge_mode
+	// attribute. The generic view needs no firmware call; the ASUS attribute is
+	// the one the Z13's values were measured against.
+	Charger string `toml:"charger"`
 }
 
 // The charge-limit range a device gets when its data declares none: what
@@ -214,7 +240,7 @@ func (c BatteryConfig) Caps() driver.BatteryCaps {
 	if c.ChargeLimit != nil {
 		limit = *c.ChargeLimit
 	}
-	caps := driver.BatteryCaps{ChargeLimit: limit, Health: c.Health}
+	caps := driver.BatteryCaps{ChargeLimit: limit, Health: c.Health, ChargerSource: c.Charger}
 	if limit {
 		caps.ChargeLimitMin, caps.ChargeLimitMax = DefaultChargeLimitMin, DefaultChargeLimitMax
 		if c.ChargeLimitMin != 0 {
@@ -437,6 +463,22 @@ func (c Config) Validate() error {
 					fail("power.stock_ppt is missing profile %q", name)
 				}
 			}
+			// The other direction: a row for a name the device does not offer
+			// is keyed by nothing the daemon will ever look up, and reads as
+			// a typo nobody is told about.
+			for name := range p.StockPPT {
+				if !slicesContains(c.Profiles.Names, name) {
+					fail("power.stock_ppt has a row for %q, which profiles.names does not list", name)
+				}
+			}
+			// The reset target's own limits must be safe: tdp-reset lowers
+			// power by writing this row *before* it releases the fans, which
+			// is only fail-closed if the row is below the fan floor's limit.
+			if d := c.Profiles.Default; d != "" {
+				if row, ok := p.StockPPT[d]; ok && row.PL1 > p.TDPMaxSafe {
+					fail("profiles.default %q has a stock PL1 of %dW, above tdp_max_safe %dW", d, row.PL1, p.TDPMaxSafe)
+				}
+			}
 		}
 	}
 
@@ -446,6 +488,19 @@ func (c Config) Validate() error {
 		}
 		if len(c.Profiles.Names) == 0 {
 			fail("profiles.names must list the firmware profile names")
+		}
+		for _, name := range c.Profiles.Names {
+			if !api.IsKernelProfileName(name) {
+				fail("profiles.names entry %q is not a kernel platform_profile name", name)
+			}
+		}
+		if d := c.Profiles.Default; d != "" && !slicesContains(c.Profiles.Names, d) {
+			fail("profiles.default %q is not in profiles.names", d)
+		}
+		for name := range c.Profiles.Labels {
+			if !slicesContains(c.Profiles.Names, name) {
+				fail("profiles.labels has a label for %q, which profiles.names does not list", name)
+			}
 		}
 	}
 	if c.Lighting != nil {
@@ -464,8 +519,8 @@ func (c Config) Validate() error {
 			fail("toggles block with no entries; drop the block instead")
 		}
 		for i, e := range c.Toggles.Entries {
-			if e.ID == "" || e.Label == "" {
-				fail("toggles.entries[%d] needs both id and label", i)
+			if e.ID == "" || (e.Label == "" && !e.Hidden) {
+				fail("toggles.entries[%d] needs both id and label (or hidden = true)", i)
 			}
 		}
 	}
@@ -476,6 +531,9 @@ func (c Config) Validate() error {
 		// Same rule as an empty toggles block: a capability that offers nothing
 		// still tells every client the controls exist. Say so by omission.
 		caps := c.Battery.Caps()
+		if ch := c.Battery.Charger; ch != "" && ch != "asus-armoury" {
+			fail("battery.charger %q is not a known source (\"asus-armoury\", or omit for the generic power_supply view)", ch)
+		}
 		if !caps.ChargeLimit && !caps.Health {
 			fail("battery block offers neither charge_limit nor health; drop the block instead")
 		}
@@ -516,4 +574,14 @@ func (c Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// slicesContains reports whether s holds v.
+func slicesContains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

@@ -32,6 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -344,12 +345,16 @@ func watchUPower(ctx context.Context, nudge chan<- struct{}) {
 // a machine that was on AC when the daemon stopped and is on battery now lands
 // on the battery profile directly instead of applying the AC profile and
 // switching moments later.
-func autoswitchTarget(s api.State, onAC bool) string {
+//
+// firmware is the device's firmware profile names: a target naming one it
+// does not offer (a state file carried from another machine) is unusable and
+// yields "".
+func autoswitchTarget(s api.State, firmware []string, onAC bool) string {
 	target := s.Autoswitch.Target(onAC)
 	if target == "" || target == s.Profile {
 		return ""
 	}
-	if api.IsStockProfileName(target) {
+	if slices.Contains(firmware, target) {
 		return target
 	}
 	if !s.IsCustomProfile(target) {
@@ -380,7 +385,7 @@ func (d *Daemon) handleAutoswitch(req request) response {
 			if side.name == "" {
 				continue
 			}
-			if !api.IsStockProfileName(side.name) && !d.state.IsCustomProfile(side.name) {
+			if !d.isFirmwareProfile(side.name) && !d.state.IsCustomProfile(side.name) {
 				d.mu.Unlock()
 				return response{OK: false, Error: "autoswitch: unknown " + side.slot + " profile " + side.name}
 			}

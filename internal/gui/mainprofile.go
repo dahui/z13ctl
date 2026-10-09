@@ -31,10 +31,20 @@ import (
 
 // profileSection is a PROFILE block: the firmware profiles, and one control
 // standing for the whole custom family.
+// drawerProfileColumns is how many firmware profile buttons share a row in the
+// drawer. Three is what the Z13's labels fit in 320px; a device offering more
+// wraps rather than squeezing.
+const drawerProfileColumns = 3
+
 type profileSection struct {
 	w *Window
 
 	btns map[string]*gtk.Button // firmware profile buttons by name
+
+	// stock is the firmware profile names the buttons were built for, in
+	// order. The focus grid walks this rather than re-reading the device, so
+	// the two cannot disagree if the document changes after construction.
+	stock []string
 
 	// customBtn is the control standing for the custom family: on the window a
 	// button that opens the editor, in the drawer the trigger of customDD. It
@@ -96,11 +106,24 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 		w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom, desktop: desktop,
 	}
 
-	stockRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	stockRow.AddCSSClass("btn-group")
-	stockRow.SetHomogeneous(true)
-	for _, r := range profileui.StockRows(nil) {
+	// The device's firmware profiles, from its document (the Z13's three only
+	// when the daemon has not answered). The window lays them on one line; the
+	// drawer wraps them in rows of at most drawerProfileColumns, since a 320px
+	// column cannot take four or five full labels side by side.
+	stockRows := []*gtk.Box{}
+	newRow := func() *gtk.Box {
+		r := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		r.AddCSSClass("btn-group")
+		r.SetHomogeneous(true)
+		stockRows = append(stockRows, r)
+		return r
+	}
+	stockRow := newRow()
+	for i, r := range profileui.StockRows(nil, w.firmware()) {
 		r := r
+		if !desktop && i > 0 && i%drawerProfileColumns == 0 {
+			stockRow = newRow()
+		}
 		btn := gtk.NewButtonWithLabel(r.Label)
 		btn.SetHExpand(true)
 		btn.ConnectClicked(func() {
@@ -111,6 +134,7 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 			w.sendProfileSet(r.Name)
 		})
 		p.btns[r.Name] = btn
+		p.stock = append(p.stock, r.Name)
 		stockRow.Append(btn)
 	}
 
@@ -152,7 +176,9 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 	box.Append(sectionLabel("PROFILE"))
-	box.Append(stockRow)
+	for _, r := range stockRows {
+		box.Append(r)
+	}
 	// In a .btn-group of its own: the .active style that marks the running
 	// profile is scoped to that class, so a bare trigger would never highlight —
 	// and the trigger's own padding is scoped to it too (see formDropdown).
@@ -329,7 +355,7 @@ func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst *
 	var d *dropdown
 	d = w.newDropdown(dropdownConfig{
 		options: func() []dropdownOption {
-			opts := profileui.TargetRows(w.state)
+			opts := profileui.TargetRows(w.state, w.firmware())
 			rows := make([]dropdownOption, len(opts))
 			for i, o := range opts {
 				rows[i] = dropdownOption{
@@ -346,11 +372,11 @@ func (a *autoswitchSection) buildTargetRow(label string, target *string, ddDst *
 		},
 		onSelect: func(v string) {
 			*target = v
-			d.setLabel(profileui.TargetLabel(v))
+			d.setLabel(profileui.TargetLabel(w.firmware(), v))
 			a.queueSend()
 		},
 	})
-	d.setLabel(profileui.TargetLabel(*target))
+	d.setLabel(profileui.TargetLabel(w.firmware(), *target))
 	w.setHint(d.btn, "Profile to apply when this power source becomes active")
 	*ddDst = d
 
@@ -419,8 +445,8 @@ func (a *autoswitchSection) sync() {
 	cfg := profileui.Autoswitch(a.w.state)
 	a.enabled, a.ac, a.batt = cfg.Enabled, cfg.AC, cfg.Battery
 	a.sw.SetActive(cfg.Enabled)
-	a.acDD.setLabel(profileui.TargetLabel(cfg.AC))
-	a.battDD.setLabel(profileui.TargetLabel(cfg.Battery))
+	a.acDD.setLabel(profileui.TargetLabel(a.w.firmware(), cfg.AC))
+	a.battDD.setLabel(profileui.TargetLabel(a.w.firmware(), cfg.Battery))
 	a.syncVis()
 }
 
@@ -441,22 +467,30 @@ func (w *Window) focusProfileSection(b *focusgrid.Builder, items *[]focusItem) {
 // disagrees with what is on screen is the failure nobody notices with a mouse
 // in their hand — the reason controlBuilder pairs the two halves at all.
 func (p *profileSection) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
-	stock := profileui.StockRows(nil)
-	btns := make([]*gtk.Button, 0, len(stock)+1)
-	for _, r := range stock {
-		btns = append(btns, p.btns[r.Name])
+	btns := make([]*gtk.Button, 0, len(p.stock)+1)
+	for _, name := range p.stock {
+		btns = append(btns, p.btns[name])
 	}
 
 	b.Section("profile")
 	if p.desktop && p.customBtn != nil {
 		btns = append(btns, p.customBtn)
 	}
-	for i, c := range b.Line(len(btns)) {
-		btn := btns[i]
-		*items = append(*items, focusItem{
-			widget: btn, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: func() { btn.Activate() },
-		})
+	// One Line per on-screen row: the window's single line, or the drawer's
+	// rows of drawerProfileColumns — the same split the builder above made.
+	per := len(btns)
+	if !p.desktop {
+		per = drawerProfileColumns
+	}
+	for start := 0; start < len(btns); start += per {
+		row := btns[start:min(start+per, len(btns))]
+		for i, c := range b.Line(len(row)) {
+			btn := row[i]
+			*items = append(*items, focusItem{
+				widget: btn, row: c.Row, col: c.Col, section: c.Section,
+				onActivate: func() { btn.Activate() },
+			})
+		}
 	}
 	if p.desktop || p.customBtn == nil {
 		return

@@ -140,8 +140,8 @@ func runFeatureSet(arg string) error {
 	if spec == nil {
 		return fmt.Errorf("unknown feature %q on this device (see 'voltaire feature --list')", id)
 	}
-	if spec.Kind == string(driver.ToggleBool) && value != 0 && value != 1 {
-		return fmt.Errorf("feature %s: value must be 0 or 1", id)
+	if !toggleInfoAccepts(*spec, value) {
+		return fmt.Errorf("feature %s: value must be %s", id, toggleSpecOf(*spec).ValuesText())
 	}
 
 	if dryRunFlag {
@@ -181,4 +181,35 @@ func init() {
 	featureCmd.Flags().StringVar(&featureGetFlag, "get", "", "Print a toggle's current value by id")
 	featureCmd.Flags().StringVar(&featureSetFlag, "set", "", "Set a toggle: id=value, e.g. boot_sound=1")
 	rootCmd.AddCommand(featureCmd)
+}
+
+// toggleSpecOf is the wire toggle as a driver spec, for its value rules.
+func toggleSpecOf(t api.ToggleInfo) driver.ToggleSpec {
+	return driver.ToggleSpec{ID: t.ID, Kind: driver.ToggleKind(t.Kind), Values: t.Values}
+}
+
+// toggleInfoAccepts applies the firmware's legal values (ToggleSpec.Accepts)
+// to a toggle described on the wire.
+func toggleInfoAccepts(t api.ToggleInfo, v int) bool { return toggleSpecOf(t).Accepts(v) }
+
+// checkToggleValue validates a value for one of this device's toggles against
+// the firmware's legal values. Reading the toggle list touches only attribute
+// metadata, never the value itself.
+func checkToggleValue(id string, value int) error {
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Toggles == nil {
+		return fmt.Errorf("no firmware toggles on this device")
+	}
+	for _, t := range hw.Toggles.List() {
+		if t.ID == id {
+			if !t.Accepts(value) {
+				return fmt.Errorf("invalid value %d: must be %s", value, t.ValuesText())
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("this device does not offer %s", id)
 }

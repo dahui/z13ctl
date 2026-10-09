@@ -531,7 +531,8 @@ func SendTdpResetFor(profile string) (bool, error) {
 }
 
 // SendTuningReset clears every tuning override at once — fan curve, power
-// limits and Curve Optimizer offset — and lands on the "balanced" profile.
+// limits and Curve Optimizer offset — and lands on the device's default
+// firmware profile (DeviceInfo.Profiles.Default; "balanced" on the Z13).
 //
 // It is not the same as issuing the three resets in sequence. Each of those has
 // to lower power before releasing the fans, so doing it by hand in the wrong

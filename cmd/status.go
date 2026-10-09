@@ -27,8 +27,10 @@ var statusCmd = &cobra.Command{
 	Long: `Display a summary of all system metrics in a single view.
 
 Shows APU temperature, fan speed and mode, performance profile, TDP power
-limits, and battery charge level and limit. All values are read directly
-from sysfs.`,
+limits, and battery charge level and limit. With the daemon running, the
+readings that come from the embedded controller (fans, battery, power source)
+are taken from it, so status never reads an EC the daemon is guarding; without
+it they are read from sysfs.`,
 	Args: cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if statusWatchFlag {
@@ -64,31 +66,30 @@ func statusReport(out io.Writer) error {
 	outf := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format, a...) }
 	outln := func(a ...any) { _, _ = fmt.Fprintln(out, a...) }
 
+	// One get-state serves every reading below that the device takes from the
+	// embedded controller. With a daemon up those come from it and nothing
+	// here reads the EC — see readLive for why that matters.
+	st, daemonUp := daemonState()
+	live := readLive(hw, st, daemonUp)
+
 	// APU temperature.
-	tempShown := false
-	if hw.Telemetry != nil {
-		if s, sErr := hw.Telemetry.Sample(); sErr == nil {
-			outf("APU:     %d°C\n", s.TempC)
-			tempShown = true
-		}
-	}
-	if !tempShown {
+	if live.TempC > 0 {
+		outf("APU:     %d°C\n", live.TempC)
+	} else {
 		outln("APU:     N/A")
 	}
 
-	// Fan RPM and mode. The mode is folded across every readable fan, as the
-	// daemon reports it: "custom" only when all of them honour the curve.
-	rpmStr := "N/A"
+	// Fan RPM, every fan the device reports, and the mode. The mode is a cached
+	// kernel value rather than an EC read, so it is read here either way; it is
+	// folded across every readable fan, as the daemon reports it: "custom" only
+	// when all of them honour the curve.
 	modeStr := ""
 	if hw.Fans != nil {
-		if rpms, rErr := hw.Fans.ReadRPM(); rErr == nil && len(rpms) > 0 {
-			rpmStr = fmt.Sprintf("%d RPM", rpms[0])
-		}
 		if mode, mErr := hw.Fans.ReadMode(); mErr == nil {
 			modeStr = ", mode: " + driver.FanModeName(mode)
 		}
 	}
-	outf("Fans:    %s%s\n", rpmStr, modeStr)
+	outf("Fans:    %s%s\n", formatRPM(live.RPM), modeStr)
 
 	// Performance profile. platform_profile is never a custom profile name, so
 	// the effective profile comes from the daemon when it is running; show the
@@ -100,34 +101,27 @@ func statusReport(out io.Writer) error {
 		outf("Profile: %s\n", profile)
 	}
 
-	// One battery reading serves the power-source line here and the charge
-	// level at the bottom. ACKnown carries the "unknown is not on-battery"
-	// distinction: no Mains supply means the line is simply omitted.
-	var onAC bool
-	acKnown := false
-	capStr := "N/A"
-	if hw.Battery != nil {
-		if st, bErr := hw.Battery.Status(); bErr == nil {
-			onAC, acKnown = st.OnAC, st.ACKnown
-			capStr = fmt.Sprintf("%d%%", st.Capacity)
-		}
-	}
-
-	// Power source, and what autoswitch would select for it.
-	if acKnown {
+	// Power source, and what autoswitch would select for it. ACKnown carries
+	// the "unknown is not on-battery" distinction: no Mains supply, or a
+	// daemon withholding the read, means the line is simply omitted.
+	if live.ACKnown {
 		source := "battery"
-		if onAC {
+		if live.OnAC {
 			source = "AC"
 		}
-		outf("Power:   %s%s\n", source, autoswitchNote(onAC))
+		outf("Power:   %s%s\n", source, autoswitchNote(live.OnAC))
 	}
 
 	// TDP power limits: the daemon's reading when it is running, since it
 	// withholds the read while the EC is not answering (on asus-armoury each
 	// limit read is a live ACPI call). A refused read prints N/A.
 	tdpShown := false
+	ecWithheld := false
 	if handled, value, err := api.SendTdpGet(); handled {
 		var tdp api.TDPState
+		// The daemon refuses EC-backed reads while the EC is not answering;
+		// say so once at the end, rather than leaving the N/As unexplained.
+		ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
 		if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
 			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
@@ -153,23 +147,29 @@ func statusReport(out io.Writer) error {
 	// wipe an active undervolt every time anyone ran `status`. Without a
 	// daemon, Present reports only what stat'ing sysfs can prove.
 	// CO values have no sysfs readback, so current values need daemon state.
-	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil {
+	if st != nil {
 		if st.UndervoltAvailable {
 			outln("UV:      available (use 'undervolt --get' for current values)")
 		}
-	} else if hw.Undervolt != nil && hw.Undervolt.Present() {
+	} else if !daemonUp && hw.Undervolt != nil && hw.Undervolt.Present() {
 		outln("UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)")
 	}
 
 	// Battery: current charge level and charge limit.
+	capStr := "N/A"
+	if live.Capacity > 0 {
+		capStr = fmt.Sprintf("%d%%", live.Capacity)
+	}
 	limitStr := ""
-	if hw.Battery != nil {
-		if limit, lErr := hw.Battery.ChargeLimit(); lErr == nil {
-			limitStr = fmt.Sprintf(" (limit: %d%%)", limit)
-		}
+	if live.Limit > 0 {
+		limitStr = fmt.Sprintf(" (limit: %d%%)", live.Limit)
 	}
 	outf("Battery: %s%s\n", capStr, limitStr)
 
+	if ecWithheld {
+		outln("         (the embedded controller is not answering since resume; the daemon")
+		outln("          is withholding fan, battery and power readings until it does)")
+	}
 	return nil
 }
 
@@ -183,10 +183,11 @@ func statusReport(out io.Writer) error {
 // the same socket (ayixiayi/z13-panel); competing with it would be worse than
 // pointing at it.
 //
-// It does not require the daemon. status reads sysfs directly by design, the
-// device handle is cached for the process, and one pass costs what the daemon's
-// own 1 Hz sampler costs — so refusing without a daemon would be a restriction
-// with nothing behind it.
+// It does not require the daemon. With one running each frame is a get-state
+// (no EC reads of its own); without one it reads sysfs, the device handle is
+// cached for the process, and one pass costs what the daemon's own 1 Hz
+// sampler costs — so refusing without a daemon would be a restriction with
+// nothing behind it.
 func runStatusWatch(interval time.Duration) error {
 	if interval < 100*time.Millisecond {
 		return fmt.Errorf("--interval %s is too short; the sensors do not update faster than about 1s", interval)

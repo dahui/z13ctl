@@ -59,14 +59,15 @@ type Row struct {
 	DeleteBlock string
 }
 
-// StockRows returns the three firmware profile rows, which are always present
-// and always activatable.
-func StockRows(s *api.State) []Row {
-	rows := make([]Row, 0, len(api.StockProfiles))
-	for _, name := range api.StockProfiles {
+// StockRows returns the device's firmware profile rows, in the device's order.
+// They are always present and always activatable.
+func StockRows(s *api.State, fw Firmware) []Row {
+	rows := make([]Row, 0, len(fw))
+	for _, e := range fw {
+		name := e.Name
 		rows = append(rows, Row{
 			Name:        name,
-			Label:       Label(name),
+			Label:       e.Label,
 			Kind:        Stock,
 			Active:      s != nil && s.Profile == name,
 			DeleteBlock: "firmware profiles cannot be deleted",
@@ -148,7 +149,7 @@ func DefaultEditTarget(s *api.State) string {
 // always activatable; a custom profile needs settings to apply, and one
 // already running has nothing to do.
 func ActivateBlock(s *api.State, name string) string {
-	if api.IsStockProfileName(name) {
+	if api.IsKernelProfileName(name) {
 		return ""
 	}
 	if s != nil && s.Profile == name {
@@ -190,12 +191,18 @@ func DeleteBlockFor(s *api.State, name string) string {
 	return ""
 }
 
-// Label returns the display text for a profile name: the stock profiles and
-// "custom" are title-cased as the drawer always has, while a named profile is
-// shown verbatim — it is an identifier the user typed, and "My-Profile" for
-// "my-profile" would suggest a name that does not exist.
+// Label returns the display text for a profile name with no device label to
+// hand: a kernel firmware profile name gets its conventional spelling
+// (api.ProfileLabel — "Low Power", not "Low-power"), "custom" is title-cased
+// as the drawer always has, and a named profile is shown verbatim — it is an
+// identifier the user typed, and "My-Profile" for "my-profile" would suggest a
+// name that does not exist. Prefer Firmware.Label for firmware profiles: a
+// device may name its own.
 func Label(name string) string {
-	if api.IsStockProfileName(name) || name == api.DefaultCustomProfile {
+	if api.IsKernelProfileName(name) {
+		return api.ProfileLabel(name)
+	}
+	if name == api.DefaultCustomProfile {
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
 	return name

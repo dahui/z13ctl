@@ -7,9 +7,11 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -153,9 +155,12 @@ func loadState() api.State {
 // fields are only a projection of the active profile, so they are discarded and
 // rebuilt rather than trusted.
 //
-// It also drops any profile whose name is reserved. Validation rejects those at
-// the door, but state.json is a plain file a user can edit, and a custom profile
-// named "balanced" would otherwise shadow the firmware profile of that name.
+// It also renames any custom profile whose name is a kernel firmware profile
+// name (renameReservedProfiles). Validation rejects those at the door, but
+// state.json is a plain file a user can edit, and the reservation widened in
+// 2.0 from the Z13's three names to the whole kernel vocabulary — so a profile
+// a user legitimately created as "low-power" must survive under a new name
+// rather than be shadowed, or deleted.
 func migrateCustomProfiles(s api.State) api.State {
 	if s.CustomProfiles == nil && (s.FanCurve != nil || s.TDP != nil || s.Undervolt != nil) {
 		p := api.CustomProfile{
@@ -171,9 +176,10 @@ func migrateCustomProfiles(s api.State) api.State {
 		s.CustomProfiles = map[string]api.CustomProfile{api.DefaultCustomProfile: p}
 		slog.Info("migrated saved custom settings into the \"custom\" profile")
 	}
+	s = renameReservedProfiles(s)
 	for name := range s.CustomProfiles {
-		if api.IsStockProfileName(name) || name == "" {
-			slog.Warn("dropping custom profile with a reserved name", "profile", name)
+		if name == "" {
+			slog.Warn("dropping custom profile with an empty name")
 			delete(s.CustomProfiles, name)
 			continue
 		}
@@ -188,7 +194,9 @@ func migrateCustomProfiles(s api.State) api.State {
 	// reads as neither stock nor custom, so nothing restores it and every later
 	// lookup falls through to an error. Clearing it makes effectiveProfile fall
 	// back to platform_profile, which is the honest answer.
-	if s.Profile != "" && !api.IsStockProfileName(s.Profile) && !s.IsCustomProfile(s.Profile) {
+	// Kernel names are kept here: whether this device offers one is a question
+	// for the assembled device, which Run() asks before writing anything.
+	if s.Profile != "" && !api.IsKernelProfileName(s.Profile) && !s.IsCustomProfile(s.Profile) {
 		slog.Warn("saved profile no longer exists; falling back to the firmware profile", "profile", s.Profile)
 		s.Profile = ""
 	}
@@ -383,4 +391,59 @@ func saveState(s api.State) error {
 		return err
 	}
 	return nil
+}
+
+// legacyFirmwareNames are the names reserved before 2.0 (the Z13's firmware
+// profiles). A state reference to one of them always meant the firmware
+// profile, never a custom profile of that name, which could not be selected.
+var legacyFirmwareNames = []string{"quiet", "balanced", "performance"}
+
+// renameReservedProfiles moves every custom profile whose name is now a
+// reserved kernel profile name to "user-<name>" (numbered if that is taken),
+// and logs each move. Nothing is dropped: the settings are the user's.
+//
+// References follow the profile only where they could have meant it. A saved
+// active profile or autoswitch target naming quiet/balanced/performance meant
+// the firmware profile (those were reserved already); one naming low-power,
+// cool, balanced-performance or max-power meant the custom profile, which was
+// a legal name until the reservation widened.
+func renameReservedProfiles(s api.State) api.State {
+	var reserved []string
+	for name := range s.CustomProfiles {
+		if api.IsKernelProfileName(name) {
+			reserved = append(reserved, name)
+		}
+	}
+	slices.Sort(reserved) // deterministic numbering
+	for _, old := range reserved {
+		renamed := "user-" + old
+		for n := 2; ; n++ {
+			if _, taken := s.CustomProfiles[renamed]; !taken && !api.IsReservedProfileName(renamed) {
+				break
+			}
+			renamed = fmt.Sprintf("user-%s-%d", old, n)
+		}
+		p := s.CustomProfiles[old]
+		p.Name = renamed
+		s.CustomProfiles[renamed] = p
+		delete(s.CustomProfiles, old)
+		slog.Warn("renamed a custom profile whose name is reserved for a firmware profile",
+			"from", old, "to", renamed)
+
+		if slices.Contains(legacyFirmwareNames, old) {
+			continue
+		}
+		if s.Profile == old {
+			s.Profile = renamed
+		}
+		if a := s.Autoswitch; a != nil {
+			if a.AC == old {
+				a.AC = renamed
+			}
+			if a.Battery == old {
+				a.Battery = renamed
+			}
+		}
+	}
+	return s
 }

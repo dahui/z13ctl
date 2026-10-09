@@ -144,7 +144,8 @@ render controls against, instead of hardcoding one device's numbers:
            "pl2":{"min":32,"max":92},"pl3":{"min":45,"max":93},
            "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."],
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
-  "profiles":{"names":["quiet","balanced","performance"]},
+  "profiles":{"names":["quiet","balanced","performance"],"default":"balanced",
+              "entries":[{"name":"quiet","label":"Quiet"}, "..."]},
   "lighting":{"zones":["keyboard","lightbar"]},
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
@@ -177,8 +178,17 @@ rather than reading the kernel, since on asus-armoury each read is a live ACPI
 call. `fans.temp_min`/`temp_max` are the curve editor's
 display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
-user's curve); `toggles[].id` is the wire identifier the `feature` commands
+user's curve); `toggles[].values` lists the legal values where the firmware
+reports them (absent means 0 and 1); `toggles[].id` is the wire identifier the `feature` commands
 below take.
+
+`profiles.names` is the firmware profiles the device offers, least power first
+— the kernel's list, filtered by the device data — and the only list to build
+firmware-profile controls from. `profiles.default` is where `tdp-reset` and
+`tuning-reset` land (its stock limits are within the safe sustained maximum),
+and `profiles.entries` gives each a display label. A daemon older than those
+two fields omits them. The names a *custom* profile may never take are wider
+than `profiles.names`: every kernel profile name is reserved on every device.
 
 `fans.presets` lists the device's named starting-point curves, in the order to
 offer them. There is **no preset command** — applying one is an ordinary
@@ -268,8 +278,13 @@ for all zones. `brightness` is 0–3.
 | Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
 | Get firmware toggle | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
 
-`profile` accepts `quiet`, `balanced`, `performance`, or the name of a custom
-profile (including `custom`).
+`profile` accepts one of the device's firmware profiles (`device-get`'s
+`profiles.names`; `quiet`, `balanced` and `performance` on the Z13) or the name
+of a custom profile (including `custom`). `profile-get` and `get-state`'s
+`profile` carry the device's names too: a secondary kernel handler's spelling
+(`low-power` for `quiet`) is mapped back, and a read the device cannot name — the
+kernel's `custom`, meaning its handlers disagree — is reported as an error
+rather than passed through.
 
 `feature`/`feature-get` are the generic form of the firmware-toggle commands:
 `id` is any toggle the `device-get` document lists, so a client driven by that
@@ -289,9 +304,10 @@ a version number.
 
 :::caution[Unknown profile names are now rejected]
 Earlier daemons forwarded any string to `platform_profile`. A name that is
-neither a firmware profile nor a saved custom profile is now an error, so a
-typo cannot reach the fan-curve reset on its way to failing. A client that
-sent e.g. `low-power` will need updating.
+neither one of this device's firmware profiles nor a saved custom profile is
+now an error, so a typo cannot reach the fan-curve reset on its way to failing.
+Send the names `device-get` lists: `low-power` works on a device that offers it
+and is refused on one that does not.
 :::
 
 ### Custom profiles
@@ -904,9 +920,11 @@ bounce.
 Devices are selected by their `type` file, not by having an `online` file. On
 the Z13 the detachable keyboard registers as `hid-*-battery-N` and the USB-C
 ports as `ucsi-source-psy-*`, and all of them expose `online`; only `type`
-`Mains` is the charger. If no `Mains` supply exists at all — a VM, a desktop,
-a driver not yet bound — the source is treated as *unknown* and the watcher
-does nothing, rather than concluding the machine is on battery.
+`Mains` is the charger. A machine with a system battery but no `Mains` supply at
+all is charged over USB-C alone, and there a `System`-scope USB supply that is
+`online` means plugged in. If neither exists — a VM, a desktop, a driver not yet
+bound — the source is treated as *unknown* and the watcher does nothing, rather
+than concluding the machine is on battery.
 
 There is deliberately no autoswitch hook in the resume path. Go timers do not
 advance across suspend, so the watcher's armed timer fires promptly after

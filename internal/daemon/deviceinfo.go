@@ -82,7 +82,12 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		}
 	}
 	if hw.Profiles != nil {
-		info.Profiles = &api.ProfileInfo{Names: hw.Profiles.Names()}
+		names := hw.Profiles.Names()
+		entries := make([]api.ProfileEntry, len(names))
+		for i, n := range names {
+			entries[i] = api.ProfileEntry{Name: n, Label: hw.Profiles.Label(n)}
+		}
+		info.Profiles = &api.ProfileInfo{Names: names, Default: hw.Profiles.Default(), Entries: entries}
 	}
 	if hw.Lighting != nil {
 		info.Lighting = &api.LightingInfo{Zones: hw.Lighting.Zones()}
@@ -98,7 +103,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 			}
 			info.Toggles = append(info.Toggles, api.ToggleInfo{
 				ID: t.ID, Label: t.Label, Description: t.Description,
-				Kind: string(t.Kind), Source: source,
+				Kind: string(t.Kind), Source: source, Values: t.Values,
 			})
 		}
 	}
@@ -261,8 +266,8 @@ func (d *Daemon) handleFeature(req request) response {
 	if err != nil {
 		return response{OK: false, Error: fmt.Sprintf("feature %s: value %q must be an integer", spec.ID, req.Set)}
 	}
-	if spec.Kind == driver.ToggleBool && value != 0 && value != 1 {
-		return response{OK: false, Error: fmt.Sprintf("feature %s: value must be 0 or 1", spec.ID)}
+	if !spec.Accepts(value) {
+		return response{OK: false, Error: fmt.Sprintf("feature %s: value must be %s", spec.ID, spec.ValuesText())}
 	}
 	if err := d.hw.Toggles.Set(spec.ID, value); err != nil {
 		return response{OK: false, Error: "feature " + spec.ID + ": " + err.Error()}

@@ -936,7 +936,16 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   flag — the Z13's two toggles both apply immediately — so the true branch was
   verified with a throwaway build forcing it, and never on real firmware. New
   pointer on `api.State` ⇒ `cloneState` got it.
-- **`charge_mode` is the only thing that can tell the Z13's two power inputs
+- **The charger kind has a generic source now; the Z13 still reads
+  `charge_mode`** (2026-10-09). `ReadChargerFromSupplies` needs no firmware
+  call: a `System`-scope USB supply `online` (ucsi's PD contract) means USB-C,
+  otherwise mains means the adapter. It is the default (`battery.charger`
+  omitted). The Z13's device file sets `charger = "asus-armoury"` because
+  `charge_mode` is what its values were measured against. The generic rule
+  matches it on the adapter (checked live), but the USB-C half needs the cable
+  swapped to confirm; once it does, the Z13 can drop the key and stop making a
+  live WMI read on every battery poll.
+- **`charge_mode` was the only thing that could tell the Z13's two power inputs
   apart, and its vocabulary was established by swapping the charger — not by
   inference.** The machine takes power two ways: the proprietary high-wattage DC
   adapter shared with the Zephyrus line, and USB-C PD. **The Mains supply reads
@@ -1273,12 +1282,42 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   otherwise the machine keeps running the old curve and offset while reporting a
   firmware profile, and the reconcile watcher stays inert because the profile is
   no longer custom.
-- **Only a firmware profile name may reach `platform_profile`.** `Run()`'s
-  restore is gated on `cli.IsStockProfile`, not on "not custom": a state file
-  naming a profile that is neither — deleted by hand, or lost in a downgrade —
-  would otherwise be written straight to the attribute. `loadState` also clears
-  such a name, so `effectiveProfile` falls back to `platform_profile` instead of
-  every later lookup erroring.
+- **Only a firmware profile *this device offers* may reach `platform_profile`**
+  (`d.isFirmwareProfile`, i.e. `hw.Profiles.Names()`; 2026-10-09). The driver
+  contract always said so and nothing enforced it — callers gated on the
+  hardcoded `api.IsStockProfileName`, so on another device `low-power` could
+  not be selected while `quiet` was accepted. `applyProfileLocked`, `Run()`'s
+  restore and autoswitch (target validation and `autoswitchTarget`) all check
+  the device's list. A state file naming a profile that is neither — deleted
+  by hand, lost in a downgrade, or carried from a machine with different
+  firmware profiles — is never written; `loadState` clears a name that is
+  neither a kernel name nor a custom profile, and `Run()` refuses a kernel name
+  the device does not offer.
+- **The firmware profile list is the kernel's, filtered by device data, and
+  reads are normalized to it** (`internal/drivers/asusz13`; 2026-10-09).
+  `Names()` is the owning handler's `choices` ∩ the TOML `[profiles] names`, in
+  the TOML's order. The handler is chosen by its `name` (`handler = "asus-wmi"`),
+  not by "whose choices contain quiet". The kernel's `custom` choice is never
+  offered. A declared name the kernel does not offer is dropped with a warning,
+  and is deliberately *not* translated to an equivalent (`quiet` → `low-power`):
+  the stock row is keyed `quiet`, so offering `low-power` would skip it before
+  the fan release. `Get()` maps a secondary handler's spelling back
+  (`low-power`/`cool` → the device's low-power-group name) and reports the
+  kernel's `custom` read (handlers disagree) as unknown, so no raw value ever
+  keys a stock table. Writes still go per class device, the low-power group
+  translated for secondary handlers. The legacy file was checked: with PPD
+  running, every switch leaves all handlers agreeing (PPD's own legacy write
+  sets amd-pmf's hidden `quiet`). Without PPD the legacy file could read
+  `custom`, which `Get` now treats as unknown. Writing the legacy file instead
+  would need a new grant on a root-owned attribute. `PPDProfile` is the one
+  kernel→PPD map, shared with the dry run.
+- **Resets land on `[profiles] default`, never a literal `"balanced"`.**
+  `Config.Validate` requires the default to be listed, with a stock row whose
+  PL1 is within `tdp_max_safe`: `resetToStock`'s lower-before-release order is
+  fail-closed only if that holds. With no default the driver falls back to
+  `balanced` if the kernel offers it, else `""`. `resetToStock` and
+  `runTdpResetDirect` resolve it *before* touching anything and refuse on
+  `""` — the old order cleared the undervolt and then failed the switch.
 - **The profile CRUD handlers take `hwMu` even though they write no hardware.**
   The edit handlers resolve a target under `d.mu`, release it for the hardware
   write, then commit the profile back under `d.mu` again. Mutating the profile map
@@ -1297,14 +1336,23 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   development. `cmd.ensureProfileTargetSupported` probes `profile-list` (which
   answers `unknown command` on an older daemon) before every `--profile` send.
   Any other client offering profile targeting must do the same.
-- **The firmware profile names are reserved at four layers.** `quiet`,
-  `balanced` and `performance` can never name a custom profile, so selecting one
-  always reaches the firmware profile: (1) `cli.ValidateProfileName` rejects
-  them, (2) `applyProfileLocked` tests `cli.IsStockProfile` *before* it consults
-  the map, (3) `api.State.IsCustomProfile` returns false for them ahead of the
-  lookup, and (4) `loadState` drops a `custom_profiles` entry carrying one. Layer
-  4 is not paranoia — `state.json` is a plain file a user can edit, and it parses
-  fine, so the other three never see it. The reservation is load-bearing beyond
+- **Every kernel firmware profile name is reserved, at four layers** —
+  `api.KernelProfileNames` (low-power, cool, quiet, balanced,
+  balanced-performance, performance, max-power) plus `custom`, on every device
+  rather than only the names this one offers, so a profile made on one machine
+  stays valid on another (widened 2026-10-09 from the Z13's three;
+  `api.StockProfiles`/`IsStockProfileName` remain exported, deprecated, for 1.x
+  clients). Selecting a reserved name always reaches the firmware profile:
+  (1) `api.ValidateProfileName` rejects them, (2) `applyProfileLocked` tests
+  `isFirmwareProfile` *before* it consults the map, (3)
+  `api.State.IsCustomProfile` returns false for any kernel name ahead of the
+  lookup, and (4) `loadState` **renames** a `custom_profiles` entry carrying one
+  to `user-<name>` (numbered if taken; Jeff, 2026-10-09: the settings are the
+  user's, never dropped). References follow the rename only for the four names
+  that were legal custom names before 2.0; `quiet`/`balanced`/`performance` were
+  already reserved, so a reference to one always meant the firmware profile.
+  Layer 4 is not paranoia — `state.json` is a plain file a user can edit, and it
+  parses fine, so the other three never see it. The reservation is load-bearing beyond
   aesthetics: `ReadEffectivePPT` disables its stale-5W fallback for any name
   absent from `StockProfilePPT`, which is right for a custom profile and wrong
   for a firmware one, so a custom "balanced" would misreport the power limits.
@@ -1346,7 +1394,13 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `ucsi-source-psy-*` (type `USB`), and all of them expose `online` — a `*/online`
   glob reports mains power whenever the cover is attached. `OnACPower` returns an
   *error* when no Mains supply exists (VM, desktop, driver not yet bound); callers
-  must treat that as unknown and do nothing, never as "on battery".
+  must treat that as unknown and do nothing, never as "on battery". The one
+  exception is gated on a system battery: a machine with a battery and no Mains
+  supply is USB-C-powered, and a `System`-scope USB supply `online` answers
+  (`usbPowered`; 2026-10-09). The system battery is likewise chosen by the
+  kernel's own description — `type == Battery` and `scope != Device`
+  (`systemBatteryDir`) — rather than the `BAT*` name, which is the fallback only
+  when no supply describes itself.
 - **The stock row is never the last write to a stock profile** (issues #12,
   #22; ported from main's v1.3.5). The `ppt_*` attributes have no "reset to
   firmware default" operation — writing 5W (an earlier attempt) just crippled
@@ -1973,6 +2027,23 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   reason instead of answering "unknown edge", and every parse failure still
   returns a usable edge so a bad config costs a warning and not a drawer that
   will not open.
+- **Which toggles exist is the kernel's answer through a code allowlist**
+  (`asusz13.safeToggles`; Jeff, 2026-10-09). The driver reads each allowlisted
+  armoury attribute's static metadata on first `List`: `type`,
+  `possible_values` (→ `ToggleSpec.Values`, served as `toggles[].values`),
+  the file mode (read-only means a reading, not a switch) and `display_name`.
+  It never reads `current_value`, which is live WMI. Anything not a writable
+  0/1 switch is skipped, and the device file supplies wording and can `hidden`
+  an entry.
+  The allowlist is the safety boundary, and it lives in code because
+  attribute names are kernel ABI: armoury on other ASUS models exposes
+  `gpu_mux_mode`, `dgpu_disable`, `egpu_enable`, `apu_mem`, `cores_*`,
+  `mini_led_mode`, which can black-screen a machine. "Offer everything the
+  kernel lists" would have made those a row like any other. `voltaire setup`
+  grants exactly the allowlist (byte-identical output for the Z13's two). Every
+  write validates through `ToggleSpec.Accepts`, so there are no `0 || 1`
+  literals in the handlers or the CLI. With no attribute directory
+  (asus-armoury not loaded), the declared list stands.
 - **Generic toggle rows needed two api additions; both landed, and the renderer
   is now the full window's Settings tab.** The roadmap had `internal/controls`
   rendering the firmware toggles (and later plugin features) from the device
@@ -3100,9 +3171,9 @@ on main is the list still to port.
 
 Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
-instead); `limits.Curve` becoming a slice gated by `Shape().Points`; firmware
-profile names from `api.ProfileInfo` rather than the hardcoded
-`api.StockProfiles`. The two device-document fields the plan specified and M2
+instead); `limits.Curve` becoming a slice gated by `Shape().Points`. (Firmware
+profile names from `api.ProfileInfo` rather than `api.StockProfiles` landed
+2026-10-09 with the device-values audit.) The two device-document fields the plan specified and M2
 left out — `battery.health` and `telemetry.{power_draw,history_seconds}` — are
 **done**; they were M4 prerequisites, since the dashboard and telemetry ring
 were specified to read them. `undervolt_available` is still not derived from

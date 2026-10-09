@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
 )
 
 const rulesPath = "/etc/udev/rules.d/99-voltaire.rules"
@@ -37,7 +39,7 @@ func buildRulesContent(group string) string {
 #   - asus-wmi platform-profile attribute for performance profile control
 #   - asus-nb-wmi battery charge_control_end_threshold for battery limit control
 #   - Armoury Crate button input device for daemon button watcher
-#   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
+#   - asus-armoury firmware-attributes (%s)
 #   - cpufreq's global boost switch (perms unit only — udev cannot see it)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
 #   - asus-armoury PPT power limit attributes for TDP control (asus-nb-wmi ppt_* as fallback)
@@ -50,9 +52,7 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", MODE="06
 ACTION=="add", SUBSYSTEM=="platform-profile", RUN+="/usr/bin/chgrp %s /sys%%p/profile", RUN+="/usr/bin/chmod g+w /sys%%p/profile"
 ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr/bin/chgrp %s /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="%s"
-ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
-ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
-ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e \"$$f\" ] || continue; chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
+%sACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e \"$$f\" ] || continue; chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", RUN+="/bin/sh -c 'chgrp %s /sys%%p/pwm*; chmod g+w /sys%%p/pwm*'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f in /sys%%p/pwm*_enable; do [ -e \"$$f\" ] && chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
 # ppt_* are usually created after this add event (later in asus_nb_wmi probe()), so
@@ -61,7 +61,35 @@ ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f i
 # which logged "failed with exit code 1" on every boot (issue #25).
 ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] || continue; chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%%p/energy_uj; do [ -e \"$$f\" ] && chgrp %s \"$$f\" && chmod g+r \"$$f\"; done'"
-`, group, group, group, group, group, group, group, group, group, group, group, group, group)
+`, group, strings.Join(asusz13.SafeToggleIDs(), ", "), group, group, group, group, group,
+		toggleUdevRules(group), group, group, group, group, group)
+}
+
+// toggleUdevRules grants each firmware toggle the daemon may write — the
+// driver's allowlist, so a newly allowlisted attribute is granted with no
+// second list to update, and nothing outside it ever is.
+func toggleUdevRules(group string) string {
+	var b strings.Builder
+	for _, id := range asusz13.SafeToggleIDs() {
+		p := toggleAttrPath(id)
+		fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s %s", RUN+="/usr/bin/chmod g+w %s"`+"\n", group, p, p)
+	}
+	return b.String()
+}
+
+// toggleAttrPath is an allowlisted toggle's value file.
+func toggleAttrPath(id string) string {
+	return "/sys/class/firmware-attributes/asus-armoury/attributes/" + id + "/current_value"
+}
+
+// toggleAttrPaths is every allowlisted toggle's value file, space-separated.
+func toggleAttrPaths() string {
+	ids := asusz13.SafeToggleIDs()
+	paths := make([]string, len(ids))
+	for i, id := range ids {
+		paths[i] = toggleAttrPath(id)
+	}
+	return strings.Join(paths, " ")
 }
 
 // buildServiceContent generates the voltaire-perms.service unit file content.
@@ -96,7 +124,7 @@ After=sysinit.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
-ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in %s; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
@@ -105,7 +133,7 @@ ExecStart=/bin/sh -c 'for f in /sys/class/powercap/*/energy_uj; do [ -e "$$f" ] 
 
 [Install]
 WantedBy=multi-user.target
-`, group, group, group, group, group, group, group)
+`, group, toggleAttrPaths(), group, group, group, group, group, group)
 }
 
 // applySysfsPerms scans live sysfs for files managed by voltaire and either
@@ -148,9 +176,9 @@ func applySysfsPerms(group string, dryRun bool) {
 		}
 	}
 
-	// Firmware-attributes (asus-armoury): boot_sound, panel_overdrive.
-	for _, attr := range []string{"boot_sound", "panel_overdrive"} {
-		p := "/sys/class/firmware-attributes/asus-armoury/attributes/" + attr + "/current_value"
+	// Firmware-attributes (asus-armoury): the toggles the daemon may write.
+	for _, id := range asusz13.SafeToggleIDs() {
+		p := toggleAttrPath(id)
 		if _, err := os.Stat(p); err != nil {
 			continue
 		}

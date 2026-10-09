@@ -213,31 +213,40 @@ func signedByStatus(dir string, watts float64) float64 {
 	}
 }
 
-// findBatteryDir returns the first power_supply device of type Battery that
-// carries a capacity — the machine's own pack.
-//
-// The type check is the same one FindACOnlinePath needs and for the same
-// reason: on this machine the detachable keyboard registers as
-// hid-*-battery-N, which is also type Battery and also has a capacity. It is
-// ruled out by requiring a name beginning "BAT", which is what the ACPI battery
-// driver names the system pack on every machine this runs on.
+// findBatteryDir returns the machine's own battery: see systemBatteryDir.
 func findBatteryDir() (string, error) {
-	entries, err := os.ReadDir(sysPowerSupplyDir)
-	if err != nil {
-		return "", fmt.Errorf("power_supply not available: %w", err)
-	}
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "BAT") {
-			continue
-		}
-		dir := sysPowerSupplyDir + "/" + e.Name()
-		if typ, err := os.ReadFile(dir + "/type"); err == nil &&
-			strings.TrimSpace(string(typ)) != "Battery" {
-			continue
-		}
+	if dir := systemBatteryDir(); dir != "" {
 		return dir, nil
 	}
 	return "", fmt.Errorf("no system battery found under %s", sysPowerSupplyDir)
+}
+
+// systemBatteryDir returns the first power_supply device the kernel describes
+// as the system's own battery: type Battery, and a scope other than Device.
+//
+// The scope attribute is the kernel's own discriminator for exactly the case
+// that matters here — on the Z13 the detachable keyboard registers as
+// hid-*-battery-N, also type Battery with a capacity, but scope=Device — and
+// it holds whatever the pack is called (BAT0, BAT1, CMB0, a fuel gauge's
+// name). A missing scope means System. Only when no supply describes itself
+// at all does the old ACPI naming rule (BAT*) stand in. "" when there is none.
+func systemBatteryDir() string {
+	entries, err := os.ReadDir(sysPowerSupplyDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		dir := sysPowerSupplyDir + "/" + e.Name()
+		if readSysfsTrimmed(dir+"/type") == "Battery" && readSysfsTrimmed(dir+"/scope") != "Device" {
+			return dir
+		}
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "BAT") {
+			return sysPowerSupplyDir + "/" + e.Name()
+		}
+	}
+	return ""
 }
 
 // readUint reads a sysfs file holding a single unsigned integer.

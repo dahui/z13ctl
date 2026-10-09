@@ -228,9 +228,9 @@ func TestValidateProfileName(t *testing.T) {
 // limits. (The companion data test in internal/device checks the envelope's
 // own table keys against the same reservation.)
 func TestNoStockProfileNameIsAcceptedAsCustom(t *testing.T) {
-	for _, name := range []string{"quiet", "balanced", "performance"} {
-		if !api.IsStockProfileName(name) {
-			t.Errorf("api.IsStockProfileName(%q) = false, want true", name)
+	for _, name := range api.KernelProfileNames {
+		if !api.IsReservedProfileName(name) {
+			t.Errorf("api.IsReservedProfileName(%q) = false, want true", name)
 		}
 		if err := ValidateProfileName(name); err == nil {
 			t.Errorf("ValidateProfileName(%q) = nil, want an error — a custom profile may not shadow a firmware profile", name)

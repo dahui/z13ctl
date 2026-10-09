@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
 )
 
 // blockedFor reports whether fn was still running after d, used to check that a
@@ -572,5 +573,50 @@ func TestImplicitEditStartsFresh(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// noDefaultProfiles is a profile controller with no safe landing profile. Any
+// write fails the test: the reset must refuse before touching hardware.
+type noDefaultProfiles struct{ t *testing.T }
+
+func (noDefaultProfiles) Names() []string       { return []string{"low-power", "performance"} }
+func (noDefaultProfiles) Get() (string, error)  { return "performance", nil }
+func (noDefaultProfiles) Default() string       { return "" }
+func (noDefaultProfiles) Label(n string) string { return n }
+func (p noDefaultProfiles) Set(n string) error {
+	p.t.Errorf("Profiles.Set(%q) reached with no landing profile", n)
+	return nil
+}
+
+// A device that names no default firmware profile has nowhere safe to land:
+// tdp-reset and tuning-reset refuse outright, before the undervolt clear or the
+// profile switch, rather than guessing "balanced".
+func TestResetRefusesWithoutALandingProfile(t *testing.T) {
+	d := &Daemon{hw: &device.Device{Profiles: noDefaultProfiles{t}}}
+	d.state.Profile = "performance"
+	for _, cmd := range []string{"tdp-reset", "tuning-reset"} {
+		var resp response
+		if cmd == "tdp-reset" {
+			resp = d.handleTDPReset(request{Cmd: cmd})
+		} else {
+			resp = d.handleTuningReset(request{Cmd: cmd})
+		}
+		if resp.OK || !strings.Contains(resp.Error, "no default firmware profile") {
+			t.Errorf("%s = %+v, want a refusal naming the missing default", cmd, resp)
+		}
+	}
+}
+
+// Only a name the device offers reaches platform_profile. "low-power" is a
+// kernel profile name — so it can never be a custom profile — but the Z13 does
+// not offer it, so it is refused as unknown before any write.
+func TestProfileSetRefusesAKernelNameTheDeviceDoesNotOffer(t *testing.T) {
+	d := &Daemon{hw: testDev}
+	if err := d.applyProfileLocked("low-power"); err == nil || !strings.Contains(err.Error(), "unknown profile") {
+		t.Errorf("applyProfileLocked(low-power) = %v, want an unknown-profile refusal", err)
+	}
+	if !d.isFirmwareProfile("quiet") || d.isFirmwareProfile("low-power") {
+		t.Error("isFirmwareProfile disagrees with the Z13's profile list")
 	}
 }

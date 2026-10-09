@@ -34,7 +34,14 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/profileui"
 )
+
+// firmware is the device's firmware profiles, from the current document (the
+// built-in list when the daemon has not answered).
+func (w *Window) firmware() profileui.Firmware {
+	return profileui.FirmwareFrom(w.device)
+}
 
 // adoptStateLimits lays a fetched state's live power-limit ranges over the
 // current limits. Main thread only; call it before syncing widgets from the
@@ -59,8 +66,15 @@ func (w *Window) adoptDevice(doc *api.DeviceInfo) {
 	if w.state != nil {
 		next = next.WithTDPLimits(w.state.TDPLimits)
 	}
+	prev := w.device
 	w.device = doc
 	w.applyLimits(next)
+
+	// The firmware profile buttons are built once from the document too.
+	if have, now := profileui.FirmwareFrom(prev).Names(), profileui.FirmwareFrom(doc).Names(); !slices.Equal(have, now) {
+		slog.Warn("the daemon now reports different firmware profiles; restart voltaire-gui to rebuild the profile buttons",
+			"built", have, "reported", now)
+	}
 
 	resolved, _ := controls.Resolve(guiConfig(), doc)
 	if have, now := controls.IDsOf(w.controls), controls.IDsOf(resolved); !slices.Equal(have, now) {

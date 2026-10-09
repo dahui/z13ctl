@@ -850,4 +850,6 @@ type notifyingProfiles struct{ paths []string }
 func (notifyingProfiles) Names() []string              { return nil }
 func (notifyingProfiles) Get() (string, error)         { return "balanced", nil }
 func (notifyingProfiles) Set(string) error             { return nil }
+func (notifyingProfiles) Default() string              { return "" }
+func (notifyingProfiles) Label(n string) string        { return n }
 func (p notifyingProfiles) PolicyWritePaths() []string { return p.paths }

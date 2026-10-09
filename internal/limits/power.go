@@ -102,7 +102,10 @@ type Limits struct {
 	FloorCurve []api.FanCurvePoint
 
 	// StockProfilePPT holds each stock profile's firmware PPT defaults, used to
-	// tell "the firmware's numbers" from "numbers the user chose". Only the three
+	// tell "the firmware's numbers" from "numbers the user chose". Like
+	// Presets, Sanitized does not fill it from DefaultLimits when empty: these
+	// are one machine's firmware values, and labelling another machine's
+	// limits "stock" against them would be a claim about firmware nobody read. Only the three
 	// limits the drawer displays are listed; the daemon also tracks APU/Platform
 	// sPPT, which it mirrors from PL2 and which no UI shows.
 	StockProfilePPT map[string]api.TDPState
@@ -262,9 +265,6 @@ func (l Limits) Sanitized() Limits {
 	}
 	if l.TempMax <= 0 {
 		l.TempMax = d.TempMax
-	}
-	if len(l.StockProfilePPT) == 0 {
-		l.StockProfilePPT = d.StockProfilePPT
 	}
 
 	// Ordering and width invariants, not just presence. A per-field default fixes

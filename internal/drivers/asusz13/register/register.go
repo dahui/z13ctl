@@ -25,16 +25,21 @@ func init() {
 		return asusz13.NewPowerLimiter(c.Envelope()), nil
 	})
 	device.RegisterProfiles("platform-profile", func(c device.ProfilesConfig) (driver.ProfileController, error) {
-		return asusz13.NewProfileController(c.Names), nil
+		return asusz13.NewProfileController(c.Names, c.Handler, c.Default, c.Labels), nil
 	})
 	device.RegisterToggles("asus-armoury", func(c device.TogglesConfig) (driver.Toggles, error) {
-		specs := make([]driver.ToggleSpec, len(c.Entries))
-		for i, e := range c.Entries {
-			specs[i] = driver.ToggleSpec{
-				ID: e.ID, Label: e.Label, Description: e.Description, Kind: driver.ToggleBool,
+		var specs []driver.ToggleSpec
+		var hidden []string
+		for _, e := range c.Entries {
+			if e.Hidden {
+				hidden = append(hidden, e.ID)
+				continue
 			}
+			specs = append(specs, driver.ToggleSpec{
+				ID: e.ID, Label: e.Label, Description: e.Description, Kind: driver.ToggleBool,
+			})
 		}
-		return asusz13.NewToggles(specs)
+		return asusz13.NewToggles(specs, hidden)
 	})
 	device.RegisterBattery("power-supply", func(c device.BatteryConfig) (driver.Battery, error) {
 		return asusz13.NewBattery(c.Caps()), nil

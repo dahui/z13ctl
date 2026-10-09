@@ -36,16 +36,16 @@ type TargetRow struct {
 // TargetRows returns the rows for one autoswitch side, in display order:
 // "leave alone" first, then the stock profiles, then every custom profile —
 // the empty ones present but marked, for the reason on TargetRow.Empty.
-func TargetRows(s *api.State) []TargetRow {
-	rows := []TargetRow{{Name: LeaveAlone, Label: TargetLabel(LeaveAlone)}}
-	for _, r := range StockRows(s) {
-		rows = append(rows, TargetRow{Name: r.Name, Label: TargetLabel(r.Name)})
+func TargetRows(s *api.State, fw Firmware) []TargetRow {
+	rows := []TargetRow{{Name: LeaveAlone, Label: TargetLabel(fw, LeaveAlone)}}
+	for _, r := range StockRows(s, fw) {
+		rows = append(rows, TargetRow{Name: r.Name, Label: r.Label})
 	}
 	for _, r := range CustomRows(s) {
 		// "already the active profile" blocks the Activate button but says
 		// nothing about whether the profile is a usable autoswitch target —
 		// only an empty one is unusable, and that is the case Empty() names.
-		row := TargetRow{Name: r.Name, Label: TargetLabel(r.Name)}
+		row := TargetRow{Name: r.Name, Label: TargetLabel(fw, r.Name)}
 		if emptyProfile(s, r.Name) {
 			row.Empty = true
 			// The same word `profile --list` uses for the same fact.
@@ -59,8 +59,8 @@ func TargetRows(s *api.State) []TargetRow {
 // TargetOptions returns the selectable choices for one autoswitch side — the
 // names of TargetRows minus the empty profiles, which are displayed but can
 // never be chosen.
-func TargetOptions(s *api.State) []string {
-	rows := TargetRows(s)
+func TargetOptions(s *api.State, fw Firmware) []string {
+	rows := TargetRows(s, fw)
 	opts := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if !r.Empty {
@@ -80,12 +80,13 @@ func emptyProfile(s *api.State, name string) bool {
 	return !ok || p.Empty()
 }
 
-// TargetLabel returns the display text for an autoswitch target.
-func TargetLabel(name string) string {
+// TargetLabel returns the display text for an autoswitch target, using the
+// device's label for a firmware profile.
+func TargetLabel(fw Firmware, name string) string {
 	if name == LeaveAlone {
 		return "(don't change)"
 	}
-	return Label(name)
+	return fw.Label(name)
 }
 
 // PowerLabel returns the power-source indicator text: "AC", "Battery", or ""

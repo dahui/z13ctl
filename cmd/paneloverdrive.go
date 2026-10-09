@@ -36,8 +36,11 @@ Values:
 
 		if panelOverdriveSetFlag != "" {
 			value, err := strconv.Atoi(panelOverdriveSetFlag)
-			if err != nil || (value != 0 && value != 1) {
-				return fmt.Errorf("invalid value %q: must be 0 or 1", panelOverdriveSetFlag)
+			if err != nil {
+				return fmt.Errorf("invalid value %q: must be an integer", panelOverdriveSetFlag)
+			}
+			if verr := checkToggleValue("panel_overdrive", value); verr != nil {
+				return verr
 			}
 
 			if dryRunFlag {

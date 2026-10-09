@@ -13,7 +13,7 @@ import (
 func TestCreateNameProblem(t *testing.T) {
 	s := stateWith("balanced", api.CustomProfile{Name: "gaming", TDP: tdp(60)})
 
-	if got := profileui.CreateNameProblem(s, "cool"); got != "" {
+	if got := profileui.CreateNameProblem(s, "silent"); got != "" {
 		t.Errorf("free valid name refused: %q", got)
 	}
 	if got := profileui.CreateNameProblem(s, "gaming"); got == "" {
@@ -27,7 +27,7 @@ func TestCreateNameProblem(t *testing.T) {
 	if got := profileui.CreateNameProblem(s, "Gaming"); got == "" {
 		t.Error("uppercase accepted — the daemon would refuse it")
 	}
-	if got := profileui.CreateNameProblem(nil, "cool"); got != "" {
+	if got := profileui.CreateNameProblem(nil, "silent"); got != "" {
 		t.Errorf("nil state refused a valid name: %q", got)
 	}
 }

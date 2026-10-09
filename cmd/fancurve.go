@@ -153,28 +153,26 @@ func runFanCurveGet() error {
 	if hw.Fans == nil {
 		return fmt.Errorf("no fan control on this device")
 	}
-	// Display fan 0 only — the Z13's two fans always run the same curve. The
-	// mode is the driver's fold across every readable fan: "custom" only when
-	// all of them honour the curve, which is the truth the daemon acts on too.
-	rpms, rpmErr := hw.Fans.ReadRPM()
+	// RPM and temperature come from the daemon when it is running: fan RPM is a
+	// live asus-wmi read, which the daemon withholds while the EC is not
+	// answering (see readLive). The mode and the curve registers are cached
+	// kernel values and are read here either way. The mode is the driver's fold
+	// across every readable fan: "custom" only when all of them honour the
+	// curve, which is the truth the daemon acts on too.
+	st, daemonUp := daemonState()
+	live := readLive(hw, st, daemonUp)
 	mode, modeErr := hw.Fans.ReadMode()
 	curve, curveErr := hw.Fans.LiveCurve()
 
-	rpmStr := "N/A"
-	if rpmErr == nil && len(rpms) > 0 {
-		rpmStr = fmt.Sprintf("%d RPM", rpms[0])
-	}
 	modeStr := "N/A"
 	if modeErr == nil {
 		modeStr = driver.FanModeName(mode)
 	}
 	tempStr := ""
-	if hw.Telemetry != nil {
-		if s, sErr := hw.Telemetry.Sample(); sErr == nil {
-			tempStr = fmt.Sprintf(", APU: %d°C", s.TempC)
-		}
+	if live.TempC > 0 {
+		tempStr = fmt.Sprintf(", APU: %d°C", live.TempC)
 	}
-	fmt.Printf("Fans: %s, mode: %s%s\n", rpmStr, modeStr, tempStr)
+	fmt.Printf("Fans: %s, mode: %s%s\n", formatRPM(live.RPM), modeStr, tempStr)
 	if curveErr != nil {
 		fmt.Printf("  error reading curve: %v\n", curveErr)
 		return nil

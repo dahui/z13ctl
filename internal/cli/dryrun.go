@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
@@ -86,13 +87,13 @@ func DryRunBatteryLimit(limit int) {
 // change, including mapped names for secondary devices (e.g. amd-pmf uses
 // "low-power" not "quiet"). env supplies the stock PPT rows the switch would
 // restore.
-func DryRunProfile(env driver.PowerEnvelope, profile string) {
+func DryRunProfile(env driver.PowerEnvelope, firmware []string, profile string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 
 	// A custom profile is never written to platform_profile — this printed the
 	// name as a platform_profile write for every release up to now, describing
 	// something the daemon has never done.
-	if !api.IsStockProfileName(profile) {
+	if !slices.Contains(firmware, profile) {
 		fmt.Printf("Would recall custom profile %q from daemon state and apply its\n", profile)
 		fmt.Println("  saved fan curve, TDP, and Curve Optimizer offset")
 		fmt.Println("Would NOT write platform_profile (custom profiles leave it to the desktop)")
@@ -121,12 +122,7 @@ func DryRunProfile(env driver.PowerEnvelope, profile string) {
 		name := asusz13.ProfileNameForDevice(base, profile)
 		fmt.Printf("Would write %q to %s\n", name, p)
 	}
-	ppd := map[string]string{
-		"quiet":       "power-saver",
-		"balanced":    "balanced",
-		"performance": "performance",
-	}[profile]
-	if ppd != "" {
+	if ppd := asusz13.PPDProfile(profile); ppd != "" {
 		fmt.Printf("Would run: powerprofilesctl set %s\n", ppd)
 	}
 	// Switching to a stock profile writes that profile's stock row, then
@@ -345,19 +341,20 @@ func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.
 }
 
 // DryRunTdpReset prints the actions for a TDP reset, in the order the real path
-// performs them.
+// performs them. landing is the device's default firmware profile
+// (ProfileController.Default); "" means the real reset would refuse.
 //
 // The order matters: power is lowered to the stock row before the fans are
 // released, never the other way round, and the release is last because it is
 // what puts the firmware's own limits back in force (issue #22).
-func DryRunTdpReset(env driver.PowerEnvelope) {
+func DryRunTdpReset(env driver.PowerEnvelope, landing string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Println("Would reset the CPU Curve Optimizer to stock (balanced is a stock profile)")
-	fmt.Println("Would switch profile to balanced")
-	stock := env.StockProfilePPT["balanced"]
-	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
-		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
-	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before), which re-applies balanced's own limits")
+	if landing == "" {
+		fmt.Println("Would refuse: this device names no default firmware profile to reset to")
+		return
+	}
+	fmt.Printf("Would reset the CPU Curve Optimizer to stock (%s is a firmware profile)\n", landing)
+	dryRunLanding(env, landing)
 }
 
 // DryRunTuningReset prints what clearing every tuning override would do.
@@ -365,16 +362,28 @@ func DryRunTdpReset(env driver.PowerEnvelope) {
 // The order shown is the order it happens in, because the order is the safety
 // property: power comes down before the fans are released, so the machine is
 // never at a high sustained limit with no floor.
-func DryRunTuningReset(env driver.PowerEnvelope) {
+func DryRunTuningReset(env driver.PowerEnvelope, landing string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if landing == "" {
+		fmt.Println("Would refuse: this device names no default firmware profile to reset to")
+		return
+	}
 	fmt.Println("Would clear every tuning override: fan curve, power limits, Curve Optimizer")
 	fmt.Println("Would reset the CPU Curve Optimizer to stock (only if an offset is applied)")
-	fmt.Println("Would switch profile to balanced")
-	stock := env.StockProfilePPT["balanced"]
-	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
-		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
-	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before), which re-applies balanced's own limits")
+	dryRunLanding(env, landing)
 	fmt.Println("Would forget the saved fan curve, power limits and offset in the edited profile")
+}
+
+// dryRunLanding is the switch-and-release both resets end with.
+func dryRunLanding(env driver.PowerEnvelope, landing string) {
+	fmt.Printf("Would switch profile to %s\n", landing)
+	if stock, ok := env.StockProfilePPT[landing]; ok {
+		fmt.Printf("Would write stock PPT for %s: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
+			landing, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
+	} else {
+		fmt.Printf("No stock PPT row for %s: the limits are left to the firmware\n", landing)
+	}
+	fmt.Printf("Would reset fan curves to auto mode (after the limit is lowered, not before), which re-applies %s's own limits\n", landing)
 }
 
 // DryRunUndervolt prints the SMU commands that would be sent for a Curve

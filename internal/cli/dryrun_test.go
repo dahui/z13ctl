@@ -75,7 +75,7 @@ func TestDryRunBatteryLimit(t *testing.T) {
 }
 
 func TestDryRunProfile(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), "performance") })
+	out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), z13Profiles, "performance") })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -95,7 +95,7 @@ func TestDryRunProfile(t *testing.T) {
 // to the desktop.
 func TestDryRunProfileCustomDoesNotClaimAPlatformProfileWrite(t *testing.T) {
 	for _, name := range []string{"custom", "battery-uv"} {
-		out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), name) })
+		out := captureStdout(t, func() { cli.DryRunProfile(z13Env(t), z13Profiles, name) })
 		if strings.Contains(out, "Would write") {
 			t.Errorf("DryRunProfile(%q) claims a sysfs write:\n%s", name, out)
 		}
@@ -343,7 +343,7 @@ func TestDryRunTdp_PLOverrides(t *testing.T) {
 }
 
 func TestDryRunTdpReset(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunTdpReset(z13Env(t)) })
+	out := captureStdout(t, func() { cli.DryRunTdpReset(z13Env(t), "balanced") })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -438,3 +438,6 @@ func TestDryRunTdp_HighSustainedWithLiveCurve(t *testing.T) {
 		t.Errorf("with no curve to keep the floor value must be named; got:\n%s", none)
 	}
 }
+
+// z13Profiles is the Z13's firmware profile list, as its device data declares it.
+var z13Profiles = []string{"quiet", "balanced", "performance"}

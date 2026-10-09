@@ -17,7 +17,10 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func FormatFanCurve\(points \[\]FanCurvePoint\) string](<#FormatFanCurve>)
+- [func IsKernelProfileName\(name string\) bool](<#IsKernelProfileName>)
+- [func IsReservedProfileName\(name string\) bool](<#IsReservedProfileName>)
 - [func IsStockProfileName\(name string\) bool](<#IsStockProfileName>)
+- [func ProfileLabel\(name string\) string](<#ProfileLabel>)
 - [func SendApply\(device, color, color2, mode, speed string, brightness int\) \(bool, error\)](<#SendApply>)
 - [func SendAutoswitchGet\(\) \(handled bool, value string, err error\)](<#SendAutoswitchGet>)
 - [func SendAutoswitchSet\(enabled bool, ac, battery string\) \(bool, error\)](<#SendAutoswitchSet>)
@@ -76,6 +79,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type LightingState](<#LightingState>)
 - [type PowerInfo](<#PowerInfo>)
 - [type PowerRange](<#PowerRange>)
+- [type ProfileEntry](<#ProfileEntry>)
 - [type ProfileInfo](<#ProfileInfo>)
 - [type State](<#State>)
   - [func SendGetState\(\) \(bool, \*State, error\)](<#SendGetState>)
@@ -176,7 +180,17 @@ Detect capabilities by probing for this error, never by comparing version number
 var ErrUnknownCommand = errors.New("daemon does not support this command")
 ```
 
-<a name="StockProfiles"></a>StockProfiles are the firmware performance profiles that can be written to platform\_profile. They are reserved: a custom profile can never take one of these names, so selecting one always reaches the firmware profile.
+<a name="KernelProfileNames"></a>KernelProfileNames is the Linux platform\_profile vocabulary — every name a firmware profile can have on any device — in the kernel's own order, which runs from least to most power. A device offers some subset of these \(the device\-get document lists which\); the full set is reserved everywhere, so a custom profile created on one machine never collides with a firmware profile on another. The kernel's own "custom" choice is not listed: it means "the handlers disagree" rather than naming a profile, and the name is reserved as DefaultCustomProfile anyway.
+
+```go
+var KernelProfileNames = []string{
+    "low-power", "cool", "quiet", "balanced", "balanced-performance", "performance", "max-power",
+}
+```
+
+<a name="StockProfiles"></a>StockProfiles are the 2025 ROG Flow Z13's firmware profiles.
+
+Deprecated: which firmware profiles exist is a property of the device, not of the protocol. Read them from the device\-get document \(DeviceInfo.Profiles.Names\); use IsReservedProfileName for the names a custom profile may never take. Kept for clients written against 1.x.
 
 ```go
 var StockProfiles = []string{"quiet", "balanced", "performance"}
@@ -191,6 +205,24 @@ func FormatFanCurve(points []FanCurvePoint) string
 
 FormatFanCurve renders points in the "temp:pwm,temp:pwm,..." form that SendFanCurveSet and the fancurve command take. It is the inverse of the daemon's own parser and lives here so that a client holding a curve — a FanPreset's, or one it built — never has to restate the wire format.
 
+<a name="IsKernelProfileName"></a>
+## func IsKernelProfileName
+
+```go
+func IsKernelProfileName(name string) bool
+```
+
+IsKernelProfileName reports whether name is in the kernel's firmware profile vocabulary. It says nothing about whether this device offers it.
+
+<a name="IsReservedProfileName"></a>
+## func IsReservedProfileName
+
+```go
+func IsReservedProfileName(name string) bool
+```
+
+IsReservedProfileName reports whether a custom profile may never take name: any kernel firmware profile name, and DefaultCustomProfile.
+
 <a name="IsStockProfileName"></a>
 ## func IsStockProfileName
 
@@ -198,7 +230,18 @@ FormatFanCurve renders points in the "temp:pwm,temp:pwm,..." form that SendFanCu
 func IsStockProfileName(name string) bool
 ```
 
-IsStockProfileName reports whether name is one of the reserved firmware profile names.
+IsStockProfileName reports whether name is one of the Z13's firmware profile names.
+
+Deprecated: use DeviceInfo.Profiles.Names to ask whether a device offers a firmware profile, or IsReservedProfileName to ask whether a custom profile may take a name.
+
+<a name="ProfileLabel"></a>
+## func ProfileLabel
+
+```go
+func ProfileLabel(name string) string
+```
+
+ProfileLabel is a display label for a firmware profile name: the kernel vocabulary's conventional spelling \("balanced\-performance" becomes "Balanced Performance"\), and any other name with its first letter raised. A device may supply its own labels \(DeviceInfo.Profiles.Entries\); this is the fallback when it does not.
 
 <a name="SendApply"></a>
 ## func SendApply
@@ -1440,7 +1483,7 @@ func main() {
 func SendTuningReset() (bool, error)
 ```
 
-SendTuningReset clears every tuning override at once — fan curve, power limits and Curve Optimizer offset — and lands on the "balanced" profile.
+SendTuningReset clears every tuning override at once — fan curve, power limits and Curve Optimizer offset — and lands on the device's default firmware profile \(DeviceInfo.Profiles.Default; "balanced" on the Z13\).
 
 It is not the same as issuing the three resets in sequence. Each of those has to lower power before releasing the fans, so doing it by hand in the wrong order leaves a window at a high sustained limit with no fan floor; sending one command puts that ordering inside the daemon where it cannot be got wrong.
 
@@ -1746,7 +1789,7 @@ func ValidateProfileName(name string) error
 
 ValidateProfileName checks a user\-supplied custom profile name.
 
-The firmware profile names are reserved so that selecting one always reaches the firmware profile and can never be shadowed by a custom profile. That reservation is load\-bearing beyond avoiding confusion: the daemon treats any name absent from its stock power table as custom and disables its stale\-cache fallback, which is right for a custom profile and wrong for a stock one — so a custom profile called "balanced" would misreport the machine's power limits. "custom" is reserved separately: it is the profile created implicitly by the first custom setting.
+Every kernel firmware profile name is reserved \(KernelProfileNames — the whole vocabulary, not only what this device offers, so a profile created on one machine stays valid on another\), so that selecting one always reaches the firmware profile and can never be shadowed by a custom profile. That reservation is load\-bearing beyond avoiding confusion: the daemon treats any name absent from its stock power table as custom and disables its stale\-cache fallback, which is right for a custom profile and wrong for a stock one — so a custom profile called "balanced" would misreport the machine's power limits. "custom" is reserved separately: it is the profile created implicitly by the first custom setting.
 
 Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
 
@@ -2039,14 +2082,32 @@ type PowerRange struct {
 }
 ```
 
+<a name="ProfileEntry"></a>
+## type ProfileEntry
+
+ProfileEntry is one firmware profile's display label.
+
+```go
+type ProfileEntry struct {
+    Name  string `json:"name"`
+    Label string `json:"label"`
+}
+```
+
 <a name="ProfileInfo"></a>
 ## type ProfileInfo
 
-ProfileInfo lists the firmware performance profiles. These are also the reserved names: a custom profile can never take one of them.
+ProfileInfo lists the firmware performance profiles this device offers, in the order to present them \(the kernel's: least to most power\).
+
+Names is what \`profile\` accepts as a firmware profile and the only list a client should build firmware\-profile controls from. The names a custom profile may never take are wider — every kernel profile name, see IsReservedProfileName — so validate a new custom name against that, not against this list.
+
+Default is the profile a reset lands on \(tdp\-reset, tuning\-reset\): one whose firmware power limits are within the safe sustained maximum. Entries carries a display label per name, in the same order as Names; a daemon older than either field omits it, and ProfileLabel is the fallback.
 
 ```go
 type ProfileInfo struct {
-    Names []string `json:"names"`
+    Names   []string       `json:"names"`
+    Default string         `json:"default,omitempty"`
+    Entries []ProfileEntry `json:"entries,omitempty"`
 }
 ```
 

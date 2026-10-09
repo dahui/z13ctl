@@ -346,7 +346,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 	// the restore).
 	leftCustom, autoswitched := false, false
 	if onAC, known := d.acPower(); known {
-		if target := autoswitchTarget(d.state, onAC); target != "" {
+		if target := autoswitchTarget(d.state, d.firmwareProfiles(), onAC); target != "" {
 			slog.Info("autoswitch: selecting startup profile", "source", sourceName(onAC), "profile", target)
 			leftCustom = d.state.InCustomProfile() && !d.state.IsCustomProfile(target)
 			d.state.Profile = target
@@ -379,7 +379,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 	// that is neither — one deleted by hand, or lost in a downgrade — would
 	// otherwise be written straight to platform_profile, where the kernel rejects
 	// it. Only a firmware profile name may ever reach that attribute.
-	if api.IsStockProfileName(d.state.Profile) && d.hw.Profiles != nil {
+	if d.isFirmwareProfile(d.state.Profile) {
 		if current := d.profileHW(); current != d.state.Profile {
 			if profileErr := d.hw.Profiles.Set(d.state.Profile); profileErr != nil {
 				slog.Warn("failed to restore profile", "err", profileErr)

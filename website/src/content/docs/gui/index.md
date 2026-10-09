@@ -9,7 +9,8 @@ Crate button and it slides in from the right edge of the screen.
 
 ## What voltaire-gui does
 
-- **Profile switching** — quiet, balanced and performance in the drawer, with
+- **Profile switching** — your machine's firmware profiles in the drawer (quiet,
+  balanced and performance on the Z13), with
   every saved custom profile behind the Custom dropdown beside them. Named
   profiles can be created, copied (Save As), edited without activating them,
   and deleted from the full window's Profiles tab

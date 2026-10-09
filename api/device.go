@@ -111,10 +111,29 @@ type PowerRange struct {
 	Max int `json:"max"`
 }
 
-// ProfileInfo lists the firmware performance profiles. These are also the
-// reserved names: a custom profile can never take one of them.
+// ProfileInfo lists the firmware performance profiles this device offers, in
+// the order to present them (the kernel's: least to most power).
+//
+// Names is what `profile` accepts as a firmware profile and the only list a
+// client should build firmware-profile controls from. The names a custom
+// profile may never take are wider — every kernel profile name, see
+// IsReservedProfileName — so validate a new custom name against that, not
+// against this list.
+//
+// Default is the profile a reset lands on (tdp-reset, tuning-reset): one
+// whose firmware power limits are within the safe sustained maximum. Entries
+// carries a display label per name, in the same order as Names; a daemon
+// older than either field omits it, and ProfileLabel is the fallback.
 type ProfileInfo struct {
-	Names []string `json:"names"`
+	Names   []string       `json:"names"`
+	Default string         `json:"default,omitempty"`
+	Entries []ProfileEntry `json:"entries,omitempty"`
+}
+
+// ProfileEntry is one firmware profile's display label.
+type ProfileEntry struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
 }
 
 // LightingInfo lists the addressable lighting zone names.
@@ -139,6 +158,11 @@ type ToggleInfo struct {
 	// knowledge — whether panel overdrive causes ghosting is a fact about the
 	// panel — and a client rendering these rows generically cannot know it.
 	Description string `json:"description,omitempty"`
+
+	// Values are the legal values, from the firmware where it reports them;
+	// absent means the kind's own (0 and 1 for "bool"). A daemon older than
+	// the field omits it.
+	Values []int `json:"values,omitempty"`
 
 	// Source is where the toggle comes from: ToggleSourceCore for one a
 	// compiled-in driver provides, "plugin:<id>" for one an external plugin

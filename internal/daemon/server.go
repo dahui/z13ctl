@@ -577,12 +577,18 @@ func (d *Daemon) handleBootSoundGet() response {
 }
 
 func (d *Daemon) handleBootSound(req request) response {
-	value, err := strconv.Atoi(req.Set)
-	if err != nil || (value != 0 && value != 1) {
-		return response{OK: false, Error: "boot sound must be 0 or 1"}
-	}
 	if d.hw == nil || d.hw.Toggles == nil {
 		return response{OK: false, Error: "bootsound: no firmware toggles on this device"}
+	}
+	// The legal values are the firmware's (ToggleSpec.Accepts), as for the
+	// generic feature command; the wording stays this command's own.
+	spec, rej := d.featureSpec("boot_sound")
+	if spec.ID == "" {
+		return rej
+	}
+	value, err := strconv.Atoi(req.Set)
+	if err != nil || !spec.Accepts(value) {
+		return response{OK: false, Error: "boot sound must be " + spec.ValuesText()}
 	}
 	if err := d.hw.Toggles.Set("boot_sound", value); err != nil {
 		return response{OK: false, Error: "bootsound: " + err.Error()}
@@ -607,12 +613,18 @@ func (d *Daemon) handlePanelOverdriveGet() response {
 }
 
 func (d *Daemon) handlePanelOverdrive(req request) response {
-	value, err := strconv.Atoi(req.Set)
-	if err != nil || (value != 0 && value != 1) {
-		return response{OK: false, Error: "panel overdrive must be 0 or 1"}
-	}
 	if d.hw == nil || d.hw.Toggles == nil {
 		return response{OK: false, Error: "paneloverdrive: no firmware toggles on this device"}
+	}
+	// The legal values are the firmware's (ToggleSpec.Accepts), as for the
+	// generic feature command; the wording stays this command's own.
+	spec, rej := d.featureSpec("panel_overdrive")
+	if spec.ID == "" {
+		return rej
+	}
+	value, err := strconv.Atoi(req.Set)
+	if err != nil || !spec.Accepts(value) {
+		return response{OK: false, Error: "panel overdrive must be " + spec.ValuesText()}
 	}
 	if err := d.hw.Toggles.Set("panel_overdrive", value); err != nil {
 		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
@@ -994,9 +1006,9 @@ func (d *Daemon) handleTDP(req request) response {
 	return response{OK: true}
 }
 
-// handleTDPReset lands on the balanced firmware profile when it targets the
-// live profile, and merely clears the stored limits when it targets another.
-// handleTDPReset clears the custom power limits and lands on "balanced".
+// handleTDPReset clears the custom power limits. When it targets the live
+// profile it lands on the device's default firmware profile (balanced on the
+// Z13); when it targets another it merely clears the stored limits.
 func (d *Daemon) handleTDPReset(req request) response {
 	return d.resetToStock(req, "tdp-reset", false)
 }
@@ -1061,13 +1073,27 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 		return response{OK: true}
 	}
 
-	// Lower power first, then release the fans: balanced's sustained limit is
-	// below the safe max, so by the time the fans drop to firmware auto the
-	// limit that required the floor is gone. Doing it the other way round leaves
-	// a window at full power with no floor, and a failed profile switch would
-	// leave it that way. HandBackToFirmware writes balanced's stock row (which
-	// lowers the limit) and releases last, so balanced's own limits end in force.
-	// Reset the undervolt too. This lands on "balanced", a stock profile, and
+	// The landing profile is the device's default firmware profile — device data
+	// guarantees its stock PL1 is within the safe max (Config.Validate), which is
+	// what makes the order below fail closed. Resolved before anything is
+	// touched: a device with no safe landing profile refuses the reset outright
+	// rather than clearing the undervolt and then failing the switch.
+	if d.hw == nil || d.hw.Profiles == nil {
+		return response{OK: false, Error: cmd + ": no platform profile control on this device"}
+	}
+	landing := d.hw.Profiles.Default()
+	if landing == "" {
+		return response{OK: false, Error: cmd + ": this device names no default firmware profile to land on"}
+	}
+
+	// Lower power first, then release the fans: the landing profile's sustained
+	// limit is below the safe max, so by the time the fans drop to firmware auto
+	// the limit that required the floor is gone. Doing it the other way round
+	// leaves a window at full power with no floor, and a failed profile switch
+	// would leave it that way. HandBackToFirmware writes the landing profile's
+	// stock row (which lowers the limit) and releases last, so its own limits
+	// end in force.
+	// Reset the undervolt too. This lands on a stock profile, and
 	// every other route to a stock profile clears CO — leaving it applied here
 	// would leak a custom setting into a stock profile (the defect class behind
 	// #12) and leave undervolt --get reporting "active" on a stock profile.
@@ -1088,16 +1114,13 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	} else {
 		slog.Info(cmd + ": no Curve Optimizer offset applied; skipping the SMU write")
 	}
-	if d.hw == nil || d.hw.Profiles == nil {
-		return response{OK: false, Error: cmd + ": no platform profile control on this device"}
+	if err := d.hw.Profiles.Set(landing); err != nil {
+		return response{OK: false, Error: cmd + ": switching to the " + landing + " profile: " + err.Error()}
 	}
-	if err := d.hw.Profiles.Set("balanced"); err != nil {
-		return response{OK: false, Error: cmd + ": switching to balanced profile: " + err.Error()}
+	if err := d.hw.HandBackToFirmware(landing); err != nil {
+		slog.Warn("failed to hand the power limits back to the firmware", "cmd", cmd, "profile", landing, "err", err)
 	}
-	if err := d.hw.HandBackToFirmware("balanced"); err != nil {
-		slog.Warn("failed to hand the power limits back to balanced", "cmd", cmd, "err", err)
-	}
-	slog.Info(cmd, "profile", "balanced")
+	slog.Info(cmd, "profile", landing)
 	d.mu.Lock()
 	// Clear the limits and curve from the profile that was running, not from a
 	// global slot: switching back to it later must not resurrect the TDP this
@@ -1115,7 +1138,7 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 		}
 		d.state.CustomProfiles[target.Name] = cleared(target.Profile, true)
 	}
-	d.state.Profile = "balanced"
+	d.state.Profile = landing
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
 	d.mu.Unlock()

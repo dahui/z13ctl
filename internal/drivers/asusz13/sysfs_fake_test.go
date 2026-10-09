@@ -78,7 +78,10 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	f.writeFile(t, f.battery+"/type", "Battery")
 	f.writeFile(t, root+"/power_supply/hid-0018:04F3:43C7.0008-battery-7/type", "Battery")
 	f.writeFile(t, root+"/power_supply/hid-0018:04F3:43C7.0008-battery-7/online", "1")
+	// As the real one reports: a peripheral's pack, not the system's.
+	f.writeFile(t, root+"/power_supply/hid-0018:04F3:43C7.0008-battery-7/scope", "Device")
 	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/type", "USB")
+	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/scope", "System")
 	f.writeFile(t, root+"/power_supply/ucsi-source-psy-USBC000:001/online", "1")
 
 	// The Z13's pack is the *energy* kind: power_now in microwatts, no

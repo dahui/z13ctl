@@ -309,7 +309,7 @@ func TestAutoswitchTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := autoswitchTarget(tt.s, tt.onAC); got != tt.want {
+			if got := autoswitchTarget(tt.s, testDev.Profiles.Names(), tt.onAC); got != tt.want {
 				t.Errorf("autoswitchTarget(onAC=%v) = %q, want %q", tt.onAC, got, tt.want)
 			}
 		})

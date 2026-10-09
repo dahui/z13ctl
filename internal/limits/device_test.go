@@ -93,8 +93,12 @@ func TestFromDeviceEmptyDocumentIsStillUsable(t *testing.T) {
 	if got.TDPMaxSafe != d.TDPMaxSafe || got.TDPMin != d.TDPMin || got.TempMax != d.TempMax {
 		t.Errorf("empty sections did not fall back: %+v", got)
 	}
-	if len(got.StockProfilePPT) == 0 {
-		t.Error("StockProfilePPT is empty; IsStockPPT would call every limit user-chosen")
+	// No stock rows declared means none: IsStockPPT then calls every limit
+	// user-chosen, which is the honest reading for a machine whose firmware
+	// values nobody has read. Lending it the Z13's table would label another
+	// machine's limits "stock" against numbers from different firmware.
+	if len(got.StockProfilePPT) != 0 {
+		t.Errorf("StockProfilePPT = %v, want none for a device that declares none", got.StockProfilePPT)
 	}
 }
 

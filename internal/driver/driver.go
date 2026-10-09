@@ -21,6 +21,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -211,14 +214,30 @@ type Lighting interface {
 
 // ProfileController reads and writes the platform performance profile.
 //
-// Names is the source of the reserved profile names: a name it returns can
-// never be used for a custom profile, and only a name it returns may ever be
-// written to the platform. Both invariants predate this interface (the Z13's
-// quiet/balanced/performance) and every implementation inherits them.
+// Names is the firmware profiles this device offers, in the order to present
+// them: what the kernel reports, filtered by the device data where it lists
+// any. Only a name it returns may ever be written to the platform — the
+// daemon enforces that, not each caller. The names a *custom* profile may
+// never take are wider (api.IsReservedProfileName: the whole kernel
+// vocabulary), so a profile created on one device stays valid on another.
+//
+// Get returns one of Names, never the kernel's raw value: a secondary
+// handler's spelling ("low-power" for "quiet") is mapped back, and a read the
+// device cannot name — the kernel's "custom", meaning its handlers disagree —
+// is an error, which callers treat as unknown. Every stock power table is
+// keyed by these names, so a raw value leaking through would silently skip
+// the stock row.
+//
+// Default is the profile a reset lands on; device data guarantees it is one
+// of Names with firmware limits inside the safe sustained maximum. "" means
+// the device has none, and a reset must then refuse rather than guess.
+// Label is a display label for one of Names.
 type ProfileController interface {
 	Names() []string
 	Get() (string, error)
 	Set(name string) error
+	Default() string
+	Label(name string) string
 }
 
 // PolicyWriteNotifier is implemented by a ProfileController whose firmware
@@ -258,6 +277,11 @@ type ToggleSpec struct {
 	// toggle whose label says everything leaves it empty.
 	Description string
 
+	// Values are the legal values, read from the firmware where it says
+	// (firmware-attributes' possible_values); empty means the kind's own —
+	// 0 and 1 for a bool. Accepts is the one check every write path uses.
+	Values []int
+
 	// Source is where this toggle comes from: "core" for one a compiled-in
 	// driver provides, "plugin:<id>" for one contributed by an external plugin.
 	//
@@ -268,6 +292,30 @@ type ToggleSpec struct {
 	// able to, and unlike a Kind with no renderer this value is always true and
 	// complete, so it misleads nobody in the meantime.
 	Source string
+}
+
+// Accepts reports whether v is a legal value for the toggle.
+func (s ToggleSpec) Accepts(v int) bool {
+	if len(s.Values) > 0 {
+		return slices.Contains(s.Values, v)
+	}
+	return s.Kind == ToggleBool && (v == 0 || v == 1)
+}
+
+// ValuesText says which values the toggle accepts, for an error message.
+func (s ToggleSpec) ValuesText() string {
+	vals := s.Values
+	if len(vals) == 0 && s.Kind == ToggleBool {
+		vals = []int{0, 1}
+	}
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = strconv.Itoa(v)
+	}
+	if len(parts) == 2 {
+		return parts[0] + " or " + parts[1]
+	}
+	return "one of " + strings.Join(parts, ", ")
 }
 
 // ToggleSourceCore is the Source of a toggle provided by a compiled-in driver.
@@ -434,6 +482,12 @@ type BatteryCaps struct {
 	// bounds, so these are device data rather than a reading. Zero when
 	// ChargeLimit is false.
 	ChargeLimitMin, ChargeLimitMax int
+
+	// ChargerSource names where Status reads the charger kind: "" for the
+	// generic power_supply view (a USB-C supply online, else mains), or a
+	// device-specific source such as "asus-armoury" (its charge_mode
+	// attribute, a live WMI read).
+	ChargerSource string
 }
 
 // Battery reads and writes battery charge policy.

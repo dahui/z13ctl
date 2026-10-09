@@ -8,8 +8,12 @@ package asusz13
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
@@ -106,13 +110,27 @@ func (l powerLimiter) Envelope() driver.PowerEnvelope {
 	return b.withBounds().envelope(l.env)
 }
 
-// NewProfileController returns the platform-profile driver. names are the
-// firmware profile names from device data — also the reserved names.
-func NewProfileController(names []string) driver.ProfileController {
-	return profileController{names: names}
+// NewProfileController returns the platform-profile driver.
+//
+// names, handler, def and labels are the device data ([profiles]): names
+// filters and orders what the kernel offers and is the fallback when sysfs
+// cannot be read; handler is the class device that owns the profile ("" picks
+// one); def is where a reset lands; labels overrides display labels. Nothing is
+// read here — constructors are pure — so the kernel's list is resolved on the
+// first Names call.
+func NewProfileController(names []string, handler, def string, labels map[string]string) driver.ProfileController {
+	return &profileController{names: names, handler: handler, def: def, labels: labels}
 }
 
-type profileController struct{ names []string }
+type profileController struct {
+	names   []string
+	handler string
+	def     string
+	labels  map[string]string
+
+	once     sync.Once
+	resolved []string
+}
 
 // PolicyWritePaths names the attributes the kernel notifies when the firmware
 // re-applies a profile's power limits (driver.PolicyWriteNotifier).
@@ -126,92 +144,240 @@ type profileController struct{ names []string }
 // (its show function, unlike the ppt_* ones, never calls
 // asus_wmi_show_deprecated). Verified on a GZ302EA, kernel 7.2: a redundant
 // pwm_enable=2 raises POLLPRI on it, and armoury PPT writes do not.
-func (profileController) PolicyWritePaths() []string {
+func (*profileController) PolicyWritePaths() []string {
 	return []string{sysProfileACPI, pptBasePath + "/throttle_thermal_policy"}
 }
 
-func (p profileController) Names() []string {
-	out := make([]string, len(p.names))
-	copy(out, p.names)
+// Names is the kernel's offer filtered by the device data, resolved once per
+// process (the handler's choices do not change while it is loaded).
+func (p *profileController) Names() []string {
+	p.once.Do(func() {
+		p.resolved = resolveProfileNames(p.names, readChoices(FindProfilePathFor(p.handler)))
+	})
+	out := make([]string, len(p.resolved))
+	copy(out, p.resolved)
 	return out
 }
 
-// Get reads the primary platform_profile attribute raw, exactly as every
-// caller does today; name mapping applies on write (SetProfile), not read.
-func (profileController) Get() (string, error) {
-	data, err := os.ReadFile(FindProfilePath())
+// Get reads the owning handler's profile and maps it to one of Names (see
+// normalizeProfile).
+func (p *profileController) Get() (string, error) {
+	data, err := os.ReadFile(FindProfilePathFor(p.handler))
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(data)), nil
+	return normalizeProfile(strings.TrimSpace(string(data)), p.Names())
 }
 
-func (profileController) Set(name string) error { return SetProfile(name) }
+// Set writes name to the platform. The daemon is what guarantees name is one
+// of Names; this driver does not second-guess it.
+func (p *profileController) Set(name string) error { return SetProfileFor(p.handler, name) }
 
-// NewToggles returns the asus-armoury firmware-toggles driver for the given
-// specs. It errors on a toggle id this driver has no attribute mapping for —
-// device data naming an unknown toggle is a data bug surfaced at assembly, not
-// a control that silently does nothing.
-func NewToggles(specs []driver.ToggleSpec) (driver.Toggles, error) {
-	for _, s := range specs {
-		if _, ok := togglePaths[s.ID]; !ok {
+// Default is the reset target from device data, or "balanced" when the data
+// names none and the device offers it. A device with neither has no safe
+// landing profile, and "" makes a reset refuse rather than guess.
+func (p *profileController) Default() string {
+	names := p.Names()
+	if p.def != "" && slices.Contains(names, p.def) {
+		return p.def
+	}
+	if p.def == "" && slices.Contains(names, "balanced") {
+		return "balanced"
+	}
+	return ""
+}
+
+// Label is the device's label for name, else the kernel vocabulary's.
+func (p *profileController) Label(name string) string {
+	if l := p.labels[name]; l != "" {
+		return l
+	}
+	return api.ProfileLabel(name)
+}
+
+// safeToggles is the allowlist of asus-armoury attributes this driver will
+// offer as switches, in the order to offer them. Attribute names are kernel
+// ABI, so the list belongs in code rather than device data — and it has to
+// exist at all because armoury on other ASUS models also exposes
+// gpu_mux_mode, dgpu_disable, egpu_enable, apu_mem, cores_* and mini_led_mode,
+// which can leave a machine with a black screen or a pending reboot it did not
+// ask for. Enumerating "everything the kernel lists" would have offered those
+// as a row like any other. An attribute joins this list only once offering it
+// as a casual switch has been judged safe; the kernel then supplies its legal
+// values and writability, and device data its wording.
+var safeToggles = []string{"boot_sound", "panel_overdrive"}
+
+// toggleValuePath is an armoury attribute's value file.
+func toggleValuePath(id string) string { return sysFirmwareAttrDir + "/" + id + "/current_value" }
+
+// NewToggles returns the asus-armoury firmware-toggles driver. declared is the
+// device data's entries — wording, and the list to fall back on when the
+// attributes cannot be read — and hidden names allowlisted attributes the
+// device data withholds. It errors on an id outside the allowlist: device data
+// naming an attribute this driver will not offer is a data bug surfaced at
+// assembly, not a control that silently does nothing. Nothing is read here;
+// the kernel's description is read on the first List.
+func NewToggles(declared []driver.ToggleSpec, hidden []string) (driver.Toggles, error) {
+	h := make(map[string]bool, len(hidden))
+	for _, id := range hidden {
+		if !slices.Contains(safeToggles, id) {
+			return nil, fmt.Errorf("hidden toggle id %q is not one this driver offers", id)
+		}
+		h[id] = true
+	}
+	for _, s := range declared {
+		if !slices.Contains(safeToggles, s.ID) {
 			return nil, fmt.Errorf("unknown toggle id %q", s.ID)
 		}
 	}
-	out := make([]driver.ToggleSpec, len(specs))
-	copy(out, specs)
-	return toggles{specs: out}, nil
-}
-
-// togglePaths maps toggle ids to their firmware-attribute accessors.
-var togglePaths = map[string]struct {
-	find func() string
-	set  func(int) error
-}{
-	"boot_sound":      {FindBootSoundPath, SetBootSound},
-	"panel_overdrive": {FindPanelOverdrivePath, SetPanelOverdrive},
+	out := make([]driver.ToggleSpec, len(declared))
+	copy(out, declared)
+	return &toggles{declared: out, hidden: h}, nil
 }
 
 // FindTogglePath returns the sysfs path a toggle id writes to, or "" for an id
-// this driver has no mapping for. For dry-run display: a dry run's job is to
-// spell out the exact write, and the path is this driver's own knowledge.
+// this driver does not offer. For dry-run display: a dry run's job is to spell
+// out the exact write, and the path is this driver's own knowledge.
 func FindTogglePath(id string) string {
-	p, ok := togglePaths[id]
-	if !ok {
+	if !slices.Contains(safeToggles, id) {
 		return ""
 	}
-	return p.find()
+	return toggleValuePath(id)
 }
 
-type toggles struct{ specs []driver.ToggleSpec }
+// SafeToggleIDs is the allowlist, for voltaire setup's permission grants: a
+// grant for exactly what the daemon may write, rather than a glob over every
+// armoury attribute.
+func SafeToggleIDs() []string { return append([]string(nil), safeToggles...) }
 
-func (t toggles) List() []driver.ToggleSpec {
-	out := make([]driver.ToggleSpec, len(t.specs))
-	copy(out, t.specs)
+type toggles struct {
+	declared []driver.ToggleSpec
+	hidden   map[string]bool
+
+	once sync.Once
+	list []driver.ToggleSpec
+}
+
+// List is the toggles this device offers: the allowlisted attributes the kernel
+// exposes as writable 0/1 switches, in device-data order, worded by device
+// data where it says and by the kernel's display_name where it does not.
+func (t *toggles) List() []driver.ToggleSpec {
+	t.once.Do(func() { t.list = enumerateToggles(t.declared, t.hidden) })
+	out := make([]driver.ToggleSpec, len(t.list))
+	copy(out, t.list)
 	return out
 }
 
-func (t toggles) Get(id string) (int, error) {
-	p, ok := togglePaths[id]
-	if !ok {
-		return 0, driver.ErrUnsupported
+// enumerateToggles reads the kernel's description of each allowlisted
+// attribute. Only static attribute metadata is read — type, possible_values,
+// display_name and the file mode — never current_value, which is a live WMI
+// call. With no attribute directory at all (asus-armoury not loaded) the
+// declared list stands as it always has, so a value read then fails and the
+// row shows as unknown rather than vanishing.
+func enumerateToggles(declared []driver.ToggleSpec, hidden map[string]bool) []driver.ToggleSpec {
+	if _, err := os.Stat(sysFirmwareAttrDir); err != nil {
+		var out []driver.ToggleSpec
+		for _, s := range declared {
+			if !hidden[s.ID] {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
-	return readIntFile(p.find())
+
+	byID := make(map[string]driver.ToggleSpec, len(declared))
+	order := make([]string, 0, len(safeToggles))
+	for _, s := range declared {
+		byID[s.ID] = s
+		order = append(order, s.ID)
+	}
+	for _, id := range safeToggles {
+		if !slices.Contains(order, id) {
+			order = append(order, id)
+		}
+	}
+
+	var out []driver.ToggleSpec
+	for _, id := range order {
+		if hidden[id] {
+			continue
+		}
+		spec, ok := describeToggle(id, byID[id])
+		if !ok {
+			if _, declaredHere := byID[id]; declaredHere {
+				slog.Info("firmware toggle not offered by the kernel; not showing it", "id", id)
+			}
+			continue
+		}
+		out = append(out, spec)
+	}
+	return out
 }
 
-func (t toggles) Set(id string, value int) error {
-	p, ok := togglePaths[id]
-	if !ok {
+// describeToggle fills spec from the kernel's attribute directory, or reports
+// false when the attribute is absent, read-only, or not a 0/1 switch (an
+// enumerated toggle has no renderer yet; one that is shown as a switch and
+// sent 0 or 1 would be writing something that means neither).
+func describeToggle(id string, spec driver.ToggleSpec) (driver.ToggleSpec, bool) {
+	dir := sysFirmwareAttrDir + "/" + id
+	fi, err := os.Stat(dir + "/current_value")
+	if err != nil || fi.Mode().Perm()&0o222 == 0 {
+		return spec, false
+	}
+	if typ := readSysfsTrimmed(dir + "/type"); typ != "" && typ != "enumeration" {
+		return spec, false
+	}
+	values := parsePossibleValues(readSysfsTrimmed(dir + "/possible_values"))
+	if len(values) > 0 && !slices.Equal(values, []int{0, 1}) {
+		return spec, false
+	}
+	spec.ID, spec.Kind, spec.Values = id, driver.ToggleBool, values
+	if spec.Label == "" {
+		spec.Label = readSysfsTrimmed(dir + "/display_name")
+	}
+	if spec.Label == "" {
+		spec.Label = id
+	}
+	return spec, true
+}
+
+// parsePossibleValues parses firmware-attributes' possible_values ("0;1"),
+// sorted; nil when absent or not all integers.
+func parsePossibleValues(s string) []int {
+	if s == "" {
+		return nil
+	}
+	var out []int
+	for _, f := range strings.Split(s, ";") {
+		v, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil {
+			return nil
+		}
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func (t *toggles) Get(id string) (int, error) {
+	if !slices.Contains(safeToggles, id) {
+		return 0, driver.ErrUnsupported
+	}
+	return readIntFile(toggleValuePath(id))
+}
+
+func (t *toggles) Set(id string, value int) error {
+	if !slices.Contains(safeToggles, id) {
 		return driver.ErrUnsupported
 	}
-	return p.set(value)
+	return os.WriteFile(toggleValuePath(id), []byte(strconv.Itoa(value)+"\n"), 0o644)
 }
 
 // PendingReboot reports whether a changed firmware setting is waiting on a
 // restart. asus-armoury exposes this once for the whole interface, as a plain
 // file beside the attribute directories rather than as an attribute of its own —
-// so it is read directly here rather than through togglePaths.
-func (t toggles) PendingReboot() (bool, error) {
+// so it is read directly here rather than through the allowlist.
+func (t *toggles) PendingReboot() (bool, error) {
 	v, err := readIntFile(sysFirmwareAttrDir + "/pending_reboot")
 	if err != nil {
 		return false, err
@@ -267,7 +433,11 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 	}
 	// Best-effort like the rest: a machine whose firmware cannot say which
 	// input is live still reports its charge level.
-	st.Charger = ReadCharger()
+	if b.caps.ChargerSource == "asus-armoury" {
+		st.Charger = ReadCharger()
+	} else {
+		st.Charger = ReadChargerFromSupplies(st.OnAC, st.ACKnown)
+	}
 	return st, nil
 }
 

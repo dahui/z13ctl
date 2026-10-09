@@ -242,9 +242,12 @@ type TelemetrySample struct {
 	MemTotalMB  int      `json:"mem_total_mb,omitempty"`
 }
 
-// StockProfiles are the firmware performance profiles that can be written to
-// platform_profile. They are reserved: a custom profile can never take one of
-// these names, so selecting one always reaches the firmware profile.
+// StockProfiles are the 2025 ROG Flow Z13's firmware profiles.
+//
+// Deprecated: which firmware profiles exist is a property of the device, not
+// of the protocol. Read them from the device-get document
+// (DeviceInfo.Profiles.Names); use IsReservedProfileName for the names a
+// custom profile may never take. Kept for clients written against 1.x.
 var StockProfiles = []string{"quiet", "balanced", "performance"}
 
 // DefaultCustomProfile is the name of the custom profile created implicitly by
@@ -252,8 +255,41 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 // active. It is reserved and cannot be chosen as a user-supplied name.
 const DefaultCustomProfile = "custom"
 
-// IsStockProfileName reports whether name is one of the reserved firmware
+// KernelProfileNames is the Linux platform_profile vocabulary — every name a
+// firmware profile can have on any device — in the kernel's own order, which
+// runs from least to most power. A device offers some subset of these (the
+// device-get document lists which); the full set is reserved everywhere, so a
+// custom profile created on one machine never collides with a firmware
+// profile on another. The kernel's own "custom" choice is not listed: it
+// means "the handlers disagree" rather than naming a profile, and the name is
+// reserved as DefaultCustomProfile anyway.
+var KernelProfileNames = []string{
+	"low-power", "cool", "quiet", "balanced", "balanced-performance", "performance", "max-power",
+}
+
+// IsKernelProfileName reports whether name is in the kernel's firmware profile
+// vocabulary. It says nothing about whether this device offers it.
+func IsKernelProfileName(name string) bool {
+	for _, p := range KernelProfileNames {
+		if name == p {
+			return true
+		}
+	}
+	return false
+}
+
+// IsReservedProfileName reports whether a custom profile may never take name:
+// any kernel firmware profile name, and DefaultCustomProfile.
+func IsReservedProfileName(name string) bool {
+	return name == DefaultCustomProfile || IsKernelProfileName(name)
+}
+
+// IsStockProfileName reports whether name is one of the Z13's firmware
 // profile names.
+//
+// Deprecated: use DeviceInfo.Profiles.Names to ask whether a device offers a
+// firmware profile, or IsReservedProfileName to ask whether a custom profile
+// may take a name.
 func IsStockProfileName(name string) bool {
 	for _, p := range StockProfiles {
 		if name == p {
@@ -261,6 +297,26 @@ func IsStockProfileName(name string) bool {
 		}
 	}
 	return false
+}
+
+// ProfileLabel is a display label for a firmware profile name: the kernel
+// vocabulary's conventional spelling ("balanced-performance" becomes
+// "Balanced Performance"), and any other name with its first letter raised.
+// A device may supply its own labels (DeviceInfo.Profiles.Entries); this is
+// the fallback when it does not.
+func ProfileLabel(name string) string {
+	switch name {
+	case "low-power":
+		return "Low Power"
+	case "balanced-performance":
+		return "Balanced Performance"
+	case "max-power":
+		return "Max Power"
+	}
+	if name == "" {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 // CustomProfile is a named set of custom hardware settings. Each subsystem is a
@@ -310,7 +366,7 @@ func (a *AutoswitchState) Target(onAC bool) string {
 // The check is deliberately ahead of the lookup so that a hand-edited state file
 // cannot make a stock profile look custom to the fan curve reconciler.
 func (s State) IsCustomProfile(name string) bool {
-	if name == "" || IsStockProfileName(name) {
+	if name == "" || IsKernelProfileName(name) {
 		return false
 	}
 	if name == DefaultCustomProfile {

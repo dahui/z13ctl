@@ -307,7 +307,7 @@ func TestLoadStateMigratesLegacyCustomSettings(t *testing.T) {
 // validation, api.State.IsCustomProfile, and applyProfileLocked's stock-first
 // switch; this one covers a hand-edited or downgrade-mangled state file, which
 // parses fine and so is never seen by any of them.
-func TestLoadStateDropsReservedProfileNames(t *testing.T) {
+func TestLoadStateRenamesReservedProfileNames(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 	path := filepath.Join(dir, "voltaire", "state.json")
@@ -328,16 +328,62 @@ func TestLoadStateDropsReservedProfileNames(t *testing.T) {
 
 	got := loadState()
 
-	for _, reserved := range api.StockProfiles {
+	// Renamed, never dropped: the settings are the user's (Jeff, 2026-10-09).
+	for _, reserved := range []string{"balanced", "performance"} {
 		if _, ok := got.CustomProfiles[reserved]; ok {
-			t.Errorf("custom profile %q survived load; it would shadow the firmware profile", reserved)
+			t.Errorf("custom profile %q survived load under its reserved name; it would shadow the firmware profile", reserved)
 		}
 	}
-	if got.IsCustomProfile("balanced") {
-		t.Error("IsCustomProfile(\"balanced\") = true after load, want false")
+	if p, ok := got.CustomProfiles["user-balanced"]; !ok || p.TDP == nil || p.TDP.PL1SPL != 90 || p.Name != "user-balanced" {
+		t.Errorf("user-balanced = %+v, %v; want the renamed profile with its settings", p, ok)
+	}
+	if _, ok := got.CustomProfiles["user-performance"]; !ok {
+		t.Error("the empty reserved profile was dropped instead of renamed")
+	}
+	// "balanced" was reserved already, so the active profile meant the
+	// firmware profile and must not follow the rename.
+	if got.Profile != "balanced" || got.IsCustomProfile("balanced") {
+		t.Errorf("Profile = %q (custom %v), want the firmware balanced", got.Profile, got.IsCustomProfile("balanced"))
 	}
 	if _, ok := got.CustomProfiles["gaming"]; !ok {
 		t.Error("a legitimate profile was dropped along with the reserved ones")
+	}
+}
+
+// A profile named after a kernel profile that was a legal custom name before
+// the reservation widened is a real custom profile the user may be running.
+// Its references follow it.
+func TestLoadStateRenamesNewlyReservedProfileAndFollowsReferences(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := statePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{
+	  "profile": "low-power",
+	  "autoswitch": {"enabled": true, "ac": "balanced", "battery": "low-power"},
+	  "custom_profiles": {
+	    "low-power": {"name": "low-power", "tdp": {"pl1_spl": 30}},
+	    "user-low-power": {"name": "user-low-power", "tdp": {"pl1_spl": 25}}
+	  }
+	}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadState()
+	// user-low-power is taken, so the rename is numbered.
+	p, ok := got.CustomProfiles["user-low-power-2"]
+	if !ok || p.TDP == nil || p.TDP.PL1SPL != 30 {
+		t.Fatalf("user-low-power-2 = %+v, %v; want the renamed low-power profile", p, ok)
+	}
+	if q := got.CustomProfiles["user-low-power"]; q.TDP == nil || q.TDP.PL1SPL != 25 {
+		t.Errorf("the existing user-low-power was overwritten: %+v", q)
+	}
+	if got.Profile != "user-low-power-2" {
+		t.Errorf("Profile = %q, want the renamed custom profile still active", got.Profile)
+	}
+	if a := got.Autoswitch; a == nil || a.Battery != "user-low-power-2" || a.AC != "balanced" {
+		t.Errorf("autoswitch = %+v, want battery following the rename and AC untouched", a)
 	}
 }
 

@@ -27,7 +27,7 @@ func TestTargetOptions(t *testing.T) {
 		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
 		api.CustomProfile{Name: "hollow"}, // empty: a target that could never activate
 	)
-	got := profileui.TargetOptions(s)
+	got := profileui.TargetOptions(s, z13)
 	want := []string{profileui.LeaveAlone, "quiet", "balanced", "performance", "gaming"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("TargetOptions = %v, want %v (empty profiles are traps, not options)", got, want)
@@ -35,7 +35,7 @@ func TestTargetOptions(t *testing.T) {
 
 	// Populated "custom" joins the options.
 	s2 := stateWith("balanced", api.CustomProfile{Name: "custom", TDP: tdp(50)})
-	got2 := profileui.TargetOptions(s2)
+	got2 := profileui.TargetOptions(s2, z13)
 	want2 := []string{profileui.LeaveAlone, "quiet", "balanced", "performance", "custom"}
 	if !reflect.DeepEqual(got2, want2) {
 		t.Errorf("TargetOptions = %v, want %v", got2, want2)
@@ -43,13 +43,13 @@ func TestTargetOptions(t *testing.T) {
 }
 
 func TestTargetLabel(t *testing.T) {
-	if got := profileui.TargetLabel(profileui.LeaveAlone); got != "(don't change)" {
+	if got := profileui.TargetLabel(z13, profileui.LeaveAlone); got != "(don't change)" {
 		t.Errorf("TargetLabel(leave alone) = %q", got)
 	}
-	if got := profileui.TargetLabel("quiet"); got != "Quiet" {
+	if got := profileui.TargetLabel(z13, "quiet"); got != "Quiet" {
 		t.Errorf("TargetLabel(quiet) = %q", got)
 	}
-	if got := profileui.TargetLabel("gaming"); got != "gaming" {
+	if got := profileui.TargetLabel(z13, "gaming"); got != "gaming" {
 		t.Errorf("TargetLabel(gaming) = %q", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestTargetRowsShowEmptyProfilesGreyed(t *testing.T) {
 		api.CustomProfile{Name: "gaming", TDP: tdp(60)},
 		api.CustomProfile{Name: "hollow"}, // empty: shown, marked, not selectable
 	)
-	rows := profileui.TargetRows(s)
+	rows := profileui.TargetRows(s, z13)
 
 	want := []profileui.TargetRow{
 		{Name: profileui.LeaveAlone, Label: "(don't change)"},
@@ -100,7 +100,7 @@ func TestTargetRowsShowEmptyProfilesGreyed(t *testing.T) {
 
 	// TargetOptions is TargetRows minus the unusable rows; the two must agree
 	// or the widget could offer a name the daemon refuses at every transition.
-	opts := profileui.TargetOptions(s)
+	opts := profileui.TargetOptions(s, z13)
 	for _, o := range opts {
 		if o == "hollow" {
 			t.Errorf("TargetOptions offers the empty profile: %v", opts)

@@ -20,7 +20,9 @@ const MaxProfileNameLen = 32
 
 // ValidateProfileName checks a user-supplied custom profile name.
 //
-// The firmware profile names are reserved so that selecting one always reaches
+// Every kernel firmware profile name is reserved (KernelProfileNames — the
+// whole vocabulary, not only what this device offers, so a profile created on
+// one machine stays valid on another), so that selecting one always reaches
 // the firmware profile and can never be shadowed by a custom profile. That
 // reservation is load-bearing beyond avoiding confusion: the daemon treats any
 // name absent from its stock power table as custom and disables its
@@ -39,7 +41,7 @@ func ValidateProfileName(name string) error {
 	if name != strings.ToLower(name) {
 		return fmt.Errorf("profile name %q must be lowercase", name)
 	}
-	if IsStockProfileName(name) {
+	if IsKernelProfileName(name) {
 		return fmt.Errorf("%q is a firmware profile name and cannot be used for a custom profile", name)
 	}
 	if name == DefaultCustomProfile {

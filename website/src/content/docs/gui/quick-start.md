@@ -37,7 +37,7 @@ tabs and B closes it.
 
 | Section | What it does |
 |---------|-------------|
-| **Profile** | The three firmware profiles (quiet, balanced, performance), and a **Custom** dropdown listing your saved custom profiles — pick one to switch to it. It is labelled with whichever custom profile is running. A profile with nothing saved in it shows greyed as "(empty)"; if you have none at all, the dropdown is greyed and a note says how to open the profile editor. |
+| **Profile** | The machine's firmware profiles (quiet, balanced and performance on the Z13), and a **Custom** dropdown listing your saved custom profiles — pick one to switch to it. It is labelled with whichever custom profile is running. A profile with nothing saved in it shows greyed as "(empty)"; if you have none at all, the dropdown is greyed and a note says how to open the profile editor. |
 | **Autoswitch** | Turn it on, then pick a profile from each dropdown to apply on AC and on battery — or "(don't change)" to leave that side alone. The daemon applies them when the charger is plugged or unplugged. The two target rows appear only while autoswitch is enabled. A custom profile with no settings shows greyed out as "(empty)" — give it something to apply and it becomes selectable. Also on the full window's Dashboard. |
 | **Battery Limit** | Set the charge cap (40–100%). Changes persist across reboots. |
 | **Keyboard / Lightbar** | Tab between the two lighting zones (the full window shows both at once instead) |

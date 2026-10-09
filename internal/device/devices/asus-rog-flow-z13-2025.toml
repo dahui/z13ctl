@@ -91,9 +91,16 @@ quiet       = { pl1 = 40, pl2 = 55, fppt = 55, apu = 70, platform = 70 }
 balanced    = { pl1 = 52, pl2 = 71, fppt = 70, apu = 70, platform = 70 }
 performance = { pl1 = 70, pl2 = 86, fppt = 86, apu = 70, platform = 70 }
 
+# The kernel lists what each handler offers (choices); names filters and orders
+# it. Two handlers register here: asus-wmi (quiet balanced performance) owns the
+# profile, and amd-pmf (low-power balanced performance) follows it — the driver
+# writes amd-pmf "low-power" for "quiet". default is where tdp --reset and
+# tuning --reset land; its stock PL1 must be within tdp_max_safe.
 [profiles]
-method = "platform-profile"
-names  = ["quiet", "balanced", "performance"]
+method  = "platform-profile"
+names   = ["quiet", "balanced", "performance"]
+handler = "asus-wmi"
+default = "balanced"
 
 # Aura HID: keyboard 0b05:1a30 (detachable — powers off when removed),
 # lightbar 0b05:18c6. Both zones are always addressed; each device ignores the
@@ -129,6 +136,10 @@ method           = "power-supply"
 health           = true
 charge_limit_min = 40
 charge_limit_max = 100
+# charge_mode (a live WMI read) is what the adapter/USB-C values were measured
+# against. The generic power_supply view reproduces them by construction, but
+# its USB-C half has not been checked on this machine yet.
+charger          = "asus-armoury"
 
 # cpufreq's global boost switch (/sys/devices/system/cpu/cpufreq/boost). Writing
 # it moves every policy at once: measured here, 0 drops scaling_max_freq from

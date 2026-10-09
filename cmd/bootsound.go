@@ -35,8 +35,11 @@ Values:
 
 		if bootSoundSetFlag != "" {
 			value, err := strconv.Atoi(bootSoundSetFlag)
-			if err != nil || (value != 0 && value != 1) {
-				return fmt.Errorf("invalid value %q: must be 0 or 1", bootSoundSetFlag)
+			if err != nil {
+				return fmt.Errorf("invalid value %q: must be an integer", bootSoundSetFlag)
+			}
+			if verr := checkToggleValue("boot_sound", value); verr != nil {
+				return verr
 			}
 
 			if dryRunFlag {

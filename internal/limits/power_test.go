@@ -80,8 +80,8 @@ func TestSanitizedFillsUnsetFields(t *testing.T) {
 	if got.TempMin != d.TempMin || got.TempMax != d.TempMax {
 		t.Errorf("zero Limits did not inherit temperature defaults: %+v", got)
 	}
-	if len(got.StockProfilePPT) != len(d.StockProfilePPT) {
-		t.Errorf("zero Limits did not inherit the stock profile table")
+	if len(got.StockProfilePPT) != 0 {
+		t.Errorf("zero Limits inherited a stock profile table; it is device content, not a bound")
 	}
 	if got.Model == "" {
 		t.Error("zero Limits did not inherit a model name")
@@ -783,9 +783,8 @@ func assertLimitsUsable(t *testing.T, l Limits) {
 	if l.BasicSliderMax() > l.TDPMaxForced {
 		t.Errorf("BasicSliderMax %d above TDPMaxForced %d", l.BasicSliderMax(), l.TDPMaxForced)
 	}
-	if len(l.StockProfilePPT) == 0 {
-		t.Error("StockProfilePPT is empty")
-	}
+	// StockProfilePPT may legitimately be empty: a device that declares no
+	// stock rows has none, and Sanitized no longer lends it the Z13's.
 }
 
 // TestSanitizedRepairsInconsistentLimits covers the values a daemon-served

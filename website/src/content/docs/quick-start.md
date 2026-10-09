@@ -143,7 +143,7 @@ voltaire tdp --set 45 --pl2 55 --pl3 60
 # 80W is asus-armoury's maximum on the GZ302EA)
 voltaire tdp --set 80 --force
 
-# Back to the balanced profile and the firmware's own limits
+# Back to the default profile (balanced on the Z13) and the firmware's own limits
 voltaire tdp --reset
 ```
 

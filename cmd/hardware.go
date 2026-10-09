@@ -15,6 +15,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -145,4 +147,141 @@ func fanPWMMax(hw *device.Device) int {
 // rounds, so a floor of 127 reads as the 50% it was chosen to be.
 func pwmPercent(pwm, pwmMax int) int {
 	return (pwm*100 + pwmMax/2) / pwmMax
+}
+
+// liveReadings are the values status and fancurve --get show that, on the
+// device, come from the embedded controller: fan RPM over asus-wmi, battery
+// and AC through ACPI (_BST, _PSR). Temperature rides along so a report is
+// sourced consistently.
+type liveReadings struct {
+	TempC     int // 0 = not available
+	RPM       []int
+	OnAC      bool
+	ACKnown   bool
+	Capacity  int // percent; 0 = not available
+	Limit     int // charge limit percent; 0 = not available
+	ViaDaemon bool
+}
+
+// readLive takes the EC-backed readings from the daemon when one is running,
+// and reads hardware only when none is.
+//
+// The daemon gates every EC read on its wedged-EC latch: a read into an
+// embedded controller that has stopped answering after a resume blocks in
+// ACPI holding the global lock, and the machine hard-locks (PR #26 — the
+// trace's lock holder was a *reader*). A CLI that read sysfs itself while a
+// daemon was up would walk around that gate, and status --watch would do it
+// every second. So with a daemon running, whatever get-state omits is shown
+// as unavailable rather than read here.
+//
+// up says whether a daemon answered at all; st is its get-state reply, nil
+// when it answered with an error. A daemon that is up is guarding the EC
+// whether or not this reply was usable, so hardware is read only when !up.
+func readLive(hw *device.Device, st *api.State, up bool) liveReadings {
+	if up && st == nil {
+		return liveReadings{ViaDaemon: true}
+	}
+	if st != nil {
+		r := liveReadings{
+			TempC:     st.Temperature,
+			RPM:       st.RPM,
+			OnAC:      st.OnAC,
+			ACKnown:   st.SourceKnown,
+			Capacity:  st.BatteryLevel,
+			Limit:     st.Battery,
+			ViaDaemon: true,
+		}
+		// A daemon older than the RPM slice reports fan 1 alone.
+		if len(r.RPM) == 0 && st.FanRPM > 0 {
+			r.RPM = []int{st.FanRPM}
+		}
+		return r
+	}
+
+	var r liveReadings
+	if hw.Telemetry != nil {
+		if s, err := hw.Telemetry.Sample(); err == nil {
+			r.TempC = s.TempC
+		}
+	}
+	if hw.Fans != nil {
+		if rpms, err := hw.Fans.ReadRPM(); err == nil {
+			r.RPM = rpms
+		}
+	}
+	if hw.Battery != nil {
+		if bs, err := hw.Battery.Status(); err == nil {
+			r.OnAC, r.ACKnown, r.Capacity = bs.OnAC, bs.ACKnown, bs.Capacity
+		}
+		if limit, err := hw.Battery.ChargeLimit(); err == nil {
+			r.Limit = limit
+		}
+	}
+	return r
+}
+
+// daemonState asks the running daemon for get-state. up is false only when no
+// daemon answered; st is nil when one did but the reply was an error.
+func daemonState() (st *api.State, up bool) {
+	handled, st, err := api.SendGetState()
+	if !handled {
+		return nil, false
+	}
+	if err != nil {
+		return nil, true
+	}
+	return st, true
+}
+
+// formatRPM shows every fan the device reports, in its order.
+func formatRPM(rpms []int) string {
+	if len(rpms) == 0 {
+		return "N/A"
+	}
+	parts := make([]string, len(rpms))
+	for i, v := range rpms {
+		parts[i] = strconv.Itoa(v)
+	}
+	return strings.Join(parts, " / ") + " RPM"
+}
+
+// firmwareProfiles is the firmware profiles the device offers, nil when it has
+// no profile control. Reading it lists the handler's choices — a cached
+// kernel value, never an EC call.
+func firmwareProfiles(hw *device.Device) []string {
+	if hw == nil || hw.Profiles == nil {
+		return nil
+	}
+	return hw.Profiles.Names()
+}
+
+// firmwareProfilesOrNone is firmwareProfiles for output: the local device's
+// list, or a single "none" when there is no device or no profile control.
+func firmwareProfilesOrNone() []string {
+	hw, err := hardware()
+	if names := firmwareProfiles(hw); err == nil && len(names) > 0 {
+		return names
+	}
+	return []string{"none"}
+}
+
+// landingProfileName names the firmware profile a reset lands on, for output
+// after the daemon performed it: the device's default, read from the same
+// device data the daemon uses.
+func landingProfileName() string {
+	if hw, err := hardware(); err == nil {
+		if d := defaultProfile(hw); d != "" {
+			return d
+		}
+	}
+	return "default"
+}
+
+// defaultProfile is the device's reset landing profile, "" with no profile
+// control or no default.
+func defaultProfile(hw *device.Device) string {
+	if hw == nil || hw.Profiles == nil {
+		return ""
+	}
+	return hw.Profiles.Default()
 }

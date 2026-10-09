@@ -25,8 +25,9 @@ var tuningCmd = &cobra.Command{
 	Long: `Manage the tuning overrides — fan curve, power limits and Curve Optimizer
 offset — as one group.
 
---reset clears all three and returns the machine to the balanced profile with
-firmware fan control and stock power limits. It is not the same as running
+--reset clears all three and returns the machine to the device's default
+firmware profile (balanced on the Z13) with firmware fan control and stock power
+limits. It is not the same as running
 'fancurve --reset', 'tdp --reset' and 'undervolt --reset' by hand: each of those
 has to lower power before releasing the fans, so issuing them in the wrong order
 leaves the machine at a high sustained limit with no fan floor. This is one
@@ -55,7 +56,7 @@ func runTuningReset() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunTuningReset(powerEnvFor(hw))
+		cli.DryRunTuningReset(powerEnvFor(hw), defaultProfile(hw))
 		return nil
 	}
 
@@ -70,7 +71,7 @@ func runTuningReset() error {
 			fmt.Printf("Cleared every tuning override from profile %s\n", tuningProfileFlag)
 			return nil
 		}
-		fmt.Println("Tuning reset: switched to balanced profile (firmware power limits and fans restored)")
+		fmt.Printf("Tuning reset: switched to the %s profile (firmware power limits and fans restored)\n", landingProfileName())
 		return nil
 	}
 
@@ -81,10 +82,11 @@ func runTuningReset() error {
 	if err := requireDaemonForProfile(tuningProfileFlag); err != nil {
 		return err
 	}
-	if err := runTdpResetDirect(); err != nil {
+	landing, err := runTdpResetDirect()
+	if err != nil {
 		return err
 	}
-	fmt.Println("Tuning reset: switched to balanced profile (firmware power limits and fans restored)")
+	fmt.Printf("Tuning reset: switched to the %s profile (firmware power limits and fans restored)\n", landing)
 	fmt.Println("  (no daemon running, so no saved profile was changed)")
 	return nil
 }

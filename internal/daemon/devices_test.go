@@ -39,6 +39,14 @@ var testDev = func() *device.Device {
 			// and writes still go to the real driver, so the rule that a daemon
 			// test must stay on rejection paths is unchanged.
 			d.Power.Power = deviceFileEnvelope{Power: d.Power.Power, env: c.Power.Envelope()}
+			// Same reason for the profile list: the driver offers the kernel's
+			// choices filtered by the device data, and a machine without
+			// asus-wmi's handler would otherwise offer the tests a different
+			// list. Get/Set still reach the real driver.
+			d.Profiles = deviceFileProfiles{ProfileController: d.Profiles, names: c.Profiles.Names}
+			// And the toggle list: the driver describes toggles from the
+			// kernel's attribute metadata when asus-armoury is loaded.
+			d.Toggles = deviceFileToggles{Toggles: d.Toggles, specs: declaredToggles(c)}
 			return d
 		}
 	}
@@ -53,6 +61,19 @@ type deviceFileEnvelope struct {
 }
 
 func (p deviceFileEnvelope) Envelope() driver.PowerEnvelope { return p.env }
+
+// deviceFileProfiles reports the device file's profile names in place of the
+// driver's kernel-filtered list.
+type deviceFileProfiles struct {
+	driver.ProfileController
+	names []string
+}
+
+func (p deviceFileProfiles) Names() []string { return append([]string(nil), p.names...) }
+
+// Default is the device file's declared default, rather than the driver's
+// rule applied to its sysfs-read list.
+func (p deviceFileProfiles) Default() string { return "balanced" }
 
 // testEnv is the Z13 device file's power envelope, for the pure tick
 // functions' tables. Not testDev.Power.Envelope(): the driver lays the running
@@ -70,3 +91,28 @@ var testEnv driver.PowerEnvelope = func() driver.PowerEnvelope {
 	}
 	panic("Z13 device file not found in embedded device data")
 }()
+
+// deviceFileToggles reports the device file's toggle entries in place of the
+// driver's kernel-described list.
+type deviceFileToggles struct {
+	driver.Toggles
+	specs []driver.ToggleSpec
+}
+
+func (t deviceFileToggles) List() []driver.ToggleSpec {
+	return append([]driver.ToggleSpec(nil), t.specs...)
+}
+
+// declaredToggles is the device file's toggle entries as specs.
+func declaredToggles(c device.Config) []driver.ToggleSpec {
+	if c.Toggles == nil {
+		return nil
+	}
+	var out []driver.ToggleSpec
+	for _, e := range c.Toggles.Entries {
+		if !e.Hidden {
+			out = append(out, driver.ToggleSpec{ID: e.ID, Label: e.Label, Description: e.Description, Kind: driver.ToggleBool})
+		}
+	}
+	return out
+}
