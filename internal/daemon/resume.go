@@ -309,7 +309,8 @@ func (d *Daemon) releaseVolatileState() {
 		}
 	}
 
-	if err := cli.ResetAllFanCurves(); err != nil {
+	// nil: the machine is going to sleep, and the resume runs applyCustomHW anyway.
+	if err := cli.ReleaseFans(nil); err != nil {
 		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
 		return
 	}

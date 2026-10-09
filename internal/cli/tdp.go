@@ -25,11 +25,14 @@ const (
 // are a stale cache (initialized to 5W on module load) and do not reflect the
 // EC's actual per-profile limits unless explicitly written.
 //
-// This table is authoritative on write: switching to a stock profile writes it
-// to hardware verbatim via SetTDPState, because the asus-nb-wmi PPT attributes
-// have no "reset to firmware default" operation and the firmware does not
-// re-apply per-profile limits on a platform_profile change. Values are measured
-// on the GZ302E and will need a per-model lookup when other models are supported.
+// Only PL1 matches what the firmware actually enforces. Under load on a GZ302EA
+// the balanced row ran 63–66 W against the firmware's own 52 W, and quiet 55–70 W
+// against 40 W, so the row must never be the last thing written to a stock
+// profile: HandBackToFirmware writes it and then releases the fans, which makes
+// the firmware re-apply its own limits. The row is still written, verbatim via
+// SetTDPState, because it lowers a high custom limit before the fans lose their
+// floor and it is what the ppt_* attributes then show. Values will need a
+// per-model lookup when other models are supported.
 var StockProfilePPT = map[string]api.TDPState{
 	"quiet":       {PL1SPL: 40, PL2SPPT: 55, FPPT: 55, APUSPPT: 70, PlatformSPPT: 70},
 	"balanced":    {PL1SPL: 52, PL2SPPT: 71, FPPT: 70, APUSPPT: 70, PlatformSPPT: 70},

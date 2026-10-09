@@ -8,6 +8,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -200,11 +202,37 @@ func runFanCurveReset() error {
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
 		return err
 	}
-	if err := cli.ResetAllFanCurves(); err != nil {
+	if err := cli.ReleaseFans(customLimitInForce()); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves reset to auto mode (both fans)")
 	return nil
+}
+
+// customLimitInForce is the power limit a no-daemon fan release must re-write, or
+// nil when there is none to keep. The release makes the firmware re-apply the
+// platform profile's own limits (issue #22), so without this a `tdp --set` made
+// earlier would be silently undone by `fancurve --reset`.
+//
+// With no daemon there is no profile state, and the ppt_* cache — whatever was
+// last written — is the only record. It counts as a custom limit only when it is
+// neither the kernel's stale 5W boot cache nor the active firmware profile's
+// stock row: re-writing either would replace the firmware's limits with ours. A
+// deliberate 5W custom limit is indistinguishable from the stale cache here and
+// is not kept; the daemon, which knows the profile, has no such blind spot.
+func customLimitInForce() *api.TDPState {
+	cur, err := cli.ReadAllPPT()
+	if err != nil || cur.PL1SPL == cli.TDPMin || cur.PL1SPL > cli.TDPMaxSafe {
+		return nil
+	}
+	profile := ""
+	if data, err := os.ReadFile(cli.FindProfilePath()); err == nil {
+		profile = strings.TrimSpace(string(data))
+	}
+	if stock, ok := cli.StockProfilePPT[profile]; ok && stock == cur {
+		return nil
+	}
+	return &cur
 }
 
 func init() {

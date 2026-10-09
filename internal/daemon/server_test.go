@@ -235,7 +235,7 @@ func TestHandleProfileCreateRejectsBadNames(t *testing.T) {
 
 // TestHandleProfileRejectsUnknownNames is the guard that keeps a typo out of
 // cli.SetProfile. Before named profiles the daemon forwarded any string to
-// platform_profile; a mistyped name would now reach ResetAllFanCurves and drop
+// platform_profile; a mistyped name would now reach ReleaseFans and drop
 // the user's fan curve on the way to failing.
 func TestHandleProfileRejectsUnknownNames(t *testing.T) {
 	d := &Daemon{state: api.State{Profile: "balanced"}}

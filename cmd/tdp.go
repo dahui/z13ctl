@@ -49,9 +49,9 @@ on every system power profile change while the power limit survives it, so
 without the daemon to restore the floor the machine can end up at high power on
 the firmware's ordinary fan curve.
 
-With --reset, switches to the balanced profile, resets fan curves to auto mode,
-and writes balanced's stock PPT values back to hardware. The firmware manages
-fan curves for stock profiles but does not restore PPT on its own.
+With --reset, switches to the balanced profile, writes balanced's stock PPT
+values (bringing a high custom limit down first), and then resets fan curves to
+auto mode, which puts the firmware's own balanced limits back in force.
 
 PPT attributes:
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
@@ -277,11 +277,9 @@ func runTdpReset() error {
 	if err := requireDaemonForProfile(tdpProfileFlag); err != nil {
 		return err
 	}
-	// Direct path (no daemon): switch to balanced, write its stock PPT values
-	// back to hardware, and only then release the fans to firmware auto — so
-	// they are never dropped to auto while a high custom TDP is still in force.
-	// The firmware manages fan curves on a profile change but does not restore
-	// PPT, so that part has to be explicit.
+	// Direct path (no daemon): switch to balanced, then HandBackToFirmware —
+	// the stock row first, so a high custom TDP is down before the fans drop to
+	// auto, and the release last, so balanced's own limits end in force.
 	// Reset the undervolt as well: this lands on a stock profile, and every
 	// other route to one clears CO. Guarded on SMUAvailable so machines without
 	// ryzen_smu do not get a spurious warning.
@@ -293,28 +291,11 @@ func runTdpReset() error {
 	if err := cli.SetProfile("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	restoreStockPPT("balanced")
-	if err := cli.ResetAllFanCurves(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	if err := cli.HandBackToFirmware("balanced"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore balanced's power limits: %v\n", err)
 	}
 	fmt.Println("TDP reset: switched to balanced profile")
 	return nil
-}
-
-// restoreStockPPT writes the measured stock PPT values for a stock profile back
-// to hardware on the direct (no-daemon) path. The asus-nb-wmi PPT attributes
-// have no "reset to firmware default" operation and the firmware does not
-// re-apply per-profile limits on a platform_profile change, so without this a
-// custom TDP leaks into every stock profile. Failures warn and continue: a
-// profile switch must not hard-fail because the PPT restore did not take.
-func restoreStockPPT(profile string) {
-	stock, ok := cli.StockProfilePPT[profile]
-	if !ok {
-		return
-	}
-	if err := cli.SetTDPState(stock); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to restore stock TDP for %s: %v\n", profile, err)
-	}
 }
 
 // parsePLOverrides returns the effective PL1/PL2/PL3 values, applying

@@ -107,18 +107,15 @@ func runProfileSet() error {
 			"  (%q is not one of quiet, balanced, performance)", profile)
 	}
 
-	// Direct path (no daemon): write platform_profile, restore that profile's
-	// stock PPT, and only then release the fans to firmware auto. The firmware
-	// manages fan curves for stock profiles but does not re-apply PPT, so a
-	// previously set custom TDP would otherwise persist across the switch. Fans
-	// are released last so they are never dropped to auto while a high custom
-	// TDP is still in force — the same order as the daemon and 'tdp --reset'.
+	// Direct path (no daemon): write platform_profile, then HandBackToFirmware —
+	// the stock row first, so a high custom TDP is down before the fans drop to
+	// auto, and the release last, so the profile's own limits end in force. The
+	// same order as the daemon and 'tdp --reset'.
 	if err := cli.SetProfile(profile); err != nil {
 		return fmt.Errorf("setting platform profile: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
-	restoreStockPPT(profile)
-	if err := cli.ResetAllFanCurves(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
+	if err := cli.HandBackToFirmware(profile); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore the %s power limits: %v\n", profile, err)
 	}
 	fmt.Printf("Performance profile set to %s\n", profile)
 	return nil

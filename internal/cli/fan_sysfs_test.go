@@ -95,7 +95,7 @@ func TestSetBothFanCurvesErrorsWhenHwmonMissing(t *testing.T) {
 	}
 }
 
-func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
+func TestReleaseFansSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
 	seedReadingsSentinel(t, f)
@@ -104,8 +104,8 @@ func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	if err := setAllFanModes(1); err != nil {
 		t.Fatalf("setAllFanModes(1) = %v", err)
 	}
-	if err := ResetAllFanCurves(); err != nil {
-		t.Fatalf("ResetAllFanCurves() = %v, want nil", err)
+	if err := ReleaseFans(nil); err != nil {
+		t.Fatalf("ReleaseFans(nil) = %v, want nil", err)
 	}
 	for _, fan := range fanNames {
 		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 2 {
@@ -117,12 +117,175 @@ func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	}
 }
 
-// TestResetAllFanCurvesFailsWhenReleaseDoesNotStick is the mirror of
+// releaseFixture seeds a curve that is live, as every real release starts from,
+// with a custom 30W limit written over the firmware's balanced row.
+func releaseFixture(t *testing.T) (*fakeSysfs, api.TDPState) {
+	t.Helper()
+	f := newFakeSysfs(t)
+	f.seedFanCurveFiles(t, 40, 100)
+	if err := setAllFanModes(1); err != nil {
+		t.Fatalf("setAllFanModes(1) = %v", err)
+	}
+	custom := TDPStateFor(30, 0, 0, 0)
+	if err := SetTDPState(custom); err != nil {
+		t.Fatalf("SetTDPState = %v", err)
+	}
+	return f, custom
+}
+
+func (f *fakeSysfs) pptState(t *testing.T) api.TDPState {
+	t.Helper()
+	return api.TDPState{
+		PL1SPL:       f.readInt(t, f.ppt+"/ppt_pl1_spl"),
+		PL2SPPT:      f.readInt(t, f.ppt+"/ppt_pl2_sppt"),
+		FPPT:         f.readInt(t, f.ppt+"/ppt_fppt"),
+		APUSPPT:      f.readInt(t, f.ppt+"/ppt_apu_sppt"),
+		PlatformSPPT: f.readInt(t, f.ppt+"/ppt_platform_sppt"),
+	}
+}
+
+// TestReleaseFansReappliesTheKeptLimit is the regression test for issue #22.
+// A fan release makes the firmware re-apply the platform profile's own power
+// limits (the fake emulates it), so a custom TDP written before the release was
+// gone after it while sysfs still showed it. "tdp --set 30" on a curveless
+// profile held 70W on performance until this was fixed.
+func TestReleaseFansReappliesTheKeptLimit(t *testing.T) {
+	f, custom := releaseFixture(t)
+
+	if err := ReleaseFans(&custom); err != nil {
+		t.Fatalf("ReleaseFans(30W) = %v, want nil", err)
+	}
+	if got := f.pptState(t); got != custom {
+		t.Errorf("PPT after release = %+v, want the kept %+v: the firmware reset was not undone", got, custom)
+	}
+	for _, fan := range fanNames {
+		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 2 {
+			t.Errorf("fan%d pwm_enable = %d, want 2: the fans must still be released", fan.index, got)
+		}
+	}
+}
+
+// TestReleaseFansWithoutKeepLeavesTheFirmwareLimits pins what nil means, and
+// that the fake's firmware emulation is live — without it the test above would
+// pass with no re-apply at all.
+func TestReleaseFansWithoutKeepLeavesTheFirmwareLimits(t *testing.T) {
+	f, _ := releaseFixture(t)
+
+	if err := ReleaseFans(nil); err != nil {
+		t.Fatalf("ReleaseFans(nil) = %v, want nil", err)
+	}
+	if got, want := f.pptState(t), fakeFirmwarePPT["balanced"]; got != want {
+		t.Errorf("PPT after release = %+v, want the firmware profile's %+v", got, want)
+	}
+}
+
+// TestReleaseFansRefusesAHighKeep: a sustained limit above the safe maximum
+// needs the fan floor, so it can never be the limit left in force by a release.
+// The fans must not be touched — refusing after releasing would be too late.
+func TestReleaseFansRefusesAHighKeep(t *testing.T) {
+	f, custom := releaseFixture(t)
+	high := TDPStateFor(TDPMaxSafe+1, 0, 0, 0)
+
+	if err := ReleaseFans(&high); err == nil {
+		t.Fatal("ReleaseFans above the safe maximum = nil, want a refusal")
+	}
+	for _, fan := range fanNames {
+		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 1 {
+			t.Errorf("fan%d pwm_enable = %d, want 1: a refused release must leave the curve live", fan.index, got)
+		}
+	}
+	if got := f.pptState(t); got != custom {
+		t.Errorf("PPT = %+v, want the untouched %+v", got, custom)
+	}
+}
+
+// TestReleaseFansReportsAFailedReapply: when the limit cannot be re-written the
+// firmware's is in force, and the caller must hear about it rather than believe
+// its TDP survived.
+func TestReleaseFansReportsAFailedReapply(t *testing.T) {
+	f, custom := releaseFixture(t)
+	swap(t, &pptBasePath, f.root+"/no-such-device")
+
+	err := ReleaseFans(&custom)
+	if err == nil {
+		t.Fatal("ReleaseFans with an unwritable PPT = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "re-applying") {
+		t.Errorf("error %q does not say the limit was not re-applied", err)
+	}
+}
+
+// TestHandBackToFirmwareEndsOnTheFirmwareLimits: the stock row is looser than the
+// firmware's own limits, so a stock profile must end on the release's re-apply,
+// not on the row. Every daemon start on a stock profile used to write the row
+// last and run balanced at ~65 W instead of 52 W.
+func TestHandBackToFirmwareEndsOnTheFirmwareLimits(t *testing.T) {
+	for _, start := range []int{30, TDPMaxSafe + 15} {
+		f, _ := releaseFixture(t)
+		if err := SetTDPState(TDPStateFor(start, 0, 0, 0)); err != nil {
+			t.Fatalf("SetTDPState(%d) = %v", start, err)
+		}
+
+		// A high start is released only because the row lowered it first.
+		if err := HandBackToFirmware("balanced"); err != nil {
+			t.Fatalf("from %dW: HandBackToFirmware = %v, want nil", start, err)
+		}
+		if got, want := f.pptState(t), fakeFirmwarePPT["balanced"]; got != want {
+			t.Errorf("from %dW: PPT = %+v, want the firmware's own %+v", start, got, want)
+		}
+		f.assertFanModes(t, 2)
+	}
+}
+
+// TestHandBackToFirmwareKeepsTheFloorWhenTheRowFails: with a high limit still in
+// hardware, releasing would remove the floor that limit needs.
+func TestHandBackToFirmwareKeepsTheFloorWhenTheRowFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the read-only mode this test relies on")
+	}
+	f, _ := releaseFixture(t)
+	if err := SetTDPState(TDPStateFor(TDPMaxSafe+15, 0, 0, 0)); err != nil {
+		t.Fatalf("SetTDPState = %v", err)
+	}
+	if err := os.Chmod(f.ppt+"/ppt_pl1_spl", 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := HandBackToFirmware("balanced"); err == nil {
+		t.Fatal("HandBackToFirmware with the limit stuck high = nil, want a refusal")
+	}
+	f.assertFanModes(t, 1)
+}
+
+// TestHandBackToFirmwareWithoutARowStillReleases: an unreadable platform_profile
+// has no row to write, but the release alone still restores the firmware limits.
+func TestHandBackToFirmwareWithoutARowStillReleases(t *testing.T) {
+	f, _ := releaseFixture(t)
+
+	if err := HandBackToFirmware(""); err != nil {
+		t.Fatalf("HandBackToFirmware(\"\") = %v, want nil", err)
+	}
+	if got, want := f.pptState(t), fakeFirmwarePPT["balanced"]; got != want {
+		t.Errorf("PPT = %+v, want the firmware's own %+v", got, want)
+	}
+	f.assertFanModes(t, 2)
+}
+
+func (f *fakeSysfs) assertFanModes(t *testing.T, want int) {
+	t.Helper()
+	for _, fan := range fanNames {
+		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != want {
+			t.Errorf("fan%d pwm_enable = %d, want %d", fan.index, got, want)
+		}
+	}
+}
+
+// TestReleaseFansFailsWhenReleaseDoesNotStick is the mirror of
 // TestSetBothFanCurvesFailsWhenCurveDoesNotStick. A release the driver silently
 // ignores used to be indistinguishable from success, which on the sleep path is
 // the difference between a quiet suspend and a machine that runs its fans all
 // night — firmware auto is what lets the EC stop them through s2idle.
-func TestResetAllFanCurvesFailsWhenReleaseDoesNotStick(t *testing.T) {
+func TestReleaseFansFailsWhenReleaseDoesNotStick(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
 
@@ -134,9 +297,9 @@ func TestResetAllFanCurvesFailsWhenReleaseDoesNotStick(t *testing.T) {
 	fanWriteInt = func(string, int) error { return nil }
 	t.Cleanup(func() { fanWriteInt = orig })
 
-	err := ResetAllFanCurves()
+	err := ReleaseFans(nil)
 	if err == nil {
-		t.Fatal("ResetAllFanCurves() = nil, want an error when the kernel does not honour the release")
+		t.Fatal("ReleaseFans(nil) = nil, want an error when the kernel does not honour the release")
 	}
 	if !strings.Contains(err.Error(), "pwm1_enable") {
 		t.Errorf("error %q does not name the attribute that proved it", err)

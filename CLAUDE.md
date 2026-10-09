@@ -49,7 +49,8 @@ internal/
     sysfs.go                 FindProfilePath, SetProfile, FindBatteryThresholdPath, FindBootSoundPath, SetBootSound, FindPanelOverdrivePath, SetPanelOverdrive, FindAPUTemperaturePath, ReadAPUTemperature, FindBatteryCapacityPath
     power.go                 FindACOnlinePath, OnACPower (Mains-only discovery), IsStockProfile, ValidateProfileName
     power_test.go            mains discovery vs the decoy supplies; profile-name rules
-    fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control, ParseFanCurve, SetAllFansFullSpeed
+    fan.go                   hwmon discovery, fan curve read/write (both fans), RPM read, mode control,
+                             ReleaseFans/HandBackToFirmware, ParseFanCurve, SetAllFansFullSpeed
     paths.go                 sysfs roots as vars (injectable by tests); see Testing
     tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
                              SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor/CheckCurveAgainstTDP,
@@ -154,8 +155,10 @@ contrib/
 - **State persistence**: `$XDG_STATE_HOME/z13ctl/state.json` (atomic write via temp +
   rename). Daemon restores lighting, fan curves, and TDP on start. Fan curves and
   custom TDP are only restored when `profile == "custom"`; a saved *stock* profile
-  gets its `StockProfilePPT` row written instead, since the kernel's PPT
-  attributes come up holding a stale 5W cache after boot.
+  goes through `cli.HandBackToFirmware` instead (row, then a fan release that
+  re-applies the firmware's own limits), which also replaces the stale 5W cache
+  the kernel's PPT attributes come up holding after boot. Only the row is written
+  when a curve the daemon does not own is in force.
 - **Always snapshot state with `cloneState()` before releasing `d.mu`.**
   `api.State` holds a map and four pointer fields, so the plain `s := d.state`
   copy still aliases live daemon state. Handlers unlock before calling
@@ -282,8 +285,12 @@ contrib/
   kernel — no daemon state persistence needed. The `current_value` files are
   `0644 root:root` by default; `setup.go` handles permissions via udev rules
   (`SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury"`) and direct `applySysfsPerms()`.
-  Other attributes exist (`charge_mode` is read-only charger type detection; PPT
-  controls exist but are empty on Z13 due to missing DMI calibration data).
+  Other attributes exist (`charge_mode` is read-only charger type detection). PPT
+  controls were empty on Z13 on early kernels for want of DMI calibration data;
+  7.x kernels carry a GZ302EA entry and expose `ppt_pl1_spl`/`ppt_pl2_sppt`/
+  `ppt_pl3_fppt` (PL1 28–80, PL2 32–92, PL3 45–93; no APU/Platform sPPT). They
+  write the same WMI IDs as the `asus-nb-wmi` path, and `current_value` is
+  armoury's own cache, so it never reflects writes made the other way.
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
   `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute
@@ -328,14 +335,15 @@ contrib/
   
   `d.mu` guards state, and every mutating handler does its hardware I/O outside
   it, so nothing otherwise stops the reconcile watcher interleaving its
-  `SetBothFanCurves` with `handleProfile`'s `ResetAllFanCurves` — the fans would
+  `SetBothFanCurves` with `handleProfile`'s `ReleaseFans` — the fans would
   keep whichever mode landed last. `handleProfile`'s "custom" branch used to hold
   `d.mu` across the `cli.*` calls and now snapshots first, so the order holds
   everywhere. `*-get` handlers deliberately do not take `hwMu`: blocking a GUI
   read behind a fan write sequence would be a regression.
 - **TDP (PPT power limits)**: Direct platform device attributes at
-  `/sys/devices/platform/asus-nb-wmi/ppt_*` (NOT the firmware-attributes interface,
-  which has empty calibration data). Five attributes: `ppt_pl1_spl` (Sustained),
+  `/sys/devices/platform/asus-nb-wmi/ppt_*`, which the kernel now warns is
+  deprecated in favour of asus-armoury (see the firmware-attributes note; migration
+  is pending, issue #22). Five attributes: `ppt_pl1_spl` (Sustained),
   `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
   `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
   (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
@@ -609,7 +617,7 @@ contrib/
   autoswitch stays enabled and configured identically.
 - **`handleTDPReset` writes `platform_profile` even when already on `balanced`,
   and that is deliberate.** The redundant write costs a WMI call whose
-  fan-controller reset is immediately superseded by the `ResetAllFanCurves` that
+  fan-controller reset is immediately superseded by the `ReleaseFans` that
   follows, so it is invisible — whereas guarding it would also skip `setPPD`,
   since `cli.SetProfile` only syncs power-profiles-daemon after a successful
   primary write. `Run()`'s same-value guard exists because nothing else there is
@@ -635,7 +643,7 @@ contrib/
   then failed at `SetTDPState`, so trusting the flag alone released the floor it
   had just written one line earlier. The same guard also covers a limit left high
   out-of-band, which cached state says nothing about.
-- **`ResetAllFanCurves` verifies the release, as `SetBothFanCurves` verifies the
+- **`ReleaseFans` verifies the release, as `SetBothFanCurves` verifies the
   curve.** It was a bare `setAllFanModes(2)`, so a release the driver silently
   ignored was indistinguishable from success. That became load-bearing with the
   pre-sleep release: firmware auto is what lets the EC stop the fans through
@@ -696,9 +704,9 @@ contrib/
   `Gaming` rather than folding it to `gaming`, or the user looks for a profile
   under a name that is not there) and lenient on lookup (`--set` and `--profile`
   do fold case).
-- **Switching to a firmware profile preserves every custom profile**; it resets
-  fan hardware to auto, clears the undervolt, and writes that profile's
-  `StockProfilePPT` row. `profile --set <custom>` errors if that profile has no
+- **Switching to a firmware profile preserves every custom profile**; it clears
+  the undervolt and calls `cli.HandBackToFirmware` (that profile's
+  `StockProfilePPT` row, then the fans to auto). `profile --set <custom>` errors if that profile has no
   settings at all — there would be nothing to apply.
 - **AC/battery autoswitch is edge-triggered on `online`, never level-triggered,
   and never reads `platform_profile`** (`internal/daemon/powersource.go`, issue
@@ -731,17 +739,55 @@ contrib/
   glob reports mains power whenever the cover is attached. `OnACPower` returns an
   *error* when no Mains supply exists (VM, desktop, driver not yet bound); callers
   must treat that as unknown and do nothing, never as "on battery".
-- **Stock PPT restore is explicit, not firmware-driven** (issue #12): the firmware
-  does *not* re-apply per-profile PPT on a `platform_profile` write, and the
-  `ppt_*` attributes have no "reset to firmware default" operation — writing 5W
-  (an earlier attempt) just crippled the machine. `cli.StockProfilePPT` is
-  therefore authoritative **on write**: `restoreStockPPT()` (present in both
-  `internal/daemon/server.go` and `cmd/tdp.go` for the no-daemon path) writes it
-  via `cli.SetTDPState` on every stock-profile switch, on `tdp --reset`, and at
-  daemon startup. Use `SetTDPState` (exact five values) rather than `SetTDP`
-  (mirrors PL2 into APU/Platform) — the measured table has APU/Platform at 70W
-  for all three profiles while PL2 varies. Failures warn and continue; the saved
-  custom TDP is never cleared on a profile switch.
+- **The stock row is never the last write to a stock profile** (issues #12,
+  #22). The `ppt_*` attributes have no "reset to firmware default" operation —
+  writing 5W (an earlier attempt) just crippled the machine — so #12 made
+  `cli.StockProfilePPT` authoritative on write, on the belief that the firmware
+  does *not* re-apply per-profile PPT on a `platform_profile` write. Measured
+  2026-10-08 on BIOS WMI 9.4 it does (see the next note); the `ppt_*` readback,
+  which never moves, is the likely source of the original conclusion. And the
+  table is *looser* than the firmware: only PL1 matches. Under load, balanced
+  held 52 W on its own limits and 63–66 W for the minute after the row was
+  written; quiet 40 W against 55–70 W, at up to 90°C rather than 75. Every daemon start
+  on a stock profile wrote the row last, so every login ran the stock profile
+  hotter than the firmware does. `cli.HandBackToFirmware(profile)` is now how a
+  stock profile is entered — `applyStockHW`, `tdp --reset` (daemon and CLI),
+  `profile --set` without the daemon, `applyCustomHW` for a profile with no TDP,
+  and startup. It writes the row (via `SetTDPState`, exact five values — the
+  row is what lowers a high custom limit before the fans lose their floor, and
+  what the attributes then show), refuses to release while hardware still reads
+  above `TDPMaxSafe`, and releases last; the release is what re-applies the
+  firmware's limits. A redundant release on fans already at auto does not dip
+  them (measured), unlike the same-value `platform_profile` write `Run()` guards
+  against, so startup may release — but only when the fans are already on auto
+  or the curve is the custom profile it just left; a foreign curve gets the row
+  alone (`restoreStockPPT`). `applyCustomHW` hands back *before* writing the
+  profile's curve, because `pwm_enable=1` leaves the limits alone and the
+  release would drop the curve. The saved custom TDP is never cleared on a
+  profile switch. The fake sysfs's firmware (`fakeFirmwarePPT`) deliberately
+  differs from the table so a test ending on the row fails.
+- **A fan release or a `platform_profile` write resets the power limits, and
+  sysfs cannot see it** (issue #22). On the Z13 any `pwm_enable=2` write to the
+  curve device — even a redundant one with the fans already on auto — and any
+  `platform_profile` write make the firmware re-apply that profile's own limits.
+  The `ppt_*` attributes go on showing whatever was last written. Measured under
+  load with RAPL: TDP 30 W on performance held 30 W, a redundant release took it
+  to 70 W, and `pwm_enable=1` left it alone. z13ctl did this to itself: a
+  curveless profile at or below `TDPMaxSafe` wrote its TDP and *then* released
+  the fans (`applyCustomHW`, `handleTDP`, and `fancurve --reset` on a running
+  custom profile). Hence "75 W does nothing, 76 W works": above the safe maximum
+  the floor is kept and the fans are never released. Two rules follow.
+  **Every release goes through `cli.ReleaseFans(keep)`**, which re-writes `keep`
+  after the release and refuses a `keep` above `TDPMaxSafe` before touching the
+  fans. `ResetAllFanCurves` was removed rather than wrapped, so a new call site
+  cannot compile without choosing; `nil` means "the firmware profile's own
+  limits", which is right for every stock-profile path. **The reconcile watcher
+  re-writes the TDP on any observed policy write** — `platform_profile` changing
+  between ticks, or a custom curve found dropped — because the drift check
+  compares against the cache and can never fire for this. A same-value write on
+  a curveless profile leaves no trace at all and remains uncorrected. Never treat
+  a `ppt_*` readback as proof that a limit is in force; the fake sysfs emulates
+  the reset through `fanReleaseHook` for exactly this reason.
 - **`ReadEffectivePPT` must be passed the *effective* profile**, not
   `platform_profile`. `platform_profile` is never "custom", so passing it makes a
   legitimate 5W custom TDP (5W is a legal value — `TDPMin`) indistinguishable

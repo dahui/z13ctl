@@ -119,13 +119,13 @@ func DryRunProfile(profile string) {
 	if ppd != "" {
 		fmt.Printf("Would run: powerprofilesctl set %s\n", ppd)
 	}
-	// Switching to a stock profile also restores that profile's PPT values,
-	// since the firmware does not re-apply them on a platform_profile write.
-	// Fans are released last, after the limit has been lowered.
+	// Switching to a stock profile writes that profile's stock row, then
+	// releases the fans — the release is what re-applies the firmware's own
+	// limits, and it comes last, after the limit has been lowered.
 	if stock, ok := StockProfilePPT[profile]; ok {
 		fmt.Printf("Would write stock PPT for %s: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
 			profile, stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
-		fmt.Printf("Would reset fan curves to auto (pwm_enable=2)\n")
+		fmt.Printf("Would reset fan curves to auto (pwm_enable=2), which re-applies the firmware's own %s limits\n", profile)
 	}
 }
 
@@ -303,10 +303,9 @@ func DryRunTdp(watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
 // DryRunTdpReset prints the actions for a TDP reset, in the order the real path
 // performs them.
 //
-// It used to claim the firmware sets per-profile PPT on a profile change. It
-// does not — that false assumption is the whole of issue #12, and z13ctl writes
-// the stock values itself. The order matters too: power is lowered before the
-// fans are released, never the other way round.
+// The order matters: power is lowered to the stock row before the fans are
+// released, never the other way round, and the release is last because it is
+// what puts the firmware's own limits back in force (issue #22).
 func DryRunTdpReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	fmt.Println("Would reset the CPU Curve Optimizer to stock (balanced is a stock profile)")
@@ -314,7 +313,7 @@ func DryRunTdpReset() {
 	stock := StockProfilePPT["balanced"]
 	fmt.Printf("Would write stock PPT for balanced: PL1=%dW PL2=%dW PL3=%dW APU=%dW Platform=%dW\n",
 		stock.PL1SPL, stock.PL2SPPT, stock.FPPT, stock.APUSPPT, stock.PlatformSPPT)
-	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before)")
+	fmt.Println("Would reset fan curves to auto mode (after the limit is lowered, not before), which re-applies balanced's own limits")
 }
 
 // DryRunUndervolt prints the SMU commands that would be sent for a Curve

@@ -7,6 +7,7 @@ package cli
 // Both fans cool the same chip, so the same curve is always applied to both.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -292,8 +293,25 @@ func setAllFanModes(mode int) error {
 	return nil
 }
 
-// ResetAllFanCurves restores firmware auto mode for both fans, and verifies that
-// the kernel kept it.
+// ReleaseFans restores firmware auto mode for both fans, verifies that the kernel
+// kept it, and then re-writes keep — the power limit that should be in force.
+//
+// The re-write is not optional, and keep is a parameter rather than a separate
+// call so that no caller can forget it. On the Z13 any pwm_enable=2 write to the
+// curve device — even a redundant one, with the fans already on auto — makes the
+// firmware re-apply the active platform profile's own power limits, discarding a
+// custom TDP. The ppt_* attributes go on showing the value that was written, so
+// nothing reading sysfs can tell: `tdp --get` and the reconcile watcher both
+// reported a limit that was no longer in force. Measured on a GZ302EA under load
+// (issue #22): TDP 30 W on performance held 30 W until the release, then 70 W.
+// Every curveless profile at or below TDPMaxSafe released its fans right after
+// writing its TDP, which is why "75 W does nothing, 76 W works" — above the safe
+// maximum the fans keep the floor and are never released.
+//
+// keep == nil means "the firmware profile's own limits", which is exactly what a
+// switch to a stock profile wants. A keep above TDPMaxSafe is refused before the
+// fans are touched: that limit requires the floor the release would remove, the
+// same fail-closed rule ApplyTDPSafely enforces from the other direction.
 //
 // The readback matters for the same reason SetBothFanCurves has one, in the
 // mirror image: a release the driver silently ignores is indistinguishable from
@@ -301,12 +319,63 @@ func setAllFanModes(mode int) error {
 // Firmware auto is what lets the EC stop the fans through s2idle, so a release
 // that did not take is the difference between a quiet suspend and a machine that
 // runs its fans all night.
-func ResetAllFanCurves() error {
+func ReleaseFans(keep *api.TDPState) error {
+	if keep != nil && keep.PL1SPL > TDPMaxSafe {
+		return fmt.Errorf("refusing to release the fans with a %dW sustained limit in force "+
+			"(above %dW the fan floor is required)", keep.PL1SPL, TDPMaxSafe)
+	}
 	if err := setAllFanModes(2); err != nil { // auto/firmware
 		return err
 	}
-	return verifyFanModeReleased()
+	if err := verifyFanModeReleased(); err != nil {
+		return err
+	}
+	fanReleaseHook()
+	if keep == nil {
+		return nil
+	}
+	if err := SetTDPState(*keep); err != nil {
+		return fmt.Errorf("fans released, but re-applying the %dW power limit failed "+
+			"(the firmware profile's own limit is in force): %w", keep.PL1SPL, err)
+	}
+	return nil
 }
+
+// HandBackToFirmware puts a firmware profile's own power limits back in force:
+// it writes the profile's StockProfilePPT row and then releases the fans, whose
+// release makes the firmware re-apply that profile's limits.
+//
+// The row must never be the last write. Its PL1 matches the firmware's, but
+// the limits behind it do not: measured on a GZ302EA under load, balanced held
+// 52 W on the firmware's own limits and 63–66 W for the whole minute after the
+// row was written, and quiet 40 W against 55–70 W. Writing the row alone — which
+// is what every daemon start on a stock profile did — ran each stock profile
+// hotter than the firmware runs it. It is still written first, for two reasons:
+// it lowers a high custom limit before the fans lose their floor, and it is what
+// the ppt_* attributes show afterwards rather than a stale custom value.
+//
+// If the row cannot be written and hardware still reports a sustained limit
+// above TDPMaxSafe, the fans are not released, as in every other release path.
+// A profile with no row (an unreadable platform_profile) skips the write and
+// still releases.
+func HandBackToFirmware(profile string) error {
+	var rowErr error
+	if row, ok := StockProfilePPT[profile]; ok {
+		if err := SetTDPState(row); err != nil {
+			rowErr = fmt.Errorf("writing the %s stock PPT row: %w", profile, err)
+		}
+	}
+	if err := CheckFanFloorRelease(profile); err != nil {
+		return errors.Join(rowErr, err)
+	}
+	return errors.Join(rowErr, ReleaseFans(nil))
+}
+
+// fanReleaseHook runs after a release has landed and before keep is re-written.
+// It does nothing in production; the fake sysfs replaces it with an emulation of
+// the firmware's reset, which plain files cannot do on their own — without it a
+// test could not tell a re-applied limit from one that was simply never touched.
+var fanReleaseHook = func() {}
 
 // verifyFanModeReleased reports whether both fans are on firmware auto.
 //

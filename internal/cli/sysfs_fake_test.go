@@ -8,8 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/dahui/z13ctl/api"
 )
 
 // fakeSysfs is a temp-dir sysfs tree with the package path vars pointed at it.
@@ -85,6 +88,14 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	f.ppdCalls = &ppdCalls
 	t.Cleanup(func() { ppdRunner = origPPD })
 
+	// Emulate the firmware: a fan release re-applies the active profile's own
+	// power limits over whatever was written (measured on a GZ302EA, issue #22).
+	// The stock table stands in for the firmware's row; balanced when the fake
+	// tree names no profile.
+	origRelease := fanReleaseHook
+	fanReleaseHook = func() { f.firmwareProfileReset(t) }
+	t.Cleanup(func() { fanReleaseHook = origRelease })
+
 	swap(t, &sysHwmonDir, root+"/hwmon")
 	swap(t, &sysProfileDir, root+"/platform-profile")
 	swap(t, &sysProfileACPI, root+"/acpi_platform_profile")
@@ -93,6 +104,39 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	swap(t, &pptBasePath, f.ppt)
 	swap(t, &smuDriverPath, f.smu)
 	return f
+}
+
+// fakeFirmwarePPT is what the fake firmware re-applies. It differs from
+// StockProfilePPT on purpose, as the real firmware's limits do: on a GZ302EA
+// balanced held 52 W on its own limits and 63–66 W on the table's row. A test
+// that ends on the table rather than the firmware's own limits must fail.
+var fakeFirmwarePPT = map[string]api.TDPState{
+	"quiet":       {PL1SPL: 40, PL2SPPT: 40, FPPT: 40, APUSPPT: 40, PlatformSPPT: 40},
+	"balanced":    {PL1SPL: 52, PL2SPPT: 52, FPPT: 52, APUSPPT: 52, PlatformSPPT: 52},
+	"performance": {PL1SPL: 70, PL2SPPT: 70, FPPT: 70, APUSPPT: 70, PlatformSPPT: 70},
+}
+
+// firmwareProfileReset overwrites the PPT files with the active profile's
+// firmware limits, as the firmware does on a fan release or a platform_profile
+// write.
+func (f *fakeSysfs) firmwareProfileReset(t *testing.T) {
+	t.Helper()
+	profile := "balanced"
+	if data, err := os.ReadFile(FindProfilePath()); err == nil {
+		if p := strings.TrimSpace(string(data)); p != "" {
+			profile = p
+		}
+	}
+	row, ok := fakeFirmwarePPT[profile]
+	if !ok {
+		return
+	}
+	for name, v := range map[string]int{
+		"ppt_pl1_spl": row.PL1SPL, "ppt_pl2_sppt": row.PL2SPPT, "ppt_fppt": row.FPPT,
+		"ppt_apu_sppt": row.APUSPPT, "ppt_platform_sppt": row.PlatformSPPT,
+	} {
+		f.writeFile(t, f.ppt+"/"+name, itoa(v))
+	}
 }
 
 // swap points a path var at v and restores it when the test ends.

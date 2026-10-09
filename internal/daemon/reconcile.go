@@ -80,7 +80,7 @@ type reconcileObs struct {
 	WantCO     *int                // that profile's Curve Optimizer offset; nil if none
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
 	PL1        int                 // effective sustained limit in watts; -1 if unreadable
-	ProfileHW  string              // platform_profile, for logging only
+	ProfileHW  string              // platform_profile; a change means the firmware reset the power limits
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
@@ -106,7 +106,7 @@ func (a reconcileAction) none() bool {
 type reconcileState struct {
 	failures       int    // consecutive unsuccessful restorations
 	quiet          bool   // stop logging repeated failures
-	lastHW         string // last observed platform_profile
+	lastHW         string // last observed platform_profile; "" until the first tick
 	suspendedTicks int    // ticks observed during the current suspend
 	suspendGen     int    // the suspend suspendedTicks is counting for
 }
@@ -216,10 +216,28 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 
 	// PPT is defended against third parties (asusctl, ryzenadj), not against
 	// the kernel: a platform_profile write does not reset the ppt_* values.
-	if obs.WantTDP != nil && obs.PL1 != -1 && obs.PL1 != obs.WantTDP.PL1SPL {
+	// A platform_profile write — power-profiles-daemon on an AC transition, Fn+F5,
+	// asusctl, anyone — makes the firmware re-apply that profile's own power
+	// limits, and the ppt_* attributes go on showing ours, so the drift check
+	// below cannot see it (issue #22). Two traces of such a write are observable:
+	// platform_profile itself changing, and a custom curve found dropped, since the
+	// same write clears custom_fan_curves[*].enabled. Either one means the saved
+	// TDP has to be re-written even though the cache still matches it. A same-value
+	// write on a profile with no curve leaves neither trace and stays invisible;
+	// nothing in sysfs records it.
+	policyWritten := act.Curve != nil ||
+		(prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW)
+
+	switch {
+	case obs.WantTDP != nil && obs.PL1 != -1 && obs.PL1 != obs.WantTDP.PL1SPL:
 		act.TDP = obs.WantTDP
 		if act.Reason == "" {
 			act.Reason = "sustained TDP no longer matches the saved custom value"
+		}
+	case obs.WantTDP != nil && policyWritten:
+		act.TDP = obs.WantTDP
+		if act.Reason == "" {
+			act.Reason = "platform profile was rewritten, which resets custom power limits"
 		}
 	}
 
