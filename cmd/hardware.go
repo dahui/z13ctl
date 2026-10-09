@@ -158,8 +158,9 @@ type liveReadings struct {
 	RPM       []int
 	OnAC      bool
 	ACKnown   bool
-	Capacity  int // percent; 0 = not available
-	Limit     int // charge limit percent; 0 = not available
+	Charger   driver.Charger // which input supplies the machine; ChargerUnknown = cannot say
+	Capacity  int            // percent; 0 = not available
+	Limit     int            // charge limit percent; 0 = not available
 	ViaDaemon bool
 }
 
@@ -187,6 +188,7 @@ func readLive(hw *device.Device, st *api.State, up bool) liveReadings {
 			RPM:       st.RPM,
 			OnAC:      st.OnAC,
 			ACKnown:   st.SourceKnown,
+			Charger:   driver.Charger(st.Charger),
 			Capacity:  st.BatteryLevel,
 			Limit:     st.Battery,
 			ViaDaemon: true,
@@ -212,6 +214,7 @@ func readLive(hw *device.Device, st *api.State, up bool) liveReadings {
 	if hw.Battery != nil {
 		if bs, err := hw.Battery.Status(); err == nil {
 			r.OnAC, r.ACKnown, r.Capacity = bs.OnAC, bs.ACKnown, bs.Capacity
+			r.Charger = bs.Charger
 		}
 		if limit, err := hw.Battery.ChargeLimit(); err == nil {
 			r.Limit = limit
@@ -231,6 +234,24 @@ func daemonState() (st *api.State, up bool) {
 		return nil, true
 	}
 	return st, true
+}
+
+// powerSourceText is status's power-source word: "battery", or "AC" with the
+// input named when the device can tell its inputs apart ("AC via USB-C").
+// The input is named only on AC and only for a kind this build knows: on
+// battery there is no charger to name, and naming an unrecognised kind wrongly
+// is worse than saying nothing.
+func powerSourceText(onAC bool, c driver.Charger) string {
+	if !onAC {
+		return "battery"
+	}
+	switch c {
+	case driver.ChargerAdapter:
+		return "AC via adapter"
+	case driver.ChargerUSBC:
+		return "AC via USB-C"
+	}
+	return "AC"
 }
 
 // formatRPM shows every fan the device reports, in its order.

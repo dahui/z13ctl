@@ -48,17 +48,18 @@ func (w *Window) syncState() {
 	w.updateHeader()
 }
 
-// updateHeader refreshes the header line: the power source when it is known,
+// updateHeader refreshes the header line: the power source when it is known
+// (named by input — USB-C or Adapter — where the device can tell them apart),
 // then live temperature and fan speed. The power label deliberately shows
 // nothing when the source is unknown (a VM, a desktop, a pre-2.0 daemon) —
-// see profileui.PowerLabel. Refreshed by syncState, the telemetry poll, and
+// see profileui.SourceLabel. Refreshed by syncState, the telemetry poll, and
 // refreshState, which the power-source event triggers.
 func (w *Window) updateHeader() {
 	if w.headerTelemetry == nil || w.state == nil {
 		return
 	}
 	text := fmt.Sprintf("%d°C · %d RPM", w.state.Temperature, w.state.FanRPM)
-	if p := profileui.PowerLabel(w.state); p != "" {
+	if p := profileui.SourceLabel(w.state); p != "" {
 		text = p + " · " + text
 	}
 	w.headerTelemetry.SetLabel(text)

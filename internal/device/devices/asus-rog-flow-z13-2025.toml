@@ -136,10 +136,10 @@ method           = "power-supply"
 health           = true
 charge_limit_min = 40
 charge_limit_max = 100
-# charge_mode (a live WMI read) is what the adapter/USB-C values were measured
-# against. The generic power_supply view reproduces them by construction, but
-# its USB-C half has not been checked on this machine yet.
-charger          = "asus-armoury"
+# No charger key: the generic power_supply view (a System-scope ucsi supply
+# online means USB-C) matched asus-armoury's charge_mode on both inputs here —
+# adapter 1/adapter, USB-C 2/usb-c (2026-10-09) — without charge_mode's live
+# WMI read on every battery poll.
 
 # cpufreq's global boost switch (/sys/devices/system/cpu/cpufreq/boost). Writing
 # it moves every policy at once: measured here, 0 drops scaling_max_freq from

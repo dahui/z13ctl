@@ -15,7 +15,9 @@ Crate button and it slides in from the right edge of the screen.
   profiles can be created, copied (Save As), edited without activating them,
   and deleted from the full window's Profiles tab
 - **Autoswitch** — pick a profile per power source and the daemon switches
-  when the charger is plugged or unplugged; the header shows AC/Battery
+  when the charger is plugged or unplugged; the header shows the power
+  source — Battery, or the input in use (USB-C or Adapter) on a machine that
+  can tell them apart, AC otherwise
 - **Custom TDP control** — configurable power limits (PL1/PL2/PL3) on the full
   window's Profiles tab, with basic and advanced modes
 - **Fan curve editor** — per-profile fan response curve editing (Profiles tab,

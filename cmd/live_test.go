@@ -63,12 +63,12 @@ func trippingDevice(t *testing.T) *device.Device {
 func TestReadLiveTakesEverythingFromTheDaemon(t *testing.T) {
 	st := &api.State{
 		Temperature: 61, RPM: []int{2100, 2350},
-		OnAC: true, SourceKnown: true,
+		OnAC: true, SourceKnown: true, Charger: "usb-c",
 		BatteryLevel: 77, Battery: 80,
 	}
 	r := readLive(trippingDevice(t), st, true)
 	if r.TempC != 61 || !slices.Equal(r.RPM, []int{2100, 2350}) || !r.OnAC || !r.ACKnown ||
-		r.Capacity != 77 || r.Limit != 80 || !r.ViaDaemon {
+		r.Charger != driver.ChargerUSBC || r.Capacity != 77 || r.Limit != 80 || !r.ViaDaemon {
 		t.Errorf("readLive = %+v, want the daemon's values", r)
 	}
 }
@@ -108,6 +108,25 @@ func TestFormatRPM(t *testing.T) {
 	} {
 		if got := formatRPM(tt.in); got != tt.want {
 			t.Errorf("formatRPM(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestPowerSourceText(t *testing.T) {
+	for _, tt := range []struct {
+		onAC bool
+		c    driver.Charger
+		want string
+	}{
+		{true, driver.ChargerAdapter, "AC via adapter"},
+		{true, driver.ChargerUSBC, "AC via USB-C"},
+		{true, driver.ChargerUnknown, "AC"},      // a device with one input
+		{true, driver.Charger("wireless"), "AC"}, // a kind this build does not know
+		{false, driver.ChargerNone, "battery"},
+		{false, driver.ChargerUSBC, "battery"}, // a stale kind never outranks OnAC
+	} {
+		if got := powerSourceText(tt.onAC, tt.c); got != tt.want {
+			t.Errorf("powerSourceText(%v, %q) = %q, want %q", tt.onAC, tt.c, got, tt.want)
 		}
 	}
 }

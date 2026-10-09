@@ -101,15 +101,12 @@ func statusReport(out io.Writer) error {
 		outf("Profile: %s\n", profile)
 	}
 
-	// Power source, and what autoswitch would select for it. ACKnown carries
-	// the "unknown is not on-battery" distinction: no Mains supply, or a
-	// daemon withholding the read, means the line is simply omitted.
+	// Power source, which input supplies it where the device can tell, and
+	// what autoswitch would select for it. ACKnown carries the "unknown is not
+	// on-battery" distinction: no Mains supply, or a daemon withholding the
+	// read, means the line is simply omitted.
 	if live.ACKnown {
-		source := "battery"
-		if live.OnAC {
-			source = "AC"
-		}
-		outf("Power:   %s%s\n", source, autoswitchNote(live.OnAC))
+		outf("Power:   %s%s\n", powerSourceText(live.OnAC, live.Charger), autoswitchNote(live.OnAC))
 	}
 
 	// TDP power limits: the daemon's reading when it is running, since it

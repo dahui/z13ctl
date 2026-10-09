@@ -102,7 +102,8 @@ as every battery indicator does; at rates too low to divide by honestly it is
 dropped and the plain Charging/Discharging word returns. At rest the header
 reads *AC · not charging* — the normal state on a machine with a charge limit:
 a pack resting above its threshold on mains moves no energy, and the header
-says why.
+says why. On a machine with more than one power input it also names the one in
+use (*USB-C* or *Adapter*).
 
 **Package power** is read from the kernel's RAPL energy counter. That file is
 root-only by default (a side-channel mitigation), so the chart appears only

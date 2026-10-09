@@ -103,3 +103,19 @@ func PowerLabel(s *api.State) string {
 	}
 	return "Battery"
 }
+
+// SourceLabel is PowerLabel with the input named where the device can tell
+// its inputs apart: "USB-C" or "Adapter" in place of "AC". It is for the one
+// place that has room for a single word — the drawer's header — where "AC"
+// beside a charger name would spend width saying the same thing twice. On
+// battery, with an unknown source, or with a kind ChargerLabel does not
+// recognise, it is PowerLabel unchanged.
+func SourceLabel(s *api.State) string {
+	if p := PowerLabel(s); p != "AC" {
+		return p
+	}
+	if c := ChargerLabel(s); c != "" {
+		return c
+	}
+	return "AC"
+}

@@ -75,6 +75,26 @@ func TestPowerLabel(t *testing.T) {
 	}
 }
 
+func TestSourceLabel(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		s    *api.State
+		want string
+	}{
+		{"nil", nil, ""},
+		{"unknown source", &api.State{Charger: "usb-c"}, ""},
+		{"usb-c", &api.State{OnAC: true, SourceKnown: true, Charger: "usb-c"}, "USB-C"},
+		{"adapter", &api.State{OnAC: true, SourceKnown: true, Charger: "adapter"}, "Adapter"},
+		{"one input", &api.State{OnAC: true, SourceKnown: true}, "AC"},
+		{"unrecognised kind", &api.State{OnAC: true, SourceKnown: true, Charger: "wireless"}, "AC"},
+		{"battery", &api.State{SourceKnown: true, Charger: "none"}, "Battery"},
+	} {
+		if got := profileui.SourceLabel(tt.s); got != tt.want {
+			t.Errorf("%s: SourceLabel = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestTargetRowsShowEmptyProfilesGreyed(t *testing.T) {
 	s := stateWith("balanced",
 		api.CustomProfile{Name: "gaming", TDP: tdp(60)},

@@ -812,15 +812,16 @@ voltaire --dry-run undervolt --set -20
 ## status
 
 Display a summary of all system metrics in a single view: APU temperature, fan
-speed and mode, performance profile, TDP power limits, undervolt status, and
-battery charge level with charge limit.
+speed and mode, performance profile, power source, TDP power limits, undervolt
+status, and battery charge level with charge limit.
 
 ```
 voltaire status
 ```
 
-This command is read-only. Values are read directly from sysfs, with two
-exceptions: undervolt has no sysfs readback, so the line reports availability
+This command is read-only. Values come from sysfs, or from the daemon when it
+is running (see [Watching](#watching) for which). Two lines always involve the
+daemon: undervolt has no sysfs readback, so the line reports availability
 rather than the active offset; and the TDP line asks the daemon which profile is
 active, because a custom TDP equal to the kernel's untouched boot-time values
 (asus-armoury's defaults, or asus-nb-wmi's 5 W) is otherwise indistinguishable
@@ -837,12 +838,19 @@ the firmware may since have replaced; see [`tdp`](#tdp).
 ```sh
 voltaire status
 # APU:     62°C
-# Fans:    4200 RPM, mode: auto
+# Fans:    4200 / 4350 RPM, mode: auto
 # Profile: balanced
+# Power:   AC via USB-C
 # TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
 # UV:      available (use 'undervolt --get' for current values)
 # Battery: 74% (limit: 80%)
 ```
+
+The power line names the input in use — `AC via USB-C` or `AC via adapter` —
+on a machine that can tell its inputs apart, and plain `AC` on one that cannot.
+It is omitted when there is no mains supply to read (a desktop, a VM). With
+autoswitch enabled it adds the profile autoswitch would select, as
+`(autoswitch: gaming)`.
 
 The undervolt line comes from the daemon. It reports `available` while the
 module is loaded, until the first undervolt write tests whether this
@@ -878,7 +886,11 @@ clears from there down, so your scrollback is untouched and `Ctrl-C` leaves the
 last reading on screen. Piped or redirected output gets plain frames with no
 escape sequences, so `voltaire status --watch > log.txt` stays readable.
 
-The daemon is not required — `status` reads sysfs directly either way.
+The daemon is not required. Without one, `status` reads sysfs directly; with
+one, the readings that come from the embedded controller — temperature, fans,
+battery and power source — come from the daemon, which stops reading the
+controller while it is not answering after a resume. Those lines then show
+`N/A` (or are omitted) rather than reading it from here.
 
 For a richer terminal view, [z13-panel](https://github.com/ayixiayi/z13-panel)
 is a third-party TUI built on the same daemon socket.
