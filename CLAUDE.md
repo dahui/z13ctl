@@ -507,6 +507,27 @@ contrib/
   set true in exactly one place — `applyCustomHW`, and only when the SMU write
   succeeded — so a profile copied while CO was live never claims to be applied
   before anything was written.
+- **...but only an offset that is actually applied.** Every
+  `cli.ResetCurveOptimizer()` is gated on `d.uvApplied()` (or
+  `daemon.UndervoltApplied()` on the CLI's no-daemon paths, which reads the same
+  state file), never on `cli.SMUProbeUndervolt()` alone. The probe answers "can
+  this machine do CO", which is true on every Z13 with ryzen_smu loaded, so the
+  old gate sent a live MP1 mailbox write on every stock-profile switch,
+  `tdp --reset` and no-offset custom profile, to clear an offset that was never
+  set. One of those hard-locked the development machine on 2026-08-14 (kernel
+  7.1.8, profile `balanced`, no undervolt saved or active anywhere) — the
+  ryzenadj-class hang where a userspace MP1 message collides with the kernel's
+  own PMFW traffic. The cause was never proven, but the SMU write is the only
+  step in that sequence with a known hard-hang mode. `uvApplied` reads `Active`
+  *before* probing, because the first probe in a process sends the same payload
+  as a reset (`uvProbe` is the seam that lets a test prove it). An explicit
+  `undervolt --reset` with nothing applied succeeds without writing. The trade:
+  an offset state does not know about (a lost state file, ryzenadj by hand) is
+  not cleared, which a reboot or suspend fixes; the hang is not recoverable.
+  `tdp-reset` logs which SMU branch it took either way, since the lockup left no
+  evidence of how far the sequence got. `undervolt_gate_test.go` source-scans
+  `internal/daemon` and `cmd/` and fails on any reset whose nearest enclosing
+  `if`/`case` is not the applied check. Ported from v2, which had it first.
 - **A corrupt state file is preserved, not silently replaced.** `loadState`
   renames an unparseable `state.json` to `state.json.corrupt` and logs before
   returning defaults; the next `saveState` would otherwise overwrite it, taking

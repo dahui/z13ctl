@@ -11,6 +11,7 @@ import (
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
+	"github.com/dahui/z13ctl/internal/daemon"
 
 	"github.com/spf13/cobra"
 )
@@ -228,7 +229,7 @@ func runTdpSet() error {
 // two: with no custom curve at all the whole built-in floor curve is written, and
 // saying "points below 127 PWM were raised; every other point is unchanged" there
 // described points the user never set. DryRunTdp already distinguished the case.
-func printFloorNotice(pl1 int, want []api.FanCurvePoint, daemon bool) {
+func printFloorNotice(pl1 int, want []api.FanCurvePoint, viaDaemon bool) {
 	if pl1 <= cli.TDPMaxSafe {
 		return
 	}
@@ -244,7 +245,7 @@ func printFloorNotice(pl1 int, want []api.FanCurvePoint, daemon bool) {
 	default:
 		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
 	}
-	if daemon {
+	if viaDaemon {
 		fmt.Println("  (the daemon keeps the floor in force if a power profile change releases it)")
 	}
 }
@@ -281,9 +282,12 @@ func runTdpReset() error {
 	// the stock row first, so a high custom TDP is down before the fans drop to
 	// auto, and the release last, so balanced's own limits end in force.
 	// Reset the undervolt as well: this lands on a stock profile, and every
-	// other route to one clears CO. Guarded on SMUAvailable so machines without
-	// ryzen_smu do not get a spurious warning.
-	if cli.SMUAvailable() {
+	// other route to one clears CO. Guarded on SMUAvailable (a stat, never the
+	// destructive probe) so machines without ryzen_smu do not get a spurious
+	// warning, and on daemon.UndervoltApplied so an offset that was never
+	// applied is never "cleared" — a speculative MP1 write is the one with a
+	// known hard-hang mode (see Daemon.uvApplied).
+	if cli.SMUAvailable() && daemon.UndervoltApplied() {
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to reset undervolt: %v\n", err)
 		}

@@ -152,14 +152,19 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	uvActive := false
-	if cli.SMUProbeUndervolt() {
-		if uv := p.Undervolt; uv != nil {
+	if uv := p.Undervolt; uv != nil {
+		if cli.SMUProbeUndervolt() {
 			if err := cli.SetCurveOptimizer(uv.CPUCO); err != nil {
 				slog.Warn("failed to apply undervolt", "profile", p.Name, "err", err)
 			} else {
 				uvActive = true
 			}
-		} else if err := cli.ResetCurveOptimizer(); err != nil {
+		}
+	} else if d.uvApplied() {
+		// Only when something is actually applied — see uvApplied. A profile
+		// that sets no offset, activated on a machine that has none applied,
+		// has nothing to clear.
+		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt", "profile", p.Name, "err", err)
 		}
 	}
@@ -188,7 +193,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 // re-applies the profile's own limits — tighter than the row's, so the row must
 // not be the last write.
 func (d *Daemon) applyStockHW(profile string) error {
-	if cli.SMUProbeUndervolt() {
+	if d.uvApplied() {
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
 		}
@@ -219,6 +224,40 @@ func setUndervoltActive(s api.State, active bool) {
 			p.Undervolt.Active = active
 		}
 	}
+}
+
+// undervoltActive reports whether any saved profile claims its Curve Optimizer
+// offset is applied in hardware.
+//
+// It walks exactly what setUndervoltActive stamps, and deliberately so: the two
+// are the write and the read of one fact, and a getter that consulted a
+// different field would drift from the setter silently. CO is global hardware
+// and at most one profile's offset can be applied, so "any profile says active"
+// is the whole question.
+func undervoltActive(s api.State) bool {
+	for _, p := range s.CustomProfiles {
+		if p.Undervolt != nil && p.Undervolt.Active {
+			return true
+		}
+	}
+	return false
+}
+
+// UndervoltApplied reports whether the saved state says a Curve Optimizer
+// offset is applied in hardware.
+//
+// It exists for the CLI's no-daemon paths, which have to make exactly the
+// decision d.uvApplied() makes and have no Daemon to ask. Reading the same
+// state file is what keeps the two answers identical — a second rule expressed
+// differently in cmd/ is how the fan-floor checks drifted apart, and the
+// consequence here is worse than an inconsistent message: it is a speculative
+// MP1 mailbox write on a machine with no offset applied, the one with a known
+// hard-hang mode. See Daemon.uvApplied for the full reasoning and the trade.
+//
+// Cheap enough to call inline: loadState reads one small file and the no-daemon
+// paths run at most once per process.
+func UndervoltApplied() bool {
+	return undervoltActive(loadState())
 }
 
 // editTarget names the custom profile a fancurve/tdp/undervolt command edits,

@@ -271,7 +271,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 	// reconcile watcher stays inert because the profile is no longer custom.
 	// The fans are released below, by HandBackToFirmware, so that a high limit
 	// the custom profile left behind comes down before its floor does.
-	if leftCustom && cli.SMUProbeUndervolt() {
+	if leftCustom && d.uvApplied() {
 		if uvErr := cli.ResetCurveOptimizer(); uvErr != nil {
 			slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
 		}

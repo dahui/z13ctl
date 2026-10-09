@@ -679,6 +679,47 @@ func (d *Daemon) handleTDPGet() response {
 	return response{OK: true, Value: string(data)}
 }
 
+// uvApplied reports whether the Curve Optimizer offset is believed to be
+// applied in hardware right now. It is the gate on every
+// cli.ResetCurveOptimizer(), and cli.SMUProbeUndervolt() is emphatically not
+// enough on its own.
+//
+// SMUProbeUndervolt answers "is the module loaded and does this fork support CO
+// on this platform" — a property of the *machine*, not of its state. Gating a
+// reset on it alone meant every route to a stock profile sent a live MP1
+// mailbox write on a machine that had never had an offset applied, to clear
+// something that was never set. One of those hard-locked this SoC on
+// 2026-08-14: total freeze, power cycle, no kernel output, while state showed
+// profile `balanced` with no undervolt saved or active anywhere. The known
+// ryzenadj-class hang is a userspace MP1 message colliding with the kernel's
+// own PMFW traffic.
+//
+// Active is the closest thing to a readback that exists here — the Curve
+// Optimizer has none — because it is set in exactly one place (applyCustomHW,
+// and only after the SMU write succeeded). State is consulted *before* the
+// probe, so a machine with nothing applied never reaches the probe from here
+// either: SMUProbeUndervolt sends the same payload as a reset the first time
+// it runs in a process.
+//
+// The trade, stated because it is real: if hardware carries an offset that
+// state does not know about (a lost state file, or ryzenadj run by hand) this
+// skips a reset that was genuinely needed and leaves that offset applied. That
+// is recoverable — CO is volatile, so a reboot or a suspend clears it — whereas
+// the hang it avoids is not.
+//
+// Takes d.mu, so callers must not hold it. Every current caller reaches this
+// while holding hwMu only, which is the documented order (hwMu then d.mu).
+func (d *Daemon) uvApplied() bool {
+	d.mu.Lock()
+	active := undervoltActive(d.state)
+	d.mu.Unlock()
+	return active && uvProbe()
+}
+
+// uvProbe is cli.SMUProbeUndervolt, as a var so a test can prove uvApplied
+// never reaches it with nothing applied — the real one is an SMU write.
+var uvProbe = cli.SMUProbeUndervolt
+
 // effectiveProfile returns the profile to use when interpreting PPT values:
 // the daemon's own state when set, falling back to platform_profile. The
 // distinction matters because "custom" is a virtual profile that is never
@@ -865,10 +906,19 @@ func (d *Daemon) handleTDPReset(req request) response {
 	// would leak a custom setting into a stock profile (the defect class behind
 	// #12) and leave undervolt --get reporting "active" on a stock profile.
 	// Saved values are kept in state so "custom" stays re-selectable.
-	if cli.SMUProbeUndervolt() {
+	//
+	// Step markers, not decoration. The 2026-08-14 lockup left no evidence of how
+	// far this sequence got, because it logged only on completion and the reset
+	// paths log only on failure — so "no line" meant both "skipped" and "wrote to
+	// the mailbox and survived". The SMU step is the one with a hard-hang mode,
+	// so it says which branch it took either way.
+	if d.uvApplied() {
+		slog.Info("tdp-reset: clearing the Curve Optimizer offset")
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			slog.Warn("failed to reset undervolt after TDP reset", "err", err)
 		}
+	} else {
+		slog.Info("tdp-reset: no Curve Optimizer offset applied; skipping the SMU write")
 	}
 	if err := cli.SetProfile("balanced"); err != nil {
 		return response{OK: false, Error: "tdp-reset: switching to balanced profile: " + err.Error()}
@@ -996,12 +1046,20 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 	}
 	d.mu.Unlock()
 
-	if target.Live {
+	switch {
+	case target.Live && d.uvApplied():
 		if err := cli.ResetCurveOptimizer(); err != nil {
 			return response{OK: false, Error: "undervolt-reset: " + err.Error()}
 		}
 		slog.Info("undervolt-reset", "profile", target.Name)
-	} else {
+	case target.Live:
+		// Asked for explicitly, but nothing is applied, so there is nothing to
+		// clear in hardware and the SMU write would be the speculative one that
+		// hard-locked this machine (see uvApplied). "No offset applied" is
+		// already the requested end state, so this succeeds; the stored value
+		// below is still cleared, which is the half the user can observe.
+		slog.Info("undervolt-reset", "profile", target.Name, "hardware", "skipped: no offset applied")
+	default:
 		slog.Info("undervolt-reset", "profile", target.Name, "applied", false)
 	}
 
