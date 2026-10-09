@@ -152,7 +152,8 @@ render controls against, instead of hardcoding one device's numbers:
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
   "undervolt":{"min":-40,"max":0},
   "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
-  "telemetry":{"history_seconds":3600},
+  "telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs",
+               "history_seconds":3600,"clock_max_mhz":5187,"temp_limit_c":100},
   "buttons":true}}
 ```
 
@@ -181,7 +182,14 @@ where the daemon can read it — and `fans.pwm_max` the speed ceiling; size a
 curve editor from both, since a curve of any other length is refused.
 `fans.labels` names each fan in the order `get-state`'s `rpm` lists them, so
 its length is the number of fans (absent from an older daemon: label by
-position). `fans.temp_min`/`temp_max` are the curve editor's
+position). The `telemetry` sources name what the daemon reads, and a source is
+listed only where its hardware is present — a declared GPU on a machine with no
+amdgpu card, or an NPU on one without amdxdna, is left out rather than framed
+as a chart that never fills. `telemetry.clock_max_mhz` (the highest clock any
+charted clock reaches), `telemetry.temp_limit_c` (the firmware's throttle
+point, the ACPI passive trip) and `fans.rpm_max` are chart hints: where to put
+an axis's top, never a clamp, since a reading past one is real. Each is absent
+when the machine cannot say. `fans.temp_min`/`temp_max` are the curve editor's
 display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].values` lists the legal values where the firmware

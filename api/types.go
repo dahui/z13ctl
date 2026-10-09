@@ -45,7 +45,7 @@ type State struct {
 	CPUBoost    *bool `json:"cpu_boost,omitempty"`
 	OnAC        bool  `json:"on_ac"`                  // true when running on mains power
 	SourceKnown bool  `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
-	Temperature int   `json:"temperature,omitempty"`  // APU temp, degrees Celsius
+	Temperature int   `json:"temperature,omitempty"`  // CPU temperature (Tctl), degrees Celsius
 	FanRPM      int   `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 
 	// RPM is every fan the device reports, in the driver's order; FanRPM is

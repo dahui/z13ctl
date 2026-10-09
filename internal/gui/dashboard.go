@@ -613,11 +613,7 @@ func (d *dashboardView) refresh() {
 				d.apply(telemetryplot.Plot{}, handled, err)
 				return
 			}
-			var fanLabels []string
-			if doc := d.w.device; doc != nil && doc.Fans != nil {
-				fanLabels = doc.Fans.Labels
-			}
-			d.apply(telemetryplot.BuildLabeled(samples, time.Now(), d.span, 0, fanLabels), true, nil)
+			d.apply(telemetryplot.BuildWith(samples, time.Now(), d.span, 0, d.chartHints()), true, nil)
 		})
 	}()
 }
@@ -655,6 +651,23 @@ func (d *dashboardView) apply(p telemetryplot.Plot, handled bool, err error) {
 	d.emptyLbl.SetVisible(false)
 }
 
+// chartHints is what the device says about its own charts: fan names and the
+// axis tops — the clock ceiling and throttle temperature the daemon read from
+// the kernel, the fans' top speed, and the sustained power ceiling from the
+// live limits (which follow the kernel's range, not the device data's).
+func (d *dashboardView) chartHints() telemetryplot.Hints {
+	h := telemetryplot.Hints{PowerMaxW: d.w.limits.TDPMaxForced}
+	if doc := d.w.device; doc != nil {
+		if f := doc.Fans; f != nil {
+			h.FanLabels, h.FanMaxRPM = f.Labels, f.RPMMax
+		}
+		if t := doc.Telemetry; t != nil {
+			h.ClockMaxMHz, h.TempLimitC = t.ClockMaxMHz, t.TempLimitC
+		}
+	}
+	return h
+}
+
 // placeholderShape is the sentinel installGroups keys the loading frames on.
 // Never a real plot's shape: those are built from series labels and always
 // carry a ':' (TestPlaceholderIsNotAPlotShape pins it from the other side).
@@ -666,9 +679,10 @@ const placeholderShape = "placeholder"
 func (d *dashboardView) showPlaceholder() {
 	doc := d.w.device
 	caps := telemetryplot.PlaceholderCaps{
-		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
+		Fans: true, Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
 	}
 	if doc != nil {
+		caps.Fans = doc.Fans != nil
 		caps.Battery = doc.Battery != nil
 		caps.Power, caps.GPU, caps.CPUStats, caps.NPU, caps.Net = false, false, false, false, false
 		if t := doc.Telemetry; t != nil {
@@ -680,7 +694,7 @@ func (d *dashboardView) showPlaceholder() {
 		}
 	}
 	kinds := telemetryplot.PlaceholderKinds(caps)
-	d.installGroups(placeholderShape, telemetryplot.Placeholder(kinds))
+	d.installGroups(placeholderShape, telemetryplot.Placeholder(kinds, d.chartHints()))
 }
 
 // emptyDashboardText says which kind of nothing this is. Only the two

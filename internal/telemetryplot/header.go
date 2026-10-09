@@ -13,7 +13,7 @@ import (
 )
 
 // HeaderTitle is the card heading for the group: the kind's axis label
-// ("APU", "Fan", "Package", "Battery").
+// ("Temp", "Fan", "Power", "Battery").
 func (g Group) HeaderTitle() string {
 	return axes[g.Kind].label
 }

@@ -1,7 +1,7 @@
 package cmd
 
 // status.go — "status" subcommand: display a summary of all system metrics.
-// Read-only. Aggregates APU temperature, fan RPM, profile, TDP, and battery
+// Read-only. Aggregates CPU temperature, fan RPM, profile, TDP, and battery
 // information into a single dashboard view, once or (with --watch) repeatedly.
 
 import (
@@ -26,7 +26,7 @@ var statusCmd = &cobra.Command{
 	Short: "Show system status (temperature, fans, profile, TDP, battery)",
 	Long: `Display a summary of all system metrics in a single view.
 
-Shows APU temperature, fan speed and mode, performance profile, TDP power
+Shows CPU temperature, fan speed and mode, performance profile, TDP power
 limits, and battery charge level and limit. With the daemon running, the
 readings that come from the embedded controller (fans, battery, power source)
 are taken from it, so status never reads an EC the daemon is guarding; without
@@ -72,11 +72,11 @@ func statusReport(out io.Writer) error {
 	st, daemonUp := daemonState()
 	live := readLive(hw, st, daemonUp)
 
-	// APU temperature.
+	// CPU temperature.
 	if live.TempC > 0 {
-		outf("APU:     %d°C\n", live.TempC)
+		outf("CPU:     %d°C\n", live.TempC)
 	} else {
-		outln("APU:     N/A")
+		outln("CPU:     N/A")
 	}
 
 	// Fan RPM, every fan the device reports, and the mode. The mode is a cached

@@ -19,6 +19,7 @@ package telemetryplot
 // field true — the keep-everything posture limits.FromDevice takes, for the
 // same reason.
 type PlaceholderCaps struct {
+	Fans     bool // a fans section
 	Power    bool // telemetry.power_draw
 	Battery  bool // a battery section
 	GPU      bool // telemetry.gpu
@@ -28,14 +29,17 @@ type PlaceholderCaps struct {
 }
 
 // PlaceholderKinds is the card set to frame before any history has arrived:
-// temperature and fans always (every device shipping telemetry measures
-// both), everything else only when a declared source would fill it — a
+// temperature always (every device shipping telemetry measures it), fans when
+// the device has any, everything else only when a declared source would fill it — a
 // placeholder for a source the device disclaims would sit empty forever,
 // which is the false claim the honesty rule exists to prevent. Each kind
 // appears when *any* of its series has a source behind it; the frames are a
 // coarse guess the first real shape corrects.
 func PlaceholderKinds(c PlaceholderCaps) []Kind {
-	kinds := []Kind{KindTemp, KindFan}
+	kinds := []Kind{KindTemp}
+	if c.Fans {
+		kinds = append(kinds, KindFan)
+	}
 	if c.Power || c.GPU || c.NPU {
 		kinds = append(kinds, KindPower)
 	}
@@ -55,15 +59,17 @@ func PlaceholderKinds(c PlaceholderCaps) []Kind {
 }
 
 // Placeholder returns one framed, series-less group per kind, each spanning
-// its kind's nominal axis. The caller draws them exactly as it draws real
-// groups — grid rules and axis labels, no traces.
-func Placeholder(kinds []Kind) []Group {
+// its kind's nominal axis with the device's hints laid over it — the frame the
+// real chart will open at, so the first data does not jump the axis. The
+// caller draws them exactly as it draws real groups — grid rules and axis
+// labels, no traces.
+func Placeholder(kinds []Kind, h Hints) []Group {
 	out := make([]Group, 0, len(kinds))
 	for _, k := range kinds {
-		a, ok := axes[k]
-		if !ok {
+		if _, ok := axes[k]; !ok {
 			continue
 		}
+		a := axisFor(k, h, 0)
 		out = append(out, Group{
 			Kind:   k,
 			Unit:   a.unit,

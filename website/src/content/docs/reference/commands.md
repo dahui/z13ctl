@@ -413,7 +413,7 @@ voltaire fancurve [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current fan curve, mode, RPM, and APU temperature |
+| `--get` | Print the current fan curve, mode, RPM, and CPU temperature |
 | `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
 | `--preset <name>` | Apply a named preset curve (see `--list-presets`) |
 | `--list-presets` | List the preset curves this device offers |
@@ -426,9 +426,9 @@ are listed underneath — the driver keeps the curve data after disabling it.
 
 ```
 $ voltaire fancurve --get
-Fans: 4400 RPM, mode: custom, APU: 43°C   # <- your curve is live
+Fans: 4400 / 4550 RPM, mode: custom, CPU: 43°C   # <- your curve is live
 $ voltaire fancurve --get
-Fans: 1200 RPM, mode: auto, APU: 48°C     # <- it is not; see the warning below
+Fans: 1200 / 1250 RPM, mode: auto, CPU: 48°C     # <- it is not; see the warning below
 ```
 
 **Curve format:** 8 comma-separated `temp:speed` pairs. Speed can be a PWM
@@ -811,7 +811,7 @@ voltaire --dry-run undervolt --set -20
 
 ## status
 
-Display a summary of all system metrics in a single view: APU temperature, fan
+Display a summary of all system metrics in a single view: CPU temperature, fan
 speed and mode, performance profile, power source, TDP power limits, undervolt
 status, and battery charge level with charge limit.
 
@@ -837,7 +837,7 @@ the firmware may since have replaced; see [`tdp`](#tdp).
 
 ```sh
 voltaire status
-# APU:     62°C
+# CPU:     62°C
 # Fans:    4200 / 4350 RPM, mode: auto
 # Profile: balanced
 # Power:   AC via USB-C

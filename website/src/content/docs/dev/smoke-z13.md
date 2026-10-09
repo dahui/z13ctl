@@ -74,7 +74,7 @@ output.
 
 - [ ] `./voltaire list` shows both Aura devices (keyboard `0b05:1a30`, lightbar
       `0b05:18c6`).
-- [ ] `./voltaire status` prints APU temperature, fan RPM + mode, profile, TDP,
+- [ ] `./voltaire status` prints CPU temperature, fan RPM + mode, profile, TDP,
       and battery — and **no** `note: no device data matches this machine` on
       stderr. That note means DMI matching failed and everything below is
       running on the fallback assumption; stop and fix the device file first.

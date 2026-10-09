@@ -48,6 +48,11 @@ type FanInfo struct {
 	// field, or one that cannot say; a client then labels by position.
 	Labels []string `json:"labels,omitempty"`
 
+	// RPMMax is the fans' top speed where the device data states one — hwmon
+	// publishes no fan*_max on most machines. A chart hint, absent when
+	// unknown.
+	RPMMax int `json:"rpm_max,omitempty"`
+
 	// Presets are named starting-point curves the device data ships, in the
 	// order a client should offer them. Empty means the device declares none,
 	// in which case a client shows no preset control at all rather than an
@@ -254,4 +259,13 @@ type TelemetryInfo struct {
 	NPU            string `json:"npu,omitempty"`
 	Net            string `json:"net,omitempty"`
 	HistorySeconds int    `json:"history_seconds,omitempty"`
+
+	// Chart hints, from the kernel where the daemon can read them; absent
+	// means no hint, and a client keeps its own frame. ClockMaxMHz is the
+	// highest any charted clock reaches (the CPU's boost ceiling, the GPU's
+	// top P-state). TempLimitC is where the firmware starts throttling (the
+	// ACPI passive trip). Both are where to frame an axis, not limits: a
+	// reading past either is real and should expand the frame.
+	ClockMaxMHz int `json:"clock_max_mhz,omitempty"`
+	TempLimitC  int `json:"temp_limit_c,omitempty"`
 }

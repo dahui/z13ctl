@@ -202,7 +202,7 @@ func TestSampleReadsEveryQuantity(t *testing.T) {
 	f.writeFile(t, f.hwmonRead+"/fan1_input", "2400")
 	f.writeFile(t, f.hwmonRead+"/fan2_input", "2600")
 
-	s, err := telemetry{}.Sample()
+	s, err := (&telemetry{}).Sample()
 	if err != nil {
 		t.Fatalf("Sample() = %v", err)
 	}
@@ -242,7 +242,7 @@ func TestSampleSurvivesAnUngrantedCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := telemetry{}.Sample()
+	s, err := (&telemetry{}).Sample()
 	if err != nil {
 		t.Fatalf("Sample() = %v, want success without the powercap grant", err)
 	}

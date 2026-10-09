@@ -50,6 +50,10 @@ var testDev = func() *device.Device {
 			// And the fan shape: the driver lays hwmon's point count and fan
 			// labels over the device data.
 			d.Fans = deviceFileFans{FanController: d.Fans, shape: c.Fans.Shape()}
+			// And the telemetry declaration: the driver drops sources whose
+			// hardware is absent and adds the kernel's chart hints. Sample still
+			// reads the real machine, which the declaration guard needs.
+			d.Telemetry = deviceFileTelemetry{Telemetry: d.Telemetry, info: c.Telemetry.Info()}
 			return d
 		}
 	}
@@ -103,6 +107,15 @@ type deviceFileFans struct {
 }
 
 func (f deviceFileFans) Shape() driver.FanShape { return f.shape }
+
+// deviceFileTelemetry reports the device file's telemetry declaration in
+// place of the driver's hardware-checked one.
+type deviceFileTelemetry struct {
+	driver.Telemetry
+	info driver.TelemetryInfo
+}
+
+func (t deviceFileTelemetry) Info() driver.TelemetryInfo { return t.info }
 
 // deviceFileToggles reports the device file's toggle entries in place of the
 // driver's kernel-described list.

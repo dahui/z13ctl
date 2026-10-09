@@ -46,7 +46,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw.Fans != nil {
 		s := hw.Fans.Shape()
 		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax,
-			Labels: slices.Clone(s.Labels)}
+			Labels: slices.Clone(s.Labels), RPMMax: s.RPMMax}
 		// Copied, not aliased, for the same reason as the floor curve below:
 		// each preset owns a points slice, so a per-preset copy is what a deep
 		// copy means here — a new outer slice alone still shares every curve.
@@ -134,6 +134,8 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 			NPU:            t.NPU,
 			Net:            t.Net,
 			HistorySeconds: t.HistorySeconds,
+			ClockMaxMHz:    t.ClockMaxMHz,
+			TempLimitC:     t.TempLimitC,
 		}
 	}
 	info.Buttons = hw.Buttons != nil

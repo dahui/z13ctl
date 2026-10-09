@@ -57,6 +57,10 @@ var (
 	sysAccelDir = "/sys/class/accel"
 	devAccelDir = "/dev/accel"
 
+	// sysThermalDir holds the thermal zones; the passive trip is the
+	// telemetry chart's temperature hint.
+	sysThermalDir = "/sys/class/thermal"
+
 	// procNetDevPath and sysNetDir are the network byte counters and the
 	// class directory that says which interfaces are physical.
 	procNetDevPath = "/proc/net/dev"

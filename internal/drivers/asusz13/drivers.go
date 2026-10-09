@@ -511,13 +511,70 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 // NewTelemetry returns the telemetry source described by device data: APU
 // temperature and every fan speed from hwmon, the package energy counter from
 // powercap RAPL, and battery flow plus state of charge from power_supply.
+// What the data declares is checked against the machine on first use (Info).
 func NewTelemetry(info driver.TelemetryInfo) driver.Telemetry {
-	return telemetry{info: info}
+	return &telemetry{declared: info}
 }
 
-type telemetry struct{ info driver.TelemetryInfo }
+type telemetry struct {
+	declared driver.TelemetryInfo
 
-func (t telemetry) Info() driver.TelemetryInfo { return t.info }
+	once sync.Once
+	info driver.TelemetryInfo
+}
+
+// Info is the device data's declaration, keeping only the sources whose
+// hardware is present here, plus the chart hints the kernel can give. Resolved
+// once; every check is a stat or a static attribute — the NPU check in
+// particular never opens the accel node, which would wake it.
+//
+// The device data stays the opt-in: a source it does not name is never read,
+// whatever the machine has. What this adds is the other direction — a
+// declared GPU on a machine without amdgpu bound, or an NPU on a SKU without
+// one, is not offered, so a client does not frame a chart that can never fill.
+func (t *telemetry) Info() driver.TelemetryInfo {
+	t.once.Do(func() { t.info = resolveTelemetry(t.declared) })
+	return t.info
+}
+
+func resolveTelemetry(d driver.TelemetryInfo) driver.TelemetryInfo {
+	out := d
+	present := func(name, source string, ok bool) string {
+		if source != "" && !ok {
+			slog.Info("telemetry source declared but not present; not offered", "source", name, "method", source)
+			return ""
+		}
+		return source
+	}
+	_, raplErr := FindRAPLPackagePath()
+	out.PowerDraw = present("power_draw", d.PowerDraw, raplErr == nil)
+	out.GPU = present("gpu", d.GPU, findGPUDevicePath() != "")
+	out.CPUStats = present("cpu_stats", d.CPUStats, fileExists(procStatPath))
+	out.NPU = present("npu", d.NPU, findNPUDevicePath() != "")
+	out.Net = present("net", d.Net, fileExists(procNetDevPath))
+
+	// The clock axis spans every clock a chart shows: the CPU's boost ceiling
+	// and the GPU's top P-state.
+	if out.CPUStats != "" {
+		if mhz, err := ReadCPUMaxClockMHz(); err == nil {
+			out.ClockMaxMHz = mhz
+		}
+	}
+	if out.GPU != "" {
+		if mhz, err := ReadGPUMaxClockMHz(); err == nil && mhz > out.ClockMaxMHz {
+			out.ClockMaxMHz = mhz
+		}
+	}
+	if c, err := ReadPassiveTripC(); err == nil {
+		out.TempLimitC = c
+	}
+	return out
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 // Sample reads every quantity this device measures.
 //
@@ -526,8 +583,9 @@ func (t telemetry) Info() driver.TelemetryInfo { return t.info }
 // run setup for, or a battery that reports no power must not make the
 // temperature unreadable — a sample that fails is a *gap* in the history,
 // which costs every series and not just the one that could not be read.
-func (t telemetry) Sample() (driver.Sample, error) {
+func (t *telemetry) Sample() (driver.Sample, error) {
 	var s driver.Sample
+	info := t.Info()
 	temp, err := ReadAPUTemperature()
 	if err != nil {
 		return s, err
@@ -551,7 +609,7 @@ func (t telemetry) Sample() (driver.Sample, error) {
 	// The expanded sources, each gated on its declaration: a capability the
 	// document does not claim must not be read, or the guard that keeps
 	// declared-and-read in lockstep loses one of its directions.
-	if t.info.GPU != "" {
+	if info.GPU != "" {
 		if v, err := ReadGPUTempC(); err == nil {
 			s.GPUTempC = v
 		}
@@ -569,7 +627,7 @@ func (t telemetry) Sample() (driver.Sample, error) {
 			s.VRAMUsedMB, s.VRAMTotalMB = used, total
 		}
 	}
-	if t.info.CPUStats != "" {
+	if info.CPUStats != "" {
 		// Counters, not a percentage — the sampler derives CPUUtilPct, on the
 		// energy-counter pattern.
 		if busy, total, err := ReadCPUJiffies(); err == nil {
@@ -582,12 +640,12 @@ func (t telemetry) Sample() (driver.Sample, error) {
 			s.MemUsedMB, s.MemTotalMB = used, total
 		}
 	}
-	if t.info.NPU != "" {
+	if info.NPU != "" {
 		if w, util, clock, known := ReadNPUTelemetry(); known {
 			s.NPUPowerW, s.NPUBusyPct, s.NPUClockMHz, s.NPUKnown = w, util, clock, true
 		}
 	}
-	if t.info.Net != "" {
+	if info.Net != "" {
 		// Counters, not a rate — the sampler derives NetRxMBps/NetTxMBps, on
 		// the energy-counter pattern.
 		if rx, tx, err := ReadNetBytes(); err == nil {

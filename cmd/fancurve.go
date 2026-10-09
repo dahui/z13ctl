@@ -170,7 +170,7 @@ func runFanCurveGet() error {
 	}
 	tempStr := ""
 	if live.TempC > 0 {
-		tempStr = fmt.Sprintf(", APU: %d°C", live.TempC)
+		tempStr = fmt.Sprintf(", CPU: %d°C", live.TempC)
 	}
 	fmt.Printf("Fans: %s, mode: %s%s\n", formatRPM(live.RPM), modeStr, tempStr)
 	if curveErr != nil {

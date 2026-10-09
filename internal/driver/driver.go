@@ -55,6 +55,10 @@ type FanShape struct {
 	// when the driver cannot say how many fans there are.
 	Labels []string
 
+	// RPMMax is the fans' top speed from device data, 0 when unknown: a chart
+	// hint only.
+	RPMMax int
+
 	// Presets are the device's named starting-point curves, in declaration
 	// order. They ride here rather than on the FanController because they are
 	// device *data*, like PowerEnvelope's FloorCurve and StockProfilePPT: a
@@ -685,6 +689,13 @@ type TelemetryInfo struct {
 	NPU            string
 	Net            string
 	HistorySeconds int
+
+	// Axis hints for a chart, from the kernel where it can say; zero means no
+	// hint. ClockMaxMHz is the highest clock any charted clock reaches (CPU
+	// boost ceiling, top GPU P-state); TempLimitC is where the firmware starts
+	// throttling (the passive trip point).
+	ClockMaxMHz int
+	TempLimitC  int
 }
 
 // Telemetry produces the readings the status command, the GUI title row, and

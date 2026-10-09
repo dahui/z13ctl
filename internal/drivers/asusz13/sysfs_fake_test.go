@@ -123,6 +123,11 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	swap(t, &sysPowercapDir, root+"/powercap")
 	swap(t, &pptBasePath, f.ppt)
 	swap(t, &smuDriverPath, f.smu)
+	// Read-only roots too, so nothing a test asserts depends on the GPU, NPU
+	// or thermal zones of the machine running it.
+	swap(t, &sysDrmDir, root+"/drm")
+	swap(t, &sysAccelDir, root+"/accel")
+	swap(t, &sysThermalDir, root+"/thermal")
 	return f
 }
 

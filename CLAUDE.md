@@ -139,8 +139,9 @@ internal/
       rapl.go                powercap package-energy counter (read-only grant) + battery
                              flow, state and the Wh energy pair from power_supply
                              (power_now, or current x voltage; energy_now, or charge x voltage)
-      gpu.go                 amdgpu: edge temp, busy %, sclk, VRAM carveout, and the pure
-                             gpu_metrics v3.0 parser (GFX power at 124, UCLK at 186)
+      gpu.go                 amdgpu, all from one card: edge temp and sclk (its own hwmon, by
+                             label), busy %, VRAM carveout, and the pure gpu_metrics parser
+                             (per-revision offset table, 2.0–3.0)
       cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory,
                              and the global boost switch (read/write/verify)
       npu.go                 amdxdna NPU power/util/clock over DRM ioctls; queried only
@@ -1873,7 +1874,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   grant table expresses the distinction.
 - **The expanded telemetry (2026-08-14) matches the z13ctl-plus/z13gui-plus
   data set, through the daemon.** GPU edge temp, busy %, sclk, GFX power and
-  UCLK (amdgpu sysfs + a pure gpu_metrics v3.0 parser at offsets 124/186), CPU
+  UCLK (amdgpu sysfs + a pure gpu_metrics parser; see the revision entry), CPU
   utilisation counters + average core clock + system memory (procfs/cpufreq),
   VRAM carveout, and NPU power/util/clock (amdxdna DRM ioctls, layouts ported
   from the -plus fork, decoded at explicit offsets because 168-byte records
@@ -1907,6 +1908,33 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   link — hardware-backed — because summing everything counts VPN and bridge
   traffic twice (once on the tunnel, once on the hardware beneath it), and no
   physical interface at all is an error, never a zero.
+- **`gpu_metrics` is read through a per-revision offset table, and GFX power
+  only where it is the GFX rail** (2026-10-09). The offsets are `offsetof` over
+  the kernel's `struct gpu_metrics_vF_C` (`kgd_pp_interface.h`), compiled
+  rather than counted, and the 3.0 result matched the existing 124/186. UCLK is
+  `MemclkFrequency` in MHz from every producer, so 2.0–2.4 read it. GFX power
+  is *not* read from 2.1–2.3, although the field is there: which rail fills it
+  varies by chip within one revision — Rembrandt and Phoenix (2.1) copy
+  `Power[0]`, VDDCR_VDD, the rail the CPU cores share with graphics; Renoir
+  (2.2) leaves it at the driver's all-ones fill — so charting it as GPU power
+  would be false on exactly the machines it would appear on. 2.4 (Van Gogh,
+  `Power[2]` = VDDCR_GFX) and 3.0 ("time filtered GFX power") are the GFX rail.
+  An unknown revision is refused, and all-ones in either width is
+  "unavailable". Everything else on the GPU comes from **one card**: the first
+  amdgpu DRM card, and the hwmon *under that card's device* rather than the
+  first amdgpu hwmon on the system; temperature and clock channels are chosen by
+  label (`edge`, `sclk`; channel 1 when nothing is labelled). The clock read used
+  to look for `device/freq1_input`, which does not exist — the file is
+  `device/hwmon/hwmonN/freq1_input`, in Hz — so the P-state fallback was the only
+  path that ever ran. The NPU is the accel device bound to `amdxdna` (its ioctls
+  are amdxdna's), not any device with AMD's vendor ID.
+- **A declared telemetry source is offered only where its hardware is present**
+  (2026-10-09). `telemetry.Info()` checks each declaration once, by stat or
+  static attribute (the NPU check never opens the accel node, which would wake
+  it), and drops the absent ones, so a client does not frame a chart that never
+  fills. The device data stays the opt-in: an undeclared source is never read.
+  Daemon tests pin the declaration (`deviceFileTelemetry`) while `Sample` reads
+  the real machine, which is what the declaration guard needs.
 - **Package power crosses the driver boundary as an energy *counter*, not as
   watts.** RAPL publishes cumulative microjoules, so power is a difference over
   an interval — arithmetic that needs the *previous* reading, which a driver
@@ -2643,14 +2671,21 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
 - **The axis is framed per *kind*, not per series, and the nominal frame is a
   starting point that expands rather than a clamp.** Two fans are drawn on one
   chart, so separate axes would make their line heights incomparable — which is
-  the one thing a viewer will use them for. The nominal ranges (30–100 °C,
-  0–6000 RPM, 0–60 W package, 0–100% battery charge) keep the axis steady while
-  values wander, because a chart
+  the one thing a viewer will use them for. The nominal ranges keep the axis
+  steady while values wander, because a chart
   that rescales every second at a 1 Hz refresh is unreadable; anything outside
   expands the frame to a step boundary, so no reading is ever cut off. That
   invariant is what makes it safe to carry one laptop's numbers in a package
   meant to serve every device, and it is a test
   (`TestTheAxisNeverClipsAReading`) rather than a comment.
+  **The nominal top is the device's where it can say** (`telemetryplot.Hints`,
+  2026-10-09): clocks from `telemetry.clock_max_mhz` (the CPU's
+  `cpuinfo_max_freq` and the GPU's top `pp_dpm_sclk`; the built-in 0–4 GHz cut
+  through this CPU's 5.19 GHz boost), temperature from `telemetry.temp_limit_c`
+  (the ACPI passive trip, 100 °C here), power from the live `tdp_max_forced`,
+  fans from `fans.rpm_max` (unset on the Z13: unmeasured), memory from the
+  samples' own capacity. The placeholders take the same hints so the first data
+  does not jump the axis, and a device with no fans gets no Fan placeholder.
   `Plot.Shape()` is the rebuild key: chart widgets are torn down only when the
   *layout* changes (a fan stops being reported, a power source appears), never
   when the values do — the same reasoning as the profile selector's signature.

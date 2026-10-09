@@ -181,7 +181,7 @@ if handled && err == nil {
     fmt.Println("tdp:", state.TDP)
     fmt.Println("undervolt:", state.Undervolt)
     fmt.Println("undervolt available:", state.UndervoltAvailable)
-    fmt.Println("APU temp:", state.Temperature, "°C")
+    fmt.Println("CPU temp:", state.Temperature, "°C")
     fmt.Println("fan RPM:", state.FanRPM)
 }
 ```

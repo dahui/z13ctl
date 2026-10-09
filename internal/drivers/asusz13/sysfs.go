@@ -291,6 +291,40 @@ func ReadAPUTemperature() (int, error) {
 	return milli / 1000, nil
 }
 
+// ReadPassiveTripC returns the lowest passive trip point across the ACPI
+// thermal zones, in °C: where the firmware starts throttling, read from the
+// kernel's static trip table (no sensor read).
+func ReadPassiveTripC() (int, error) {
+	zones, err := os.ReadDir(sysThermalDir)
+	if err != nil {
+		return 0, err
+	}
+	best := 0
+	for _, z := range zones {
+		dir := sysThermalDir + "/" + z.Name()
+		if typ, err := os.ReadFile(dir + "/type"); err != nil || strings.TrimSpace(string(typ)) != "acpitz" {
+			continue
+		}
+		for i := 0; ; i++ {
+			kind, err := os.ReadFile(fmt.Sprintf("%s/trip_point_%d_type", dir, i))
+			if err != nil {
+				break
+			}
+			if strings.TrimSpace(string(kind)) != "passive" {
+				continue
+			}
+			milli, err := readIntFile(fmt.Sprintf("%s/trip_point_%d_temp", dir, i))
+			if c := milli / 1000; err == nil && c > 0 && (best == 0 || c < best) {
+				best = c
+			}
+		}
+	}
+	if best == 0 {
+		return 0, fmt.Errorf("no passive thermal trip point")
+	}
+	return best, nil
+}
+
 // FindBatteryCapacityPath returns the sysfs path for the current battery charge level.
 func FindBatteryCapacityPath() string {
 	return findBatteryAttr("capacity")

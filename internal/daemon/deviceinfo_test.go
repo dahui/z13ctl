@@ -605,3 +605,24 @@ func TestTDPLimitsWireKeys(t *testing.T) {
 		t.Errorf("get-state wire form lacks %s\n got: %s", want, data)
 	}
 }
+
+// hintTelemetry is a telemetry driver reporting chart hints, so the wire keys
+// can be pinned without depending on the machine's kernel.
+type hintTelemetry struct{ driver.Telemetry }
+
+func (hintTelemetry) Info() driver.TelemetryInfo {
+	return driver.TelemetryInfo{CPUStats: "procfs", ClockMaxMHz: 5187, TempLimitC: 100}
+}
+
+func TestChartHintWireKeys(t *testing.T) {
+	data, err := json.Marshal(deviceInfoFor(&device.Device{ID: "hints", Telemetry: hintTelemetry{},
+		Fans: deviceFileFans{shape: driver.FanShape{Points: 8, PWMMax: 255, RPMMax: 5600}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"clock_max_mhz":5187`, `"temp_limit_c":100`, `"rpm_max":5600`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("document does not contain %s\ngot: %s", want, data)
+		}
+	}
+}

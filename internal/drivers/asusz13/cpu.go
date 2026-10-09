@@ -86,6 +86,29 @@ func ReadCPUClockMHz() (int, error) {
 	return int(sum / count), nil
 }
 
+// ReadCPUMaxClockMHz returns the highest cpuinfo_max_freq across cores, in
+// MHz — the boost ceiling, a static attribute the kernel reports per policy.
+func ReadCPUMaxClockMHz() (int, error) {
+	entries, err := os.ReadDir(sysCPUDir)
+	if err != nil {
+		return 0, err
+	}
+	best := 0
+	for _, e := range entries {
+		name := e.Name()
+		if _, err := strconv.Atoi(strings.TrimPrefix(name, "cpu")); err != nil || !strings.HasPrefix(name, "cpu") {
+			continue
+		}
+		if khz, err := readIntFile(sysCPUDir + "/" + name + "/cpufreq/cpuinfo_max_freq"); err == nil && khz/1000 > best {
+			best = khz / 1000
+		}
+	}
+	if best == 0 {
+		return 0, fmt.Errorf("no readable cpuinfo_max_freq")
+	}
+	return best, nil
+}
+
 // ReadMemoryMB returns system memory usage in MB, used = MemTotal −
 // MemAvailable — the kernel's own estimate of what is genuinely in use, the
 // figure free(1) prints as "used".

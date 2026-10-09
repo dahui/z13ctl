@@ -25,6 +25,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -59,8 +60,12 @@ const (
 // payloads without a device.
 var npuQueryFn = npuQueryIoctl
 
-// findNPUDevicePath returns the /dev/accel/accelN node for the AMD XDNA NPU,
-// or "" when none is bound. Uncached, like every discovery in this package.
+// findNPUDevicePath returns the /dev/accel/accelN node bound to the amdxdna
+// driver, or "" when none is. Uncached, like every discovery in this package.
+//
+// Matched on the driver, not the PCI vendor: the ioctls below are amdxdna's
+// own, so an accel device from any other driver — AMD's included — must never
+// receive them. The vendor ID said "made by AMD", which is not the question.
 func findNPUDevicePath() string {
 	entries, err := os.ReadDir(sysAccelDir)
 	if err != nil {
@@ -71,11 +76,8 @@ func findNPUDevicePath() string {
 		if !strings.HasPrefix(name, "accel") {
 			continue
 		}
-		vendor, err := os.ReadFile(sysAccelDir + "/" + name + "/device/vendor")
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(string(vendor)) != "0x1022" {
+		link, err := filepath.EvalSymlinks(sysAccelDir + "/" + name + "/device/driver")
+		if err != nil || filepath.Base(link) != "amdxdna" {
 			continue
 		}
 		return devAccelDir + "/" + name

@@ -225,8 +225,8 @@ func TestFanLabels(t *testing.T) {
 	find(t, two, telemetryplot.KindFan, "Fan 2")
 
 	// The device's names win; a fan it does not name keeps its position.
-	named := telemetryplot.BuildLabeled([]api.TelemetrySample{sampleAt(0, 50, []int{2000, 2100, 2200})},
-		now, time.Minute, 0, []string{"CPU fan", ""})
+	named := telemetryplot.BuildWith([]api.TelemetrySample{sampleAt(0, 50, []int{2000, 2100, 2200})},
+		now, time.Minute, 0, telemetryplot.Hints{FanLabels: []string{"CPU fan", ""}})
 	find(t, named, telemetryplot.KindFan, "CPU fan")
 	find(t, named, telemetryplot.KindFan, "Fan 2")
 	find(t, named, telemetryplot.KindFan, "Fan 3")
@@ -520,15 +520,15 @@ func batteryPct(v int) *int { return &v }
 func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 	t.Parallel()
 
-	now := time.Unix(1_700_000_000, 0)
-	at := func(off int) int64 { return now.Add(time.Duration(off) * time.Second).Unix() }
+	ref := time.Unix(1_700_000_000, 0)
+	at := func(off int) int64 { return ref.Add(time.Duration(off) * time.Second).Unix() }
 
 	t.Run("a reported zero is drawn", func(t *testing.T) {
 		t.Parallel()
 		p := telemetryplot.Build([]api.TelemetrySample{
 			{At: at(-2), TempC: 50, BatteryLevelPct: batteryPct(0)},
 			{At: at(-1), TempC: 51, BatteryLevelPct: batteryPct(0)},
-		}, now, time.Minute, 0)
+		}, ref, time.Minute, 0)
 
 		if !hasKind(p, telemetryplot.KindBattery) {
 			t.Fatal("a pack reporting 0% lost its series; that is a real reading")
@@ -540,7 +540,7 @@ func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 		p := telemetryplot.Build([]api.TelemetrySample{
 			{At: at(-2), TempC: 50},
 			{At: at(-1), TempC: 51},
-		}, now, time.Minute, 0)
+		}, ref, time.Minute, 0)
 
 		if hasKind(p, telemetryplot.KindBattery) {
 			t.Error("a device reporting no battery got a series, which would draw " +
@@ -559,12 +559,12 @@ func TestBatteryZeroIsAReadingButAbsenceIsNot(t *testing.T) {
 func TestBatteryChartIsStateOfCharge(t *testing.T) {
 	t.Parallel()
 
-	now := time.Unix(1_700_000_000, 0)
+	ref := time.Unix(1_700_000_000, 0)
 	flow := -28.0
 	p := telemetryplot.Build([]api.TelemetrySample{
-		{At: now.Add(-2 * time.Second).Unix(), BatteryLevelPct: batteryPct(64), BatteryPowerW: &flow},
-		{At: now.Add(-time.Second).Unix(), BatteryLevelPct: batteryPct(65), BatteryPowerW: &flow},
-	}, now, time.Minute, 0)
+		{At: ref.Add(-2 * time.Second).Unix(), BatteryLevelPct: batteryPct(64), BatteryPowerW: &flow},
+		{At: ref.Add(-time.Second).Unix(), BatteryLevelPct: batteryPct(65), BatteryPowerW: &flow},
+	}, ref, time.Minute, 0)
 
 	var got []telemetryplot.Series
 	for _, s := range p.Series {
@@ -584,8 +584,8 @@ func TestBatteryChartIsStateOfCharge(t *testing.T) {
 	}
 
 	flowOnly := telemetryplot.Build([]api.TelemetrySample{
-		{At: now.Add(-time.Second).Unix(), BatteryPowerW: &flow},
-	}, now, time.Minute, 0)
+		{At: ref.Add(-time.Second).Unix(), BatteryPowerW: &flow},
+	}, ref, time.Minute, 0)
 	if hasKind(flowOnly, telemetryplot.KindBattery) {
 		t.Error("a flow-only sample produced a battery series; watts must not plot on the percent axis")
 	}
@@ -599,4 +599,40 @@ func hasKind(p telemetryplot.Plot, k telemetryplot.Kind) bool {
 		}
 	}
 	return false
+}
+
+// The device's hints set each axis's starting frame: the clock axis spans the
+// CPU's 5.19 GHz boost (the built-in 0–4 band cut through it), power runs to the
+// sustained ceiling, and memory reads against the machine's own capacity.
+func TestHintsFrameTheAxes(t *testing.T) {
+	s := sampleAt(0, 50, []int{2000})
+	s.CPUClockMHz = 3000
+	pw := 20.0
+	s.GPUPowerW = &pw
+	s.MemUsedMB, s.MemTotalMB = 8*1024, 64*1024
+	p := telemetryplot.BuildWith([]api.TelemetrySample{s}, now, time.Minute, 0,
+		telemetryplot.Hints{ClockMaxMHz: 5187, TempLimitC: 100, PowerMaxW: 80, FanMaxRPM: 5600})
+
+	for _, tt := range []struct {
+		kind telemetryplot.Kind
+		max  float64
+	}{
+		{telemetryplot.KindClock, 6},
+		{telemetryplot.KindTemp, 100},
+		{telemetryplot.KindPower, 80},
+		{telemetryplot.KindFan, 6000},
+		{telemetryplot.KindMemory, 64},
+	} {
+		if got := find(t, p, tt.kind, "").Bounds.Max; got != tt.max {
+			t.Errorf("kind %d: axis top %v, want %v", tt.kind, got, tt.max)
+		}
+	}
+
+	// No hints: the built-in frames stand, and a reading past one still
+	// expands it — a hint is a frame, never a clamp.
+	s.CPUClockMHz = 5100
+	p = telemetryplot.Build([]api.TelemetrySample{s}, now, time.Minute, 0)
+	if got := find(t, p, telemetryplot.KindClock, "").Bounds.Max; got != 6 {
+		t.Errorf("unhinted clock axis top %v, want the data's 6", got)
+	}
 }

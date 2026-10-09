@@ -73,6 +73,10 @@ type FansConfig struct {
 	// "Fan N". Worth setting where the kernel's label is wrong for the machine.
 	Labels []string `toml:"labels"`
 
+	// RPMMax is the fans' measured top speed, a chart hint. Optional: hwmon
+	// has no fan*_max here, so only a measurement can supply it.
+	RPMMax int `toml:"rpm_max"`
+
 	Presets []FanPresetConfig `toml:"presets"`
 }
 
@@ -94,7 +98,8 @@ type FanPresetConfig struct {
 func (c FansConfig) Shape() driver.FanShape {
 	s := driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255,
 		SleepReleaseSettle: time.Duration(c.SleepReleaseSettleMs) * time.Millisecond,
-		Labels:             slices.Clone(c.Labels)}
+		Labels:             slices.Clone(c.Labels),
+		RPMMax:             c.RPMMax}
 	for _, p := range c.Presets {
 		preset := api.FanPreset{Name: p.Name, Label: p.Label, Description: p.Description}
 		for _, pt := range p.Curve {
@@ -384,6 +389,9 @@ func (c Config) Validate() error {
 		// The hold runs inside logind's delay budget, 5 s by default; the daemon
 		// cuts it short to fit anyway, but a value at or past the budget would
 		// never be what the file says.
+		if c.Fans.RPMMax < 0 {
+			fail("fans.rpm_max %d must not be negative", c.Fans.RPMMax)
+		}
 		if c.Fans.SleepReleaseSettleMs < 0 || c.Fans.SleepReleaseSettleMs >= 5000 {
 			fail("fans.sleep_release_settle_ms %d must be 0 or more and under 5000", c.Fans.SleepReleaseSettleMs)
 		}

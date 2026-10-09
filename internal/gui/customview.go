@@ -247,7 +247,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 		sec = newSection(leftCol)
 		sec.Append(sectionLabel("TELEMETRY"))
 		telRow := gtk.NewBox(gtk.OrientationHorizontal, 8)
-		c.telemetryTempLabel = gtk.NewLabel("APU: --°C")
+		c.telemetryTempLabel = gtk.NewLabel("CPU: --°C")
 		c.telemetryTempLabel.SetHAlign(gtk.AlignStart)
 		c.telemetryTempLabel.AddCSSClass("section-label")
 		c.telemetryFanLabel = gtk.NewLabel("Fan: -- RPM")
@@ -786,7 +786,7 @@ func (c *customView) syncTelemetry(st *api.State) {
 		return
 	}
 	if c.telemetryTempLabel != nil {
-		c.telemetryTempLabel.SetLabel(fmt.Sprintf("APU: %d°C", st.Temperature))
+		c.telemetryTempLabel.SetLabel(fmt.Sprintf("CPU: %d°C", st.Temperature))
 	}
 	if c.telemetryFanLabel != nil {
 		text := profileui.FanRPMText(st)

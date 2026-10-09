@@ -145,12 +145,12 @@ var axes = map[Kind]axis{
 	// but bounds() would let it if a driver ever misreported.
 	KindLoad: {label: "Load", unit: "%", nomMin: 0, nomMax: 100, step: 25},
 	// Clocks travel in GHz rather than MHz so the axis labels stay short and
-	// the header readout is legible; the CPU/GPU/memory clocks genuinely
-	// share a 0–4 GHz band on the hardware shipping today.
+	// the header readout is legible. The 4 GHz top is only the fallback: the
+	// device's own ceiling (Hints.ClockMaxMHz) replaces it — the Z13's CPU
+	// boosts to 5.19 GHz, which a shared 0–4 band would have cut through.
 	KindClock: {label: "Clocks", unit: "GHz", nomMin: 0, nomMax: 4, step: 1},
-	// Memory gauges in GB. The frame grows to the machine's actual capacity
-	// from the data — nominal 32 covers the smaller configurations without
-	// wasting half the axis on a 32 GB machine.
+	// Memory gauges in GB. The frame is the machine's capacity, from the
+	// samples' own totals (axisFor); 32 is only for a sample with none.
 	KindMemory: {label: "Memory", unit: "GB", nomMin: 0, nomMax: 32, step: 8},
 	// Network throughput in decimal MB/s. The nominal frame is deliberately
 	// small — idle and browsing traffic lives under 10 — and a big download
@@ -198,13 +198,57 @@ type reading struct {
 // maxGap of zero or less means DefaultMaxGap; a caller that genuinely wants
 // every reading joined can pass a very large one, but nothing does.
 func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Duration) Plot {
-	return BuildLabeled(samples, now, window, maxGap, nil)
+	return BuildWith(samples, now, window, maxGap, Hints{})
 }
 
-// BuildLabeled is Build with the device's fan names (api.FanInfo.Labels, in
-// rpm order). A fan without one is "Fan N"; a single fan is unlabelled either
-// way, since the card's heading already says Fan.
-func BuildLabeled(samples []api.TelemetrySample, now time.Time, window, maxGap time.Duration, fanLabels []string) Plot {
+// Hints is what the device can say about its own charts. Every field is
+// optional — zero means no hint, and the kind's built-in frame stands.
+type Hints struct {
+	// FanLabels names the fans (api.FanInfo.Labels, in rpm order). A fan
+	// without one is "Fan N"; a single fan is unlabelled either way, since the
+	// card's heading already says Fan.
+	FanLabels []string
+
+	// Axis tops: the highest clock (MHz), the throttle temperature (°C), the
+	// sustained power ceiling (W) and the fans' top speed (RPM). Each becomes
+	// its kind's nominal top, rounded up to a step — a starting frame like the
+	// built-in one, so a reading past it still expands the axis.
+	ClockMaxMHz int
+	TempLimitC  int
+	PowerMaxW   int
+	FanMaxRPM   int
+}
+
+// axisFor is kind's axis with the hints laid over its nominal top, and the
+// memory frame set from the samples' own capacity: a gauge of used memory
+// reads against what the machine has, not against a constant.
+func axisFor(k Kind, h Hints, memTotalGB float64) axis {
+	a := axes[k]
+	var top float64
+	switch k {
+	case KindClock:
+		top = float64(h.ClockMaxMHz) / 1000
+	case KindTemp:
+		top = float64(h.TempLimitC)
+	case KindPower:
+		top = float64(h.PowerMaxW)
+	case KindFan:
+		top = float64(h.FanMaxRPM)
+	case KindMemory:
+		top = memTotalGB
+	}
+	if top > a.nomMin {
+		step := a.step
+		if step <= 0 {
+			step = 1
+		}
+		a.nomMax = math.Ceil(top/step) * step
+	}
+	return a
+}
+
+// BuildWith is Build with the device's Hints.
+func BuildWith(samples []api.TelemetrySample, now time.Time, window, maxGap time.Duration, h Hints) Plot {
 	if window <= 0 || len(samples) == 0 {
 		return Plot{}
 	}
@@ -273,7 +317,7 @@ func BuildLabeled(samples []api.TelemetrySample, now time.Time, window, maxGap t
 	for i := range fans {
 		label := ""
 		if fans > 1 {
-			label = fanLabel(i, fanLabels)
+			label = fanLabel(i, h.FanLabels)
 		}
 		specs = append(specs, spec{kind: KindFan, label: label,
 			value: func(s api.TelemetrySample) (float64, bool) {
@@ -387,8 +431,14 @@ func BuildLabeled(samples []api.TelemetrySample, now time.Time, window, maxGap t
 		live = append(live, gathered{spec: sp, readings: rs})
 	}
 
+	// The largest capacity any sample reports, for the memory frame.
+	var memTotalGB float64
+	for _, smp := range sorted {
+		memTotalGB = math.Max(memTotalGB, float64(max(smp.MemTotalMB, smp.VRAMTotalMB))/1024)
+	}
+
 	for _, g := range live {
-		a := axes[g.spec.kind]
+		a := axisFor(g.spec.kind, h, memTotalGB)
 		label := g.spec.label
 		if label == "" {
 			label = a.label

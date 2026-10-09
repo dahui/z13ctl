@@ -11,7 +11,7 @@ import (
 )
 
 func TestPlaceholderKinds(t *testing.T) {
-	all := PlaceholderCaps{Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true}
+	all := PlaceholderCaps{Fans: true, Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true}
 	cases := []struct {
 		name string
 		caps PlaceholderCaps
@@ -19,20 +19,23 @@ func TestPlaceholderKinds(t *testing.T) {
 	}{
 		{"everything declared", all,
 			[]Kind{KindTemp, KindFan, KindPower, KindBattery, KindLoad, KindClock, KindMemory, KindNet}},
+		// A device with no fans gets no Fan frame: it would sit empty forever.
 		{"nothing declared", PlaceholderCaps{},
+			[]Kind{KindTemp}},
+		{"fans only", PlaceholderCaps{Fans: true},
 			[]Kind{KindTemp, KindFan}},
 		{"battery only", PlaceholderCaps{Battery: true},
-			[]Kind{KindTemp, KindFan, KindBattery}},
+			[]Kind{KindTemp, KindBattery}},
 		// A net source alone brings exactly its own frame.
 		{"net only", PlaceholderCaps{Net: true},
-			[]Kind{KindTemp, KindFan, KindNet}},
+			[]Kind{KindTemp, KindNet}},
 		// An NPU alone brings a power and a load frame — it has a series on
 		// each — but no clock or memory card, whose series it never fills.
 		{"npu only", PlaceholderCaps{NPU: true},
-			[]Kind{KindTemp, KindFan, KindPower, KindLoad}},
+			[]Kind{KindTemp, KindPower, KindLoad}},
 		// cpu_stats alone: load, clocks and memory but no power domain.
 		{"cpu stats only", PlaceholderCaps{CPUStats: true},
-			[]Kind{KindTemp, KindFan, KindLoad, KindClock, KindMemory}},
+			[]Kind{KindTemp, KindLoad, KindClock, KindMemory}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,8 +58,8 @@ func TestPlaceholderKinds(t *testing.T) {
 // cannot claim a measurement).
 func TestPlaceholderFramesAreDrawable(t *testing.T) {
 	groups := Placeholder(PlaceholderKinds(PlaceholderCaps{
-		Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
-	}))
+		Fans: true, Power: true, Battery: true, GPU: true, CPUStats: true, NPU: true, Net: true,
+	}), Hints{})
 	if len(groups) != 8 {
 		t.Fatalf("got %d groups, want 8", len(groups))
 	}
