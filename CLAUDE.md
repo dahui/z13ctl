@@ -98,8 +98,13 @@ internal/
                              broadcast wire shape, withLegacyProjection
     resume.go                DBus logind PrepareForSleep watcher; logind delay inhibitor; pure sleepTick seam;
                              on sleep turns off lightbar + releases fans to firmware auto (releaseVolatileState),
-                             on resume restores lighting + volatile state (restoreVolatileState)
-    resume_test.go           sleepTick decision table + the sleep/resume symmetry invariant (no hardware)
+                             on resume restores lighting + volatile state (restoreVolatileState) off the
+                             signal loop (sleepCycle), so a re-suspend during the EC wait abandons it
+    resume_test.go           sleepTick decision table + the sleep/resume symmetry invariant (no hardware);
+                             sleepCycle: a sleep edge cancels a pending restore and joins a running one
+    wakeup.go                wake report: per-source wakeup counters snapshotted before the suspend is
+                             handed to logind, diffed and logged on resume (issue #24)
+    wakeup_test.go           diff arithmetic + readers against a fake /sys/class/wakeup and /proc/interrupts
     client.go                Redirect comment only — client functions live in api/
   hid/
     doc.go                   package doc file only
@@ -1070,12 +1075,65 @@ contrib/
   suspends as soon as the last delay lock closes, so deferring it to the end of the
   loop would hold suspend open for `InhibitDelayMaxSec` (5 s by default).
   Best-effort throughout: a refused `Inhibit` logs at Debug and returns -1.
-  There is deliberately **no settle delay** after the writes. One was added on the
-  theory that the EC answers them with a notification a few hundred milliseconds
-  later, which would land in the window where it aborts the suspend; the control
-  run disproved the premise, and a fixed delay on every suspend with no evidence
-  behind it is cargo cult. If the theory is ever revived it needs the
-  `/sys/power/wakeup_count` measurement to support it, not timing coincidence.
+  A delay after the writes was first added on the theory that the EC answers them
+  and aborts the suspend, then removed when that control run aborted without the
+  daemon. **It is back, as `releaseSettle`, and this time on measured evidence** —
+  see the next note. It applies only when the hook actually released something.
+- **A suspend straight after a fan release is woken by the EC; the hook holds it
+  for `releaseSettle` (3 s) first** (issue #24). The control run above was right
+  that z13ctl was not behind *that* wake, but it was on CachyOS and only checked
+  aborted suspends. A Fedora 44 user saw several sleep/wake rounds before the
+  machine stayed asleep, and it reproduces here once you look: RTC-timed 20 s
+  suspends on the GZ302EA (2026-10-09) woke after 1–2.5 s with 0.2 s of hardware
+  sleep in **7 of 15** cases when the suspend was handed to logind straight after
+  the `pwm_enable=2` release, **0 of 7** with a 3 s hold, and **0 of 10** with no
+  release. With `pm_debug_messages` on, the early wake is IRQ 9 (the EC's SCI)
+  and IRQ 1 firing together, then `ACPI: PM: Wakeup after ACPI Notify sync`: an
+  EC query's AML sent a Notify that a driver turned into a wakeup. It is not the
+  release's own event burst — three or four `_QDA` queries, over within ~230 ms
+  while awake, and a 300 ms wait for that burst still woke **4 of 6**. The
+  mechanism behind the cycling: the machine wakes, the resume puts the curve back,
+  logind re-suspends the lid-closed machine, the release runs again, and it wakes
+  again. The early wake comes in streaks (one batch of three slept fine), so any
+  re-measurement needs a dozen suspends, not two.
+  The hold is capped by logind's `InhibitDelayMaxUSec` (read over DBus, 5 s by
+  default) minus the work already done and `inhibitMargin`, because logind
+  suspends regardless once the budget is spent. `releaseHold` is the pure
+  arithmetic.
+  To diagnose a report, the daemon logs a **wake report** on every resume
+  (`wakeup.go`): per-source `wakeup_count`/`event_count` deltas from
+  `/sys/class/wakeup` (opaque names like `device:44` labelled with their device),
+  SCI and GPE deltas from `/sys/firmware/acpi/interrupts` (the EC is GPE 0x0a
+  here; the kernel logs `ACPI: EC: GPE=` at boot), `pm_wakeup_irq` resolved
+  through `/proc/interrupts`, `last_hw_sleep`, and the suspend success/fail
+  deltas. The snapshot is taken after the hold, just before the inhibitor closes,
+  so anything counted happened after everything z13ctl did. The sleep side logs
+  its work time, whether it wrote fans or PPT, and the hold. Every file read is
+  in-memory bookkeeping or a GPE status register, world-readable and safe while
+  `d.ecWedged` is set; deliberately not `/sys/power/wakeup_count`, whose read
+  blocks while events are in progress. `slept` strips the monotonic reading,
+  which does not advance in s2idle. Note that `woken_by` usually reads "not
+  counted" for this wake, since the Notify path does not charge a wakeup source;
+  `hw_sleep` and `slept` are what show it. Ask a reporter for `journalctl --user
+  -u z13ctl -b | grep -E "entering sleep|held the suspend|handing the
+  suspend|wake report"`; for kernel-side attribution, `echo 1 >
+  /sys/power/pm_debug_messages` and `file drivers/acpi/ec.c +p` in
+  dynamic_debug.
+- **The post-resume restore runs off the signal loop, and a sleep edge cancels it
+  (`sleepCycle`).** The loop used to run `waitForEC` (3 s settle, up to 20 s of
+  probing) and the restore inline, holding the delay lock it had just re-taken. A
+  `PrepareForSleep(true)` in that window — the lid closed again, or logind
+  re-suspending a machine that woke with its lid shut — sat unread; logind gives a
+  lock `InhibitDelayMaxSec` (5 s) and then suspends anyway, so the restore's
+  `pwm_enable=1` and PPT writes could land at the freeze, leaving the curve driving
+  the fans through s2idle, and the stale sleep signal was handled only after the
+  next wake. Now the sleep edge cancels a restore still waiting for the EC and
+  *joins* one already writing (it holds `hwMu`; the release then undoes it), so
+  the release is always the last write. A brief wake therefore writes nothing:
+  the fans were released before the previous suspend and nothing restored them, so
+  `sleepTick` finds mode 2. The lighting `TurnOff` still runs on that path — it is
+  hidraw, not the EC, and the lightbar may have come back lit on its own. A skipped
+  restore leaves `d.suspending` set, as it already is between any two signals.
 - **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
   detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
   loses power when detached; on reattach the firmware does not restore the
