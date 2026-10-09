@@ -1509,7 +1509,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   skips its PPT read, and `d.env()` stops asking the driver for the envelope — it
   serves the last one read while the EC answered, or the device data alone
   (`driver.DeviceEnvelope`); `device-get` goes through it. z13ctl 1.4.0 shipped
-  without these; the fix is on main for 1.4.1. **The CLI must not read the limits
+  without these; 1.4.1 fixed it. **The CLI must not read the limits
   itself while a daemon is up**: `tdp --get` and `status` ask the daemon
   (`tdp-get`, refused while latched), `tdp --set` and the dry runs validate
   against the daemon's `device-get` envelope (`powerEnvFor`), and the
@@ -1559,7 +1559,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   suspends on the GZ302EA (2026-10-09) woke after 1–2.5 s with 0.2 s of hardware
   sleep in **7 of 15** cases when the suspend was handed to logind straight after
   the `pwm_enable=2` release, **0 of 7** with a 3 s hold, and **0 of 10** with no
-  release. With `pm_debug_messages` on, the early wake is IRQ 9 (the EC's SCI)
+  release. Turning a curve *on* (`pwm_enable=1`) raises no EC event at all, which is
+  why only the release side needs the hold. With `pm_debug_messages` on, the early wake is IRQ 9 (the EC's SCI)
   and IRQ 1 firing together, then `ACPI: PM: Wakeup after ACPI Notify sync`: an
   EC query's AML sent a Notify that a driver turned into a wakeup. It is not the
   release's own event burst — three or four `_QDA` queries, over within ~230 ms
@@ -1568,7 +1569,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   logind re-suspends the lid-closed machine, the release runs again, and it wakes
   again. The early wake comes in streaks (one batch of three slept fine), so any
   re-measurement needs a dozen suspends, not two.
-  The duration is **device data**: `fans.sleep_release_settle_ms` in the device
+  The duration is **device data** — the rule for any new number measured on one
+  machine, rather than a daemon constant: `fans.sleep_release_settle_ms` in the device
   file, carried on `driver.FanShape.SleepReleaseSettle` and read by
   `d.releaseSettle()`. A device with no measurement holds nothing; the
   measurements are recorded next to the value. `Validate` keeps it under 5000 ms.
@@ -1607,8 +1609,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   *joins* one already writing (it holds `hwMu`; the release then undoes it), so
   the release is always the last write. A brief wake therefore writes nothing:
   the fans were released before the previous suspend and nothing restored them, so
-  `sleepTick` finds mode 2. The lighting `TurnOff` still runs on that path — it is
-  hidraw, not the EC, and the lightbar may have come back lit on its own. A skipped
+  `sleepTick` finds mode 2. The pre-sleep `Lighting.Off` still runs on that path —
+  it is hidraw, not the EC, and the lightbar may have come back lit on its own. A skipped
   restore leaves `d.suspending` set, as it already is between any two signals.
 - **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
   detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
@@ -2817,6 +2819,48 @@ asus-armoury. Reads and writes still reach the real driver, so the
 rejection-paths-only rule stands: a TDP rejection case must be refused on both
 interfaces' ranges, and a PL2/PL3 below its minimum is raised, not refused.
 
+### Hardware verification (on the development machine)
+
+Unit tests cannot see firmware behaviour — #22's limit reset and #24's early wake
+were both invisible to them — so a change to power, fan or sleep handling gets a
+run on the Z13. The procedure that has worked, and the traps found the hard way:
+
+- **Stop the installed daemon** (`systemctl --user stop voltaire.service
+  voltaire.socket`) and run the build under test in the foreground,
+  `daemon --no-button`, logging to a file. Build it with the SMU path pointed
+  nowhere — `-ldflags "-X github.com/dahui/voltaire/v2/internal/drivers/asusz13.smuDriverPath=/nonexistent/ryzen_smu_drv"`
+  — so nothing can send a Curve Optimizer write (see the 2026-08-14 lockup).
+- **Back up `~/.local/state/voltaire/state.json` first, and never overwrite an
+  existing backup** — a rerun after an aborted run would otherwise back up the
+  test's own state. Record `platform_profile` before starting and set it back by
+  name: the test daemon restores whatever profile its state file names on startup,
+  so reading the profile after a hung run gives the wrong answer. Restore the state
+  file, then `systemctl --user start voltaire.socket voltaire.service`, and check
+  `voltaire-gui` came back too.
+- **Power** is measured with RAPL under a `yes` ×32 load, never from the `ppt_*` or
+  armoury readback (which does not move when the firmware resets the limits).
+- **Suspends:** `sudo -n rtcwake -m no -s 20 && systemctl suspend` gives a suspend
+  of known length; the daemon's `resume: wake report` then shows whether it ran the
+  full time (`slept`, `hw_sleep`). For kernel-side attribution set
+  `/sys/power/pm_debug_messages` to 1 and `file drivers/acpi/ec.c +p` in
+  `/sys/kernel/debug/dynamic_debug/control`, and **set both back** afterwards. Each
+  suspend interrupts Jeff's session, so ask before a run.
+- **Noise in the wake report:** `wake_irq` shows IRQ 1 (i8042) or 9 (acpi) on
+  clean resumes too, and the lid `PNP0C0D:00` counts one event on every resume.
+  An SD-card `mmc0` suspend failure with errno -84 is the known harmless one
+  (see "Do not blame the sleep hook").
+- **Sample size:** the #24 early wake comes in streaks; a batch of three can come
+  out clean. Interleave the variants and run a dozen or more before concluding
+  anything, and keep a no-change control.
+- **A/B variants are separate binaries**, built from a temporarily edited copy of
+  the source that is restored immediately and checked with `cmp`. Never
+  `git stash` for this: one stash reverted a whole port in three files.
+- **Shell traps in test harnesses:** a bare `wait` also waits for the
+  backgrounded daemon and hangs the script — `wait $pid`; `pkill -f <script>`
+  matches the invoking shell's own command line and kills the caller — kill by
+  PID; a log-file label with a space breaks the redirect, so the daemon never
+  starts and the "test" runs with no daemon at all.
+
 ## Build / release
 
 ```sh
@@ -2947,6 +2991,11 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
+
+**z13ctl fixes are ported through 1.4.2** (2026-10-09): every main commit since
+v1.3.2 has a counterpart here, the last being the #24 sleep-wake fix. Fixes land
+on main first and are ported in one commit per release; `git log v1.4.2..main`
+on main is the list still to port.
 
 Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
