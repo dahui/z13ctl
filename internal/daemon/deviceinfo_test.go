@@ -541,3 +541,65 @@ func TestDeviceGetCarriesTheKernelsRanges(t *testing.T) {
 		t.Errorf("device data alone reported a PL2 range %+v; absent means PL1's", testDocPower.PL2)
 	}
 }
+
+// TestTDPLimitsFromEnvelope covers the projection behind get-state's
+// tdp_limits, the field z13ctl 1.4 clients bound their sliders by. The cases
+// are the two interfaces the Z13 driver reports and the envelope that names
+// none — device data alone, which must not be presented as kernel bounds.
+func TestTDPLimitsFromEnvelope(t *testing.T) {
+	armoury := driver.PowerEnvelope{
+		TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80, Interface: "asus-armoury",
+		PL2: driver.PowerRange{Min: 32, Max: 92},
+		PL3: driver.PowerRange{Min: 45, Max: 93},
+	}
+	legacy := driver.PowerEnvelope{TDPMin: 5, TDPMaxSafe: 75, TDPMaxForced: 93, Interface: "asus-nb-wmi"}
+
+	tests := []struct {
+		name string
+		env  driver.PowerEnvelope
+		want *api.TDPLimits
+	}{
+		{"armoury reports per-limit bounds", armoury, &api.TDPLimits{
+			Backend: "asus-armoury",
+			PL1:     api.TDPRange{Min: 28, Max: 80},
+			PL2:     api.TDPRange{Min: 32, Max: 92},
+			PL3:     api.TDPRange{Min: 45, Max: 93},
+			SafeMax: 75,
+		}},
+		// asus-nb-wmi has no per-limit bounds, so every rail takes PL1's — the
+		// 5–93 W z13ctl reports for it.
+		{"asus-nb-wmi shares PL1's range", legacy, &api.TDPLimits{
+			Backend: "asus-nb-wmi",
+			PL1:     api.TDPRange{Min: 5, Max: 93},
+			PL2:     api.TDPRange{Min: 5, Max: 93},
+			PL3:     api.TDPRange{Min: 5, Max: 93},
+			SafeMax: 75,
+		}},
+		{"no interface, no limits", driver.PowerEnvelope{TDPMin: 5, TDPMaxSafe: 75, TDPMaxForced: 93}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tdpLimitsFrom(tc.env); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("tdpLimitsFrom = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTDPLimitsWireKeys pins the JSON names z13ctl 1.4 published. They are the
+// whole compatibility promise: a Go client gets a compile error if a field is
+// renamed, a Python or Decky client gets silence.
+func TestTDPLimitsWireKeys(t *testing.T) {
+	s := api.State{TDPLimits: tdpLimitsFrom(driver.PowerEnvelope{
+		TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80, Interface: "asus-armoury",
+	})}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"tdp_limits":{"backend":"asus-armoury","pl1":{"min":28,"max":80},` +
+		`"pl2":{"min":28,"max":80},"pl3":{"min":28,"max":80},"safe_max":75}`
+	if !strings.Contains(string(data), want) {
+		t.Errorf("get-state wire form lacks %s\n got: %s", want, data)
+	}
+}

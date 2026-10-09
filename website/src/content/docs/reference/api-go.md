@@ -82,6 +82,8 @@ Package api provides the public client interface for the voltaire daemon. It con
   - [func \(s State\) ActiveCustomProfile\(\) \(CustomProfile, bool\)](<#State.ActiveCustomProfile>)
   - [func \(s State\) InCustomProfile\(\) bool](<#State.InCustomProfile>)
   - [func \(s State\) IsCustomProfile\(name string\) bool](<#State.IsCustomProfile>)
+- [type TDPLimits](<#TDPLimits>)
+- [type TDPRange](<#TDPRange>)
 - [type TDPState](<#TDPState>)
 - [type TelemetryInfo](<#TelemetryInfo>)
 - [type TelemetrySample](<#TelemetrySample>)
@@ -2061,10 +2063,11 @@ type State struct {
     PanelOverdrive     int                      `json:"panel_overdrive,omitempty"`
     CustomProfiles     map[string]CustomProfile `json:"custom_profiles,omitempty"` // saved custom profiles keyed by name
     Autoswitch         *AutoswitchState         `json:"autoswitch,omitempty"`
-    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"` // projection; see the type doc
-    TDP                *TDPState                `json:"tdp,omitempty"`       // projection; see the type doc
-    Undervolt          *UndervoltState          `json:"undervolt,omitempty"` // projection; see the type doc
-    UndervoltAvailable bool                     `json:"undervolt_available"` // ryzen_smu loaded; after the first undervolt write, whether CO works
+    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`  // projection; see the type doc
+    TDP                *TDPState                `json:"tdp,omitempty"`        // projection; see the type doc
+    TDPLimits          *TDPLimits               `json:"tdp_limits,omitempty"` // get-state only; what the kernel accepts
+    Undervolt          *UndervoltState          `json:"undervolt,omitempty"`  // projection; see the type doc
+    UndervoltAvailable bool                     `json:"undervolt_available"`  // ryzen_smu loaded; after the first undervolt write, whether CO works
 
     // CPUBoost is whether the CPU's opportunistic boost clocks are enabled.
     //
@@ -2282,6 +2285,37 @@ IsCustomProfile reports whether name identifies a voltaire\-managed custom profi
 Clients that check Profile == "custom" to decide whether custom controls apply must move to this — a named profile would otherwise read as stock.
 
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
+
+<a name="TDPLimits"></a>
+## type TDPLimits
+
+TDPLimits describes the power limits the running kernel accepts, so a client can bound its controls instead of discovering the range from an error. It is reported by get\-state and never stored.
+
+The ranges come from the kernel at the time of the request: asus\-armoury reports per\-limit bounds \(on the GZ302EA, PL1 28–80, PL2 32–92, PL3 45–93 W\) and may report different ones on battery; the deprecated asus\-nb\-wmi interface has none of its own, so the daemon reports 5–93 W for it. A PL2 or PL3 below its minimum is raised to it when set; a PL1 outside its range is refused.
+
+This is the field z13ctl 1.4 introduced, served unchanged so clients written against it keep their bounds. The same ranges are in the device\-get document's power section \(DeviceInfo.Power\), which is the place a 2.0 client reads them once rather than on every poll. Absent while the daemon cannot reach the embedded controller, and on a device with no known PPT interface.
+
+```go
+type TDPLimits struct {
+    Backend string   `json:"backend"`  // "asus-armoury" or "asus-nb-wmi"
+    PL1     TDPRange `json:"pl1"`      // sustained
+    PL2     TDPRange `json:"pl2"`      // short boost
+    PL3     TDPRange `json:"pl3"`      // fast boost
+    SafeMax int      `json:"safe_max"` // highest PL1 accepted without force; above it the fan floor applies
+}
+```
+
+<a name="TDPRange"></a>
+## type TDPRange
+
+TDPRange is an inclusive range in watts.
+
+```go
+type TDPRange struct {
+    Min int `json:"min"`
+    Max int `json:"max"`
+}
+```
 
 <a name="TDPState"></a>
 ## type TDPState

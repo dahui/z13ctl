@@ -524,6 +524,7 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
 | `pending_reboot` | whether a changed firmware setting needs a restart; **absent** when the device cannot say |
 | `charger` | which power input is supplying the machine: `adapter`, `usb-c`, or `none`; **absent** when the device cannot say |
+| `tdp_limits` | the power limits the kernel accepts: `backend` (`asus-armoury` or `asus-nb-wmi`), `pl1`/`pl2`/`pl3` as `{min,max}` watts, and `safe_max` (the highest PL1 without `force`). Served for clients written against z13ctl 1.4; the [`device-get` power section](#device-capabilities) carries the same ranges and is the place to read them once. **Absent** while the embedded controller is not answering, and when no power-limit interface is known |
 | `battery_health` | full-charge capacity as a percentage of design capacity |
 | `battery_energy_wh` | the pack's remaining energy in watt-hours |
 | `battery_energy_full_wh` | the pack's full-charge energy in watt-hours |

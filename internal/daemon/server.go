@@ -303,6 +303,11 @@ func (d *Daemon) dispatch(req request) response {
 			if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 				s.TDP = &tdp
 			}
+			// The bounds the kernel accepts, for z13ctl 1.4 clients; device-get
+			// carries the same ranges. Inside this gate for the same reason as
+			// the read above — on armoury the bounds are _PSR calls too — and
+			// through d.env(), whose cache keeps a 1 Hz poll from re-reading them.
+			s.TDPLimits = tdpLimitsFrom(d.env())
 		}
 		// Whether undervolt is available, without probing: see uvAvailable.
 		s.UndervoltAvailable = d.uvAvailable()

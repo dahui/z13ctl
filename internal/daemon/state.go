@@ -277,6 +277,10 @@ func cloneState(s api.State) api.State {
 		p := *s.PendingReboot
 		c.PendingReboot = &p
 	}
+	if s.TDPLimits != nil {
+		l := *s.TDPLimits
+		c.TDPLimits = &l
+	}
 	return c
 }
 

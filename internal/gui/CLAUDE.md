@@ -25,6 +25,12 @@
 > | bare `api.SendTdpSet`/`SendFanCurveSet`/`SendUndervoltSet` everywhere | the `...For` variants, addressed per operation by `profileui.PlanEdit` (live vs stored) with a `SendProfileList` probe before every stored send |
 >
 > The root `CLAUDE.md` is authoritative for layout, build and release.
+> The GUI work of 2026-08-14/15 — Reset All in the editor's commit bar, the
+> Settings reboot banner, the charger label on the battery header, the fan
+> chart's operating-point dot and the preset row above it — is recorded in the
+> root file's decision entries, not here, as is the GUI verification procedure
+> (focus dump needs `-d`, the service stopped, and the daemon under test
+> running).
 
 ## What this project is
 

@@ -128,6 +128,35 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	return info
 }
 
+// tdpLimitsFrom projects the power envelope onto get-state's tdp_limits, the
+// field z13ctl 1.4 clients read. It is the same envelope device-get's power
+// section comes from, so the two cannot disagree about a range.
+//
+// nil when the envelope names no PPT interface: z13ctl reports nothing when it
+// finds none, and a backend-less range would be device data presented as what
+// the kernel accepts. A burst range the driver did not report falls back to
+// PL1's, which is what api.PowerInfo documents absence as meaning — and what
+// asus-nb-wmi, with no per-limit bounds, genuinely accepts.
+func tdpLimitsFrom(env driver.PowerEnvelope) *api.TDPLimits {
+	if env.Interface == "" {
+		return nil
+	}
+	pl1 := api.TDPRange{Min: env.TDPMin, Max: env.TDPMaxForced}
+	burst := func(r driver.PowerRange) api.TDPRange {
+		if r.IsZero() {
+			return pl1
+		}
+		return api.TDPRange{Min: r.Min, Max: r.Max}
+	}
+	return &api.TDPLimits{
+		Backend: env.Interface,
+		PL1:     pl1,
+		PL2:     burst(env.PL2),
+		PL3:     burst(env.PL3),
+		SafeMax: env.TDPMaxSafe,
+	}
+}
+
 // readFeatures reads the current value of every firmware toggle the device
 // declares, keyed by id. It is what lets a client render toggle rows from the
 // device document without a socket round trip per toggle per refresh.

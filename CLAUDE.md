@@ -260,7 +260,7 @@ contrib/
                              on tag. provides/conflicts cover all four old names;
                              replaces=() is inert on AUR but declared anyway.
                              The retirement runbook for the old AUR packages is
-                             ~/.claude/plans/voltaire-aur-playbook.md (Jeff executes).
+                             .claude/plans/voltaire-aur-playbook.md (Jeff executes).
   voltaire-gui.desktop       desktop entry
 examples/themes/             shipped theme TOMLs (catppuccin, gruvbox, nord, rog-*, …)
 website/                     the docs site (Astro Starlight; see Documentation)
@@ -520,7 +520,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | profile list | `{"cmd":"profile-list"}` | `ok`, `value` (JSON) |
   | autoswitch set | `{"cmd":"autoswitch","enabled":true,"ac":"balanced","battery":"gaming"}` | `ok` |
   | autoswitch get | `{"cmd":"autoswitch-get"}` | `ok`, `value` (JSON) |
-  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live telemetry + undervolt_available + on_ac/source_known + battery_health + pending_reboot) |
+  | full state | `{"cmd":"get-state"}` | `ok`, `state` (cached + sysfs + live telemetry + undervolt_available + on_ac/source_known + battery_health + pending_reboot + tdp_limits) |
   | subscribe | `{"cmd":"subscribe","events":["gui-toggle"]}` | `ok`, then streams `{"ok":true,"event":"gui-toggle"}` |
   (events: `gui-toggle`, `gui-open-full`, `power-source`, `state-changed`)
 
@@ -1043,6 +1043,61 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   RAPL package covers SoC/iGPU/uncore beyond the rail STAPM governs; direction
   and magnitude are the signal, not equality. Any future PPT or SMU
   investigation starts by putting the machine under sustained load.
+  **What is known about `pm_table` here**, for the telemetry work that is
+  planned but not started (`.claude/plans/pm-table-telemetry.md`):
+  `/sys/kernel/ryzen_smu_drv/pm_table` is version `0x64020C`, 3664 bytes
+  (`0xE50`, 916 float32), mode `0444` — the one SMU path needing no grant.
+  STAPM, PPT-fast and PPT-slow limits sit at float index 0/2/4 (byte
+  `0x0`/`0x8`/`0x10`); those names come from Jeff's prior OneXPlayer work
+  (GitHub `dahui/onexplayer-x2-mini-pro-cachyos`, `docs/ryzen-smu.md`, whose
+  `0x64010C` differs only in the middle byte), and the first attempt here
+  declared the table unnameable for want of checking it. Under load
+  `ppt_pl1_spl` and `ppt_fppt` drive stapm/fast and `ppt_platform_sppt` drives
+  the slow rail. A pm_table read is an SMU transaction through the same mailbox
+  as the Curve Optimizer and must be serialised with it — that driver shares one
+  argument buffer across mailboxes.
+- **`tdp_limits` exists on get-state for z13ctl 1.4 clients; `device-get` is
+  where 2.0 serves the same ranges.** z13ctl 1.4.0 (main, `api/v1.3.0`) added
+  `State.TDPLimits` — backend, PL1/PL2/PL3 ranges and `safe_max` — so clients
+  could bound sliders by what armoury accepts. v2 had already put those facts in
+  the capability document (`power.interface`, `tdp_min`/`tdp_max_forced`,
+  `pl2`/`pl3`, `tdp_max_safe`), and the port carried the daemon side without the
+  wire field, so a 1.4-era client lost its bounds on 2.0 with nothing saying so —
+  the opposite of the 2.x promise that 1.x wire fields survive. Both now come
+  from one projection of `d.env()` (`tdpLimitsFrom` beside `deviceInfoForEnv`),
+  so they cannot disagree. It sits inside get-state's existing `!wedged` PPT
+  block, because on armoury the bounds are `_PSR` calls too, and goes through
+  `d.env()`'s 30 s cache so a 1 Hz poll does not re-read them. Absent with no
+  known interface, as on main: a backend-less range would be device data
+  presented as the kernel's answer. `TestTDPLimitsWireKeys` pins the JSON names,
+  which are the entire contract for a non-Go client.
+- **EPP belongs to power-profiles-daemon, not to voltaire — the ownership
+  test.** Power control is layered: `platform_profile` (EC thermal policy) →
+  the PPT limits (a package power *ceiling*) → EPP (a per-core *bias* under that
+  ceiling, applied sub-millisecond by CPPC) → boost and `scaling_{min,max}_freq`
+  (clamps). voltaire owns a knob only when **nothing else replays it**. Boost
+  passes — cpufreq comes up boosting on every boot and nothing restores a
+  user's "off", hence `driver.CPUBoost` and its persisted state. EPP fails:
+  power-profiles-daemon rewrites it on every profile change, which is the same
+  event our `platform_profile` write causes, so a voltaire EPP setting would be
+  overwritten by the write that accompanied it, or would fight PPD. voltaire
+  already moves EPP — through PPD, by selecting the profile (`cli.SetProfile`
+  syncs `powerprofilesctl`). The z13ctl-plus fork's EPP control is therefore
+  redundant where PPD runs and a write-fight where it does; do not add one
+  without a machine on which nothing else owns it.
+- **The 2026-08-14 feature survey (HHD, G-Helper, z13ctl-plus/z13gui-plus) —
+  what was rejected, so it is not re-proposed.** Shipped from it: tuning-reset,
+  named fan presets (with the coupling to profile switches removed), the curve
+  editor's operating-point dot, `status --watch`, `pending_reboot`, `charge_mode`.
+  Rejected, each for a checked reason: the fork's **EPP control** (entry above);
+  its **tablet-kit** features (Jeff: dubious value); its **NPU power modes**
+  (measured by the fork itself at 10–20 mW across all three — below sensor noise
+  — and removed there); its **"more Aura modes"** (not present in its tree; the
+  README claimed them); its **zero-RPM** claim (a bug its Quiet-profile curve
+  introduced, fixed by deletion in `293fdff` — the reason presets are user-only).
+  The lesson that shaped the survey: a fork's README is a claim, its tree is the
+  evidence, and our own CLAUDE.md prose can go stale the same way — two "gaps"
+  (live operating point, floor on the chart) turned out to be already built.
 - **A corrupt state file is preserved, not silently replaced.** `loadState`
   renames an unparseable `state.json` to `state.json.corrupt` and logs before
   returning defaults; the next `saveState` would otherwise overwrite it, taking
@@ -2861,6 +2916,32 @@ run on the Z13. The procedure that has worked, and the traps found the hard way:
   PID; a log-file label with a space breaks the redirect, so the daemon never
   starts and the "test" runs with no daemon at all.
 
+### GUI verification (on the development machine)
+
+`internal/gui` has no tests, so a GUI change is checked with the two
+instruments in the decision entries above, and each has traps found the hard
+way (2026-08-15):
+
+- **`VOLTAIRE_GUI_DUMP_FOCUS=1 ./voltaire-gui/voltaire-gui -d`** — the lists
+  are logged at **Debug**; without `-d` the run prints nothing and an empty
+  diff looks like success. Grep `focus list built`, diff before/after.
+- **Stop `voltaire-gui.service` first.** A second launch is a GApplication
+  `activate` forwarded to the running instance, and the new process exits
+  without building anything.
+- **The running daemon must be the build under test.** Widgets are built from
+  `device-get`, so a GUI feature driven by a new document field renders nothing
+  against the installed daemon — and the focus diff comes back *identical*,
+  which reads as "the change added no focusable widget". `make build-all`,
+  `sudo -n make install`, `systemctl --user restart voltaire.service`.
+- **Screenshots:** `VOLTAIRE_GUI_OPEN_FULL=<dashboard|profiles|settings|color>`
+  opens the full window on that page; `spectacle -b -n -o <file>` captures it.
+  The focus dump names the profiles tab's view `full:custom`.
+- **Last baseline** (2026-08-15, before the Aug–Oct ports): `main` 40, `theme` 73,
+  `color` 11, `full:dashboard` 75, `full:custom` 23, `full:settings` 5. A
+  reference only — recapture before relying on it.
+- Restart `voltaire-gui.service` afterwards; killing test instances by
+  `pgrep -x voltaire-gui` PID, never `pkill -f` (it matches the invoking shell).
+
 ## Build / release
 
 ```sh
@@ -2964,6 +3045,10 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   change; the target prepends the frontmatter and strips the H1. The page is
   excluded from link validation (its `#Symbol` fragments target gomarkdoc's raw
   `<a name>` anchors, invisible to the validator); every other page is checked.
+  **Today's gomarkdoc adds source links from the git remote** (`dahui/z13ctl`,
+  branch `main` — the wrong api), which the committed page does not have; run
+  it against a copy of `api/` outside the repo until the target passes
+  repository flags (Open work below).
 - `reference/daemon.md` holds the user-facing socket protocol tables; keep them
   in sync with `dispatch()` in `internal/daemon/server.go`.
 - `reference/protocol.md` — technical HID protocol reference for developers.
@@ -2976,10 +3061,16 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 ## Current status and next steps
 
 **Everything below M6 ships as voltaire 2.0. There is exactly one release.**
-The milestones M0–M6 in `~/.claude/plans/i-want-to-explore-snoopy-puffin.md`
+The milestones M0–M6 in `.claude/plans/voltaire-2.0-roadmap.md`
 are sequencing, not release boundaries; an earlier revision of that plan
 assigned 2.1.0/2.2.0/2.3+ to M4/M5/M6, which was never requested and
 contradicts the plan's own title. Do not reintroduce dot releases.
+
+**Long-lived plans live in this repo's `.claude/plans/`** (gitignored, so it
+survives branch switches), not in `~/.claude/plans/`, which is cleaned
+periodically: the roadmap, the AUR playbook and the pm_table plan were all lost
+from there between August and October and had to be recovered from a session
+transcript (2026-10-09). Write new ones here and point at them from this file.
 
 | Milestone | State |
 |---|---|
@@ -2987,7 +3078,7 @@ contradicts the plan's own title. Do not reintroduce dot releases.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. **Remaining:** (1) **quickbar customization**, on top of the `internal/controls` + `gui.toml` machinery that already exists — the last M4 feature. (2) The **gamescope path has never run in a Gaming Mode session** — there is none on this machine — so it is built, reviewed and unverified: the standing pre-release hardware risk, in both this table and the smoke checklist. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Remaining:** quickbar customization and the gamescope hardware pass — see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -3006,6 +3097,43 @@ left out — `battery.health` and `telemetry.{power_draw,history_seconds}` — a
 **done**; they were M4 prerequisites, since the dashboard and telemetry ring
 were specified to read them. `undervolt_available` is still not derived from
 capabilities (it is no longer a live probe: see `Undervolter.Available`).
+
+**API parity with main** (checked 2026-10-09 by diffing every exported symbol
+and JSON key): main's only addition since the branch, `State.TDPLimits` from
+z13ctl 1.4.0, is served here too — see the `tdp_limits` entry above. Repeat the
+diff whenever a main release touches `api/`.
+
+### Open work (as of 2026-10-09, in rough priority order)
+
+1. **Quickbar customization** — the last M4 feature, on the existing
+   `internal/controls` + `gui.toml` machinery: needs a `gui.toml` writer and a
+   reorder affordance that works on a controller.
+2. **Gamescope Gaming Mode hardware pass** — never run; the full window hosted
+   in the overlay surface, the popup layer, and now the preset row and Reset All
+   are all unverified there. Standing pre-release risk; also in
+   `dev/smoke-z13.md`.
+3. **pm_table telemetry** (§6b parser, §6c wiring/dashboard card) — unblocked,
+   not started: `.claude/plans/pm-table-telemetry.md`. Its fixtures were lost
+   and must be recaptured under load.
+4. **`viewHost.back` dead branches** — every `host.back != nil` branch and
+   `customView.hosted()` (constant true) since the drawer's editor was removed;
+   its own pass with a focus-dump diff, not a side effect of other work.
+5. **`handleUndervoltReset` test with a fake undervolter** — now drivable (it no
+   longer opens with the probe); not yet written.
+6. **`make docs-api` emits wrong source links.** gomarkdoc reads the git remote
+   and default branch, so links point at `github.com/dahui/z13ctl/blob/main/api/…`
+   — main's old api, wrong line numbers. Until the target passes repository
+   flags (or the repo is renamed), generate from a copy of `api/` outside the
+   repo; the committed page has no source links.
+7. **This machine needs `sudo voltaire setup` re-run**: the asus-armoury PPT
+   grant ported in 1.4 is not applied (`ppt_pl1_spl/current_value` is still
+   `root:root 644`), so the daemon falls back to asus-nb-wmi and `tdp_limits`
+   reports that backend. Correct behaviour, but armoury is untested live here.
+8. **M3 release mechanics** (table above), with the AUR side in
+   `.claude/plans/voltaire-aur-playbook.md`.
+9. **M5** (plugin tier + OXP device, carrying the three M2 items above) and
+   **M6** (Ally + generic AMD TOMLs).
+10. **Ports from main**: `git log v1.4.2..main` on main.
 
 ### The daemon — COMPLETE
 
