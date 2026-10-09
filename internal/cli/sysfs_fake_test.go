@@ -246,8 +246,10 @@ func resetSMUProbe(t *testing.T) {
 	t.Helper()
 	smuProbeOnce = new(sync.Once)
 	smuProbeOK = false
+	smuProbeResult.Store(0)
 	t.Cleanup(func() {
 		smuProbeOnce = new(sync.Once)
 		smuProbeOK = false
+		smuProbeResult.Store(0)
 	})
 }

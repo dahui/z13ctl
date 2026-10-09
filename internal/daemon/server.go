@@ -225,8 +225,10 @@ func (d *Daemon) dispatch(req request) response {
 		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
 			s.TDP = &tdp
 		}
-		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
-		s.UndervoltAvailable = cli.SMUProbeUndervolt()
+		// Whether undervolt is available: the probe's answer once something has
+		// probed, module presence until then. Never the probe itself — its first
+		// run is a CO reset, and a GUI poll is no reason to write the mailbox.
+		s.UndervoltAvailable = cli.SMUUndervoltAvailable()
 		// Populate APU temperature and fan RPM from sysfs.
 		if temp, err := cli.ReadAPUTemperature(); err == nil {
 			s.Temperature = temp
@@ -956,7 +958,8 @@ func (d *Daemon) handleTDPReset(req request) response {
 }
 
 func (d *Daemon) handleUndervoltGet() response {
-	if !cli.SMUProbeUndervolt() {
+	// A read: never the probe, whose first run is a CO reset.
+	if !cli.SMUUndervoltAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 	d.mu.Lock()
@@ -1031,7 +1034,9 @@ func (d *Daemon) handleUndervolt(req request) response {
 }
 
 func (d *Daemon) handleUndervoltReset(req request) response {
-	if !cli.SMUProbeUndervolt() {
+	// Not the probe: with nothing applied this command writes nothing (see the
+	// switch below), and probing here would be that write by another route.
+	if !cli.SMUUndervoltAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 

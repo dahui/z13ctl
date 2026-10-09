@@ -55,7 +55,8 @@ internal/
     tdp.go                   PPT helpers, safety constants, StockProfilePPT, ReadEffectivePPT, ReadAllPPT,
                              SetTDP, SetTDPState, TDPStateFor, ApplyTDPSafely, CheckFanCurveFloor/CheckCurveAgainstTDP,
                              CheckFanFloorRelease/CheckFanFloorReleaseAt (the *At forms are pure, for inactive profiles)
-    smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SendSMUCommand, response codes
+    smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SMUUndervoltAvailable,
+                             SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
     fan_test.go              ParseFanCurve, FanModeName tests
@@ -482,17 +483,24 @@ contrib/
   that path is the ACPI alias, which lives outside `sysProfileDir` and the loop
   never visits. It returned nil having written nothing, and still called
   `setPPD`. Guarded by `primaryWritten` + a fallback write.
-- **`SMUProbeUndervolt()` is destructive — never call it speculatively from the
-  CLI.** The "safe no-op probe" sends CO offset 0, which is byte-for-byte what
-  `ResetCurveOptimizer` sends, so probing *clears any active undervolt*. That is
-  fine where the caller writes a CO value immediately afterwards
-  (`SetCurveOptimizer`/`ResetCurveOptimizer`) or caches the result for the
-  process lifetime — the daemon probes once at startup, before restoring saved
-  offsets, and the `sync.Once` covers every later call. It is NOT fine in a
-  short-lived CLI process, where the `sync.Once` is fresh every invocation: a
-  `status` that probed would wipe the user's undervolt every single run. `status`
-  therefore asks the daemon (`get-state`'s `undervolt_available`) and falls back
-  to `SMUAvailable()` — a plain stat — with wording that claims less.
+- **`SMUProbeUndervolt()` is destructive — call it only where an offset is
+  about to be written.** The "safe no-op probe" sends CO offset 0, which is
+  byte-for-byte what `ResetCurveOptimizer` sends, so probing *clears any active
+  undervolt* — and its first run in a process is an MP1 mailbox write, the step
+  with a known hard-hang mode (see the applied-offset gate below). Only
+  `handleUndervolt`, `applyCustomHW` and `reconcileOnce` call it, each about to
+  write an offset; `undervolt_gate_test.go:TestOnlyWritersProbeTheSMU` pins the
+  list. Anything that only *asks* — `get-state`'s `undervolt_available`,
+  `undervolt-get`, an `undervolt-reset` with nothing applied — uses
+  `cli.SMUUndervoltAvailable()`, which returns the probe's cached answer once
+  something has probed and module presence (`SMUAvailable`, a stat) until then.
+  `get-state` used to probe, so the GUI's first poll after every daemon start
+  sent a CO reset on machines that had never undervolted. The trade: a
+  wrong-fork machine reports "available" until the first real write probes and
+  fails. In a short-lived CLI process the `sync.Once` is fresh every invocation,
+  so a `status` that probed would wipe the user's undervolt every run; `status`
+  asks the daemon and falls back to `SMUAvailable()` with wording that claims
+  less.
   `internal/cli/smu_test.go:TestSMUProbeIsDestructive` pins the payload equality;
   if the probe ever becomes genuinely read-only, that test is the signal to relax
   these warnings.
@@ -592,8 +600,9 @@ contrib/
   short way silently turned `fancurve --reset --profile gaming` into a no-op;
   `TestResetProfileTargetStillClearsStoredSettings` is the guard, and it can drive
   the real handlers because a non-live target reads the profile's own stored TDP
-  instead of hardware. `handleUndervoltReset` cannot be tested that way — it opens
-  with `SMUProbeUndervolt()`, which is destructive.
+  instead of hardware. `handleUndervoltReset` no longer opens with the probe
+  (it uses `SMUUndervoltAvailable`), so it could now be driven the same way on a
+  machine with nothing applied; it is not yet.
 - **`reconcileCurveFor` may return nil, and the caller must honour that rather
   than substituting the tick's own `act.Curve`.** `reconcileOnce` writes the TDP
   first and then recomputes the curve against the limit that write established;
@@ -820,9 +829,9 @@ contrib/
   interface at `/sys/kernel/ryzen_smu_drv/`. Uses only the MP1 0x4C command for
   CPU CO (iGPU CO was removed — Strix Halo does not support it). Optional
   dependency — gracefully disabled when the module is not installed.
-  `SMUProbeUndervolt()` sends a safe no-op probe at daemon startup to detect
-  whether the installed `ryzen_smu` fork actually supports CO commands on this
-  platform (the amkillam fork is required for Strix Halo; the leogx9r fork does
+  `SMUProbeUndervolt()` sends a CO-0 probe before the first offset write to
+  detect whether the installed `ryzen_smu` fork actually supports CO commands on
+  this platform (the amkillam fork is required for Strix Halo; the leogx9r fork does
   not work). CO values are volatile (reset on reboot/sleep); the daemon
   reapplies them on startup and resume when the custom profile is active.
   Safety limit: CPU 0 to -40. `--get` returns saved values from daemon state
@@ -831,9 +840,10 @@ contrib/
   applied. Switching to a stock profile resets CO in hardware but preserves
   saved values in state for recall; the CLI displays "(not active)" when a
   stock profile is active. The `get-state` response includes
-  `undervolt_available` (using `SMUProbeUndervolt()`, not just `SMUAvailable()`)
-  so GUIs can hide controls when ryzen_smu is not installed or the wrong fork
-  is present.
+  `undervolt_available` (`SMUUndervoltAvailable()`: module presence until
+  something has probed, the probe's answer after) so GUIs can hide controls when
+  ryzen_smu is not installed, or the wrong fork is present once a write has
+  found out.
 - **Sleep/resume hook**: `internal/daemon/resume.go` watches for DBus
   `org.freedesktop.login1.Manager.PrepareForSleep` signals. On sleep
   (`PrepareForSleep(true)`), turns off the lightbar via `aura.TurnOff()` (the

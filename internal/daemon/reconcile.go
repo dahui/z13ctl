@@ -438,10 +438,10 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		}
 	}
 	if act.Undervolt != nil && cli.SMUProbeUndervolt() {
-		// Probed once at daemon startup and cached behind a sync.Once, so this is a
-		// bool read rather than the destructive no-op write the probe would
-		// otherwise be. It is called here and not in the observe step so the common
-		// path never touches it at all.
+		// Usually a cached bool read: the offset was written once already, which
+		// probed. If nothing has probed in this process, the probe is followed at
+		// once by the re-apply, so it is never the speculative write. It is called
+		// here and not in the observe step so the common path never touches it.
 		if err := cli.SetCurveOptimizer(*act.Undervolt); err != nil {
 			ok = false
 			if !st.quiet {

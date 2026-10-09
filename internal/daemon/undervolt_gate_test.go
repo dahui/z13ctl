@@ -205,3 +205,61 @@ func TestEveryUndervoltResetIsGatedOnApplied(t *testing.T) {
 			"this guard needs updating with the rename", found)
 	}
 }
+
+// TestOnlyWritersProbeTheSMU: cli.SMUProbeUndervolt's first run in a process is
+// a CO reset, so it may be called only where an offset is about to be written
+// anyway. Anything that merely asks — get-state's undervolt_available,
+// undervolt-get, an undervolt-reset with nothing applied — uses
+// cli.SMUUndervoltAvailable, which never writes. get-state probing was how a GUI
+// poll sent the speculative MP1 write after every daemon start. uvApplied
+// reaches the probe through the uvProbe var, and only with an offset applied.
+func TestOnlyWritersProbeTheSMU(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string]bool{
+		"func (d *Daemon) handleUndervolt(": true, // writes the requested offset
+		"func (d *Daemon) applyCustomHW(":   true, // writes the profile's offset
+		"func (d *Daemon) reconcileOnce(":   true, // re-applies the offset after a lost resume
+	}
+
+	for _, dir := range []string{".", "../../cmd"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			path := filepath.Join(dir, name)
+			raw, err := os.ReadFile(filepath.Clean(path))
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			fn := ""
+			for i, line := range strings.Split(string(raw), "\n") {
+				if j := strings.Index(line, "//"); j >= 0 {
+					line = line[:j]
+				}
+				if strings.HasPrefix(line, "func ") {
+					fn = line
+				}
+				if !strings.Contains(line, "SMUProbeUndervolt()") {
+					continue
+				}
+				ok := false
+				for prefix := range allowed {
+					if strings.HasPrefix(fn, prefix) {
+						ok = true
+					}
+				}
+				if !ok {
+					t.Errorf("%s:%d — %q calls cli.SMUProbeUndervolt(), which writes a CO reset on its "+
+						"first run; a caller that is only asking must use cli.SMUUndervoltAvailable()",
+						path, i+1, fn)
+				}
+			}
+		}
+	}
+}
