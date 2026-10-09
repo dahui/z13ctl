@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
 )
 
 func TestUndervoltActiveMirrorsSetUndervoltActive(t *testing.T) {
@@ -186,5 +187,103 @@ func TestEveryUndervoltResetIsGatedOnApplied(t *testing.T) {
 	if found < 7 {
 		t.Fatalf("found %d Undervolt.Reset() call sites, expected at least 7 — "+
 			"this guard needs updating with the rename", found)
+	}
+}
+
+// probeSpy is an Undervolter that records whether its destructive probe ran.
+type probeSpy struct{ probed *bool }
+
+func (probeSpy) Present() bool { return true }
+func (u probeSpy) ProbeAvailable() bool {
+	*u.probed = true
+	return true
+}
+func (probeSpy) Available() bool     { return true }
+func (probeSpy) Range() (lo, hi int) { return -40, 0 }
+func (probeSpy) Apply(int) error     { return nil }
+func (probeSpy) Reset() error        { return nil }
+
+// TestUvAppliedSkipsTheProbeWhenNothingIsApplied pins the order inside
+// uvApplied: state first. The driver's probe sends the same payload as a reset
+// the first time it runs, so asking it on a machine with nothing applied would
+// be the speculative write by another route.
+func TestUvAppliedSkipsTheProbeWhenNothingIsApplied(t *testing.T) {
+	t.Parallel()
+	probed := false
+	d := &Daemon{
+		hw: &device.Device{Undervolt: probeSpy{&probed}},
+		state: api.State{CustomProfiles: map[string]api.CustomProfile{
+			"gaming": {Name: "gaming", Undervolt: &api.UndervoltState{CPUCO: -20}},
+		}},
+	}
+	if d.uvApplied() || probed {
+		t.Errorf("nothing applied: uvApplied probed=%v, want false without probing", probed)
+	}
+
+	setUndervoltActive(d.state, true)
+	if !d.uvApplied() || !probed {
+		t.Errorf("offset applied: uvApplied probed=%v, want true after probing", probed)
+	}
+}
+
+// TestOnlyWritersProbeTheSMU: the driver's probe writes a CO reset on its first
+// run, so uvProbe() may be called only where an offset is about to be written
+// anyway, and ProbeAvailable() only from uvProbe itself. Anything that merely
+// asks — get-state's undervolt_available, undervolt-get, an undervolt-reset with
+// nothing applied — uses uvAvailable(), which never writes. get-state probing
+// was how a GUI poll sent the speculative MP1 write after every daemon start.
+func TestOnlyWritersProbeTheSMU(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string][]string{
+		"uvProbe()": {
+			"func (d *Daemon) handleUndervolt(", // writes the requested offset
+			"func (d *Daemon) applyCustomHW(",   // writes the profile's offset
+			"func (d *Daemon) reconcileOnce(",   // re-applies after a lost resume
+			"func (d *Daemon) uvApplied(",       // only once state says applied
+		},
+		"ProbeAvailable()": {"func (d *Daemon) uvProbe("},
+	}
+
+	for _, dir := range []string{".", "../../cmd"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			path := filepath.Join(dir, name)
+			raw, err := os.ReadFile(filepath.Clean(path))
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			fn := ""
+			for i, line := range strings.Split(string(raw), "\n") {
+				if j := strings.Index(line, "//"); j >= 0 {
+					line = line[:j]
+				}
+				if strings.HasPrefix(line, "func ") {
+					fn = line
+				}
+				for call, fns := range allowed {
+					if !strings.Contains(line, call) || strings.HasPrefix(line, "func ") {
+						continue
+					}
+					ok := false
+					for _, prefix := range fns {
+						if strings.HasPrefix(fn, prefix) {
+							ok = true
+						}
+					}
+					if !ok {
+						t.Errorf("%s:%d — %q calls %s, which can write a CO reset; a caller that "+
+							"is only asking must use uvAvailable()", path, i+1, fn, call)
+					}
+				}
+			}
+		}
 	}
 }

@@ -235,3 +235,43 @@ func TestSMUProbeIsDestructive(t *testing.T) {
 	}
 	t.Logf("probe writes the same payload as a CO reset (%v) — it is not read-only", probeArgs)
 }
+
+// TestSMUUndervoltAvailableNeverProbes: asking whether undervolting is available
+// must not write the mailbox, because the probe's first run is a CO reset. Before
+// any probe it reports module presence; afterwards, the probe's answer — so a
+// wrong-fork machine stops reporting "available" once a real write has found out.
+func TestSMUUndervoltAvailableNeverProbes(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	fake := &fakeSMU{response: SMUReturnUnknownCmd}
+	fake.install(t)
+
+	if !SMUUndervoltAvailable() {
+		t.Error("before any probe, with the module loaded = false, want true (presence)")
+	}
+	if fake.writes != 0 {
+		t.Fatalf("mailbox writes = %d, want 0: asking must not probe", fake.writes)
+	}
+
+	if SMUProbeUndervolt() {
+		t.Fatal("SMUProbeUndervolt() = true for an unknown-command fork, want false")
+	}
+	if SMUUndervoltAvailable() {
+		t.Error("after a failed probe = true, want the probe's false")
+	}
+
+	resetSMUProbe(t)
+	ok := &fakeSMU{response: SMUReturnOK}
+	ok.install(t)
+	if !SMUProbeUndervolt() || !SMUUndervoltAvailable() {
+		t.Error("after a successful probe = false, want true")
+	}
+}
+
+func TestSMUUndervoltAvailableFalseWithoutModule(t *testing.T) {
+	newFakeSysfs(t) // no rsmu_cmd file
+	resetSMUProbe(t)
+	if SMUUndervoltAvailable() {
+		t.Error("SMUUndervoltAvailable() = true without ryzen_smu loaded, want false")
+	}
+}

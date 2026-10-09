@@ -300,7 +300,7 @@ func (d *Daemon) dispatch(req request) response {
 				s.TDP = &tdp
 			}
 		}
-		// Indicate whether undervolt is available (ryzen_smu loaded + commands work).
+		// Whether undervolt is available, without probing: see uvAvailable.
 		s.UndervoltAvailable = d.uvAvailable()
 		// Populate live telemetry from hardware. A sample fails only when the
 		// temperature is unreadable, so fall back to the fan controller for RPM
@@ -1145,7 +1145,8 @@ func (d *Daemon) handleUndervoltGet() response {
 }
 
 func (d *Daemon) handleUndervolt(req request) response {
-	if !d.uvAvailable() {
+	// The probe, not uvAvailable: this is about to write an offset anyway.
+	if !d.uvProbe() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}
 
@@ -1199,6 +1200,8 @@ func (d *Daemon) handleUndervolt(req request) response {
 }
 
 func (d *Daemon) handleUndervoltReset(req request) response {
+	// Not the probe: with nothing applied this command writes nothing (see the
+	// switch below), and probing here would be that write by another route.
 	if !d.uvAvailable() {
 		return response{OK: false, Error: "Curve Optimizer not available — ryzen_smu module missing or does not support this platform"}
 	}

@@ -673,19 +673,33 @@ func (d *Daemon) batteryStatus() (driver.BatteryStatus, bool) {
 	return st, true
 }
 
-// uvAvailable reports whether the Curve Optimizer path actually works on this
-// machine. The underlying probe may write hardware, but the driver caches its
-// answer for the process lifetime, so after the first call — made on the apply
-// path at startup, never speculatively — this is a plain bool read.
-func (d *Daemon) uvAvailable() bool {
+// uvProbe reports whether the Curve Optimizer path actually works on this
+// machine, by asking the driver's probe — whose first run in a process is a CO
+// reset on the Z13, an MP1 mailbox write. Only a path about to write an offset
+// anyway may call it (handleUndervolt, applyCustomHW, reconcileOnce, and
+// uvApplied once state says an offset is applied); TestOnlyWritersProbeTheSMU
+// pins the list. The driver caches the answer, so later calls are bool reads.
+func (d *Daemon) uvProbe() bool {
 	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.ProbeAvailable()
+}
+
+// uvAvailable answers "is undervolting available?" without ever writing: the
+// probe's cached answer once something has probed, module presence until then.
+// It is what every caller that only asks uses — get-state's
+// undervolt_available, undervolt-get, an undervolt-reset with nothing applied.
+// get-state used to probe, so the GUI's first poll after every daemon start
+// sent a CO reset on machines that had never undervolted. The trade: a
+// wrong-fork machine reports available until the first real write probes and
+// fails.
+func (d *Daemon) uvAvailable() bool {
+	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.Available()
 }
 
 // uvApplied reports whether the Curve Optimizer offset is believed to be
 // applied in hardware right now. It is the gate on every Undervolt.Reset(),
-// and uvAvailable() is emphatically not enough on its own.
+// and availability is emphatically not enough on its own.
 //
-// uvAvailable() answers "is the module loaded and does this fork support CO on
+// Availability answers "is the module loaded and does this fork support CO on
 // this platform" — a property of the *machine*, not of its state. Gating a
 // reset on it alone means every route to a stock profile sends a live MP1
 // mailbox write on a machine that has never had an offset applied, to clear
@@ -699,7 +713,9 @@ func (d *Daemon) uvAvailable() bool {
 //
 // Active is the closest thing to a readback that exists here — the Curve
 // Optimizer has none — because it is set in exactly one place (applyCustomHW,
-// and only after the SMU write succeeded).
+// and only after the SMU write succeeded). State is consulted *before* the
+// probe, so a machine with nothing applied never reaches the probe from here
+// either — its first run is the very write this gate exists to avoid.
 //
 // The trade, stated because it is real: if hardware carries an offset that
 // state does not know about (a lost state file, or ryzenadj run by hand) this
@@ -710,12 +726,10 @@ func (d *Daemon) uvAvailable() bool {
 // Takes d.mu, so callers must not hold it. Every current caller reaches this
 // while holding hwMu only, which is the documented order (hwMu then d.mu).
 func (d *Daemon) uvApplied() bool {
-	if !d.uvAvailable() {
-		return false
-	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return undervoltActive(d.state)
+	active := undervoltActive(d.state)
+	d.mu.Unlock()
+	return active && d.uvProbe()
 }
 
 // profileHW reads the platform profile from hardware, or "" when the device

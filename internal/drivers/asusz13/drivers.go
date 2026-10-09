@@ -348,6 +348,7 @@ type undervolter struct{ lo, hi int }
 // ProbeAvailable's (destructive) question.
 func (undervolter) Present() bool         { return SMUAvailable() }
 func (undervolter) ProbeAvailable() bool  { return SMUProbeUndervolt() }
+func (undervolter) Available() bool       { return SMUUndervoltAvailable() }
 func (u undervolter) Range() (lo, hi int) { return u.lo, u.hi }
 
 // Apply validates against the device data's bounds before anything else: even

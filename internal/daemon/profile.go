@@ -155,20 +155,23 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	uvActive := false
-	if d.uvAvailable() {
-		if uv := p.Undervolt; uv != nil {
+	if uv := p.Undervolt; uv != nil {
+		// The probe only where an offset is about to be written: its first run
+		// is a CO reset, so probing for a profile with no offset would be the
+		// speculative write by another route.
+		if d.uvProbe() {
 			if err := d.hw.Undervolt.Apply(uv.CPUCO); err != nil {
 				slog.Warn("failed to apply undervolt", "profile", p.Name, "err", err)
 			} else {
 				uvActive = true
 			}
-		} else if d.uvApplied() {
-			// Only when something is actually applied — see uvApplied. A profile
-			// that sets no offset, activated on a machine that has none applied,
-			// has nothing to clear.
-			if err := d.hw.Undervolt.Reset(); err != nil {
-				slog.Warn("failed to reset undervolt", "profile", p.Name, "err", err)
-			}
+		}
+	} else if d.uvApplied() {
+		// Only when something is actually applied — see uvApplied. A profile
+		// that sets no offset, activated on a machine that has none applied,
+		// has nothing to clear.
+		if err := d.hw.Undervolt.Reset(); err != nil {
+			slog.Warn("failed to reset undervolt", "profile", p.Name, "err", err)
 		}
 	}
 

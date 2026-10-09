@@ -429,6 +429,7 @@ type fakeUndervolt struct{}
 
 func (fakeUndervolt) Present() bool        { return false }
 func (fakeUndervolt) ProbeAvailable() bool { return false }
+func (fakeUndervolt) Available() bool      { return false }
 func (fakeUndervolt) Range() (lo, hi int)  { return -40, 0 }
 func (fakeUndervolt) Apply(int) error      { return nil }
 func (fakeUndervolt) Reset() error         { return nil }

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 // SMU mailbox identifiers. Each corresponds to a sysfs file that accepts
@@ -105,10 +106,13 @@ func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, 
 	return code, outArgs, nil
 }
 
-// smuProbeOnce ensures the undervolt probe runs only once.
+// smuProbeOnce ensures the undervolt probe runs only once. smuProbeResult
+// publishes its outcome to SMUUndervoltAvailable, which must never run it:
+// 0 not yet probed, 1 supported, 2 not.
 var (
-	smuProbeOnce = new(sync.Once)
-	smuProbeOK   bool
+	smuProbeOnce   = new(sync.Once)
+	smuProbeOK     bool
+	smuProbeResult atomic.Int32
 )
 
 // SMUProbeUndervolt reports whether the installed ryzen_smu module supports
@@ -136,12 +140,38 @@ func SMUProbeUndervolt() bool {
 		args := [6]uint32{encoded}
 		resp, _, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, args)
 		smuProbeOK = err == nil && resp == SMUReturnOK
+		if smuProbeOK {
+			smuProbeResult.Store(1)
+		} else {
+			smuProbeResult.Store(2)
+		}
 		if !smuProbeOK {
 			slog.Warn("SMU undervolt probe failed — Curve Optimizer will be disabled",
 				"resp", fmt.Sprintf("0x%X", resp), "err", err)
 		}
 	})
 	return smuProbeOK
+}
+
+// SMUUndervoltAvailable answers "is undervolting available?" without ever
+// writing the SMU. Once SMUProbeUndervolt has run in this process its result is
+// returned; until then it falls back to SMUAvailable, a stat, which claims less —
+// the module is loaded, not that this fork supports Curve Optimizer here.
+//
+// Every caller that is only *asking* must use this rather than the probe: the
+// probe's first run is a CO reset, and asking is not a reason to write the MP1
+// mailbox (see the 2026-08-14 lockup in Daemon.uvApplied). The probe is for the
+// caller about to write an offset anyway. The trade is that a machine with the
+// wrong ryzen_smu fork reports "available" until the first real write probes
+// and fails, at which point it reports false and the write is refused.
+func SMUUndervoltAvailable() bool {
+	switch smuProbeResult.Load() {
+	case 1:
+		return true
+	case 2:
+		return false
+	}
+	return SMUAvailable()
 }
 
 // smuResponseError returns a human-readable error for a non-OK SMU response.

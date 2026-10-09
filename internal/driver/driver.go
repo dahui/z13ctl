@@ -391,9 +391,10 @@ type Battery interface {
 //
 // The Z13 contracts carry over: offsets are write-only (no hardware readback
 // exists, so state is the only record), volatile across suspend, and the
-// availability probe may be destructive — ProbeAvailable is called once by the
-// daemon at startup and its result cached for the process lifetime. A
-// short-lived caller must never probe.
+// availability probe may be destructive — on the Z13 its first run is a CO
+// reset. ProbeAvailable is therefore called only by a daemon path about to
+// write an offset anyway, and cached for the process lifetime; anything that
+// merely asks uses Available. A short-lived caller must never probe.
 type Undervolter interface {
 	// Present reports whether the undervolt interface exists on this machine
 	// at all — for the Z13, whether the ryzen_smu module is loaded — without
@@ -405,6 +406,12 @@ type Undervolter interface {
 	// ProbeAvailable reports whether the undervolt path actually works on this
 	// machine. May write to hardware; see above for who is allowed to call it.
 	ProbeAvailable() bool
+
+	// Available answers the same question without ever writing: the probe's
+	// cached answer once something in this process has probed, Present until
+	// then. It is what a read (get-state, undervolt-get) or a reset with
+	// nothing to reset must ask.
+	Available() bool
 
 	// Range returns the legal offset bounds (Z13: -40 to 0).
 	Range() (min, max int)

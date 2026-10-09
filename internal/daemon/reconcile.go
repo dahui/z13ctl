@@ -449,11 +449,11 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			}
 		}
 	}
-	if act.Undervolt != nil && d.uvAvailable() {
-		// The driver probed once at daemon startup and caches the answer, so this
-		// is a bool read rather than the destructive no-op write the probe would
-		// otherwise be. It is called here and not in the observe step so the common
-		// path never touches it at all.
+	if act.Undervolt != nil && d.uvProbe() {
+		// Usually a cached bool read: the offset was written once already, which
+		// probed. If nothing has probed in this process, the probe is followed at
+		// once by the re-apply, so it is never the speculative write. It is called
+		// here and not in the observe step so the common path never touches it.
 		if err := d.hw.Undervolt.Apply(*act.Undervolt); err != nil {
 			ok = false
 			if !st.quiet {
