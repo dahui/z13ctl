@@ -344,16 +344,11 @@ func (d *Daemon) restoreHardwareAtStartup() {
 	// would. Without this the machine keeps running the old profile's fan curve
 	// and undervolt while the daemon reports a firmware profile, and the
 	// reconcile watcher stays inert because the profile is no longer custom.
-	if leftCustom {
-		if d.uvApplied() {
-			if uvErr := d.hw.Undervolt.Reset(); uvErr != nil {
-				slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
-			}
-		}
-		if d.hw.Fans != nil {
-			if fanErr := d.hw.Fans.Release(); fanErr != nil {
-				slog.Warn("failed to release fans leaving the custom profile", "err", fanErr)
-			}
+	// The fans are released below, by HandBackToFirmware, so that a high limit
+	// the custom profile left behind comes down before its floor does.
+	if leftCustom && d.uvApplied() {
+		if uvErr := d.hw.Undervolt.Reset(); uvErr != nil {
+			slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
 		}
 	}
 
@@ -375,11 +370,32 @@ func (d *Daemon) restoreHardwareAtStartup() {
 				slog.Info("profile restored", "profile", d.state.Profile)
 			}
 		}
-		// Write the profile's stock PPT even when platform_profile already
-		// matches: the kernel's PPT attributes come up holding a stale 5W cache
-		// after boot, and nothing else restores them. Unlike a profile write this
-		// is not a WMI call, so it does not disturb the fan controller.
-		d.restoreStockPPT(d.state.Profile)
+		// Restore the profile's limits even when platform_profile already
+		// matches. The stock row alone used to be written here, and it is looser
+		// than the firmware's own limits, so every login left the stock profile
+		// running hotter than the firmware runs it (quiet at ~60 W rather than
+		// 40). HandBackToFirmware ends with a fan release, which re-applies the
+		// firmware's limits; a redundant release on fans already at auto does
+		// not disturb them (measured: no RPM dip under load), unlike the
+		// same-value platform_profile write guarded against above.
+		//
+		// The release is ours to make only when the fans are already on auto or
+		// the curve is the custom profile's we just left. A curve another tool
+		// set while we sat on a firmware profile is not, so it is left alone
+		// and only the row is written, which at least replaces the stale boot
+		// cache in the PPT attributes.
+		owned := leftCustom || d.hw.Fans == nil
+		if !owned {
+			mode, modeErr := d.hw.Fans.ReadMode()
+			owned = modeErr == nil && mode == 2
+		}
+		if owned {
+			if err := d.hw.HandBackToFirmware(d.state.Profile); err != nil {
+				slog.Warn("failed to restore the firmware profile's power limits", "profile", d.state.Profile, "err", err)
+			}
+		} else {
+			d.restoreStockPPT(d.state.Profile)
+		}
 	}
 
 	// Restore battery charge limit if saved.

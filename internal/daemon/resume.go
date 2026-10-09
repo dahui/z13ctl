@@ -320,7 +320,8 @@ func (d *Daemon) releaseVolatileState() {
 	}
 
 	// act.ReleaseFans requires a readable curve mode, so Fans is present here.
-	if err := d.hw.Fans.Release(); err != nil {
+	// nil: the machine is going to sleep, and the resume runs applyCustomHW anyway.
+	if err := d.hw.ReleaseFans(nil); err != nil {
 		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
 		return
 	}

@@ -635,3 +635,77 @@ func TestUndervoltIsReappliedOnlyWhenTheResumeSignalWentMissing(t *testing.T) {
 		}
 	})
 }
+
+// TestReconcileReappliesTDPAfterAProfileWrite covers the external half of issue
+// #22. A platform_profile write by anyone resets the power limits to that
+// profile's own, while the ppt_* cache keeps showing the custom value — so the
+// drift check alone never fires. The watcher re-writes the TDP on the two traces
+// such a write leaves: platform_profile changing, or the custom curve dropped.
+func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
+	saved := curve(120)
+	tdp := &api.TDPState{PL1SPL: 30, PL2SPPT: 30, FPPT: 30, APUSPPT: 30, PlatformSPPT: 30}
+
+	tests := []struct {
+		name      string
+		lastHW    string
+		obs       reconcileObs
+		wantTDP   bool
+		wantCurve bool
+	}{
+		{
+			// PPD on an AC transition, on a curveless profile: the only trace.
+			name:    "platform_profile changed under a custom TDP",
+			lastHW:  "balanced",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "performance"},
+			wantTDP: true,
+		},
+		{
+			// Same-value write with a curve live: the dropped curve is the trace,
+			// and the cached PL1 still "matches".
+			name:      "curve dropped while the cached PL1 matches",
+			lastHW:    "balanced",
+			obs:       reconcileObs{Custom: true, WantCurve: saved, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced"},
+			wantTDP:   true,
+			wantCurve: true,
+		},
+		{
+			// The daemon's first observation has nothing to compare against.
+			name:   "first tick is not a change",
+			lastHW: "",
+			obs:    reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "performance"},
+		},
+		{
+			name:   "profile changed but the profile sets no TDP",
+			lastHW: "balanced",
+			obs:    reconcileObs{Custom: true, CurveMode: 2, PL1: 52, ProfileHW: "performance"},
+		},
+		{
+			name:   "nothing changed",
+			lastHW: "balanced",
+			obs:    reconcileObs{Custom: true, WantCurve: saved, WantTDP: tdp, CurveMode: 1, PL1: 30, ProfileHW: "balanced"},
+		},
+		{
+			// A firmware profile is never defended, whatever happens underneath.
+			name:   "not a custom profile",
+			lastHW: "balanced",
+			obs:    reconcileObs{WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "performance"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, act := tick(reconcileState{lastHW: tt.lastHW}, tt.obs)
+			if got := act.TDP != nil; got != tt.wantTDP {
+				t.Errorf("re-applied TDP = %v, want %v (reason %q)", got, tt.wantTDP, act.Reason)
+			}
+			if got := act.Curve != nil; got != tt.wantCurve {
+				t.Errorf("restored curve = %v, want %v", got, tt.wantCurve)
+			}
+			if !act.none() && act.Reason == "" {
+				t.Error("an action was returned with no reason to log")
+			}
+			if st.lastHW != tt.obs.ProfileHW {
+				t.Errorf("lastHW = %q, want %q latched for the next tick", st.lastHW, tt.obs.ProfileHW)
+			}
+		})
+	}
+}

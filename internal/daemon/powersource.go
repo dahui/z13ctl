@@ -400,6 +400,7 @@ func (d *Daemon) handleAutoswitchGet() response {
 	if d.state.Autoswitch != nil {
 		a = *d.state.Autoswitch
 	}
+	wedged := d.ecWedged
 	d.mu.Unlock()
 
 	// Include the live source so a client can render "active on battery"
@@ -409,9 +410,18 @@ func (d *Daemon) handleAutoswitchGet() response {
 		OnAC  bool `json:"on_ac"`
 		Known bool `json:"source_known"`
 	}{AutoswitchState: a}
-	if onAC, known := d.acPower(); known {
-		out.OnAC = onAC
-		out.Known = true
+	// acPower reads the Mains supply's online attribute, which the ACPI AC
+	// driver answers by evaluating _PSR — an EC call, not a cached value. While
+	// the EC is not answering that read can hold the ACPI global mutex like any
+	// write, so the source is reported unknown instead: source_known=false is
+	// already the documented "claim nothing", so a client needs no new case.
+	// This handler was the one EC read the latch missed (z13ctl v1.3.4), since
+	// autoswitch-get stores nothing and so never looked like hardware access.
+	if !wedged {
+		if onAC, known := d.acPower(); known {
+			out.OnAC = onAC
+			out.Known = true
+		}
 	}
 	data, _ := json.Marshal(out)
 	return response{OK: true, Value: string(data)}

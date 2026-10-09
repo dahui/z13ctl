@@ -493,15 +493,12 @@ func (d *Daemon) handleBrightness(req request) response {
 	return response{OK: true}
 }
 
-// restoreStockPPT writes the measured stock PPT values for a stock profile back
-// to hardware. The PPT attributes have no "reset to firmware default" operation
-// and the firmware does not re-apply per-profile limits on a platform_profile
-// change, so without this a custom TDP leaks into every stock profile. Failures
-// are logged and swallowed: a profile switch must not hard-fail because the PPT
-// restore did not take.
-//
-// Callers must not clear the saved custom TDP in daemon state — only the
-// hardware values are reset, so the user can select "custom" again.
+// restoreStockPPT writes a stock profile's stock row to hardware and nothing
+// else. The row is looser than the firmware's own limits, so it must not be how
+// a stock profile is entered — device.HandBackToFirmware is, ending on the fan
+// release that re-applies the firmware's limits. This is for the one place that
+// may not release the fans (Run(), with a curve in force it does not own).
+// Failures are logged and swallowed.
 func (d *Daemon) restoreStockPPT(profile string) {
 	// A profile with no row is a deliberate silent no-op here, as it was before
 	// restoreStockPPTErr existed. applyCustomHW calls this with d.profileHW(),
@@ -795,7 +792,14 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 		if d.hw == nil || d.hw.Fans == nil {
 			return response{OK: false, Error: "fancurve-reset: no fan control on this device"}
 		}
-		if err := d.hw.Fans.Release(); err != nil {
+		// A running custom profile keeps its TDP through the release, which would
+		// otherwise reset it to the firmware profile's. The implicit target — a bare
+		// reset on a firmware profile — has no custom limit in force, so nil.
+		var keep *api.TDPState
+		if target.Active {
+			keep = target.Profile.TDP
+		}
+		if err := d.hw.ReleaseFans(keep); err != nil {
 			return response{OK: false, Error: "fancurve-reset: " + err.Error()}
 		}
 		slog.Info("fancurve-reset", "fans", "both", "profile", target.Name)
@@ -974,7 +978,10 @@ func (d *Daemon) handleTDP(req request) response {
 			} else {
 				slog.Info("fan curve restored after TDP reduced to safe levels")
 			}
-		} else if err := d.hw.Fans.Release(); err != nil {
+		} else if err := d.hw.ReleaseFans(&tdp); err != nil {
+			// &tdp, not nil: the release resets the power limits to the firmware
+			// profile's, so without the re-write every `tdp --set` at or below the
+			// safe maximum on a curveless profile was undone on the spot (#22).
 			slog.Warn("failed to release fans after TDP reduced to safe levels", "err", err)
 		}
 	}
@@ -1053,8 +1060,8 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	// below the safe max, so by the time the fans drop to firmware auto the
 	// limit that required the floor is gone. Doing it the other way round leaves
 	// a window at full power with no floor, and a failed profile switch would
-	// leave it that way. The firmware manages fan curves on a profile change but
-	// does not restore PPT, so restoreStockPPT has to be explicit.
+	// leave it that way. HandBackToFirmware writes balanced's stock row (which
+	// lowers the limit) and releases last, so balanced's own limits end in force.
 	// Reset the undervolt too. This lands on "balanced", a stock profile, and
 	// every other route to a stock profile clears CO — leaving it applied here
 	// would leak a custom setting into a stock profile (the defect class behind
@@ -1082,11 +1089,8 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	if err := d.hw.Profiles.Set("balanced"); err != nil {
 		return response{OK: false, Error: cmd + ": switching to balanced profile: " + err.Error()}
 	}
-	d.restoreStockPPT("balanced")
-	if d.hw.Fans != nil {
-		if err := d.hw.Fans.Release(); err != nil {
-			slog.Warn("failed to reset fan curves", "cmd", cmd, "err", err)
-		}
+	if err := d.hw.HandBackToFirmware("balanced"); err != nil {
+		slog.Warn("failed to hand the power limits back to balanced", "cmd", cmd, "err", err)
 	}
 	slog.Info(cmd, "profile", "balanced")
 	d.mu.Lock()

@@ -88,8 +88,12 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 //     temperature*, and the floor curve is written whole only when there is no
 //     curve at all. Writing the curve first is still what keeps the user's curve
 //     in force if the ApplyTDPSafely call fails.
-//   - Clearing the TDP hands the limits back to the firmware profile underneath,
-//     which lowers power before the fans are touched.
+//   - Clearing the TDP hands the limits back to the firmware profile underneath
+//     (device.HandBackToFirmware), and comes *first*: it lowers power to the
+//     stock row before the fans are touched, and ends with a release, which is
+//     what re-applies the firmware's own limits. The profile's curve goes on
+//     after it — pwm_enable=1 leaves the limits alone, and a release would
+//     drop it.
 //   - The fans are released only when no high sustained limit is in force. A
 //     profile with a high TDP and no curve of its own keeps the floor
 //     ApplyTDPSafely just wrote. That is checked against *hardware* and not only
@@ -107,6 +111,14 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 // it — for the fan-floor check before that.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	hasCurve := d.hasApplicableCurve(p.FanCurve)
+	if p.TDP == nil && d.hw != nil {
+		// Not controlled here, so hand the limits back to the firmware profile
+		// underneath rather than leaving the previous profile's watts in force.
+		if err := d.hw.HandBackToFirmware(d.profileHW()); err != nil {
+			slog.Warn("failed to hand the power limits back to the firmware profile", "profile", p.Name, "err", err)
+		}
+	}
+
 	var wantCurve []api.FanCurvePoint
 	if hasCurve {
 		wantCurve = p.FanCurve.Points
@@ -127,17 +139,17 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 		} else {
 			highTDP = t.PL1SPL > d.env().TDPMaxSafe
 		}
-	} else {
-		// Not controlled here, so hand the limits back to the firmware profile
-		// underneath rather than leaving the previous profile's watts in force.
-		d.restoreStockPPT(d.profileHW())
 	}
 
-	if !hasCurve && !highTDP && d.hw != nil && d.hw.Fans != nil {
+	// A profile with no TDP was released above, by HandBackToFirmware.
+	if p.TDP != nil && !hasCurve && !highTDP && d.hw != nil && d.hw.Fans != nil {
 		if err := d.checkFanFloorRelease(d.effectiveProfile()); err != nil {
 			slog.Warn("keeping the high-TDP fan floor: the sustained limit in hardware still requires it",
 				"profile", p.Name, "err", err)
-		} else if err := d.hw.Fans.Release(); err != nil {
+		} else if err := d.hw.ReleaseFans(p.TDP); err != nil {
+			// p.TDP, not nil: the release makes the firmware re-apply the profile's
+			// own limits, so the TDP written above would otherwise be gone by the
+			// time this returns — the "75 W does nothing" of issue #22.
 			slog.Warn("failed to release fans to firmware auto", "profile", p.Name, "err", err)
 		}
 	}
@@ -179,10 +191,10 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 // The order below is deliberate and load-bearing. Reset the undervolt first
 // (every route to a stock profile must clear it, or a custom setting leaks into
 // a stock profile). Write platform_profile next; a failure there aborts with
-// state untouched. Restore that profile's stock PPT — the firmware does not
-// re-apply per-profile limits on a profile change, so without this a custom TDP
-// persists across the switch. Release the fans to firmware auto *last*, so they
-// are never dropped to auto while a high custom TDP is still in force.
+// state untouched. Then HandBackToFirmware: the stock row first, so a high
+// custom TDP is down before the fans drop to auto, and the release last, which
+// re-applies the profile's own limits — tighter than the row's, so the row must
+// not be the last write.
 func (d *Daemon) applyStockHW(profile string) error {
 	if d.uvApplied() {
 		if err := d.hw.Undervolt.Reset(); err != nil {
@@ -195,11 +207,8 @@ func (d *Daemon) applyStockHW(profile string) error {
 	if err := d.hw.Profiles.Set(profile); err != nil {
 		return err
 	}
-	d.restoreStockPPT(profile)
-	if d.hw.Fans != nil {
-		if err := d.hw.Fans.Release(); err != nil {
-			slog.Warn("failed to reset fan curves to auto", "err", err)
-		}
+	if err := d.hw.HandBackToFirmware(profile); err != nil {
+		slog.Warn("failed to hand the power limits back to the firmware profile", "profile", profile, "err", err)
 	}
 
 	d.mu.Lock()

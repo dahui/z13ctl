@@ -111,8 +111,10 @@ type PowerEnvelope struct {
 	TDPMaxForced int // absolute ceiling, force flag or not
 
 	// StockProfilePPT maps each firmware profile name to the PPT values the
-	// daemon writes when that profile is selected. Authoritative on write: the
-	// firmware does not restore these itself (z13ctl issue #12).
+	// daemon writes when that profile is selected, before the fan release that
+	// makes the firmware re-apply its own limits. On the Z13 only PL1 matches
+	// what the firmware enforces, so the row must never be the last write
+	// (safety.Engine.HandBackToFirmware; z13ctl issues #12 and #22).
 	StockProfilePPT map[string]api.TDPState
 
 	// FloorCurve is the per-point fan floor enforced while the sustained limit

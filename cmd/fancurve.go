@@ -12,6 +12,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
@@ -304,11 +305,41 @@ func runFanCurveReset() error {
 	if hw.Fans == nil {
 		return fmt.Errorf("no fan control on this device")
 	}
-	if err := hw.Fans.Release(); err != nil {
+	if err := hw.ReleaseFans(customLimitInForce(hw)); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	fmt.Println("Fan curves reset to auto mode (both fans)")
 	return nil
+}
+
+// customLimitInForce is the power limit a no-daemon fan release must re-write, or
+// nil when there is none to keep. The release makes the firmware re-apply the
+// platform profile's own limits (issue #22), so without this a `tdp --set` made
+// earlier would be silently undone by `fancurve --reset`.
+//
+// With no daemon there is no profile state, and the limiter's cache — whatever
+// was last written — is the only record. It counts as a custom limit only when it
+// is neither the kernel's stale boot cache (the envelope minimum) nor the active
+// firmware profile's stock row: re-writing either would replace the firmware's
+// limits with ours. A deliberate minimum-watts limit is indistinguishable from
+// the stale cache here and is not kept; the daemon has no such blind spot.
+func customLimitInForce(hw *device.Device) *api.TDPState {
+	if hw.Power == nil {
+		return nil
+	}
+	env := hw.Power.Envelope()
+	cur, err := hw.Power.Read()
+	if err != nil || cur.PL1SPL == env.TDPMin || cur.PL1SPL > env.TDPMaxSafe {
+		return nil
+	}
+	if hw.Profiles != nil {
+		if profile, err := hw.Profiles.Get(); err == nil {
+			if stock, ok := env.StockProfilePPT[profile]; ok && stock == cur {
+				return nil
+			}
+		}
+	}
+	return &cur
 }
 
 func init() {

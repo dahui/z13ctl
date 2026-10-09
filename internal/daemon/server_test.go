@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 func TestDispatchUnknownCommand(t *testing.T) {
@@ -423,5 +425,48 @@ func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
 	d := &Daemon{hw: testDev, ecWedged: true}
 	if resp := d.dispatch(request{Cmd: "profile-list"}); !resp.OK {
 		t.Errorf("profile-list while wedged = %+v, want OK: it touches only state", resp)
+	}
+}
+
+// spyBattery reports mains power and records whether it was read at all.
+type spyBattery struct{ read *bool }
+
+func (b spyBattery) Caps() driver.BatteryCaps   { return driver.BatteryCaps{} }
+func (b spyBattery) ChargeLimit() (int, error)  { return 0, nil }
+func (b spyBattery) SetChargeLimit(_ int) error { return nil }
+func (b spyBattery) Status() (driver.BatteryStatus, error) {
+	*b.read = true
+	return driver.BatteryStatus{OnAC: true, ACKnown: true}, nil
+}
+
+// TestAutoswitchGetReportsUnknownSourceWhileWedged covers the one EC read the
+// latch missed (z13ctl v1.3.4). autoswitch-get changes nothing, so it was never
+// in ecGuarded, but its live source comes from the battery driver's AC read, and
+// the AC driver answers that by evaluating _PSR on the EC. While wedged it must
+// report the source as unknown without reading it. The control case proves the
+// spy is reachable, so the wedged case cannot pass merely because nothing was
+// wired up.
+func TestAutoswitchGetReportsUnknownSourceWhileWedged(t *testing.T) {
+	t.Parallel()
+	for _, wedged := range []bool{false, true} {
+		read := false
+		d := &Daemon{ecWedged: wedged, hw: &device.Device{Battery: spyBattery{&read}}}
+		resp := d.dispatch(request{Cmd: "autoswitch-get"})
+		if !resp.OK {
+			t.Fatalf("wedged=%v: autoswitch-get = %+v, want OK: it is a read, not refused", wedged, resp)
+		}
+		var got struct {
+			OnAC  bool `json:"on_ac"`
+			Known bool `json:"source_known"`
+		}
+		if err := json.Unmarshal([]byte(resp.Value), &got); err != nil {
+			t.Fatalf("unmarshal %q: %v", resp.Value, err)
+		}
+		if wedged && (read || got.Known || got.OnAC) {
+			t.Errorf("while wedged: read=%v source=%+v, want no read and unknown: the AC read is an EC call", read, got)
+		}
+		if !wedged && (!read || !got.Known || !got.OnAC) {
+			t.Errorf("healthy: read=%v source=%+v, want the battery driver's answer", read, got)
+		}
 	}
 }

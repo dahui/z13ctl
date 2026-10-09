@@ -52,9 +52,9 @@ on every system power profile change while the power limit survives it, so
 without the daemon to restore the floor the machine can end up at high power on
 the firmware's ordinary fan curve.
 
-With --reset, switches to the balanced profile, resets fan curves to auto mode,
-and writes balanced's stock PPT values back to hardware. The firmware manages
-fan curves for stock profiles but does not restore PPT on its own.
+With --reset, switches to the balanced profile, writes balanced's stock PPT
+values (bringing a high custom limit down first), and then resets fan curves to
+auto mode, which puts the firmware's own balanced limits back in force.
 
 PPT attributes:
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
@@ -321,10 +321,9 @@ func runTdpReset() error {
 // two commands do exactly the same thing to hardware and there is no reason for
 // two copies of an ordering that has to be right.
 //
-// Switch to balanced, write its stock PPT values back, and only then release the
-// fans to firmware auto — so they are never dropped to auto while a high custom
-// TDP is still in force. The firmware manages fan curves on a profile change but
-// does not restore PPT, so that part has to be explicit.
+// Switch to balanced, then HandBackToFirmware — the stock row first, so a high
+// custom TDP is down before the fans drop to auto, and the release last, so
+// balanced's own limits end in force.
 //
 // Reset the undervolt as well: this lands on a stock profile, and every other
 // route to one clears CO. Guarded on Present (a stat, never the destructive
@@ -348,32 +347,10 @@ func runTdpResetDirect() error {
 	if err := hw.Profiles.Set("balanced"); err != nil {
 		return fmt.Errorf("switching to balanced profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
-	restoreStockPPT(hw, "balanced")
-	if hw.Fans != nil {
-		if err := hw.Fans.Release(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to reset fan curves: %v\n", err)
-		}
+	if err := hw.HandBackToFirmware("balanced"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to restore balanced's power limits: %v\n", err)
 	}
 	return nil
-}
-
-// restoreStockPPT writes the stock PPT values for a stock profile back to
-// hardware on the direct (no-daemon) path. The PPT attributes have no "reset
-// to firmware default" operation and the firmware does not re-apply
-// per-profile limits on a platform_profile change, so without this a custom
-// TDP leaks into every stock profile. A profile with no row in the envelope is
-// a silent no-op, and write failures warn and continue: a profile switch must
-// not hard-fail because the PPT restore did not take.
-func restoreStockPPT(hw *device.Device, profile string) {
-	if hw.Power == nil {
-		return
-	}
-	if _, ok := hw.Power.Envelope().StockProfilePPT[profile]; !ok {
-		return
-	}
-	if err := hw.Power.RestoreStock(profile); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to restore stock TDP for %s: %v\n", profile, err)
-	}
 }
 
 // parsePLOverrides returns the effective PL1/PL2/PL3 values, applying

@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
@@ -49,6 +50,34 @@ type Device struct {
 	CPUBoost  driver.CPUBoost
 	Telemetry driver.Telemetry
 	Buttons   driver.Buttons
+}
+
+// ReleaseFans hands the fans back to firmware auto and leaves keep in force. It
+// is the one release entry point for the daemon and the CLI — a source scan in
+// both packages rejects a direct Fans.Release() — because on the Z13 a release
+// resets the power limits to the firmware profile's own (issue #22), and only
+// safety.Engine.ReleaseFans puts keep back afterwards. A device with no power
+// control has no limit to lose, so it releases directly. nil keep means the
+// firmware profile's own limits; a device with no fan control is a no-op.
+func (d *Device) ReleaseFans(keep *api.TDPState) error {
+	if d.Power != nil {
+		return d.Power.ReleaseFans(keep)
+	}
+	if d.Fans == nil {
+		return nil
+	}
+	return d.Fans.Release()
+}
+
+// HandBackToFirmware puts a firmware profile's own power limits back in force:
+// the stock row first, then the fan release that re-applies the firmware's
+// limits (see safety.Engine.HandBackToFirmware). A device with no power control
+// has no limits to hand back and only releases.
+func (d *Device) HandBackToFirmware(profile string) error {
+	if d.Power != nil {
+		return d.Power.HandBackToFirmware(profile)
+	}
+	return d.ReleaseFans(nil)
 }
 
 var (

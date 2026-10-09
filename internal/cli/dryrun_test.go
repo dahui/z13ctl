@@ -341,16 +341,11 @@ func TestDryRunTdpReset(t *testing.T) {
 		"fan curves",
 		"balanced",
 		"Curve Optimizer", // a stock profile clears the undervolt
-		"stock PPT",       // z13ctl writes these; the firmware does not
+		"stock PPT",       // lowers a high limit before the fans are released
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("DryRunTdpReset output missing %q; got:\n%s", want, out)
 		}
-	}
-	// The firmware does not re-apply per-profile PPT — assuming it did is the
-	// whole of issue #12, and this text used to assert it.
-	if strings.Contains(out, "firmware sets per-profile PPT") {
-		t.Error("DryRunTdpReset still claims the firmware restores PPT")
 	}
 	// Power comes down before the fans are released.
 	if strings.Index(out, "stock PPT") > strings.Index(out, "fan curves to auto") {

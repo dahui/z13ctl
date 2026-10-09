@@ -390,9 +390,10 @@ func (c Config) Validate() error {
 		if len(p.FloorCurve) > 0 && c.Fans == nil {
 			fail("power.floor_curve requires a fans block: a floor without fan control cannot be enforced")
 		}
-		// The stock table is authoritative on write (the firmware does not
-		// restore per-profile limits itself), so every selectable firmware
-		// profile needs a row or switching to it leaves stale limits in force.
+		// Every selectable firmware profile needs a stock row: switching to it
+		// writes the row to bring a high custom limit down before the fans are
+		// released (HandBackToFirmware), and the row is what the PPT attributes
+		// then show.
 		if c.Profiles != nil {
 			for _, name := range c.Profiles.Names {
 				if _, ok := p.StockPPT[name]; !ok {

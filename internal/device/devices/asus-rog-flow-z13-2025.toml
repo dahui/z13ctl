@@ -72,10 +72,12 @@ tdp_max_forced = 93
 tdp_default    = 50
 floor_curve    = [[30, 127], [40, 127], [50, 140], [60, 165], [65, 190], [70, 215], [75, 235], [80, 255]]
 
-# Measured with ryzenadj; authoritative on write, because the firmware does
-# not re-apply per-profile limits on a platform_profile change and the kernel's
-# PPT attributes boot holding a stale 5W cache. APU/Platform sPPT are 70 across
-# all three profiles while PL2 varies — write these rows verbatim, never mirror.
+# Measured with ryzenadj. Only PL1 matches what the firmware enforces — under
+# load the balanced row ran 63–66 W against the firmware's own 52 W — so a row
+# is written first (it lowers a high custom limit and replaces the kernel's
+# stale 5W boot cache) and is always followed by the fan release that makes the
+# firmware re-apply its own limits. APU/Platform sPPT are 70 across all three
+# profiles while PL2 varies — write these rows verbatim, never mirror.
 [power.stock_ppt]
 quiet       = { pl1 = 40, pl2 = 55, fppt = 55, apu = 70, platform = 70 }
 balanced    = { pl1 = 52, pl2 = 71, fppt = 70, apu = 70, platform = 70 }
