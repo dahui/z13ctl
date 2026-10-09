@@ -1087,7 +1087,8 @@ contrib/
   suspends on the GZ302EA (2026-10-09) woke after 1–2.5 s with 0.2 s of hardware
   sleep in **7 of 15** cases when the suspend was handed to logind straight after
   the `pwm_enable=2` release, **0 of 7** with a 3 s hold, and **0 of 10** with no
-  release. With `pm_debug_messages` on, the early wake is IRQ 9 (the EC's SCI)
+  release. Turning a curve *on* (`pwm_enable=1`) raises no EC event at all, which is
+  why only the release side needs the hold. With `pm_debug_messages` on, the early wake is IRQ 9 (the EC's SCI)
   and IRQ 1 firing together, then `ACPI: PM: Wakeup after ACPI Notify sync`: an
   EC query's AML sent a Notify that a driver turned into a wakeup. It is not the
   release's own event burst — three or four `_QDA` queries, over within ~230 ms
@@ -1182,6 +1183,51 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   — they were stale by 17 points on daemon and 9 on api before v1.3.1.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
+### Hardware verification (on the development machine)
+
+Unit tests cannot see firmware behaviour — #22's limit reset and #24's early wake
+were both invisible to them — so a change to power, fan or sleep handling gets a
+run on the Z13. The procedure that has worked, and the traps found the hard way:
+
+- **Stop the installed daemon first.** On the development machine the z13ctl
+  user units are masked and voltaire (v2) runs instead, serving the z13ctl socket
+  path as well as its own — so `systemctl --user stop voltaire.service
+  voltaire.socket`, then run the build under test in the foreground,
+  `z13ctl daemon --no-button`, logging to a file. Build it with the SMU path
+  pointed nowhere —
+  `-ldflags "-X github.com/dahui/z13ctl/internal/cli.smuDriverPath=/nonexistent/ryzen_smu_drv"`
+  — so nothing can send a Curve Optimizer write (see the 2026-08-14 lockup).
+- **Back up `~/.local/state/z13ctl/state.json` first, and never overwrite an
+  existing backup** — a rerun after an aborted run would otherwise back up the
+  test's own state. Record `platform_profile` before starting and set it back by
+  name: the test daemon restores whatever profile its state file names on startup
+  (a stale z13ctl state file moved the machine from performance to balanced), so
+  reading the profile after a hung run gives the wrong answer. Restore the state
+  file, then restart voltaire and check `voltaire-gui` came back too.
+- **Power** is measured with RAPL under a `yes` ×32 load, never from the `ppt_*` or
+  armoury readback (which does not move when the firmware resets the limits).
+- **Suspends:** `sudo -n rtcwake -m no -s 20 && systemctl suspend` gives a suspend
+  of known length; the daemon's `resume: wake report` then shows whether it ran the
+  full time (`slept`, `hw_sleep`). For kernel-side attribution set
+  `/sys/power/pm_debug_messages` to 1 and `file drivers/acpi/ec.c +p` in
+  `/sys/kernel/debug/dynamic_debug/control`, and **set both back** afterwards. Each
+  suspend interrupts Jeff's session, so ask before a run.
+- **Noise in the wake report:** `wake_irq` shows IRQ 1 (i8042) or 9 (acpi) on
+  clean resumes too, and the lid `PNP0C0D:00` counts one event on every resume.
+  An SD-card `mmc0` suspend failure with errno -84 is the known harmless one
+  (see "Do not blame the sleep hook").
+- **Sample size:** the #24 early wake comes in streaks; a batch of three can come
+  out clean. Interleave the variants and run a dozen or more before concluding
+  anything, and keep a no-change control.
+- **A/B variants are separate binaries**, built from a temporarily edited copy of
+  the source that is restored immediately and checked with `cmp`. Never
+  `git stash` for this: one stash reverted a whole port in three files.
+- **Shell traps in test harnesses:** a bare `wait` also waits for the
+  backgrounded daemon and hangs the script — `wait $pid`; `pkill -f <script>`
+  matches the invoking shell's own command line and kills the caller — kill by
+  PID; a log-file label with a space breaks the redirect, so the daemon never
+  starts and the "test" runs with no daemon at all.
+
 ### Fake sysfs (`internal/cli`)
 
 All sysfs roots this package touches live in `paths.go` as package **vars**, not
@@ -1240,6 +1286,17 @@ make clean              # remove z13ctl binary, dist/, coverage artifacts
 
 Version is injected at link time: `-X github.com/dahui/z13ctl/cmd.Version={{.Version}}`.
 Default value in source is `"1.0.0-beta"` (used only in local builds without ldflags).
+
+`release-notes.md` at the repo root is gitignored and holds the notes for the
+**next release only**, written for users. When starting a new version, save the
+previous text aside and replace the file rather than prepending to it.
+
+**Fixes land here first and are then ported to v2** — voltaire, on the
+`feat/v2-refactor` branch — in one commit per release. v2 restructures the same
+logic behind drivers and a device file, so a port is a translation rather than a
+cherry-pick, and a number measured on this machine (such as the #24 sleep release
+settle) becomes device-file data there rather than a constant. v2 is in sync
+through 1.4.2.
 
 ## goreleaser
 
