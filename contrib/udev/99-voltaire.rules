@@ -23,5 +23,9 @@ ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/
 ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", RUN+="/bin/sh -c 'chgrp users /sys%p/pwm*; chmod g+w /sys%p/pwm*'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f in /sys%p/pwm*_enable; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
-ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
+# ppt_* are usually created after this add event (later in asus_nb_wmi probe()), so
+# voltaire-perms.service is what applies this grant at boot; this rule covers the files
+# that already exist. A missing file is skipped rather than ending the script non-zero,
+# which logged "failed with exit code 1" on every boot (issue #25).
+ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] || continue; chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%p/energy_uj; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+r \"$$f\"; done'"

@@ -76,6 +76,17 @@ type Daemon struct {
 	// and eventually expired *inside* a real pre-freeze window.
 	suspendGen int
 
+	// ecWedged is set by restoreVolatileState when the resume wait timed out on an
+	// EC that is present but not answering, and cleared only by a probe that reads
+	// cleanly. While it is set nothing may reach the EC through asus-wmi or
+	// asus-armoury: such a call blocks in acpi_evaluate_object holding the ACPI
+	// global mutex, and every other ACPI consumer piles up behind it until the
+	// machine hard-locks. Skipping the resume apply alone is not enough — the
+	// reconcile watcher would make the same writes two seconds later, and the
+	// telemetry sampler reads fan RPM over WMI every second — so every watcher,
+	// the socket dispatcher and get-state consult it.
+	ecWedged bool
+
 	// telemetry is the sampler's history ring, sized by Run from the device's
 	// declared window. It carries its own lock and is never read directly —
 	// history() substitutes an empty ring for the Daemons tests build as struct
@@ -209,6 +220,107 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	// Probe the EC before anything below touches it. A daemon restarted after a
+	// bad resume — the natural thing to try — would otherwise write
+	// platform_profile, PPT, the battery limit and the custom profile into an EC
+	// that is not answering, with the latch that would have stopped it lost along
+	// with the old process. Lighting above is hidraw and has already gone out.
+	//
+	// ENOENT stays ecAbsent here: there is no pre-sleep evidence of a battery, so
+	// a batteryless machine boots exactly as before. Once the reconcile watcher's
+	// probe reads cleanly it restores a custom profile in full. A firmware profile
+	// needs nothing: platform_profile is firmware state and survives the restart.
+	// The one thing not recovered is a startup autoswitch, which the power-source
+	// watcher then picks up at the next real AC/battery transition.
+	if d.probeEC() == ecWedged {
+		d.ecWedged = true
+		slog.Error("EC not answering at startup; leaving power and fan settings alone until it responds")
+	} else {
+		d.restoreHardwareAtStartup()
+	}
+
+	switch {
+	case !opts.WatchButton:
+		slog.Info("hardware button watcher disabled")
+	case d.hw.Buttons == nil:
+		slog.Info("no hardware button on this device")
+	default:
+		go d.watchButtons(ctx)
+	}
+
+	go d.watchResume(ctx)
+
+	go d.watchHotplug(ctx, lightingOpened)
+
+	// State-driven, so it is a no-op on a machine that never uses a custom
+	// profile; register it unconditionally.
+	go d.watchReconcile(ctx)
+
+	// Likewise inert until autoswitch is configured.
+	go d.watchPowerSource(ctx)
+
+	// Inert on a device with no telemetry source or no declared history; the
+	// tick decides, so there is one place to read the rule.
+	go d.watchTelemetry(ctx)
+
+	lns, err := d.getListeners()
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
+	}
+	closeAll := func() {
+		for _, ln := range lns {
+			_ = ln.Close()
+		}
+	}
+	defer closeAll()
+
+	if _, notifyErr := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); notifyErr != nil {
+		slog.Warn("sd_notify READY failed", "err", notifyErr)
+	}
+	addrs := make([]string, len(lns))
+	for i, ln := range lns {
+		addrs[i] = ln.Addr().String()
+	}
+	slog.Info("voltaire daemon ready", "sockets", strings.Join(addrs, ", "))
+
+	go d.broadcastLoop(ctx)
+
+	go func() {
+		<-ctx.Done()
+		_, _ = sddaemon.SdNotify(false, sddaemon.SdNotifyStopping)
+		closeAll()
+	}()
+
+	// One accept loop per listener; every connection is answered identically,
+	// so a client cannot tell the canonical socket from the legacy one. The
+	// first accept error wins and takes the daemon down (the deferred closeAll
+	// unblocks the sibling loops), except during shutdown, where the closes
+	// above surface here as expected errors.
+	errc := make(chan error, len(lns))
+	for _, ln := range lns {
+		go func(ln net.Listener) {
+			for {
+				conn, acceptErr := ln.Accept()
+				if acceptErr != nil {
+					errc <- acceptErr
+					return
+				}
+				go d.handleConn(conn)
+			}
+		}(ln)
+	}
+	err = <-errc
+	if ctx.Err() != nil {
+		return nil
+	}
+	return fmt.Errorf("accept: %w", err)
+}
+
+// restoreHardwareAtStartup puts the saved profile, power limits, battery limit
+// and firmware toggles back when the daemon starts. Run() calls it only once the
+// EC has answered, and before any watcher starts, so it runs single-threaded
+// and takes no locks — which is also why nothing else may call it.
+func (d *Daemon) restoreHardwareAtStartup() {
 	// Resolve the power source before restoring anything, so a machine that was
 	// on AC when the daemon stopped and is on battery now lands on the battery
 	// profile directly. The watcher deliberately does not act on its first
@@ -325,82 +437,6 @@ func Run(ctx context.Context, opts Options) error {
 			slog.Warn("failed to save the startup autoswitch profile", "err", saveErr)
 		}
 	}
-
-	switch {
-	case !opts.WatchButton:
-		slog.Info("hardware button watcher disabled")
-	case d.hw.Buttons == nil:
-		slog.Info("no hardware button on this device")
-	default:
-		go d.watchButtons(ctx)
-	}
-
-	go d.watchResume(ctx)
-
-	go d.watchHotplug(ctx, lightingOpened)
-
-	// State-driven, so it is a no-op on a machine that never uses a custom
-	// profile; register it unconditionally.
-	go d.watchReconcile(ctx)
-
-	// Likewise inert until autoswitch is configured.
-	go d.watchPowerSource(ctx)
-
-	// Inert on a device with no telemetry source or no declared history; the
-	// tick decides, so there is one place to read the rule.
-	go d.watchTelemetry(ctx)
-
-	lns, err := d.getListeners()
-	if err != nil {
-		return fmt.Errorf("socket: %w", err)
-	}
-	closeAll := func() {
-		for _, ln := range lns {
-			_ = ln.Close()
-		}
-	}
-	defer closeAll()
-
-	if _, notifyErr := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); notifyErr != nil {
-		slog.Warn("sd_notify READY failed", "err", notifyErr)
-	}
-	addrs := make([]string, len(lns))
-	for i, ln := range lns {
-		addrs[i] = ln.Addr().String()
-	}
-	slog.Info("voltaire daemon ready", "sockets", strings.Join(addrs, ", "))
-
-	go d.broadcastLoop(ctx)
-
-	go func() {
-		<-ctx.Done()
-		_, _ = sddaemon.SdNotify(false, sddaemon.SdNotifyStopping)
-		closeAll()
-	}()
-
-	// One accept loop per listener; every connection is answered identically,
-	// so a client cannot tell the canonical socket from the legacy one. The
-	// first accept error wins and takes the daemon down (the deferred closeAll
-	// unblocks the sibling loops), except during shutdown, where the closes
-	// above surface here as expected errors.
-	errc := make(chan error, len(lns))
-	for _, ln := range lns {
-		go func(ln net.Listener) {
-			for {
-				conn, acceptErr := ln.Accept()
-				if acceptErr != nil {
-					errc <- acceptErr
-					return
-				}
-				go d.handleConn(conn)
-			}
-		}(ln)
-	}
-	err = <-errc
-	if ctx.Err() != nil {
-		return nil
-	}
-	return fmt.Errorf("accept: %w", err)
 }
 
 // getListeners returns every socket the daemon serves: all fds handed over by
@@ -570,6 +606,14 @@ func (d *Daemon) setSuspending(v bool) {
 		d.suspendGen++
 	}
 	d.suspending = v
+	d.mu.Unlock()
+}
+
+// setECWedged records whether the EC was left unresponsive by a resume. See the
+// field comment on Daemon.ecWedged.
+func (d *Daemon) setECWedged(v bool) {
+	d.mu.Lock()
+	d.ecWedged = v
 	d.mu.Unlock()
 }
 

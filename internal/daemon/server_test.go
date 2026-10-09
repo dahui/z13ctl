@@ -380,3 +380,48 @@ func TestEditTargetIsACopy(t *testing.T) {
 		t.Error("editing the target mutated live daemon state before any commit")
 	}
 }
+
+// TestDispatchRefusesECCommandsWhileWedged covers the socket half of the
+// wedged-EC latch. The watchers stand down on their own; a command from the CLI
+// or GUI would otherwise walk straight into the stalled EC. The refusal returns
+// before any handler runs, which is also what makes this safe to test — nothing
+// here reaches the driver.
+func TestDispatchRefusesECCommandsWhileWedged(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []string{
+		"profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
+		"batterylimit", "bootsound", "paneloverdrive", "feature",
+		"bootsound-get", "paneloverdrive-get", "feature-get",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			d := &Daemon{hw: testDev, ecWedged: true}
+			resp := d.dispatch(request{Cmd: cmd, Set: "1"})
+			if resp.OK || resp.Error != errECWedged {
+				t.Errorf("dispatch(%s) while wedged = %+v, want the wedged-EC refusal", cmd, resp)
+			}
+		})
+	}
+}
+
+// TestDispatchLeavesNonECCommandsAlone is the other side: lighting, state-only
+// commands, cpufreq boost, the telemetry ring and undervolt (the SMU, not the
+// EC) are not the EC's business.
+func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []string{
+		"apply", "off", "brightness", "profile-get", "profile-create", "profile-save",
+		"profile-delete", "profile-list", "autoswitch", "autoswitch-get",
+		"batterylimit-get", "device-get", "telemetry-history", "cpuboost", "cpuboost-get",
+		"fancurve-get", "tdp-get", "undervolt", "undervolt-get", "undervolt-reset",
+		"get-state", "subscribe",
+	} {
+		if ecGuarded(cmd) {
+			t.Errorf("ecGuarded(%q) = true; it does not reach the EC", cmd)
+		}
+	}
+	d := &Daemon{hw: testDev, ecWedged: true}
+	if resp := d.dispatch(request{Cmd: "profile-list"}); !resp.OK {
+		t.Errorf("profile-list while wedged = %+v, want OK: it touches only state", resp)
+	}
+}

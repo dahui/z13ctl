@@ -15,6 +15,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/cli"
+	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
@@ -119,7 +120,42 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	_ = conn.Close()
 }
 
+// ecGuarded reports whether cmd reaches the embedded controller through
+// asus-wmi or asus-armoury, and so must be refused while d.ecWedged is set.
+// Writes are the obvious half. The *-get commands for the firmware toggles are
+// here because their attributes are not driver caches: each read is a live WMI
+// call, and into a stalled EC a read holds the ACPI global mutex exactly as a
+// write does. Lighting is hidraw, the profile CRUD commands touch only state,
+// cpuboost is cpufreq, telemetry-history is the in-memory ring, and undervolt is
+// the SMU rather than the EC, so none of those are guarded.
+func ecGuarded(cmd string) bool {
+	switch cmd {
+	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
+		"batterylimit", "bootsound", "paneloverdrive", "feature",
+		"bootsound-get", "paneloverdrive-get", "feature-get":
+		return true
+	}
+	return false
+}
+
+// errECWedged is what a guarded command gets while the EC is not answering.
+const errECWedged = "the embedded controller has not answered since resume; " +
+	"refusing to touch it (this clears on its own once it responds)"
+
 func (d *Daemon) dispatch(req request) response {
+	// A user command into a stalled EC hard-locks the machine just as surely as
+	// a watcher's does, and nobody asking for a TDP change wants that instead.
+	// Refused up front, before any handler runs, so a click in the GUI during the
+	// wedge costs an error message rather than a power-button reset.
+	if ecGuarded(req.Cmd) {
+		d.mu.Lock()
+		wedged := d.ecWedged
+		d.mu.Unlock()
+		if wedged {
+			return response{OK: false, Error: errECWedged}
+		}
+	}
+
 	switch req.Cmd {
 	case "apply":
 		return d.handleApply(req)
@@ -194,8 +230,20 @@ func (d *Daemon) dispatch(req request) response {
 		// still see the settings that are in force. Two of the three are then
 		// overwritten with live sysfs readings below.
 		s := withLegacyProjection(cloneState(d.state))
+		wedged := d.ecWedged
 		d.mu.Unlock()
-		if bat, ok := d.batteryStatus(); ok {
+		// While the EC is not answering, skip the reads that are live ACPI/WMI
+		// calls rather than driver caches — the battery and AC status, the
+		// firmware toggles (asus-armoury), and the telemetry sample and fan RPM
+		// (asus-wmi). A GUI polls this, so it would otherwise be the first thing to
+		// walk into the stalled EC. Those fields keep the values in daemon state;
+		// the reads left live below are cached or not the EC at all.
+		var bat driver.BatteryStatus
+		batOK := false
+		if !wedged {
+			bat, batOK = d.batteryStatus()
+		}
+		if batOK {
 			if bat.ACKnown {
 				s.OnAC = bat.OnAC
 				// SourceKnown is what lets a client distinguish "on battery"
@@ -226,10 +274,12 @@ func (d *Daemon) dispatch(req request) response {
 		// filled from the same reads. A failed read reports zero in the named
 		// fields, as it always has, but is *absent* from Features: zero there
 		// would be a claim the toggle is off.
-		s.BootSound, s.PanelOverdrive = 0, 0
-		s.Features = d.readFeatures()
-		s.BootSound = s.Features["boot_sound"]
-		s.PanelOverdrive = s.Features["panel_overdrive"]
+		if !wedged {
+			s.BootSound, s.PanelOverdrive = 0, 0
+			s.Features = d.readFeatures()
+			s.BootSound = s.Features["boot_sound"]
+			s.PanelOverdrive = s.Features["panel_overdrive"]
+		}
 		// Left nil when the device's firmware interface has no such flag or the
 		// read fails — a client renders that as unknown, never as "nothing
 		// pending", which would be a claim about the firmware.
@@ -256,13 +306,13 @@ func (d *Daemon) dispatch(req request) response {
 		// temperature is unreadable, so fall back to the fan controller for RPM
 		// there — the two readings were always independent on the wire.
 		sampled := false
-		if d.hw != nil && d.hw.Telemetry != nil {
+		if !wedged && d.hw != nil && d.hw.Telemetry != nil {
 			if sample, err := d.hw.Telemetry.Sample(); err == nil {
 				sampled = true
 				d.applyLiveTelemetry(&s, sample)
 			}
 		}
-		if !sampled && d.hw != nil && d.hw.Fans != nil {
+		if !wedged && !sampled && d.hw != nil && d.hw.Fans != nil {
 			if rpms, err := d.hw.Fans.ReadRPM(); err == nil && len(rpms) > 0 {
 				s.RPM = append([]int(nil), rpms...)
 				s.FanRPM = rpms[0]

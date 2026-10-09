@@ -1357,6 +1357,39 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   release. `setSuspending` bumps the generation on entry only (not on exit, and not
   on a repeated entry), and `reconcileTick` zeroes its counter whenever the
   generation it is counting for changes.
+- **A resume that times out on a wedged EC latches `d.ecWedged`, and every
+  path into the EC stands down on it — not just the resume apply.** (Ported from
+  main's v1.3.3: `c92ec8e`, PR #26, and `b3b3c77`.) `d.probeEC()` classifies the
+  error from `d.hw.Battery.Status()`, whose first read is the capacity attribute
+  and comes back unwrapped: `ENODEV` on an existing attribute is a wedged EC,
+  `ENOENT` is no battery, and a device with no battery capability reports ready.
+  `restoreVolatileState` skips `applyCustomHW` when wedged: a WMI write into an EC
+  that is not answering blocks in `acpi_evaluate_object` holding the ACPI global
+  mutex, and the machine hard-locks. Skipping that one call was PR #26's first
+  version and was not enough. The sleep hook had released the curve, so two
+  seconds later `reconcileTick` would have written it straight back into the
+  stalled EC. The latch is consulted by `reconcileTick`, `powerSourceOnce`
+  (returns `prev`, as for `suspending`), `sleepTick` and — v2 only —
+  `telemetryTick`. That last gate is a **safety** property, unlike the suspend
+  gate beside it: `Telemetry.Sample()` reads fan RPM over asus-wmi once a second,
+  which would make the sampler the most frequent thing walking into the EC.
+  `dispatch` refuses the commands in `ecGuarded` with `errECWedged` (v2 adds
+  `feature`, `feature-get` and `tuning-reset` to main's list). `get-state` skips
+  `batteryStatus`, `readFeatures`, `Telemetry.Sample` and the `Fans.ReadRPM`
+  fallback. Reads count because the PR #26 trace's mutex holder was asusd
+  *reading*. `Run()` probes before `restoreHardwareAtStartup`, because a daemon
+  restarted after a bad resume would otherwise write everything with the
+  in-memory latch gone. There is no ceiling: `reconcileOnce` probes once per tick
+  while latched, and only a clean read clears it and runs the held-back
+  `applyCustomHW`. **`ENOENT` is "no battery" only if there was none before the
+  suspend.** `watchResume` records `d.probeEC() != ecAbsent` on each
+  `PrepareForSleep(true)`, and `ecStatusAfterSleep` turns a post-resume
+  `ecAbsent` into `ecWedged` when it was true. That is the probe itself rather
+  than main's `cli.HasBattery()`, so the driver interface needed nothing new.
+  `autoswitch-get` is not gated because `acPower()` goes through
+  `Battery.Status()`, which fails on the capacity read before it reaches AC. A
+  new watcher, socket command or `get-state` field that reaches the EC needs the
+  gate.
 - **The daemon holds a logind delay inhibitor, because
   `PrepareForSleep(true)` is otherwise advisory.** logind emits it and proceeds
   to freeze; the release's sysfs writes racing that is how the fix would silently

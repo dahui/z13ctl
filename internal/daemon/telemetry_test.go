@@ -33,6 +33,10 @@ func TestTelemetryTick(t *testing.T) {
 		// thermal cliff seconds before a suspend that explains nothing.
 		{"suspending", telemetryObs{Suspending: true, HasSource: true, RingCap: 300}, false},
 		{"suspending with nothing to sample anyway", telemetryObs{Suspending: true}, false},
+		// Unlike the suspend gate, this one is a safety property: Sample reads fan
+		// RPM over asus-wmi once a second, and a read into a stalled EC holds the
+		// ACPI global mutex as surely as a write does.
+		{"EC wedged", telemetryObs{ECWedged: true, HasSource: true, RingCap: 300}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -582,5 +586,24 @@ func TestAPITelemetrySampleBoxesFreshPointers(t *testing.T) {
 	got.RPM[0] = 1
 	if rpm[0] != 2400 {
 		t.Error("the wire sample aliases the driver's RPM slice")
+	}
+}
+
+// TestSamplerStandsDownWhileTheECIsWedged drives sampleOnce rather than the tick
+// alone, for the reason the suspending test beside it gives: the gate is worth
+// nothing unless the watcher reads the latch into its observation.
+func TestSamplerStandsDownWhileTheECIsWedged(t *testing.T) {
+	d := &Daemon{hw: testDev, telemetry: telemetryring.New(10)}
+
+	d.setECWedged(true)
+	d.sampleOnce()
+	if got := d.history().Len(); got != 0 {
+		t.Fatalf("sampled %d times with the EC wedged, want 0", got)
+	}
+
+	d.setECWedged(false)
+	d.sampleOnce()
+	if got := d.history().Len(); got != 1 {
+		t.Errorf("after the EC answered the ring holds %d samples, want 1", got)
 	}
 }

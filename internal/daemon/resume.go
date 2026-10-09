@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"syscall"
 	"time"
@@ -69,6 +70,14 @@ func (d *Daemon) watchResume(ctx context.Context) {
 	inhibitor := takeSleepInhibitor(conn)
 	defer releaseSleepInhibitor(&inhibitor)
 
+	// Whether a battery was registered going into the suspend. It is what lets the
+	// resume wait read a battery that has vanished outright as a wedged EC rather
+	// than a batteryless machine — see ecStatusAfterSleep. Seeded here so a resume
+	// signal with no preceding sleep signal still has evidence to go on. Taken
+	// from the probe itself rather than a separate presence check, so the driver
+	// interface needs nothing new: ENOENT is the one answer that means "none".
+	hadBattery := d.probeEC() != ecAbsent
+
 	slog.Info("resume watcher started (listening for PrepareForSleep)")
 
 	for {
@@ -92,6 +101,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				hadBattery = d.probeEC() != ecAbsent
 				// A (true) with no intervening (false) — a retried suspend, an
 				// aborted one, or a lost resume signal — leaves us holding nothing.
 				// Re-taking is too late to delay *this* suspend, but it restores the
@@ -139,17 +149,29 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
 
-			if !d.waitForEC(ctx) {
+			status, ok := d.waitForEC(ctx, hadBattery)
+			if !ok {
 				continue
 			}
+			// Deliberately not a `continue`: restoreVolatileState is what clears
+			// the suspending flag, and skipping it wholesale would stand the
+			// reconcile watcher down until its staleness ceiling expired. It also
+			// restores lighting, which goes over hidraw and never touches the EC.
+			// Only the profile apply at the end has to be held back.
+			if status == ecWedged {
+				slog.Error("EC unresponsive after resume; restoring lighting only and leaving the "+
+					"profile to the reconcile watcher, to keep WMI writes off a stalled ACPI mutex",
+					"waited", ecProbeTimeout)
+			}
 			slog.Info("restoring volatile state")
-			d.restoreVolatileState()
+			d.restoreVolatileState(status)
 		}
 	}
 }
 
 // sleepObs is what the sleep hook observes before touching anything.
 type sleepObs struct {
+	ECWedged  bool   // the last resume left the EC unresponsive; see Daemon.ecWedged
 	Owned     bool   // daemon state says a non-empty custom profile is active
 	CurveMode int    // curve device pwm1_enable; -1 if unreadable
 	PL1       int    // effective sustained limit in watts; -1 if unreadable
@@ -173,6 +195,15 @@ func (a sleepAction) none() bool { return !a.LowerPPT && !a.ReleaseFans }
 // a daemon test that reached the apply path would write the developer's actual
 // fan hardware.
 func sleepTick(obs sleepObs, env driver.PowerEnvelope) sleepAction {
+	// Both releases are asus-wmi writes, and an EC that has not answered since
+	// the last resume is the one place such a write hard-locks the machine. A
+	// curve left running through this suspend is a noisy night; a write into a
+	// stalled EC is a power-button reset. Returning no action also keeps
+	// d.suspending unarmed, since it is armed only once something is released.
+	if obs.ECWedged {
+		return sleepAction{}
+	}
+
 	// The ownership gate is what keeps sleep and resume symmetric. Owned is the
 	// same condition restoreVolatileState restores under, so the invariant holds
 	// in both directions: the sleep hook releases only what applyCustomHW will
@@ -234,9 +265,15 @@ func (d *Daemon) releaseVolatileState() {
 
 	d.mu.Lock()
 	active, ok := d.state.ActiveCustomProfile()
+	wedged := d.ecWedged
 	d.mu.Unlock()
 
+	if wedged {
+		slog.Warn("sleep: leaving fans and power limits as they are; the EC has not answered since the last resume")
+	}
+
 	obs := sleepObs{
+		ECWedged:  wedged,
 		Owned:     ok && !active.Empty(),
 		CurveMode: -1,
 		PL1:       -1,
@@ -384,54 +421,112 @@ const (
 	ecProbeTimeout = 20 * time.Second
 )
 
-// ecResponds reports whether the EC is answering, via the cheapest sysfs signal
+// ecStatus is what one probe of the EC found. A plain bool could not separate
+// the last two cases, and they need opposite handling on timeout: an absent
+// battery must still be restored, a wedged EC must not be written to at all.
+type ecStatus int
+
+const (
+	// ecReady means the probe read succeeded, so the EC is answering.
+	ecReady ecStatus = iota
+	// ecAbsent means the attribute does not exist. A machine with no battery at
+	// all — bench supply, pack removed — reports this way, and nothing about
+	// waiting longer will change it.
+	ecAbsent
+	// ecWedged means the attribute exists but the read failed, in practice with
+	// ENODEV: the power_supply device is registered while its EC is not
+	// answering. This is the state that must not be written to.
+	ecWedged
+)
+
+// probeEC reports what the EC looks like right now, via the cheapest sysfs signal
 // the driver exposes. driver.Battery.Status reads the battery capacity attribute
-// first and returns its error immediately, so a nil error means that single read
-// succeeded — and it never takes the ACPI/WMI path this whole wait exists to stay
-// off. While the EC is still coming up the attribute is present but its device is
-// not, so the read fails fast with ENODEV rather than blocking on the mutex.
+// first and returns its error immediately, unwrapped, so that single read decides
+// the result — and it never takes the ACPI/WMI path this whole probe exists to
+// stay off. While the EC is still coming up the attribute is present but its
+// device is not, so the read fails fast with ENODEV rather than blocking on the
+// mutex.
 //
-// A device with no battery capability has nothing cheap to probe, so it proceeds
-// rather than blocking a restore the machine still needs.
-func (d *Daemon) ecResponds() bool {
+// The ENOENT/ENODEV split is what makes the timeout decision possible. The
+// driver globs for BAT*/capacity and falls back to a BAT0 path that will not
+// exist, so a machine with no battery fails the read with ENOENT while a wedged
+// EC fails an existing path with ENODEV.
+//
+// A device with no battery capability has nothing cheap to probe, so it reports
+// ready rather than blocking a restore the machine still needs.
+func (d *Daemon) probeEC() ecStatus {
 	if d.hw == nil || d.hw.Battery == nil {
-		return true
+		return ecReady
 	}
 	_, err := d.hw.Battery.Status()
-	return err == nil
+	return classifyECRead(err)
+}
+
+// classifyECRead maps the probe read's error to a status. Split out from probeEC
+// so the ENOENT/ENODEV distinction — the one thing this fix turns on — can be
+// tested without redirecting sysfs, which internal/daemon cannot do because
+// the driver's path vars are unexported.
+func classifyECRead(err error) ecStatus {
+	switch {
+	case err == nil:
+		return ecReady
+	case errors.Is(err, fs.ErrNotExist):
+		return ecAbsent
+	default:
+		return ecWedged
+	}
+}
+
+// ecStatusAfterSleep corrects a probe result with what was true before the
+// suspend. ENOENT means "no battery" only on a machine that never had one: if the
+// kernel unregisters the power_supply device when its EC dies, the attribute is
+// gone rather than failing, and classifyECRead alone would wave the restore
+// through into the very EC it exists to protect. The Z13's battery is internal,
+// so on this hardware a battery that was there before sleep and is missing after
+// it is a wedge, not a removal.
+func ecStatusAfterSleep(s ecStatus, hadBattery bool) ecStatus {
+	if s == ecAbsent && hadBattery {
+		return ecWedged
+	}
+	return s
 }
 
 // waitForEC blocks until the EC answers, ctx is cancelled, or ecProbeTimeout
-// elapses. Returns false only on cancellation.
-func (d *Daemon) waitForEC(ctx context.Context) bool {
-	return waitForECWith(ctx, d.ecResponds, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
+// elapses. The bool is false only on cancellation. hadBattery is whether a
+// battery was registered going into the suspend; see ecStatusAfterSleep.
+func (d *Daemon) waitForEC(ctx context.Context, hadBattery bool) (ecStatus, bool) {
+	probe := func() ecStatus { return ecStatusAfterSleep(d.probeEC(), hadBattery) }
+	return waitForECWith(ctx, probe, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
 }
 
 // waitForECWith is waitForEC with its probe and timings injected, so the policy
 // can be tested without real sysfs or real delays.
 //
-// On timeout it returns true and lets the restore proceed rather than skipping
-// it: a machine with no battery at all (bench supply, pack removed) reports the
-// same way as a wedged EC, and must still get its profile back.
-func waitForECWith(ctx context.Context, responds func() bool, settle, interval, timeout time.Duration) bool {
+// On timeout it returns what the last probe actually saw rather than a blanket
+// "go ahead". ecAbsent still restores: a batteryless machine has nothing to wait
+// for and must not be stranded on whatever the firmware left behind. ecWedged
+// does not, and the caller restores only what does not touch the EC — driving a
+// WMI write into an EC that is not answering is what wedges the ACPI global
+// mutex and hard-locks every core, which is the whole reason this wait exists.
+func waitForECWith(ctx context.Context, probe func() ecStatus, settle, interval, timeout time.Duration) (ecStatus, bool) {
 	select {
 	case <-ctx.Done():
-		return false
+		return ecWedged, false
 	case <-time.After(settle):
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
-		if responds() {
-			return true
+		status := probe()
+		if status == ecReady {
+			return ecReady, true
 		}
 		if time.Now().After(deadline) {
-			slog.Warn("EC still unresponsive after resume; restoring anyway", "waited", timeout)
-			return true
+			return status, true
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return ecWedged, false
 		case <-time.After(interval):
 		}
 	}
@@ -439,7 +534,11 @@ func waitForECWith(ctx context.Context, responds func() bool, settle, interval, 
 
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
 // lighting, fan curves, TDP, and Curve Optimizer offsets.
-func (d *Daemon) restoreVolatileState() {
+//
+// ec is what the resume wait last saw. Everything up to the profile apply is
+// safe in any state — lighting is hidraw and the suspending flag must be cleared
+// on every path — so only the closing applyCustomHW is gated on it.
+func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// hwMu before d.mu: the fan/TDP block below writes the same attributes the
 	// socket handlers and the reconcile watcher do.
 	d.hwMu.Lock()
@@ -459,6 +558,11 @@ func (d *Daemon) restoreVolatileState() {
 	// the plain struct copy would alias the Devices map and the pointer fields
 	// still owned by d.state.
 	d.mu.Lock()
+	// Latched here, under hwMu, so no watcher can run between the wait's verdict
+	// and the latch: the reconcile, power-source and telemetry watchers all
+	// consult it, and the first two take hwMu first. A later resume that finds
+	// the EC answering clears it again.
+	d.ecWedged = ec == ecWedged
 	state := cloneState(d.state)
 	if d.hw != nil && d.hw.Lighting != nil {
 		// USB re-enumerates across suspend, so the handle opened at startup (or
@@ -499,6 +603,19 @@ func (d *Daemon) restoreVolatileState() {
 	// which is how the four drifted apart in the first place; every fix to the
 	// ordering or the clearing rules now lands here too. hwMu is already held and
 	// d.mu is not, which is what applyCustomHW requires.
+	// applyCustomHW writes fan curves and PPT through asus-wmi, so it is exactly
+	// the call that must not run against an EC that is not answering. It is not
+	// lost: the reconcile watcher keeps probing while d.ecWedged is set, and runs
+	// this same apply once the EC reads cleanly. Until then every watcher that
+	// writes fan or PPT hardware stands down on the latch set above — the curve
+	// this skips would otherwise be "repaired" by reconcile two seconds later,
+	// into the same stalled EC.
+	if ec == ecWedged {
+		slog.Error("skipping custom profile restore: the EC is not answering",
+			"profile", active.Name)
+		return
+	}
+
 	slog.Info("resume: restoring custom profile", "profile", active.Name)
 	d.applyCustomHW(active)
 }

@@ -10,10 +10,15 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 func TestSleepTick(t *testing.T) {
@@ -70,6 +75,17 @@ func TestSleepTick(t *testing.T) {
 			// neither it nor the PPT we would have lowered.
 			name: "a curve the daemon does not own is untouched",
 			obs:  sleepObs{Owned: false, CurveMode: 1, PL1: 90, Firmware: "balanced"},
+		},
+		{
+			// Both releases are asus-wmi writes. A curve left running through one
+			// suspend is noise; a write into an EC that has not answered since the
+			// last resume is a hard lock.
+			name: "nothing is released while the EC is wedged",
+			obs:  sleepObs{ECWedged: true, Owned: true, CurveMode: 1, PL1: 45, Firmware: "balanced"},
+		},
+		{
+			name: "not even the PPT lowering a high limit would otherwise need",
+			obs:  sleepObs{ECWedged: true, Owned: true, CurveMode: 1, PL1: 90, Firmware: "balanced"},
 		},
 	}
 
@@ -242,28 +258,145 @@ func TestSuspendCeilingExceedsInhibitDelay(t *testing.T) {
 	}
 }
 
+func TestClassifyECReadSeparatesAbsentFromWedged(t *testing.T) {
+	t.Parallel()
+	// The whole fix turns on this distinction. ENOENT is a machine with no
+	// battery, which must still be restored; ENODEV is a registered power_supply
+	// whose EC is not answering, which must not be written to. Collapsing both
+	// into "did the read fail" is what let a wedged EC through to a PPT write.
+	cases := []struct {
+		name string
+		err  error
+		want ecStatus
+	}{
+		{"read succeeded", nil, ecReady},
+		{"no battery at all", fs.ErrNotExist, ecAbsent},
+		{"wrapped ENOENT", &fs.PathError{Err: syscall.ENOENT}, ecAbsent},
+		{"EC not answering", &fs.PathError{Err: syscall.ENODEV}, ecWedged},
+		{"read timed out", &fs.PathError{Err: syscall.ETIMEDOUT}, ecWedged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := classifyECRead(tc.err); got != tc.want {
+				t.Errorf("classifyECRead(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWaitForECWaitsForTheECToAnswer(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	responds := func() bool {
+	probe := func() ecStatus {
 		calls++
-		return calls >= 3
+		if calls >= 3 {
+			return ecReady
+		}
+		return ecWedged
 	}
-	if !waitForECWith(t.Context(), responds, 0, time.Millisecond, time.Second) {
+	status, ok := waitForECWith(t.Context(), probe, 0, time.Millisecond, time.Second)
+	if !ok {
 		t.Fatal("waitForECWith reported cancellation for a probe that answered")
+	}
+	if status != ecReady {
+		t.Errorf("status = %v, want ecReady", status)
 	}
 	if calls != 3 {
 		t.Errorf("probed %d times, want 3: the loop must retry until the EC answers", calls)
 	}
 }
 
-func TestWaitForECRestoresAnywayOnTimeout(t *testing.T) {
+func TestWaitForECRestoresAnywayWhenThereIsNoBattery(t *testing.T) {
 	t.Parallel()
-	// A machine with no battery reports exactly like a wedged EC. Skipping the
-	// restore there would strand it on whatever the firmware left behind.
-	never := func() bool { return false }
-	if !waitForECWith(t.Context(), never, 0, time.Millisecond, 5*time.Millisecond) {
-		t.Error("timeout returned false; a batteryless machine would never be restored")
+	// A bench supply or a removed pack never answers, but it is not a wedged EC:
+	// the attribute is missing rather than failing. Skipping the restore there
+	// would strand the machine on whatever the firmware left behind.
+	absent := func() ecStatus { return ecAbsent }
+	status, ok := waitForECWith(t.Context(), absent, 0, time.Millisecond, 5*time.Millisecond)
+	if !ok {
+		t.Fatal("a batteryless machine reported cancellation")
+	}
+	if status != ecAbsent {
+		t.Errorf("status = %v, want ecAbsent: a batteryless machine must still be restored", status)
+	}
+}
+
+func TestWaitForECReportsAWedgedECOnTimeout(t *testing.T) {
+	t.Parallel()
+	// The regression this whole wait exists for: the attribute is present and the
+	// read keeps failing, so the EC is up but not answering. Reporting ecReady —
+	// or the old blanket "restore anyway" — drives a WMI write into the stalled
+	// ACPI mutex and hard-locks every core.
+	wedged := func() ecStatus { return ecWedged }
+	status, ok := waitForECWith(t.Context(), wedged, 0, time.Millisecond, 5*time.Millisecond)
+	if !ok {
+		t.Fatal("a wedged EC reported cancellation rather than a timeout")
+	}
+	if status != ecWedged {
+		t.Errorf("status = %v, want ecWedged: the profile restore must be held back", status)
+	}
+}
+
+func TestECStatusAfterSleepTreatsAVanishedBatteryAsWedged(t *testing.T) {
+	t.Parallel()
+	// The residual hole in the ENOENT/ENODEV split: a kernel that unregisters the
+	// battery when the EC dies makes the read fail with ENOENT, which on its own
+	// classifies as "no battery" and restores into the dead EC.
+	cases := []struct {
+		name       string
+		probe      ecStatus
+		hadBattery bool
+		want       ecStatus
+	}{
+		{"battery vanished across the suspend", ecAbsent, true, ecWedged},
+		{"never had a battery", ecAbsent, false, ecAbsent},
+		{"answering", ecReady, true, ecReady},
+		{"wedged stays wedged", ecWedged, false, ecWedged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ecStatusAfterSleep(tc.probe, tc.hadBattery); got != tc.want {
+				t.Errorf("ecStatusAfterSleep(%v, %v) = %v, want %v", tc.probe, tc.hadBattery, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRestoreLatchesAWedgedEC pins the hand-off from the resume wait to the
+// watchers. restoreVolatileState is the only place the wait's verdict lands, so
+// it must record it for the reconcile, power-source and sleep paths to stand down
+// on, and a later resume that finds the EC answering must lift it.
+//
+// It runs the real function on a firmware profile with no HID device, which
+// returns before any hardware access: the lighting block is skipped on a nil
+// d.dev, and a firmware profile has nothing for applyCustomHW to restore.
+func TestRestoreLatchesAWedgedEC(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{state: api.State{Profile: "balanced"}}
+
+	wedged := func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.ecWedged
+	}
+
+	d.restoreVolatileState(ecWedged)
+	if !wedged() {
+		t.Fatal("a wedged EC was not latched; the reconcile watcher would write into it two seconds later")
+	}
+
+	// A batteryless machine is not wedged: nothing about it blocks a WMI write.
+	d.restoreVolatileState(ecAbsent)
+	if wedged() {
+		t.Error("ecAbsent left the latch set; a batteryless machine would never be restored")
+	}
+
+	d.restoreVolatileState(ecWedged)
+	d.restoreVolatileState(ecReady)
+	if wedged() {
+		t.Error("a resume that found the EC answering did not lift the latch")
 	}
 }
 
@@ -271,8 +404,48 @@ func TestWaitForECAbandonsOnCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if waitForECWith(ctx, func() bool { return false }, time.Hour, time.Hour, time.Hour) {
+	probe := func() ecStatus { return ecWedged }
+	if _, ok := waitForECWith(ctx, probe, time.Hour, time.Hour, time.Hour); ok {
 		t.Error("a cancelled context must abandon the wait, not restore")
+	}
+}
+
+// errBattery is a driver.Battery whose Status fails with a chosen error, so
+// probeEC's classification can be driven through the real v2 call path —
+// d.hw.Battery.Status() — without reading the developer's battery.
+type errBattery struct{ err error }
+
+func (errBattery) Caps() driver.BatteryCaps                { return driver.BatteryCaps{} }
+func (errBattery) ChargeLimit() (int, error)               { return 0, nil }
+func (errBattery) SetChargeLimit(int) error                { return nil }
+func (b errBattery) Status() (driver.BatteryStatus, error) { return driver.BatteryStatus{}, b.err }
+
+// TestProbeECClassifiesThroughTheDriver pins that the ENOENT/ENODEV split
+// survives the driver abstraction: asusz13's Status returns the capacity read's
+// error unwrapped, and a wrapped one must classify the same way. A device with
+// no battery capability has nothing cheap to probe and must not block a restore.
+func TestProbeECClassifiesThroughTheDriver(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		hw   *device.Device
+		want ecStatus
+	}{
+		{"no device at all", nil, ecReady},
+		{"device without a battery", &device.Device{}, ecReady},
+		{"capacity read succeeds", &device.Device{Battery: errBattery{}}, ecReady},
+		{"no battery attribute", &device.Device{Battery: errBattery{&fs.PathError{Op: "open", Err: syscall.ENOENT}}}, ecAbsent},
+		{"EC not answering", &device.Device{Battery: errBattery{&fs.PathError{Op: "read", Err: syscall.ENODEV}}}, ecWedged},
+		{"wrapped ENODEV", &device.Device{Battery: errBattery{fmt.Errorf("battery: %w", syscall.ENODEV)}}, ecWedged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := &Daemon{hw: tc.hw}
+			if got := d.probeEC(); got != tc.want {
+				t.Errorf("probeEC() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

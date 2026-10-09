@@ -30,6 +30,7 @@ const telemetrySampleInterval = time.Second
 // telemetryObs is one tick's view of the world.
 type telemetryObs struct {
 	Suspending bool // between PrepareForSleep(true) and the resume
+	ECWedged   bool // the last resume left the EC unresponsive; see Daemon.ecWedged
 	HasSource  bool // the device has a telemetry driver
 	RingCap    int  // how many samples the ring retains
 }
@@ -62,12 +63,22 @@ type telemetryAction struct {
 // here a lost resume signal costs a gap in a graph until the next suspend
 // clears the flag, and re-arming on a guess would put samples back exactly
 // where they are least trustworthy.
+//
+// The EC gate beside it is the opposite case: it **is** a safety property, and
+// must not be relaxed on the reasoning above. Sample reads fan RPM through
+// asus-wmi and the battery through ACPI, and does it once a second — so while
+// the EC is not answering, this watcher would be the most frequent thing to walk
+// into it, and one blocked read holds the ACPI global mutex as surely as a
+// write. The gap in the graph is the cost; the reconcile watcher's probe lifts
+// the latch once the EC reads cleanly.
 func telemetryTick(obs telemetryObs) telemetryAction {
 	switch {
 	case !obs.HasSource:
 		return telemetryAction{Reason: "device has no telemetry source"}
 	case obs.RingCap <= 0:
 		return telemetryAction{Reason: "no history retained for this device"}
+	case obs.ECWedged:
+		return telemetryAction{Reason: "EC not answering"}
 	case obs.Suspending:
 		return telemetryAction{Reason: "suspending"}
 	}
@@ -154,11 +165,12 @@ func packagePowerW(prev, cur energyReading) (watts float64, ok bool) {
 // handlers avoid by the same reasoning. The ring carries its own lock.
 func (d *Daemon) sampleOnce() {
 	d.mu.Lock()
-	suspending := d.suspending
+	suspending, wedged := d.suspending, d.ecWedged
 	d.mu.Unlock()
 
 	act := telemetryTick(telemetryObs{
 		Suspending: suspending,
+		ECWedged:   wedged,
 		HasSource:  d.hw != nil && d.hw.Telemetry != nil,
 		RingCap:    d.history().Cap(),
 	})
