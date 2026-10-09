@@ -324,6 +324,9 @@ func TestAutoswitchTarget(t *testing.T) {
 // so an implementation that ran powerTick and dropped only the apply consumed the
 // edge — every later tick then computed sourceChanged == false and the machine ran
 // the AC profile on battery until the charger was physically cycled.
+//
+// The EC stand-down (d.ecWedged) returns prev at the same point for the same
+// reason, so this covers a transition deferred across a wedged EC as well.
 func TestAutoswitchDeferralSurvivesTheSuspend(t *testing.T) {
 	t.Parallel()
 

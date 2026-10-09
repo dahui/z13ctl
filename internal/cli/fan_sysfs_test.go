@@ -481,6 +481,20 @@ func TestBatteryPathsGlobBATStar(t *testing.T) {
 	}
 }
 
+// HasBattery is the daemon's evidence that a battery existed before a suspend,
+// which is what lets the resume wait read a battery that has vanished outright
+// as a wedged EC rather than as a batteryless machine.
+func TestHasBatteryFollowsTheCapacityAttribute(t *testing.T) {
+	f := newFakeSysfs(t)
+	if HasBattery() {
+		t.Fatal("HasBattery() = true with no capacity attribute")
+	}
+	f.writeFile(t, f.battery+"/capacity", "55")
+	if !HasBattery() {
+		t.Error("HasBattery() = false with BAT0/capacity present")
+	}
+}
+
 func TestReadAPUTemperatureConvertsMillidegrees(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.writeFile(t, f.hwmonTemp+"/temp1_input", "62500")

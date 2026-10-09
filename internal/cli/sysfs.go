@@ -200,3 +200,13 @@ func FindBatteryCapacityPath() string {
 	}
 	return sysPowerSupplyDir + "/BAT0/capacity"
 }
+
+// HasBattery reports whether a battery is registered, by the same glob
+// FindBatteryCapacityPath uses. It checks only that the attribute exists, never
+// reads it, so it stays off the EC: a power_supply device whose EC is not
+// answering still has its attribute files, and reading one is what tells the two
+// apart.
+func HasBattery() bool {
+	matches, _ := filepath.Glob(sysPowerSupplyDir + "/BAT*/capacity")
+	return len(matches) > 0
+}

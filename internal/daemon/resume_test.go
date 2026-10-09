@@ -74,6 +74,17 @@ func TestSleepTick(t *testing.T) {
 			name: "a curve the daemon does not own is untouched",
 			obs:  sleepObs{Owned: false, CurveMode: 1, PL1: 90, Firmware: "balanced"},
 		},
+		{
+			// Both releases are asus-wmi writes. A curve left running through one
+			// suspend is noise; a write into an EC that has not answered since the
+			// last resume is a hard lock.
+			name: "nothing is released while the EC is wedged",
+			obs:  sleepObs{ECWedged: true, Owned: true, CurveMode: 1, PL1: 45, Firmware: "balanced"},
+		},
+		{
+			name: "not even the PPT lowering a high limit would otherwise need",
+			obs:  sleepObs{ECWedged: true, Owned: true, CurveMode: 1, PL1: 90, Firmware: "balanced"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -322,6 +333,68 @@ func TestWaitForECReportsAWedgedECOnTimeout(t *testing.T) {
 	}
 	if status != ecWedged {
 		t.Errorf("status = %v, want ecWedged: the profile restore must be held back", status)
+	}
+}
+
+func TestECStatusAfterSleepTreatsAVanishedBatteryAsWedged(t *testing.T) {
+	t.Parallel()
+	// The residual hole in the ENOENT/ENODEV split: a kernel that unregisters the
+	// battery when the EC dies makes the read fail with ENOENT, which on its own
+	// classifies as "no battery" and restores into the dead EC.
+	cases := []struct {
+		name       string
+		probe      ecStatus
+		hadBattery bool
+		want       ecStatus
+	}{
+		{"battery vanished across the suspend", ecAbsent, true, ecWedged},
+		{"never had a battery", ecAbsent, false, ecAbsent},
+		{"answering", ecReady, true, ecReady},
+		{"wedged stays wedged", ecWedged, false, ecWedged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ecStatusAfterSleep(tc.probe, tc.hadBattery); got != tc.want {
+				t.Errorf("ecStatusAfterSleep(%v, %v) = %v, want %v", tc.probe, tc.hadBattery, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRestoreLatchesAWedgedEC pins the hand-off from the resume wait to the
+// watchers. restoreVolatileState is the only place the wait's verdict lands, so
+// it must record it for the reconcile, power-source and sleep paths to stand down
+// on, and a later resume that finds the EC answering must lift it.
+//
+// It runs the real function on a firmware profile with no HID device, which
+// returns before any hardware access: the lighting block is skipped on a nil
+// d.dev, and a firmware profile has nothing for applyCustomHW to restore.
+func TestRestoreLatchesAWedgedEC(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{state: api.State{Profile: "balanced"}}
+
+	wedged := func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.ecWedged
+	}
+
+	d.restoreVolatileState(ecWedged)
+	if !wedged() {
+		t.Fatal("a wedged EC was not latched; the reconcile watcher would write into it two seconds later")
+	}
+
+	// A batteryless machine is not wedged: nothing about it blocks a WMI write.
+	d.restoreVolatileState(ecAbsent)
+	if wedged() {
+		t.Error("ecAbsent left the latch set; a batteryless machine would never be restored")
+	}
+
+	d.restoreVolatileState(ecWedged)
+	d.restoreVolatileState(ecReady)
+	if wedged() {
+		t.Error("a resume that found the EC answering did not lift the latch")
 	}
 }
 

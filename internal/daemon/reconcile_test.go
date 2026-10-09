@@ -190,6 +190,23 @@ func TestReconcileTick(t *testing.T) {
 			name: "suspending: a drifted PPT is left alone too",
 			obs:  reconcileObs{Custom: true, Suspending: true, CurveMode: 1, PL1: 35, WantTDP: floorTDP},
 		},
+		{
+			// The gap PR #26 left open: resume skipped its apply because the EC
+			// was not answering, and this is the same WMI write two seconds later.
+			// The sleep hook released the curve, so without the gate this row
+			// restores it into a stalled EC.
+			name: "EC wedged: a dropped curve is not written",
+			obs:  reconcileObs{Custom: true, ECWedged: true, WantCurve: saved, CurveMode: 2, PL1: 35},
+		},
+		{
+			name: "EC wedged: a drifted PPT is not written either",
+			obs:  reconcileObs{Custom: true, ECWedged: true, CurveMode: 1, PL1: 35, WantTDP: floorTDP},
+		},
+		{
+			// Not even the floor: raising it is a fan-curve write like any other.
+			name: "EC wedged: a high limit with no floor is still left alone",
+			obs:  reconcileObs{Custom: true, ECWedged: true, CurveMode: 2, PL1: 90},
+		},
 	}
 
 	for _, tt := range tests {

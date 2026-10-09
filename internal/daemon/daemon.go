@@ -63,6 +63,16 @@ type Daemon struct {
 	// and eventually expired *inside* a real pre-freeze window.
 	suspendGen int
 
+	// ecWedged is set by restoreVolatileState when the resume wait timed out on an
+	// EC that is present but not answering, and cleared only by a probe that reads
+	// cleanly. While it is set nothing may write through asus-wmi: such a write
+	// blocks in acpi_evaluate_object holding the ACPI global mutex, and every
+	// other ACPI consumer piles up behind it until the machine hard-locks.
+	// Skipping the resume apply alone is not enough — the reconcile watcher
+	// would make the same writes two seconds later — so every watcher that
+	// writes fan or PPT hardware consults it.
+	ecWedged bool
+
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
 
@@ -119,6 +129,123 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	// Probe the EC before anything below touches it. A daemon restarted after a
+	// bad resume — the natural thing to try — would otherwise write
+	// platform_profile, PPT, the battery limit and the custom profile into an EC
+	// that is not answering, with the latch that would have stopped it lost along
+	// with the old process. Lighting above is hidraw and has already gone out.
+	//
+	// ENOENT stays ecAbsent here: there is no pre-sleep evidence of a battery, so
+	// a batteryless machine boots exactly as before. Once the reconcile watcher's
+	// probe reads cleanly it restores a custom profile in full. A firmware profile
+	// needs nothing: platform_profile is firmware state and survives the restart.
+	// The one thing not recovered is a startup autoswitch, which the power-source
+	// watcher then picks up at the next real AC/battery transition.
+	if probeEC() == ecWedged {
+		d.ecWedged = true
+		slog.Error("EC not answering at startup; leaving power and fan settings alone until it responds")
+	} else {
+		d.restoreHardwareAtStartup()
+	}
+
+	if opts.WatchButton {
+		go watchButton(ctx, d.buttonCh)
+	} else {
+		slog.Info("Armoury Crate button watcher disabled")
+	}
+
+	go d.watchResume(ctx)
+
+	go d.watchHotplug(ctx)
+
+	// State-driven, so it is a no-op on a machine that never uses a custom
+	// profile; register it unconditionally.
+	go d.watchReconcile(ctx)
+
+	// Likewise inert until autoswitch is configured.
+	go d.watchPowerSource(ctx)
+
+	ln, err := d.getListener()
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	if _, err := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); err != nil {
+		slog.Warn("sd_notify READY failed", "err", err)
+	}
+	slog.Info("z13ctl daemon ready", "socket", ln.Addr())
+
+	go d.broadcastLoop(ctx)
+
+	go func() {
+		<-ctx.Done()
+		_, _ = sddaemon.SdNotify(false, sddaemon.SdNotifyStopping)
+		_ = ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("accept: %w", err)
+		}
+		go d.handleConn(conn)
+	}
+}
+
+// getListener returns a net.Listener from systemd socket activation if available,
+// otherwise creates a new Unix socket at socketPath().
+func (d *Daemon) getListener() (net.Listener, error) {
+	listeners, err := activation.Listeners()
+	if err == nil && len(listeners) > 0 && listeners[0] != nil {
+		slog.Info("using systemd socket activation")
+		return listeners[0], nil
+	}
+
+	sock := api.SocketPath()
+	if mkdirErr := os.MkdirAll(filepath.Dir(sock), 0o750); mkdirErr != nil {
+		return nil, mkdirErr
+	}
+	_ = os.Remove(sock)
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("listening on Unix socket", "path", sock)
+	return ln, nil
+}
+
+// broadcastLoop forwards Armoury Crate button presses to all subscribers
+// until ctx is done, then closes all subscriber connections.
+func (d *Daemon) broadcastLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			d.subMu.Lock()
+			for _, s := range d.subscribers {
+				_ = s.conn.Close()
+			}
+			d.subscribers = nil
+			d.subMu.Unlock()
+			return
+		case <-d.buttonCh:
+			// OK must be true: `ok` has no omitempty, so leaving it zero ships
+			// {"ok":false,...} on a perfectly good event, and any client that
+			// checks ok before dispatching — the documented contract — silently
+			// drops every button press.
+			d.broadcast(response{OK: true, Event: api.EventGUIToggle})
+		}
+	}
+}
+
+// restoreHardwareAtStartup puts the saved profile, power limits, battery limit
+// and panel overdrive back when the daemon starts. Run() calls it only once the
+// EC has answered, and before any watcher starts, so it runs single-threaded
+// and takes no locks — which is also why nothing else may call it.
+func (d *Daemon) restoreHardwareAtStartup() {
 	// Resolve the power source before restoring anything, so a machine that was
 	// on AC when the daemon stopped and is on battery now lands on the battery
 	// profile directly. The watcher deliberately does not act on its first
@@ -224,98 +351,6 @@ func Run(ctx context.Context, opts Options) error {
 			slog.Warn("failed to save the startup autoswitch profile", "err", saveErr)
 		}
 	}
-
-	if opts.WatchButton {
-		go watchButton(ctx, d.buttonCh)
-	} else {
-		slog.Info("Armoury Crate button watcher disabled")
-	}
-
-	go d.watchResume(ctx)
-
-	go d.watchHotplug(ctx)
-
-	// State-driven, so it is a no-op on a machine that never uses a custom
-	// profile; register it unconditionally.
-	go d.watchReconcile(ctx)
-
-	// Likewise inert until autoswitch is configured.
-	go d.watchPowerSource(ctx)
-
-	ln, err := d.getListener()
-	if err != nil {
-		return fmt.Errorf("socket: %w", err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	if _, err := sddaemon.SdNotify(false, sddaemon.SdNotifyReady); err != nil {
-		slog.Warn("sd_notify READY failed", "err", err)
-	}
-	slog.Info("z13ctl daemon ready", "socket", ln.Addr())
-
-	go d.broadcastLoop(ctx)
-
-	go func() {
-		<-ctx.Done()
-		_, _ = sddaemon.SdNotify(false, sddaemon.SdNotifyStopping)
-		_ = ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("accept: %w", err)
-		}
-		go d.handleConn(conn)
-	}
-}
-
-// getListener returns a net.Listener from systemd socket activation if available,
-// otherwise creates a new Unix socket at socketPath().
-func (d *Daemon) getListener() (net.Listener, error) {
-	listeners, err := activation.Listeners()
-	if err == nil && len(listeners) > 0 && listeners[0] != nil {
-		slog.Info("using systemd socket activation")
-		return listeners[0], nil
-	}
-
-	sock := api.SocketPath()
-	if mkdirErr := os.MkdirAll(filepath.Dir(sock), 0o750); mkdirErr != nil {
-		return nil, mkdirErr
-	}
-	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("listening on Unix socket", "path", sock)
-	return ln, nil
-}
-
-// broadcastLoop forwards Armoury Crate button presses to all subscribers
-// until ctx is done, then closes all subscriber connections.
-func (d *Daemon) broadcastLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			d.subMu.Lock()
-			for _, s := range d.subscribers {
-				_ = s.conn.Close()
-			}
-			d.subscribers = nil
-			d.subMu.Unlock()
-			return
-		case <-d.buttonCh:
-			// OK must be true: `ok` has no omitempty, so leaving it zero ships
-			// {"ok":false,...} on a perfectly good event, and any client that
-			// checks ok before dispatching — the documented contract — silently
-			// drops every button press.
-			d.broadcast(response{OK: true, Event: api.EventGUIToggle})
-		}
-	}
 }
 
 // broadcastWriteTimeout bounds a single write to one subscriber.
@@ -413,6 +448,14 @@ func (d *Daemon) setSuspending(v bool) {
 		d.suspendGen++
 	}
 	d.suspending = v
+	d.mu.Unlock()
+}
+
+// setECWedged records whether the EC was left unresponsive by a resume. See the
+// field comment on Daemon.ecWedged.
+func (d *Daemon) setECWedged(v bool) {
+	d.mu.Lock()
+	d.ecWedged = v
 	d.mu.Unlock()
 }
 

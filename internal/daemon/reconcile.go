@@ -73,6 +73,7 @@ const reconcileSuspendMaxTicks = 60
 type reconcileObs struct {
 	Custom     bool                // daemon state says a custom profile is active
 	Suspending bool                // the sleep hook has released the fans on purpose
+	ECWedged   bool                // the last resume left the EC unresponsive; see Daemon.ecWedged
 	SuspendGen int                 // increments per suspend; see the gate in reconcileTick
 	WantCurve  []api.FanCurvePoint // that profile's curve; nil if none
 	WantTDP    *api.TDPState       // that profile's TDP; nil if none
@@ -118,6 +119,17 @@ type reconcileState struct {
 func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, reconcileAction) {
 	st := prev
 	st.lastHW = obs.ProfileHW
+
+	// Every write below goes through asus-wmi, and into an EC that is not
+	// answering that write wedges the ACPI global mutex and hard-locks the
+	// machine. The resume path skipped its apply for exactly that reason; acting
+	// here would make the same write two seconds later. There is deliberately no
+	// ceiling, unlike the suspend stand-down: that one guards against a signal
+	// that went missing, while this one is lifted by the EC itself answering —
+	// reconcileOnce probes for it every tick.
+	if obs.ECWedged {
+		return st, reconcileAction{}
+	}
 
 	// The sleep hook released the fans deliberately so the EC can stop them
 	// through s2idle; re-enabling the curve here would undo it in the window
@@ -289,10 +301,35 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 
 	d.mu.Lock()
 	s := cloneState(d.state) // must clone: FanCurve.Points and TDP alias live state
-	suspending, suspendGen := d.suspending, d.suspendGen
+	suspending, suspendGen, wedged := d.suspending, d.suspendGen, d.ecWedged
 	d.mu.Unlock()
 
+	// The resume left the EC unresponsive and skipped the profile apply. Probe it
+	// once per tick — the read fails fast with ENODEV rather than taking the ACPI
+	// path — and once it answers, run the apply that resume held back. Only a
+	// clean read lifts the latch: an attribute that has vanished outright is no
+	// evidence the EC came back.
+	if wedged {
+		if probeEC() != ecReady {
+			slog.Debug("reconcile watcher standing down: the EC is still not answering")
+		} else {
+			d.setECWedged(false)
+			active, ok := s.ActiveCustomProfile()
+			if !ok || active.Empty() {
+				slog.Info("EC answering again after resume")
+				return prev
+			}
+			// hwMu is held and d.mu is not, which is what applyCustomHW requires.
+			// It is the full sequence — Curve Optimizer included — rather than the
+			// curve and TDP this watcher would otherwise repair on its own.
+			slog.Info("EC answering again after resume; restoring custom profile", "profile", active.Name)
+			d.applyCustomHW(active)
+			return prev
+		}
+	}
+
 	obs := reconcileObs{
+		ECWedged:   wedged,
 		Suspending: suspending,
 		SuspendGen: suspendGen,
 		CurveMode:  -1,

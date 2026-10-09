@@ -864,6 +864,40 @@ contrib/
   release. `setSuspending` bumps the generation on entry only (not on exit, and not
   on a repeated entry), and `reconcileTick` zeroes its counter whenever the
   generation it is counting for changes.
+- **A resume that times out on a wedged EC latches `d.ecWedged`, and every
+  asus-wmi writer stands down on it — not just the resume apply.** The wait
+  (`waitForECWith`) tells a wedged EC (`ENODEV` on an existing battery attribute)
+  from a batteryless machine (`ENOENT`), and `restoreVolatileState` skips
+  `applyCustomHW` for the former: a WMI write into an EC that is not answering
+  blocks in `acpi_evaluate_object` holding the ACPI global mutex, and the machine
+  hard-locks. Skipping that one call was the first version of the fix (PR #26)
+  and was not enough on its own. The sleep hook had released the curve, so two
+  seconds later `reconcileTick` saw `pwm_enable=2` on a custom profile and wrote
+  the curve into the same stalled EC. The latch is consulted by `reconcileTick`
+  (pure, table-tested), `powerSourceOnce` (returns `prev`, as for `suspending`)
+  and `sleepTick`. It has no ceiling, unlike `d.suspending`: that one guards
+  against a signal going missing, while this one is lifted only by evidence.
+  `reconcileOnce` probes once per tick while latched, and a clean read clears it
+  and runs the held-back `applyCustomHW` — the whole sequence, Curve Optimizer
+  included. A vanished attribute (`ecAbsent`) does not clear it.
+  **It covers every way into the EC, not just the watchers.** `dispatch` refuses
+  the commands in `ecGuarded` with `errECWedged` before any handler runs — a GUI
+  click into a stalled EC hard-locks the machine as surely as a watcher does — and
+  `get-state` skips its four reads that are live ACPI/WMI calls rather than driver
+  caches (AC `online`, `boot_sound`, `panel_overdrive`, fan RPM). The PR #26 trace
+  is why reads count: the mutex holder there was asusd *reading*, not a writer.
+  The cached reads (`ppt_*`, the curve `pwm*` files, `platform_profile`,
+  `charge_control_end_threshold`) stay live. `Run()` probes once before
+  `restoreHardwareAtStartup`, since a daemon restarted after a bad resume would
+  otherwise write everything into the EC with the in-memory latch gone.
+  **`ENOENT` is "no battery" only if there was none before the suspend.**
+  `watchResume` records `cli.HasBattery()` on each `PrepareForSleep(true)`, and
+  `ecStatusAfterSleep` turns a post-resume `ecAbsent` into `ecWedged` when it was
+  true: a kernel that unregisters the power_supply device when the EC dies would
+  otherwise pass the probe as a batteryless machine. Startup has no such evidence
+  and keeps `ENOENT` as absent. The CLI's no-daemon fallback writes sysfs directly
+  and is not gated. A new watcher, socket command or `get-state` field that reaches
+  the EC needs the gate.
 - **The daemon holds a logind delay inhibitor, because
   `PrepareForSleep(true)` is otherwise advisory.** logind emits it and proceeds
   to freeze; the release's sysfs writes racing that is how the fix would silently

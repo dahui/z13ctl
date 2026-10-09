@@ -217,7 +217,7 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 		auto := *a
 		obs.Auto = &auto
 	}
-	suspending := d.suspending
+	suspending, wedged := d.suspending, d.ecWedged
 	d.mu.Unlock()
 
 	// Stand down *before* powerTick, returning prev untouched — this watcher is
@@ -237,6 +237,15 @@ func (d *Daemon) powerSourceOnce(prev powerState) powerState {
 	// so it is re-detected and confirmed after the resume, one settle window later.
 	if suspending {
 		slog.Debug("power source watcher standing down: the machine is entering sleep")
+		return prev
+	}
+	// Same stand-down, same reason for returning prev: an autoswitch is a
+	// platform_profile write and usually an applyCustomHW, all through asus-wmi,
+	// and the EC has not answered since the last resume. The edge stays
+	// unobserved and is acted on once the reconcile watcher's probe clears the
+	// latch.
+	if wedged {
+		slog.Debug("power source watcher standing down: the EC is not answering")
 		return prev
 	}
 

@@ -72,6 +72,12 @@ func (d *Daemon) watchResume(ctx context.Context) {
 	inhibitor := takeSleepInhibitor(conn)
 	defer releaseSleepInhibitor(&inhibitor)
 
+	// Whether a battery was registered going into the suspend. It is what lets the
+	// resume wait read a battery that has vanished outright as a wedged EC rather
+	// than a batteryless machine — see ecStatusAfterSleep. Seeded here so a resume
+	// signal with no preceding sleep signal still has evidence to go on.
+	hadBattery := cli.HasBattery()
+
 	slog.Info("resume watcher started (listening for PrepareForSleep)")
 
 	for {
@@ -95,6 +101,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				hadBattery = cli.HasBattery()
 				// A (true) with no intervening (false) — a retried suspend, an
 				// aborted one, or a lost resume signal — leaves us holding nothing.
 				// Re-taking is too late to delay *this* suspend, but it restores the
@@ -139,7 +146,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
 
-			status, ok := waitForEC(ctx)
+			status, ok := waitForEC(ctx, hadBattery)
 			if !ok {
 				continue
 			}
@@ -161,6 +168,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 
 // sleepObs is what the sleep hook observes before touching anything.
 type sleepObs struct {
+	ECWedged  bool   // the last resume left the EC unresponsive; see Daemon.ecWedged
 	Owned     bool   // daemon state says a non-empty custom profile is active
 	CurveMode int    // curve device pwm1_enable; -1 if unreadable
 	PL1       int    // effective sustained limit in watts; -1 if unreadable
@@ -183,6 +191,15 @@ func (a sleepAction) none() bool { return !a.LowerPPT && !a.ReleaseFans }
 // path vars are unexported, so a daemon test that reached the apply path would
 // write the developer's actual fan hardware.
 func sleepTick(obs sleepObs) sleepAction {
+	// Both releases are asus-wmi writes, and an EC that has not answered since
+	// the last resume is the one place such a write hard-locks the machine. A
+	// curve left running through this suspend is a noisy night; a write into a
+	// stalled EC is a power-button reset. Returning no action also keeps
+	// d.suspending unarmed, since it is armed only once something is released.
+	if obs.ECWedged {
+		return sleepAction{}
+	}
+
 	// The ownership gate is what keeps sleep and resume symmetric. Owned is the
 	// same condition restoreVolatileState restores under, so the invariant holds
 	// in both directions: the sleep hook releases only what applyCustomHW will
@@ -242,9 +259,15 @@ func (d *Daemon) releaseVolatileState() {
 
 	d.mu.Lock()
 	active, ok := d.state.ActiveCustomProfile()
+	wedged := d.ecWedged
 	d.mu.Unlock()
 
+	if wedged {
+		slog.Warn("sleep: leaving fans and power limits as they are; the EC has not answered since the last resume")
+	}
+
 	obs := sleepObs{
+		ECWedged:  wedged,
 		Owned:     ok && !active.Empty(),
 		CurveMode: -1,
 		PL1:       -1,
@@ -429,10 +452,26 @@ func classifyECRead(err error) ecStatus {
 	}
 }
 
+// ecStatusAfterSleep corrects a probe result with what was true before the
+// suspend. ENOENT means "no battery" only on a machine that never had one: if the
+// kernel unregisters the power_supply device when its EC dies, the attribute is
+// gone rather than failing, and classifyECRead alone would wave the restore
+// through into the very EC it exists to protect. The Z13's battery is internal,
+// so on this hardware a battery that was there before sleep and is missing after
+// it is a wedge, not a removal.
+func ecStatusAfterSleep(s ecStatus, hadBattery bool) ecStatus {
+	if s == ecAbsent && hadBattery {
+		return ecWedged
+	}
+	return s
+}
+
 // waitForEC blocks until the EC answers, ctx is cancelled, or ecProbeTimeout
-// elapses. The bool is false only on cancellation.
-func waitForEC(ctx context.Context) (ecStatus, bool) {
-	return waitForECWith(ctx, probeEC, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
+// elapses. The bool is false only on cancellation. hadBattery is whether a
+// battery was registered going into the suspend; see ecStatusAfterSleep.
+func waitForEC(ctx context.Context, hadBattery bool) (ecStatus, bool) {
+	probe := func() ecStatus { return ecStatusAfterSleep(probeEC(), hadBattery) }
+	return waitForECWith(ctx, probe, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
 }
 
 // waitForECWith is waitForEC with its probe and timings injected, so the policy
@@ -493,6 +532,10 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// handlers use. cloneState is required because the plain struct copy would
 	// alias the Devices map and the pointer fields still owned by d.state.
 	d.mu.Lock()
+	// Latched here, under hwMu, so no watcher can run between the wait's verdict
+	// and the latch: the reconcile and power-source watchers both take hwMu
+	// first. A later resume that finds the EC answering clears it again.
+	d.ecWedged = ec == ecWedged
 	state := cloneState(d.state)
 	if d.dev != nil {
 		// USB re-enumerates across suspend, so the handle opened at startup (or
@@ -529,10 +572,12 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	}
 
 	// applyCustomHW writes fan curves and PPT through asus-wmi, so it is exactly
-	// the call that must not run against an EC that is not answering. The curve
-	// and the TDP floor are what the reconcile watcher already puts back on its
-	// own once pwm_enable reads as dropped, so the cost of skipping here is a
-	// delay rather than a setting lost for the rest of the session.
+	// the call that must not run against an EC that is not answering. It is not
+	// lost: the reconcile watcher keeps probing while d.ecWedged is set, and runs
+	// this same apply once the EC reads cleanly. Until then every watcher that
+	// writes fan or PPT hardware stands down on the latch set above — the curve
+	// this skips would otherwise be "repaired" by reconcile two seconds later,
+	// into the same stalled EC.
 	if ec == ecWedged {
 		slog.Error("skipping custom profile restore: the EC is not answering",
 			"profile", active.Name)

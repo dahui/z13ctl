@@ -106,7 +106,41 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	_ = conn.Close()
 }
 
+// ecGuarded reports whether cmd reaches the embedded controller through
+// asus-wmi or asus-armoury, and so must be refused while d.ecWedged is set.
+// Writes are the obvious half. The two *-get commands are here because their
+// attributes are not driver caches: each read is a live WMI call, and into a
+// stalled EC a read holds the ACPI global mutex exactly as a write does.
+// Lighting is hidraw, the profile CRUD commands touch only state, and undervolt
+// is the SMU rather than the EC, so none of those are guarded.
+func ecGuarded(cmd string) bool {
+	switch cmd {
+	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset",
+		"batterylimit", "bootsound", "paneloverdrive",
+		"bootsound-get", "paneloverdrive-get":
+		return true
+	}
+	return false
+}
+
+// errECWedged is what a guarded command gets while the EC is not answering.
+const errECWedged = "the embedded controller has not answered since resume; " +
+	"refusing to touch it (this clears on its own once it responds)"
+
 func (d *Daemon) dispatch(req request) response {
+	// A user command into a stalled EC hard-locks the machine just as surely as
+	// a watcher's does, and nobody asking for a TDP change wants that instead.
+	// Refused up front, before any handler runs, so a click in the GUI during the
+	// wedge costs an error message rather than a power-button reset.
+	if ecGuarded(req.Cmd) {
+		d.mu.Lock()
+		wedged := d.ecWedged
+		d.mu.Unlock()
+		if wedged {
+			return response{OK: false, Error: errECWedged}
+		}
+	}
+
 	switch req.Cmd {
 	case "apply":
 		return d.handleApply(req)
@@ -167,13 +201,22 @@ func (d *Daemon) dispatch(req request) response {
 		// still see the settings that are in force. Two of the three are then
 		// overwritten with live sysfs readings below.
 		s := withLegacyProjection(cloneState(d.state))
+		wedged := d.ecWedged
 		d.mu.Unlock()
-		if onAC, acErr := cli.OnACPower(); acErr == nil {
-			s.OnAC = onAC
+		// While the EC is not answering, skip the four reads that are live ACPI/WMI
+		// calls rather than driver caches — AC online (_PSR), boot sound and panel
+		// overdrive (asus-armoury), and fan RPM. A GUI polls this, so it would
+		// otherwise be the first thing to walk into the stalled EC. Those fields
+		// keep the values in daemon state; everything below is cached or not the
+		// EC at all, and stays live.
+		if !wedged {
+			if onAC, acErr := cli.OnACPower(); acErr == nil {
+				s.OnAC = onAC
+			}
+			// Populate firmware-managed fields from sysfs (not cached in daemon state).
+			s.BootSound = readIntSysfs(cli.FindBootSoundPath())
+			s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
 		}
-		// Populate firmware-managed fields from sysfs (not cached in daemon state).
-		s.BootSound = readIntSysfs(cli.FindBootSoundPath())
-		s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
 		// Populate fan curve from sysfs for ground truth.
 		s.FanCurve = readFanCurveFromSysfs()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
@@ -188,8 +231,10 @@ func (d *Daemon) dispatch(req request) response {
 		if temp, err := cli.ReadAPUTemperature(); err == nil {
 			s.Temperature = temp
 		}
-		if rpms, err := cli.ReadBothFanRPM(); err == nil {
-			s.FanRPM = rpms[0]
+		if !wedged {
+			if rpms, err := cli.ReadBothFanRPM(); err == nil {
+				s.FanRPM = rpms[0]
+			}
 		}
 		return response{OK: true, State: &s}
 	default:
