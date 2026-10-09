@@ -70,8 +70,18 @@ func runStatus() error {
 		fmt.Printf("Power:   %s%s\n", source, autoswitchNote(onAC))
 	}
 
-	// TDP power limits.
-	tdp, tdpErr := cli.ReadEffectivePPT(effectiveProfileForTDP())
+	// TDP power limits: the daemon's reading when it is running, since it
+	// withholds the read while the EC is not answering (on asus-armoury each
+	// limit read is a live ACPI call). A refused read prints N/A.
+	var tdp api.TDPState
+	var tdpErr error
+	if handled, value, err := api.SendTdpGet(); handled {
+		if tdpErr = err; tdpErr == nil {
+			tdpErr = json.Unmarshal([]byte(value), &tdp)
+		}
+	} else {
+		tdp, tdpErr = cli.ReadEffectivePPT(effectiveProfileForTDP())
+	}
 	if tdpErr == nil {
 		fmt.Printf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 			tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)

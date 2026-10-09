@@ -5,6 +5,7 @@ package cmd
 // access required.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -103,9 +104,22 @@ selects on battery.`,
 }
 
 func runTdpGet() error {
-	tdp, err := cli.ReadEffectivePPT(effectiveProfileForTDP())
-	if err != nil {
-		return fmt.Errorf("reading TDP: %w", err)
+	// The daemon when it is running: it refuses the read while the EC is not
+	// answering (on asus-armoury each limit read is a live ACPI call), where a
+	// read from here would go straight into the stalled EC.
+	var tdp api.TDPState
+	handled, value, err := api.SendTdpGet()
+	switch {
+	case handled && err != nil:
+		return err
+	case handled:
+		if err = json.Unmarshal([]byte(value), &tdp); err != nil {
+			return fmt.Errorf("reading TDP: %w", err)
+		}
+	default:
+		if tdp, err = cli.ReadEffectivePPT(effectiveProfileForTDP()); err != nil {
+			return fmt.Errorf("reading TDP: %w", err)
+		}
 	}
 
 	fmt.Println("TDP Power Limits (watts):")
@@ -117,7 +131,7 @@ func runTdpGet() error {
 		fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
 		fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
 	}
-	if lim, err := cli.PPTLimits(); err == nil {
+	if lim, ok := pptLimitsFor(); ok {
 		fmt.Printf("  Interface:          %s (PL1 %d–%dW, PL2 %d–%dW, PL3 %d–%dW)\n", lim.Backend,
 			lim.PL1.Min, lim.PL1.Max, lim.PL2.Min, lim.PL2.Max, lim.PL3.Min, lim.PL3.Max)
 	}
@@ -160,7 +174,11 @@ func runTdpSet() error {
 	// 28–80 W on the GZ302EA). PL1 above the safe maximum needs --force; PL2/PL3
 	// below their minimum are raised to it, which notes reports. The daemon runs
 	// the same check on what it receives.
-	tdp, notes, err := cli.ResolveTDP(watts, pl1, pl2, pl3, tdpForceFlag)
+	lim, ok := pptLimitsFor()
+	if !ok {
+		lim = cli.LegacyPPTLimits()
+	}
+	tdp, notes, err := cli.ResolveTDPWith(lim, watts, pl1, pl2, pl3, tdpForceFlag)
 	if err != nil {
 		return err
 	}
@@ -227,6 +245,24 @@ func runTdpSet() error {
 	fmt.Printf("TDP set to %dW\n", watts)
 	printNotes(notes)
 	return nil
+}
+
+// pptLimitsFor returns the limits the kernel accepts. With a daemon running
+// they come from it (get-state's tdp_limits): on asus-armoury a read of the
+// bounds is a live ACPI call, and the daemon leaves them out rather than make
+// one while the EC is not answering — the CLI reading them itself would walk
+// into the stalled EC the daemon is avoiding. ok is false when they are not to
+// be had: the daemon withheld them, or no interface exists. With no daemon
+// there is no latch to honour, and the kernel is asked.
+func pptLimitsFor() (api.TDPLimits, bool) {
+	if handled, st, err := api.SendGetState(); handled && err == nil && st != nil {
+		if st.TDPLimits == nil {
+			return api.TDPLimits{}, false
+		}
+		return *st.TDPLimits, true
+	}
+	lim, err := cli.PPTLimits()
+	return lim, err == nil
 }
 
 // printNotes prints what ResolveTDP changed about the request, one per line.

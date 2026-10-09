@@ -269,21 +269,33 @@ func TestHandBackToFirmwareOnArmoury(t *testing.T) {
 		}
 		f.assertFanModes(t, 2)
 	})
-	t.Run("keeps the floor when the row fails", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root ignores the read-only mode this test relies on")
-		}
-		f, _ := releaseFixture(t)
-		f.withArmouryPPT(t)
-		if err := SetTDPState(api.TDPState{PL1SPL: 78, PL2SPPT: 78, FPPT: 78}); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(f.firmware+"/ppt_pl1_spl/current_value", 0o444); err != nil {
-			t.Fatal(err)
-		}
-		if err := HandBackToFirmware("balanced"); err == nil {
-			t.Fatal("HandBackToFirmware with the limit stuck high = nil, want a refusal")
-		}
-		f.assertFanModes(t, 1)
-	})
+}
+
+// TestUnwritableArmouryFallsBack: an install that has not re-run setup can read
+// armoury's PPT attributes but not write them, while it still holds the grant
+// on asus-nb-wmi's. Choosing armoury there would turn every TDP write into
+// EACCES on upgrade; the driver keeps using the interface it can write. (The
+// fail-closed hand-back for a row that genuinely fails is covered on
+// asus-nb-wmi, where nothing else is selectable, in fan_sysfs_test.go.)
+func TestUnwritableArmouryFallsBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a read-only file, which is what this test relies on")
+	}
+	f := newFakeSysfs(t)
+	f.withArmouryPPT(t)
+	if err := os.Chmod(f.firmware+"/ppt_pl1_spl/current_value", 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if lim, err := PPTLimits(); err != nil || lim.Backend != PPTBackendLegacy {
+		t.Fatalf("PPTLimits() with armoury read-only = %+v, %v; want the %s fallback", lim, err, PPTBackendLegacy)
+	}
+	if err := SetTDPState(api.TDPState{PL1SPL: 40, PL2SPPT: 40, FPPT: 40, APUSPPT: 40, PlatformSPPT: 40}); err != nil {
+		t.Fatalf("SetTDPState = %v, want it written through asus-nb-wmi", err)
+	}
+	if got := f.readInt(t, f.ppt+"/ppt_pl1_spl"); got != 40 {
+		t.Errorf("asus-nb-wmi ppt_pl1_spl = %d, want 40", got)
+	}
+	if got := f.armouryState(t); got != (api.TDPState{PL1SPL: 60, PL2SPPT: 75, FPPT: 86}) {
+		t.Errorf("armoury = %+v, want its untouched defaults", got)
+	}
 }

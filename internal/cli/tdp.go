@@ -66,10 +66,15 @@ func ReadEffectivePPT(profile string) (api.TDPState, error) {
 	if err != nil {
 		return s, err
 	}
-	if b.stale(s) {
-		if stock, ok := StockProfilePPT[profile]; ok {
-			return b.clamp(stock), nil
-		}
+	// The bounds only when a stock row could replace the reading: on armoury
+	// each is a live ACPI call, and a custom profile — what the reconcile
+	// watcher reads every two seconds — never substitutes.
+	stock, ok := StockProfilePPT[profile]
+	if !ok {
+		return s, nil
+	}
+	if b = b.withBounds(); b.stale(s) {
+		return b.clamp(stock), nil
 	}
 	return s, nil
 }

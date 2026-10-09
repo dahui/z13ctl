@@ -382,8 +382,8 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			// readback, and a profile saved under asus-nb-wmi's 5 W floor reads
 			// back at asus-armoury's 28 W minimum. Comparing the raw value would
 			// see drift on every tick and re-write the limit every two seconds.
-			eff := cli.EffectiveTDP(*t)
-			obs.WantTDP = &eff
+			// Resolved below, with the readback, only when the power is read.
+			obs.WantTDP = t
 		}
 		// A plain state read, so it costs nothing on the common path; the SMU is
 		// only consulted if the tick actually asks for a re-apply.
@@ -393,13 +393,26 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		}
 	}
 
-	// Cheap enough to read unconditionally, and reading them even when the
-	// profile is stock keeps lastHW meaningful for the log line.
+	// The fan mode and platform_profile are driver caches, cheap enough to read
+	// unconditionally, and reading them even when the profile is stock keeps
+	// lastHW meaningful for the log line.
 	if modes, err := cli.ReadFanCurveModes(); err == nil {
 		obs.CurveMode = modes[0]
 	}
-	if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-		obs.PL1 = tdp.PL1SPL
+	// The power limits are not, on asus-armoury: each read evaluates the AC
+	// adapter's _PSR. So they are read only when the tick can act on them — a
+	// custom profile — and not while suspending, which includes the post-resume
+	// wait for the EC (waitForEC) before the wedge latch is set: the tick stands
+	// down then anyway. Past the stand-down ceiling the tick acts with PL1
+	// unread, and the next tick, with the flag cleared, reads it.
+	if obs.Custom && !suspending {
+		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
+			obs.PL1 = tdp.PL1SPL
+		}
+		if obs.WantTDP != nil {
+			eff := cli.EffectiveTDP(*obs.WantTDP)
+			obs.WantTDP = &eff
+		}
 	}
 	obs.ProfileHW = readProfileFromSysfs()
 	// Consumed here, after every early return above: a write seen while the

@@ -354,7 +354,14 @@ contrib/
   `get-state` polling them is what triggered it. The two write the same WMI device
   IDs and each keeps its own cache, so a read or write never mixes them. The
   interface is chosen per call (`activePPT`), because the bounds have to be read
-  per call anyway: armoury keeps separate AC and battery tables
+  per call anyway (see below). Each armoury read is a `_PSR` evaluation, so selection reads
+  only PL1's two bounds and the rest load on demand (`withBounds`: clamping,
+  the stale test, `PPTLimits`), and `ReadEffectivePPT` loads them only when the
+  profile has a stock row to substitute. Armoury is chosen only when PL1's
+  `current_value` is writable by this process, so an install that has not
+  re-run `z13ctl setup` since the grant was added keeps writing asus-nb-wmi
+  rather than failing every TDP write with EACCES. Per call, because armoury
+  keeps separate AC and battery tables
   (`power_supply_is_system_supplied()`) — on the GZ302EA the min/max agree and
   only the defaults differ (60/75/86 AC, 45/52/71 battery). armoury's PL3 is
   `ppt_pl3_fppt`, not `ppt_fppt`, and it exposes no APU/Platform sPPT, which then
@@ -1032,7 +1039,15 @@ contrib/
   `ecGuarded`, `reconcileOnce` returns before observing (its observation calls
   `EffectiveTDP` and `ReadEffectivePPT`, both armoury reads), and the sleep hook
   skips its PPT read. Anything new that calls into `ppt.go` while latched needs
-  the same treatment. `autoswitch-get` reports the source
+  the same treatment. **The CLI must not read the limits itself while a daemon
+  is up**, or it walks into the EC the daemon is avoiding: `tdp --get` and
+  `status` ask the daemon (`tdp-get`, refused while latched), `tdp --set`
+  resolves against `get-state`'s `tdp_limits` (`pptLimitsFor`,
+  `cli.ResolveTDPWith`), and the `fancurve --set`/`--reset` floor checks run only
+  on the dry-run and no-daemon paths, the daemon making the same check itself.
+  The reconcile watcher reads the limits only for a custom profile it is not
+  standing down for: `suspending` covers the post-resume `waitForEC` window, up
+  to 20 s before the latch is set, during which the tick stands down anyway. `autoswitch-get` reports the source
   as unknown while latched rather than calling `cli.OnACPower()` (AC `_PSR`).
   v1.3.3 missed it because the command stores nothing and so never looked like
   hardware access. Audit by *what is read*, not by whether a command mutates. `Run()` probes once before

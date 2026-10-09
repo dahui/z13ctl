@@ -114,14 +114,22 @@ func runFanCurveSet() error {
 	// Enforce the minimum PWM floor when sustained TDP exceeds the safe max.
 	// Only meaningful for the running machine: when --profile names another
 	// profile the daemon checks the curve against that profile's own TDP, since
-	// hardware says nothing about a profile that is not applied.
-	if fanCurveProfileFlag == "" {
-		if err := cli.CheckFanCurveFloor(effectiveProfileForTDP(), points); err != nil {
-			return err
+	// hardware says nothing about a profile that is not applied. Run here only
+	// where the daemon will not: a dry run, and the no-daemon path. The daemon
+	// makes the same check itself, and the CLI reading the limits while it is up
+	// would bypass its wedged-EC gate (on asus-armoury each read is a live ACPI
+	// call).
+	checkFloor := func() error {
+		if fanCurveProfileFlag != "" {
+			return nil
 		}
+		return cli.CheckFanCurveFloor(effectiveProfileForTDP(), points)
 	}
 
 	if dryRunFlag {
+		if err := checkFloor(); err != nil {
+			return err
+		}
 		if fanCurveProfileFlag != "" {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "fan curve")
 			return nil
@@ -151,6 +159,9 @@ func runFanCurveSet() error {
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
 		return err
 	}
+	if err := checkFloor(); err != nil {
+		return err
+	}
 	if err := cli.SetBothFanCurves(points); err != nil {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo z13ctl setup' to enable non-root access)", err)
 	}
@@ -163,20 +174,26 @@ func runFanCurveSet() error {
 }
 
 func runFanCurveReset() error {
-	// Checked before the dry-run branch, as in runFanCurveSet: this is a
-	// read-only check, and a dry run that reported success for a reset the real
-	// command would refuse would be worse than useless.
-	//
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the protection the high-TDP curve
 	// provides. "tdp --reset" is the way out — it lowers power first.
-	if fanCurveProfileFlag == "" {
-		if err := cli.CheckFanFloorRelease(effectiveProfileForTDP()); err != nil {
-			return err
+	//
+	// Checked in the dry run, since a dry run that reported success for a reset
+	// the real command would refuse would be worse than useless, and on the
+	// no-daemon path. The daemon makes the same check itself, and the CLI
+	// reading the limits while it is up would bypass its wedged-EC gate (on
+	// asus-armoury each read is a live ACPI call), as in runFanCurveSet.
+	checkRelease := func() error {
+		if fanCurveProfileFlag != "" {
+			return nil
 		}
+		return cli.CheckFanFloorRelease(effectiveProfileForTDP())
 	}
 
 	if dryRunFlag {
+		if err := checkRelease(); err != nil {
+			return err
+		}
 		if fanCurveProfileFlag != "" {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "cleared fan curve")
 			return nil
@@ -200,6 +217,9 @@ func runFanCurveReset() error {
 		return nil
 	}
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
+		return err
+	}
+	if err := checkRelease(); err != nil {
 		return err
 	}
 	if err := cli.ReleaseFans(customLimitInForce()); err != nil {

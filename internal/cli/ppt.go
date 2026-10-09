@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"os"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/dahui/z13ctl/api"
 )
 
@@ -64,13 +66,21 @@ type pptBackend struct {
 	bounds [5]pptBound
 }
 
-// activePPT picks the backend: asus-armoury when it exposes ppt_pl1_spl with
-// readable bounds, else asus-nb-wmi when it has ppt_pl1_spl, else an error.
+// activePPT picks the backend: asus-armoury when its PL1 attribute has
+// readable bounds and a current_value this process may write, else asus-nb-wmi
+// when it has ppt_pl1_spl, else an error. Only PL1's bounds are read here; the
+// rest load on demand (withBounds), because on armoury every read is a live
+// ACPI call — the kernel evaluates the AC adapter's _PSR to choose its AC or
+// battery table — and the reconcile watcher reads the limits every two seconds.
 //
-// It is decided on every call rather than once per process. The bounds have to
-// be read at call time anyway — armoury keeps separate AC and battery tables and
-// answers from whichever matches the power source now — and a stat per call is
+// It is decided on every call rather than once per process: armoury answers
+// from whichever table matches the power source now, and a stat per call is
 // cheap next to the WMI write it guards.
+//
+// Writability is part of the choice so an upgrade does not break TDP control
+// before the new permission grant is applied: an install that has not re-run
+// `z13ctl setup` keeps writing asus-nb-wmi's attributes, which it can, rather
+// than failing on armoury's, which it cannot. Root can write either.
 func activePPT() (pptBackend, error) {
 	if b, ok := armouryPPT(); ok {
 		return b, nil
@@ -87,26 +97,57 @@ func activePPT() (pptBackend, error) {
 		PPTBackendArmoury, PPTBackendLegacy)
 }
 
-// armouryPPT reads armoury's bounds. Any limit whose current_value, min_value
-// or max_value cannot be read counts as absent, and armoury as a whole is used
-// only if PL1 is present: a kernel that registers the attributes without
-// calibration data for this model has nothing to offer the fallback lacks.
+// armouryPPT decides whether armoury is the backend: PL1's current_value
+// exists and is writable, and its min_value and max_value read as a sane
+// range — a kernel that registers the attributes without calibration data for
+// this model has nothing to offer the fallback lacks. The other limits are
+// present when their current_value exists; their bounds are not read here.
 func armouryPPT() (pptBackend, bool) {
 	b := pptBackend{name: PPTBackendArmoury}
-	for i, l := range pptLimits {
-		dir := sysFirmwareAttrDir + "/" + l.armoury
-		if _, err := os.Stat(dir + "/current_value"); err != nil {
-			continue
-		}
-		lo, loErr := readIntFile(dir + "/min_value")
-		hi, hiErr := readIntFile(dir + "/max_value")
-		if loErr != nil || hiErr != nil || lo <= 0 || hi < lo {
-			continue
-		}
-		def, _ := readIntFile(dir + "/default_value")
-		b.bounds[i] = pptBound{min: lo, max: hi, def: def, present: true}
+	dir := sysFirmwareAttrDir + "/" + pptLimits[0].armoury
+	if unix.Access(dir+"/current_value", unix.W_OK) != nil {
+		return b, false
 	}
-	return b, b.bounds[0].present
+	lo, loErr := readIntFile(dir + "/min_value")
+	hi, hiErr := readIntFile(dir + "/max_value")
+	if loErr != nil || hiErr != nil || lo <= 0 || hi < lo {
+		return b, false
+	}
+	b.bounds[0] = pptBound{min: lo, max: hi, present: true}
+	for i := 1; i < len(pptLimits); i++ {
+		if _, err := os.Stat(sysFirmwareAttrDir + "/" + pptLimits[i].armoury + "/current_value"); err == nil {
+			b.bounds[i].present = true
+		}
+	}
+	return b, true
+}
+
+// withBounds reads the rest of armoury's bounds — every present limit's range
+// and every default_value — for the callers that need them: clamping, the
+// stale-cache test, and the limits reported to clients. A limit whose bounds
+// cannot be read is treated as absent. A no-op on asus-nb-wmi, whose bounds
+// are fixed.
+func (b pptBackend) withBounds() pptBackend {
+	if b.name != PPTBackendArmoury {
+		return b
+	}
+	for i, l := range pptLimits {
+		if !b.bounds[i].present {
+			continue
+		}
+		dir := sysFirmwareAttrDir + "/" + l.armoury
+		if i > 0 {
+			lo, loErr := readIntFile(dir + "/min_value")
+			hi, hiErr := readIntFile(dir + "/max_value")
+			if loErr != nil || hiErr != nil || lo <= 0 || hi < lo {
+				b.bounds[i] = pptBound{}
+				continue
+			}
+			b.bounds[i].min, b.bounds[i].max = lo, hi
+		}
+		b.bounds[i].def, _ = readIntFile(dir + "/default_value")
+	}
+	return b
 }
 
 // path returns the file holding limit i on this backend.
@@ -146,7 +187,7 @@ func EffectiveTDP(s api.TDPState) api.TDPState {
 	if err != nil {
 		return s
 	}
-	return b.clamp(s)
+	return b.withBounds().clamp(s)
 }
 
 // PPTCacheStale reports whether a readback is the kernel's own initial cache
@@ -159,7 +200,7 @@ func PPTCacheStale(s api.TDPState) bool {
 	if err != nil {
 		return false
 	}
-	return b.stale(s)
+	return b.withBounds().stale(s)
 }
 
 func (b pptBackend) stale(s api.TDPState) bool {
@@ -182,14 +223,16 @@ func PPTLimits() (api.TDPLimits, error) {
 	if err != nil {
 		return api.TDPLimits{}, err
 	}
+	b = b.withBounds()
 	r := func(i int) api.TDPRange { return api.TDPRange{Min: b.bounds[i].min, Max: b.bounds[i].max} }
 	return api.TDPLimits{Backend: b.name, PL1: r(0), PL2: r(1), PL3: r(2), SafeMax: TDPMaxSafe}, nil
 }
 
-// legacyLimits is what validation falls back to with no PPT interface present
-// (a dry run on another machine, CI): asus-nb-wmi's historical range. The write
-// itself then fails, which is the honest answer.
-func legacyLimits() api.TDPLimits {
+// LegacyPPTLimits is what validation falls back to with no PPT interface
+// present (a dry run on another machine, CI), or with no limits to be had from
+// the daemon: asus-nb-wmi's historical range. A write the kernel would refuse
+// then fails on its own, which is the honest answer.
+func LegacyPPTLimits() api.TDPLimits {
 	r := api.TDPRange{Min: TDPMin, Max: TDPMaxForced}
 	return api.TDPLimits{Backend: PPTBackendLegacy, PL1: r, PL2: r, PL3: r, SafeMax: TDPMaxSafe}
 }
@@ -212,11 +255,19 @@ func legacyLimits() api.TDPLimits {
 //     30/32/45 held 32 W for four minutes rather than settling to 30 W, so 32 W
 //     is armoury's practical floor, and the note is what tells the user.
 func ResolveTDP(watts, pl1, pl2, pl3 int, force bool) (api.TDPState, []string, error) {
-	s := TDPStateFor(watts, pl1, pl2, pl3)
 	lim, err := PPTLimits()
 	if err != nil {
-		lim = legacyLimits()
+		lim = LegacyPPTLimits()
 	}
+	return ResolveTDPWith(lim, watts, pl1, pl2, pl3, force)
+}
+
+// ResolveTDPWith is ResolveTDP against limits the caller already has — the
+// daemon's, for a CLI that must not read the kernel's bounds itself while a
+// daemon is running (on asus-armoury each read is a live ACPI call, which the
+// daemon withholds while the EC is not answering).
+func ResolveTDPWith(lim api.TDPLimits, watts, pl1, pl2, pl3 int, force bool) (api.TDPState, []string, error) {
+	s := TDPStateFor(watts, pl1, pl2, pl3)
 
 	if s.PL1SPL > TDPMaxSafe && !force {
 		return s, nil, fmt.Errorf("PL1 %dW exceeds the safe sustained maximum (%dW); use --force to allow up to %dW",
@@ -298,6 +349,7 @@ func SetTDPState(s api.TDPState) error {
 	if err != nil {
 		return err
 	}
+	b = b.withBounds()
 	out := b.clamp(s)
 	for i, l := range pptLimits {
 		if b.bounds[i].present && *l.field(&out) != *l.field(&s) {
@@ -333,6 +385,7 @@ func PlanTDPWrites(s api.TDPState) []PPTWrite {
 	if err != nil {
 		return nil
 	}
+	b = b.withBounds()
 	out := b.clamp(s)
 	var plan []PPTWrite
 	for i, l := range pptLimits {
