@@ -278,8 +278,12 @@ func (d *Daemon) releaseVolatileState() {
 	if modes, err := cli.ReadFanCurveModes(); err == nil {
 		obs.CurveMode = modes[0]
 	}
-	if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-		obs.PL1 = tdp.PL1SPL
+	// Not while wedged: sleepTick stands down then anyway, and on asus-armoury a
+	// PPT read evaluates the AC adapter's _PSR — a live ACPI call into the EC.
+	if !wedged {
+		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
+			obs.PL1 = tdp.PL1SPL
+		}
 	}
 
 	act := sleepTick(obs)

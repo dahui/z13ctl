@@ -344,21 +344,25 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// evidence the EC came back.
 	if wedged {
 		if probeEC() != ecReady {
+			// Return before observing: the tick would stand down anyway, and on
+			// asus-armoury the PPT reads below are live ACPI calls (each evaluates
+			// the AC adapter's _PSR), not caches — reading them here would walk
+			// into the stalled EC every two seconds.
 			slog.Debug("reconcile watcher standing down: the EC is still not answering")
-		} else {
-			d.setECWedged(false)
-			active, ok := s.ActiveCustomProfile()
-			if !ok || active.Empty() {
-				slog.Info("EC answering again after resume")
-				return prev
-			}
-			// hwMu is held and d.mu is not, which is what applyCustomHW requires.
-			// It is the full sequence — Curve Optimizer included — rather than the
-			// curve and TDP this watcher would otherwise repair on its own.
-			slog.Info("EC answering again after resume; restoring custom profile", "profile", active.Name)
-			d.applyCustomHW(active)
 			return prev
 		}
+		d.setECWedged(false)
+		active, ok := s.ActiveCustomProfile()
+		if !ok || active.Empty() {
+			slog.Info("EC answering again after resume")
+			return prev
+		}
+		// hwMu is held and d.mu is not, which is what applyCustomHW requires.
+		// It is the full sequence — Curve Optimizer included — rather than the
+		// curve and TDP this watcher would otherwise repair on its own.
+		slog.Info("EC answering again after resume; restoring custom profile", "profile", active.Name)
+		d.applyCustomHW(active)
+		return prev
 	}
 
 	obs := reconcileObs{

@@ -378,7 +378,9 @@ limits through asus-armoury (which reports 5–93 W for each). PL1 above
 `safe_max` needs `"force": true` on the `tdp` request and brings the high-TDP
 fan floor with it. The ranges can differ on battery, so read them from the
 latest `get-state` rather than caching them. The field is absent when no power
-limit interface exists. A `tdp` request with PL2 or PL3 below its minimum is
+limit interface exists, and while the embedded controller has not answered since
+a resume: on asus-armoury each read of the limits is a live ACPI call, and the
+daemon makes none until the EC responds. A `tdp` request with PL2 or PL3 below its minimum is
 raised to it; one with PL1 outside its range is refused.
 
 On startup the daemon reads this file, resolves what the current power source

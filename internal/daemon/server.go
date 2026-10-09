@@ -108,16 +108,20 @@ func (d *Daemon) handleConn(conn net.Conn) {
 
 // ecGuarded reports whether cmd reaches the embedded controller through
 // asus-wmi or asus-armoury, and so must be refused while d.ecWedged is set.
-// Writes are the obvious half. The two *-get commands are here because their
-// attributes are not driver caches: each read is a live WMI call, and into a
-// stalled EC a read holds the ACPI global mutex exactly as a write does.
+// Writes are the obvious half. The *-get commands are here because their
+// attributes are not driver caches: each read is a live WMI or ACPI call, and
+// into a stalled EC a read holds the ACPI global mutex exactly as a write does.
+// tdp-get joined them with the asus-armoury migration: armoury answers every PPT
+// read from its AC or battery table, chosen by power_supply_is_system_supplied(),
+// which evaluates the AC adapter's _PSR on each call. asus-nb-wmi's ppt_* were
+// caches; armoury's are not.
 // Lighting is hidraw, the profile CRUD commands touch only state, and undervolt
 // is the SMU rather than the EC, so none of those are guarded.
 func ecGuarded(cmd string) bool {
 	switch cmd {
 	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset",
 		"batterylimit", "bootsound", "paneloverdrive",
-		"bootsound-get", "paneloverdrive-get":
+		"bootsound-get", "paneloverdrive-get", "tdp-get":
 		return true
 	}
 	return false
@@ -203,12 +207,14 @@ func (d *Daemon) dispatch(req request) response {
 		s := withLegacyProjection(cloneState(d.state))
 		wedged := d.ecWedged
 		d.mu.Unlock()
-		// While the EC is not answering, skip the four reads that are live ACPI/WMI
+		// While the EC is not answering, skip the reads that are live ACPI/WMI
 		// calls rather than driver caches — AC online (_PSR), boot sound and panel
-		// overdrive (asus-armoury), and fan RPM. A GUI polls this, so it would
-		// otherwise be the first thing to walk into the stalled EC. Those fields
-		// keep the values in daemon state; everything below is cached or not the
-		// EC at all, and stays live.
+		// overdrive (asus-armoury), the power limits and their bounds on
+		// asus-armoury (each read evaluates _PSR to pick the AC or battery table;
+		// see ecGuarded), and fan RPM. A GUI polls this, so it would otherwise be
+		// the first thing to walk into the stalled EC. Those fields keep the values
+		// in daemon state, and tdp_limits is absent; everything else below is
+		// cached or not the EC at all, and stays live.
 		if !wedged {
 			if onAC, acErr := cli.OnACPower(); acErr == nil {
 				s.OnAC = onAC
@@ -216,20 +222,21 @@ func (d *Daemon) dispatch(req request) response {
 			// Populate firmware-managed fields from sysfs (not cached in daemon state).
 			s.BootSound = readIntSysfs(cli.FindBootSoundPath())
 			s.PanelOverdrive = readIntSysfs(cli.FindPanelOverdrivePath())
+			// Populate TDP, substituting per-profile defaults if sysfs is stale.
+			// Pass the daemon's own profile: platform_profile is never "custom",
+			// so using it would report the stock table for a legitimate custom TDP
+			// equal to the boot cache.
+			if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
+				s.TDP = &tdp
+			}
+			// What the kernel accepts, so a client can bound its sliders. Set on
+			// this response only; it is never stored in state.
+			if lim, err := cli.PPTLimits(); err == nil {
+				s.TDPLimits = &lim
+			}
 		}
 		// Populate fan curve from sysfs for ground truth.
 		s.FanCurve = readFanCurveFromSysfs()
-		// Populate TDP, substituting per-profile defaults if sysfs is stale.
-		// Pass the daemon's own profile: platform_profile is never "custom", so
-		// using it would report the stock table for a legitimate 5W custom TDP.
-		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
-			s.TDP = &tdp
-		}
-		// What the kernel accepts, so a client can bound its sliders. Set on
-		// this response only; it is never stored in state.
-		if lim, err := cli.PPTLimits(); err == nil {
-			s.TDPLimits = &lim
-		}
 		// Whether undervolt is available: the probe's answer once something has
 		// probed, module presence until then. Never the probe itself — its first
 		// run is a CO reset, and a GUI poll is no reason to write the mailbox.

@@ -387,7 +387,7 @@ func TestDispatchRefusesECCommandsWhileWedged(t *testing.T) {
 	for _, cmd := range []string{
 		"profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset",
 		"batterylimit", "bootsound", "paneloverdrive",
-		"bootsound-get", "paneloverdrive-get",
+		"bootsound-get", "paneloverdrive-get", "tdp-get",
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
@@ -407,7 +407,7 @@ func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
 	for _, cmd := range []string{
 		"apply", "off", "brightness", "profile-get", "profile-create", "profile-save",
 		"profile-delete", "profile-list", "autoswitch", "autoswitch-get",
-		"batterylimit-get", "fancurve-get", "tdp-get", "undervolt", "undervolt-get",
+		"batterylimit-get", "fancurve-get", "undervolt", "undervolt-get",
 		"undervolt-reset", "get-state", "subscribe",
 	} {
 		if ecGuarded(cmd) {
@@ -445,5 +445,29 @@ func TestAutoswitchGetReportsUnknownSourceWhileWedged(t *testing.T) {
 	}
 	if got.Known || got.OnAC {
 		t.Errorf("source while wedged = %+v, want unknown: the AC read is an EC call", got)
+	}
+}
+
+// TestGetStateSkipsArmouryPPTWhileWedged: on asus-armoury every PPT read —
+// current_value and the bounds alike — goes through get_current_tunables(),
+// which evaluates the AC adapter's _PSR to choose the AC or battery table. That
+// is a live ACPI call into the EC, not the cache asus-nb-wmi's ppt_* were, so
+// while the latch is set get-state must not read the limits or their bounds.
+//
+// Hermetic with the gate in place: nothing is read. Without it the test reads
+// the machine's real PPT interface and fails on any machine that has one, which
+// is what makes it a regression test on the Z13.
+func TestGetStateSkipsArmouryPPTWhileWedged(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{ecWedged: true}
+	resp := d.dispatch(request{Cmd: "get-state"})
+	if !resp.OK || resp.State == nil {
+		t.Fatalf("get-state while wedged = %+v, want OK: it is a read, not refused", resp)
+	}
+	if resp.State.TDPLimits != nil {
+		t.Errorf("tdp_limits while wedged = %+v, want absent: reading the bounds is an EC call", resp.State.TDPLimits)
+	}
+	if resp.State.TDP != nil {
+		t.Errorf("tdp while wedged = %+v, want the state projection (none here), not a readback", resp.State.TDP)
 	}
 }

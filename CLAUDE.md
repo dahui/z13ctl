@@ -1018,11 +1018,21 @@ contrib/
   **It covers every way into the EC, not just the watchers.** `dispatch` refuses
   the commands in `ecGuarded` with `errECWedged` before any handler runs — a GUI
   click into a stalled EC hard-locks the machine as surely as a watcher does — and
-  `get-state` skips its four reads that are live ACPI/WMI calls rather than driver
-  caches (AC `online`, `boot_sound`, `panel_overdrive`, fan RPM). The PR #26 trace
+  `get-state` skips its reads that are live ACPI/WMI calls rather than driver
+  caches (AC `online`, `boot_sound`, `panel_overdrive`, fan RPM, and asus-armoury's
+  PPT limits and bounds). The PR #26 trace
   is why reads count: the mutex holder there was asusd *reading*, not a writer.
-  The cached reads (`ppt_*`, the curve `pwm*` files, `platform_profile`,
-  `charge_control_end_threshold`) stay live. `autoswitch-get` reports the source
+  The cached reads (asus-nb-wmi's `ppt_*`, the curve `pwm*` files,
+  `platform_profile`, `charge_control_end_threshold`) stay live. **asus-armoury's
+  PPT attributes are not a cache**, and 1.4.0 shipped treating them as one: every
+  read of `current_value`, `min_value`, `max_value` or `default_value` goes
+  through `get_current_tunables()`, which calls `power_supply_is_system_supplied()`
+  to pick the AC or battery table — the AC adapter's `_PSR`, on every read. So
+  while latched `get-state` skips the limits and `tdp_limits`, `tdp-get` is in
+  `ecGuarded`, `reconcileOnce` returns before observing (its observation calls
+  `EffectiveTDP` and `ReadEffectivePPT`, both armoury reads), and the sleep hook
+  skips its PPT read. Anything new that calls into `ppt.go` while latched needs
+  the same treatment. `autoswitch-get` reports the source
   as unknown while latched rather than calling `cli.OnACPower()` (AC `_PSR`).
   v1.3.3 missed it because the command stores nothing and so never looked like
   hardware access. Audit by *what is read*, not by whether a command mutates. `Run()` probes once before
