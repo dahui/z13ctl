@@ -32,7 +32,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"syscall"
@@ -137,11 +139,22 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
 
-			if !waitForEC(ctx) {
+			status, ok := waitForEC(ctx)
+			if !ok {
 				continue
 			}
+			// Deliberately not a `continue`: restoreVolatileState is what clears
+			// the suspending flag, and skipping it wholesale would stand the
+			// reconcile watcher down until its staleness ceiling expired. It also
+			// restores lighting, which goes over hidraw and never touches the EC.
+			// Only the profile apply at the end has to be held back.
+			if status == ecWedged {
+				slog.Error("EC unresponsive after resume; restoring lighting only and leaving the "+
+					"profile to the reconcile watcher, to keep WMI writes off a stalled ACPI mutex",
+					"waited", ecProbeTimeout)
+			}
 			slog.Info("restoring volatile state")
-			d.restoreVolatileState()
+			d.restoreVolatileState(status)
 		}
 	}
 }
@@ -368,47 +381,88 @@ const (
 	ecProbeTimeout = 20 * time.Second
 )
 
-// ecResponds reports whether the EC is answering. Reading the battery capacity
+// ecStatus is what one probe of the EC found. A plain bool could not separate
+// the last two cases, and they need opposite handling on timeout: an absent
+// battery must still be restored, a wedged EC must not be written to at all.
+type ecStatus int
+
+const (
+	// ecReady means the probe read succeeded, so the EC is answering.
+	ecReady ecStatus = iota
+	// ecAbsent means the attribute does not exist. A machine with no battery at
+	// all — bench supply, pack removed — reports this way, and nothing about
+	// waiting longer will change it.
+	ecAbsent
+	// ecWedged means the attribute exists but the read failed, in practice with
+	// ENODEV: the power_supply device is registered while its EC is not
+	// answering. This is the state that must not be written to.
+	ecWedged
+)
+
+// probeEC reports what the EC looks like right now. Reading the battery capacity
 // is the cheapest available signal: while the EC is still coming up the sysfs
 // attribute is present but its device is not, so the read fails fast with
 // ENODEV rather than blocking on the ACPI mutex this whole function exists to
 // stay off.
-func ecResponds() bool {
+//
+// The ENOENT/ENODEV split is what makes the timeout decision possible.
+// FindBatteryCapacityPath globs for BAT*/capacity and falls back to a BAT0 path
+// that will not exist, so a machine with no battery fails the read with ENOENT
+// while a wedged EC fails an existing path with ENODEV.
+func probeEC() ecStatus {
 	_, err := os.ReadFile(cli.FindBatteryCapacityPath())
-	return err == nil
+	return classifyECRead(err)
+}
+
+// classifyECRead maps the probe read's error to a status. Split out from probeEC
+// so the ENOENT/ENODEV distinction — the one thing this fix turns on — can be
+// tested without redirecting sysfs, which internal/daemon cannot do because
+// cli's path vars are unexported.
+func classifyECRead(err error) ecStatus {
+	switch {
+	case err == nil:
+		return ecReady
+	case errors.Is(err, fs.ErrNotExist):
+		return ecAbsent
+	default:
+		return ecWedged
+	}
 }
 
 // waitForEC blocks until the EC answers, ctx is cancelled, or ecProbeTimeout
-// elapses. Returns false only on cancellation.
-func waitForEC(ctx context.Context) bool {
-	return waitForECWith(ctx, ecResponds, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
+// elapses. The bool is false only on cancellation.
+func waitForEC(ctx context.Context) (ecStatus, bool) {
+	return waitForECWith(ctx, probeEC, ecSettleDelay, ecProbeInterval, ecProbeTimeout)
 }
 
 // waitForECWith is waitForEC with its probe and timings injected, so the policy
 // can be tested without real sysfs or real delays.
 //
-// On timeout it returns true and lets the restore proceed rather than skipping
-// it: a machine with no battery at all (bench supply, pack removed) reports the
-// same way as a wedged EC, and must still get its profile back.
-func waitForECWith(ctx context.Context, responds func() bool, settle, interval, timeout time.Duration) bool {
+// On timeout it returns what the last probe actually saw rather than a blanket
+// "go ahead". ecAbsent still restores: a batteryless machine has nothing to wait
+// for and must not be stranded on whatever the firmware left behind. ecWedged
+// does not, and the caller restores only what does not touch the EC — driving a
+// WMI write into an EC that is not answering is what wedges the ACPI global
+// mutex and hard-locks every core, which is the whole reason this wait exists.
+func waitForECWith(ctx context.Context, probe func() ecStatus, settle, interval, timeout time.Duration) (ecStatus, bool) {
 	select {
 	case <-ctx.Done():
-		return false
+		return ecWedged, false
 	case <-time.After(settle):
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
-		if responds() {
-			return true
+		status := probe()
+		if status == ecReady {
+			return ecReady, true
 		}
 		if time.Now().After(deadline) {
-			slog.Warn("EC still unresponsive after resume; restoring anyway", "waited", timeout)
-			return true
+			return status, true
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return ecWedged, false
 		case <-time.After(interval):
 		}
 	}
@@ -416,7 +470,11 @@ func waitForECWith(ctx context.Context, responds func() bool, settle, interval, 
 
 // restoreVolatileState reapplies all settings that are lost on sleep/resume:
 // lighting, fan curves, TDP, and Curve Optimizer offsets.
-func (d *Daemon) restoreVolatileState() {
+//
+// ec is what the resume wait last saw. Everything up to the profile apply is
+// safe in any state — lighting is hidraw and the suspending flag must be cleared
+// on every path — so only the closing applyCustomHW is gated on it.
+func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// hwMu before d.mu: the fan/TDP block below writes the same attributes the
 	// socket handlers and the reconcile watcher do.
 	d.hwMu.Lock()
@@ -467,6 +525,17 @@ func (d *Daemon) restoreVolatileState() {
 	active, ok := state.ActiveCustomProfile()
 	if !ok || active.Empty() {
 		slog.Info("skipping volatile state restore (no custom profile active)", "profile", state.Profile)
+		return
+	}
+
+	// applyCustomHW writes fan curves and PPT through asus-wmi, so it is exactly
+	// the call that must not run against an EC that is not answering. The curve
+	// and the TDP floor are what the reconcile watcher already puts back on its
+	// own once pwm_enable reads as dropped, so the cost of skipping here is a
+	// delay rather than a setting lost for the rest of the session.
+	if ec == ecWedged {
+		slog.Error("skipping custom profile restore: the EC is not answering",
+			"profile", active.Name)
 		return
 	}
 
