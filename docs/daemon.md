@@ -14,7 +14,8 @@ ordinary one-shot CLI invocations cannot:
   lighting (the firmware does not restore it on its own).
 - **Custom fan curve reconciliation** — re-applies your custom fan curve (and the
   high-TDP fan floor) after the kernel driver drops it, which it does on every
-  system power profile change.
+  system power profile change, and your custom power limits after the firmware
+  resets them, which it does on every power profile write or fan release.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -571,6 +572,20 @@ journalctl --user -u z13ctl -f
 # After a profile change: reconciling custom thermal settings
 #   reason="saved custom fan curve was disabled" platform_profile=balanced pwm_enable=2
 ```
+
+Custom power limits need the same defence, and a harder one to see. On the Flow
+Z13 the firmware re-applies the active power profile's own limits whenever
+anything writes `platform_profile` — **even the profile already set**, as
+`power-profiles-daemon` does on a charger transition that keeps it — and
+whenever anything hands the fans back to firmware auto, even fans already on it.
+The power limit files go on showing the custom value, so nothing that reads them
+can tell. The kernel does report both writes, and the daemon listens for them,
+re-writing a custom profile's power limits within two seconds of each. Our own
+fan releases are reported the same way, so a re-apply logged at `INFO` just after
+`tdp --set` is expected. Fan releases are reported through an `asus-nb-wmi`
+attribute that kernels built without the deprecated asus-wmi attributes do not
+have; on those, a release by another tool on fans already on auto goes unnoticed
+until the next platform profile write.
 
 The daemon never writes `platform_profile` itself — your desktop stays in charge
 of the power profile. Reconciliation only runs while the `custom` profile is

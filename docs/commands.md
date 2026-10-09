@@ -121,10 +121,10 @@ z13ctl profile [flags]
 asus-wmi. These three names are **reserved**: a custom profile can never take
 one, so `--set balanced` always reaches the firmware profile.
 
-Setting a firmware profile resets fan curves to firmware auto mode, resets the
-CPU undervolt to stock, and writes that profile's measured stock PPT values back
-to hardware. The firmware does *not* re-apply per-profile power limits on its
-own, so z13ctl restores them explicitly. Your custom profiles are untouched and
+Setting a firmware profile resets the CPU undervolt to stock and hands the power
+limits and fans back to the firmware: z13ctl writes that profile's stock PPT
+values, then releases the fans to firmware auto, which makes the firmware
+re-apply the profile's own limits. Your custom profiles are untouched and
 can be selected again at any time. [`tdp --reset`](#tdp) behaves the same way,
 since it also lands on a firmware profile.
 

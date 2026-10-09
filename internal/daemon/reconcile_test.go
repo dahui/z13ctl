@@ -643,6 +643,9 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 		obs       reconcileObs
 		wantTDP   bool
 		wantCurve bool
+		// wantRoutine: the notification is the only evidence, which the daemon's
+		// own fan releases also produce, so it must not be logged as a warning.
+		wantRoutine bool
 	}{
 		{
 			// PPD on an AC transition, on a curveless profile: the only trace.
@@ -665,28 +668,46 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			// transition, on a curveless custom profile. platform_profile reads the
 			// same and there is no curve to find dropped; only the kernel's
 			// notification says the limit was reset.
-			name:    "same-value write reported by the kernel",
-			lastHW:  "balanced",
-			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
-			wantTDP: true,
+			name:        "same-value write reported by the kernel",
+			lastHW:      "balanced",
+			obs:         reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:     true,
+			wantRoutine: true,
 		},
 		{
 			// The notification alone is enough even on the first tick.
-			name:    "reported write on the first tick",
-			lastHW:  "",
-			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
+			name:        "reported write on the first tick",
+			lastHW:      "",
+			obs:         reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:     true,
+			wantRoutine: true,
+		},
+		{
+			// A profile change is evidence of its own, and stays a warning when the
+			// notification arrives with it.
+			name:    "reported write that also changed the profile",
+			lastHW:  "balanced",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "performance", PolicyWritten: true},
 			wantTDP: true,
+		},
+		{
+			// So is a dropped curve.
+			name:      "reported write that dropped the curve",
+			lastHW:    "balanced",
+			obs:       reconcileObs{Custom: true, WantCurve: saved, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:   true,
+			wantCurve: true,
 		},
 		{
 			name:   "reported write but the profile sets no TDP",
 			lastHW: "balanced",
-			obs:    reconcileObs{Custom: true, CurveMode: 2, PL1: 52, ProfileHW: "balanced", ProfileWritten: true},
+			obs:    reconcileObs{Custom: true, CurveMode: 2, PL1: 52, ProfileHW: "balanced", PolicyWritten: true},
 		},
 		{
 			// Our own profile writes notify too; they land on firmware profiles.
 			name:   "reported write on a firmware profile",
 			lastHW: "balanced",
-			obs:    reconcileObs{WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
+			obs:    reconcileObs{WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
 		},
 		{
 			// The daemon's first observation has nothing to compare against.
@@ -723,6 +744,9 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			if !act.none() && act.Reason == "" {
 				t.Error("an action was returned with no reason to log")
 			}
+			if act.Routine != tt.wantRoutine {
+				t.Errorf("routine = %v, want %v (reason %q)", act.Routine, tt.wantRoutine, act.Reason)
+			}
 			if st.lastHW != tt.obs.ProfileHW {
 				t.Errorf("lastHW = %q, want %q latched for the next tick", st.lastHW, tt.obs.ProfileHW)
 			}
@@ -730,24 +754,25 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 	}
 }
 
-// TestWatchProfileWritesIgnoresAPlainFile: the watcher waits for POLLPRI, which
+// TestWatchPolicyWritesIgnoresAPlainFile: the watcher waits for POLLPRI, which
 // only sysfs_notify raises. A regular file never raises it, so the watcher must
-// neither report a write nor spin, and must return once ctx ends. (The real
+// neither report a write nor spin, and must return once ctx ends. A missing
+// attribute (throttle_thermal_policy on a kernel built without the deprecated
+// asus-wmi attributes) must not stop it watching the other. (The real
 // notification cannot be produced outside sysfs; it is verified on hardware.)
-func TestWatchProfileWritesIgnoresAPlainFile(t *testing.T) {
-	path := t.TempDir() + "/platform_profile"
+func TestWatchPolicyWritesIgnoresAPlainFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/platform_profile"
 	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	orig := profileNotifyPath
-	profileNotifyPath = path
-	t.Cleanup(func() { profileNotifyPath = orig })
+	usePolicyNotifyPaths(t, path, dir+"/throttle_thermal_policy")
 
 	d := &Daemon{}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	done := make(chan struct{})
-	go func() { d.watchProfileWrites(ctx); close(done) }()
+	go func() { d.watchPolicyWrites(ctx); close(done) }()
 
 	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -755,9 +780,31 @@ func TestWatchProfileWritesIgnoresAPlainFile(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("watchProfileWrites did not return after ctx ended")
+		t.Fatal("watchPolicyWrites did not return after ctx ended")
 	}
-	if d.profileWritten.Load() {
-		t.Error("a plain file write was reported as a platform_profile write")
+	if d.policyWritten.Load() {
+		t.Error("a plain file write was reported as a thermal policy write")
 	}
+}
+
+// TestWatchPolicyWritesWithNothingToWatch: with neither attribute present the
+// watcher returns at once instead of polling nothing until shutdown.
+func TestWatchPolicyWritesWithNothingToWatch(t *testing.T) {
+	dir := t.TempDir()
+	usePolicyNotifyPaths(t, dir+"/platform_profile", dir+"/throttle_thermal_policy")
+
+	done := make(chan struct{})
+	go func() { (&Daemon{}).watchPolicyWrites(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchPolicyWrites kept running with no attribute to watch")
+	}
+}
+
+func usePolicyNotifyPaths(t *testing.T, paths ...string) {
+	t.Helper()
+	orig := policyNotifyPaths
+	policyNotifyPaths = paths
+	t.Cleanup(func() { policyNotifyPaths = orig })
 }

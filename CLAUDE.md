@@ -79,8 +79,8 @@ internal/
                              eventDevice seam — no Grab method, see issue #10
     button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
-    profilewatch.go          poll(POLLPRI) on /sys/firmware/acpi/platform_profile: reports every profile write,
-                             same-value ones included, to the reconcile watcher (issue #22)
+    policywatch.go           poll(POLLPRI) on platform_profile + throttle_thermal_policy: reports every profile
+                             write and fan release, same-value ones included, to the reconcile watcher (issue #22)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
                              stands down while d.suspending, with a tick-counted staleness ceiling
     profile.go               applyProfileLocked/applyCustomHW/applyStockHW, edit-target resolution,
@@ -841,20 +841,35 @@ contrib/
   re-writes the TDP on any observed policy write** — the kernel's notification,
   `platform_profile` changing between ticks, or a custom curve found dropped —
   because the drift check compares against the cache and can never fire for
-  this. A same-value write on a curveless profile (power-profiles-daemon on a
-  charger edge that keeps the profile) leaves no trace in sysfs at all, and was
-  the remaining #22 report: `tdp --get` and `status` went on reporting a limit
-  the firmware had discarded. `watchProfileWrites` (`profilewatch.go`) closes
-  it: the kernel calls `sysfs_notify` on `/sys/firmware/acpi/platform_profile`
-  after *every* successful write — legacy attribute, class device or Fn+F5's
-  cycle, with no same-value check — so `poll(POLLPRI)` on it sees each one and
-  sets `d.profileWritten`, which the next tick consumes as `obs.ProfileWritten`.
-  Our own profile writes notify too and are harmless: they land on firmware
-  profiles, where the watcher does nothing. Verified on hardware: 40 W custom on
-  performance held 40 W through same-value writes, each logged as a re-apply,
-  where one such write takes the machine to the profile's own limit. Still
-  invisible: another tool writing `pwm_enable=2` to fans already on auto (hwmon
-  has no notification). Never treat
+  this. On a curveless profile two writes leave no trace in sysfs at all — a
+  same-value `platform_profile` write (power-profiles-daemon on a charger edge
+  that keeps the profile) and another tool writing `pwm_enable=2` to fans
+  already on auto — and were the remaining #22 report: `tdp --get` and `status`
+  went on reporting a limit the firmware had discarded. `watchPolicyWrites`
+  (`policywatch.go`) closes both with `poll(POLLPRI)` on two attributes the
+  kernel `sysfs_notify`s, setting `d.policyWritten`, which the next tick
+  consumes as `obs.PolicyWritten`. `/sys/firmware/acpi/platform_profile` is
+  notified after *every* successful profile write — legacy attribute, class
+  device or Fn+F5's cycle, with no same-value check.
+  `/sys/devices/platform/asus-nb-wmi/throttle_thermal_policy` is notified by
+  asus-wmi's `throttle_thermal_policy_write()`, which is the call that both a
+  profile write and a curve-device `pwm_enable=2` make — that shared call is
+  *why* a fan release resets the limits. It exists only under
+  `CONFIG_ASUS_WMI_DEPRECATED_ATTRS`; without it a foreign redundant release is
+  invisible again. Reading it does not log the deprecation notice (its show
+  function, unlike the `ppt_*` ones, never calls `asus_wmi_show_deprecated`), and
+  armoury PPT writes do not notify it, so re-applying cannot feed itself. Our own
+  writes notify too: profile writes land on firmware profiles, where the watcher
+  does nothing, and our fan releases on a custom profile already re-wrote the
+  limit, so the tick after re-writes it once more. That is why a re-apply whose
+  only evidence is the notification is `act.Routine` and logs at Info — it
+  follows every `tdp --set` on a curveless profile. Verified on hardware: 40 W
+  custom on performance held 40 W through same-value profile writes, where one
+  such write takes the machine to the profile's own limit; and A/B against the
+  build before the `throttle_thermal_policy` watch, a foreign `pwm_enable=2` on
+  fans already on auto took 40 W to 70.3 W (armoury still reading 40/40/45) and
+  held there, where the watched build stayed at 40.2 W with one re-apply logged
+  per release and no feedback loop (measured 2026-10-08). Never treat
   a `ppt_*` readback as proof that a limit is in force; the fake sysfs emulates
   the reset through `fanReleaseHook` for exactly this reason.
 - **`ReadEffectivePPT` must be passed the *effective* profile**, not

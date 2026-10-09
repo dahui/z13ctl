@@ -81,10 +81,11 @@ type reconcileObs struct {
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
 	PL1        int                 // effective sustained limit in watts; -1 if unreadable
 	ProfileHW  string              // platform_profile; a change means the firmware reset the power limits
-	// ProfileWritten: the kernel reported a platform_profile write since the last
-	// tick, same-value writes included (watchProfileWrites). Like a change in
-	// ProfileHW it means the firmware reset the power limits.
-	ProfileWritten bool
+	// PolicyWritten: the kernel reported a thermal policy write since the last
+	// tick — a platform_profile write or a fan release, same-value ones included
+	// (watchPolicyWrites). Like a change in ProfileHW it means the firmware reset
+	// the power limits.
+	PolicyWritten bool
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
@@ -99,6 +100,10 @@ type reconcileAction struct {
 	// meaning a PrepareForSleep(false) never arrived. See reconcileTick.
 	Undervolt *int
 	Reason    string
+	// Routine marks an action whose only evidence is the kernel's notification.
+	// The daemon's own fan releases produce that too, so it is logged at Info
+	// rather than as a warning after every tdp --set.
+	Routine bool
 }
 
 // none reports whether the action would touch anything.
@@ -219,18 +224,19 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 	}
 
 	// A platform_profile write — power-profiles-daemon on an AC transition, Fn+F5,
-	// asusctl, anyone — makes the firmware re-apply that profile's own power
-	// limits, and the ppt_* attributes go on showing ours, so the drift check
-	// below cannot see it (issue #22). Three traces of such a write are
-	// observable: the kernel's own notification (ProfileWritten), platform_profile
-	// itself changing, and a custom curve found dropped, since the same write
-	// clears custom_fan_curves[*].enabled. Any one means the saved TDP has to be
-	// re-written even though the cache still matches it. The notification is the
-	// only one a same-value write on a curveless profile leaves — which is what
-	// power-profiles-daemon does on a charger transition that keeps the profile —
-	// and the other two remain for a kernel or path where it does not arrive.
-	policyWritten := act.Curve != nil || obs.ProfileWritten ||
-		(prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW)
+	// asusctl, anyone — or a fan release makes the firmware re-apply the
+	// profile's own power limits, and the ppt_* attributes go on showing ours, so
+	// the drift check below cannot see it (issue #22). Three traces of such a
+	// write are observable: the kernel's own notification (PolicyWritten),
+	// platform_profile itself changing, and a custom curve found dropped, since
+	// the same write clears custom_fan_curves[*].enabled. Any one means the saved
+	// TDP has to be re-written even though the cache still matches it. The
+	// notification is the only one a same-value write on a curveless profile
+	// leaves — power-profiles-daemon on a charger transition that keeps the
+	// profile, or another tool releasing fans already on auto — and the other two
+	// remain for a kernel or path where it does not arrive.
+	profileChanged := prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW
+	policyWritten := act.Curve != nil || obs.PolicyWritten || profileChanged
 
 	switch {
 	case obs.WantTDP != nil && obs.PL1 != -1 && obs.PL1 != obs.WantTDP.PL1SPL:
@@ -240,8 +246,13 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		}
 	case obs.WantTDP != nil && policyWritten:
 		act.TDP = obs.WantTDP
-		if act.Reason == "" {
+		switch {
+		case act.Reason != "":
+		case profileChanged:
 			act.Reason = "platform profile was rewritten, which resets custom power limits"
+		default:
+			act.Reason = "the kernel reported a platform profile write or fan release, which resets custom power limits"
+			act.Routine = true
 		}
 	}
 
@@ -390,7 +401,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// Consumed here, after every early return above: a write seen while the
 	// watcher stood down (suspend, wedged EC) is followed by a full re-apply on
 	// resume or recovery anyway.
-	obs.ProfileWritten = d.profileWritten.Swap(false)
+	obs.PolicyWritten = d.policyWritten.Swap(false)
 
 	st, act := reconcileTick(prev, obs)
 
@@ -408,8 +419,11 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	}
 
 	logf := slog.Warn
-	if st.quiet {
+	switch {
+	case st.quiet:
 		logf = slog.Debug
+	case act.Routine:
+		logf = slog.Info
 	}
 	logf("reconciling custom thermal settings",
 		"reason", act.Reason,

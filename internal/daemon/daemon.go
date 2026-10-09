@@ -74,10 +74,11 @@ type Daemon struct {
 	// writes fan or PPT hardware consults it.
 	ecWedged bool
 
-	// profileWritten is set by watchProfileWrites whenever the kernel reports a
-	// platform_profile write — same-value writes included — and consumed by the
-	// next reconcile tick. Atomic because the watcher sets it without d.mu.
-	profileWritten atomic.Bool
+	// policyWritten is set by watchPolicyWrites whenever the kernel reports a
+	// thermal policy write — a platform_profile write or a fan release,
+	// same-value ones included — and consumed by the next reconcile tick. Atomic
+	// because the watcher sets it without d.mu.
+	policyWritten atomic.Bool
 
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
@@ -168,9 +169,9 @@ func Run(ctx context.Context, opts Options) error {
 	// profile; register it unconditionally.
 	go d.watchReconcile(ctx)
 
-	// Tells the reconcile watcher about platform_profile writes that leave no
-	// other trace: a same-value write still resets the power limits (issue #22).
-	go d.watchProfileWrites(ctx)
+	// Tells the reconcile watcher about platform_profile writes and fan releases
+	// that leave no other trace: each one resets the power limits (issue #22).
+	go d.watchPolicyWrites(ctx)
 
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)
