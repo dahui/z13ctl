@@ -98,10 +98,13 @@ type Window struct {
 	// one instance serves every view. See errbar.go.
 	errView *errBarView
 
-	// limits is the device's power/thermal envelope, driving every TDP and fan
-	// curve bound in the custom view. Defaulted to the Z13's values; when the daemon
-	// grows an API for serving per-device limits this is the one place that
-	// changes — fetch once at startup, Sanitized, falling back to the defaults.
+	// limits is every bound a widget takes from the device: the TDP and fan
+	// curve bounds in the editor, the undervolt range, the charge limit range.
+	// Built from the device document at startup (the built-in defaults when
+	// the daemon does not answer), then kept current by limitsync.go — the
+	// document is refetched on every daemon connection and get-state's live
+	// power ranges are laid over it on every refresh. Assign it only through
+	// applyLimits, which moves the built widgets with it.
 	limits limits.Limits
 
 	// edge is the screen edge the drawer anchors to and slides from, resolved
@@ -242,26 +245,14 @@ func layerShellUsable() bool {
 	return gtk4layershell.IsSupported()
 }
 
-// deviceLimits asks the daemon what this machine's power and thermal envelope
-// actually is, so the drawer stops presenting one laptop's numbers on every
-// machine. Any failure falls back to the built-in Z13 values — a drawer with
-// slightly wrong bounds is worth having, and the daemon validates every write
-// regardless, so the worst case is an option that gets refused rather than a
-// setting that gets through.
-//
-// Fetched once, before any widget exists, because the TDP scales and the fan
-// curve editor bind their ranges at construction: applying new limits later
-// would mean rebuilding them, and there is no second device yet to prove such
-// a path works. The document is static for the daemon's lifetime anyway
-// (api/device.go), so the only case this misses is the drawer starting while
-// the daemon is down — rare, since voltaire.socket is socket-activated and up
-// before graphical-session.target, and harmless on the one device shipping
-// today, where FromDevice and DefaultLimits agree by test.
-// deviceDocument fetches the capability document once, or nil when the daemon
-// cannot be reached. Two things read it — the widgets' limits and the control
-// list — and they must see the same answer: fetching twice would let a daemon
-// that started between the calls give the drawer bounds for a device whose
-// controls it had already decided without.
+// deviceDocument fetches the capability document, or nil when the daemon
+// cannot be reached. At startup two things read one fetch — the widgets'
+// limits and the control list — and they must see the same answer: fetching
+// twice would let a daemon that started between the calls give the drawer
+// bounds for a device whose controls it had already decided without. The
+// subscribe loop fetches it again on every connection, so the bounds follow a
+// daemon that was down at startup or restarted onto different limits
+// (limitsync.go).
 func deviceDocument() *api.DeviceInfo {
 	handled, info, err := api.SendDeviceGet()
 	switch {
@@ -275,9 +266,10 @@ func deviceDocument() *api.DeviceInfo {
 	return info
 }
 
-// deviceLimits derives the widgets' bounds from the document, falling back to
-// the built-in Z13 values on any failure — a drawer with slightly wrong bounds
-// is worth having, and the daemon validates every write anyway.
+// deviceLimits derives the widgets' starting bounds from the document, falling
+// back to the built-in Z13 values when there is none — a drawer with slightly
+// wrong bounds is worth having, the daemon validates every write anyway, and
+// limitsync.go replaces them as soon as the daemon answers.
 func deviceLimits(info *api.DeviceInfo) limits.Limits {
 	if info == nil {
 		return limits.DefaultLimits()
@@ -603,6 +595,7 @@ func (w *Window) openQuickbar() {
 		glib.IdleAdd(func() {
 			slog.Debug("syncState dispatched", "totalElapsed", time.Since(fetchStart))
 			w.state = state
+			w.adoptStateLimits(state)
 			w.syncState()
 		})
 	}()
@@ -830,6 +823,14 @@ func (w *Window) subscribeLoop() {
 		}
 		slog.Info("daemon connected")
 		backoff = time.Second
+		// Every connection, the first included: the daemon may have been down
+		// when the widgets were built (so they hold the built-in defaults), or
+		// have restarted onto different limits — an upgrade, or the armoury
+		// grant landing. adoptDevice is a no-op when nothing changed, and the
+		// state refresh after it lays the live power ranges on top.
+		doc := deviceDocument()
+		glib.IdleAdd(func() { w.adoptDevice(doc) })
+		w.refreshState()
 		for event := range ch {
 			switch event {
 			case api.EventGUIToggle:

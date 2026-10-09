@@ -92,5 +92,15 @@ func FromDevice(info *api.DeviceInfo) Limits {
 		}
 	}
 
+	if u := info.Undervolt; u != nil {
+		l.UVMin, l.UVMax = u.Min, u.Max
+	}
+	// A daemon older than the range fields serves charge_limit with no bounds;
+	// zero then reads as "not served" and Sanitized supplies the 40–100 every
+	// such daemon accepted.
+	if b := info.Battery; b != nil {
+		l.BatteryMin, l.BatteryMax = b.ChargeLimitMin, b.ChargeLimitMax
+	}
+
 	return l.Sanitized()
 }

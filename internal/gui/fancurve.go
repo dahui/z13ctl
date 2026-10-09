@@ -257,7 +257,14 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 		cr.SetDash(nil, 0)
 		cr.SetFontSize(fontSize)
 		cr.MoveTo(fc.chartX+4*s, leftY-4*s)
-		cr.ShowText(fmt.Sprintf("%d–100%% min (TDP > %dW)", pwmPct(floor[0].PWM), fc.limits().TDPMaxSafe))
+		// Bottom and top read off the device's floor (Sanitized keeps it
+		// non-decreasing, so the last point is the highest), not "–100%".
+		bottom, top := pwmPct(floor[0].PWM), pwmPct(floor[len(floor)-1].PWM)
+		span := fmt.Sprintf("%d–%d%%", bottom, top)
+		if top == bottom {
+			span = fmt.Sprintf("%d%%", bottom)
+		}
+		cr.ShowText(fmt.Sprintf("%s min (TDP > %dW)", span, fc.limits().TDPMaxSafe))
 	}
 
 	// Current APU temperature indicator line, and the operating point on it.

@@ -395,15 +395,18 @@ type TDPState struct {
 // The ranges come from the kernel at the time of the request: asus-armoury
 // reports per-limit bounds (on the GZ302EA, PL1 28–80, PL2 32–92, PL3 45–93 W)
 // and may report different ones on battery; the deprecated asus-nb-wmi
-// interface has none of its own, so the daemon reports 5–93 W for it. A PL2 or
-// PL3 below its minimum is raised to it when set; a PL1 outside its range is
-// refused.
+// interface has none of its own, so the daemon reports the device data's
+// range for it. A PL2 or PL3 below its minimum is raised to it when set; a PL1
+// outside its range is refused.
 //
 // This is the field z13ctl 1.4 introduced, served unchanged so clients written
-// against it keep their bounds. The same ranges are in the device-get
-// document's power section (DeviceInfo.Power), which is the place a 2.0 client
-// reads them once rather than on every poll. Absent while the daemon cannot
-// reach the embedded controller, and on a device with no known PPT interface.
+// against it keep their bounds. The device-get document's power section
+// (DeviceInfo.Power) carries the same ranges as of when it was fetched; this
+// field is the live copy, so a client that bounds its controls from the
+// document and overlays this on each refresh follows a change of power source
+// or interface without refetching. Absent while the daemon cannot reach the
+// embedded controller, and on a device with no known PPT interface — keep the
+// last ranges then, rather than reading absence as "no limits".
 type TDPLimits struct {
 	Backend string   `json:"backend"`  // "asus-armoury" or "asus-nb-wmi"
 	PL1     TDPRange `json:"pl1"`      // sustained

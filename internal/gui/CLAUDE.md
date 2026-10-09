@@ -274,9 +274,18 @@ contrib/
   fan floor, temperature axis and stock PPT table; `Window.limits` is initialised to
   `power.DefaultLimits()` (the Z13's values). **No TDP or fan bound may be hardcoded
   in `internal/gui`** — derive it from `w.limits` / `fc.limits()`, because z13ctl is
-  being extended to devices with different envelopes. The design brief for the
-  eventual daemon-served limits is in z13ctl's `.claude/plans/device-limits-api.md`;
-  when it lands, only where `Window.limits` is assigned changes.
+  being extended to devices with different envelopes. That covers the undervolt
+  and charge-limit sliders too (`UVMin`/`UVMax`, `BatteryMin`/`BatteryMax`), and
+  any other number a device can report: read it from the device, never a literal.
+  - **The limits follow the daemon, not just startup** (`limitsync.go`, 2026-10-09).
+    The document is refetched on every daemon connection and get-state's live
+    `tdp_limits` is laid over it on every refresh (`limits.WithTDPLimits`);
+    `applyLimits` moves each built slider's range in place under `w.syncing`, so
+    a clamped value is not sent as an edit. Assign `w.limits` only through it. A
+    widget that binds a new bound at construction needs a line in its view's
+    `applyLimits` too, or it goes stale exactly the way the startup-only fetch did
+    (a drawer started on asus-nb-wmi kept 5–93 W after the armoury grant moved the
+    daemon to 28–80 W).
   - Presentation policy stays derived, not fixed: `BasicSliderMax()` is
     `TDPMaxSafe - 5`, not a literal 70, because 70 is meaningless on a device whose
     safe max is 54.
@@ -293,15 +302,17 @@ contrib/
     legitimately means "no fan floor on this device" — but is clamped to `PWMMax`.
   - `power.Curve` is a fixed `[8]` array. If a device ever needs a different point
     count it becomes a slice and the compile-time length guarantee is lost.
-- **High-TDP fan floor**: while sustained PL1 exceeds 75W the daemon rejects any fan
-  curve point below 204 PWM (80%) and refuses a fan reset outright. `fanFloorPWM()`
+- **High-TDP fan floor**: while sustained PL1 exceeds the device's safe maximum the
+  daemon rejects any fan curve point below the device's floor curve at that point's
+  temperature (a 127→255 ramp on the Z13; it was a flat 204 through z13ctl v1.2.1),
+  and refuses a fan reset outright. `fanFloorPWM()`
   derives this from applied daemon state (not slider position); `enforceConstraints`
   clamps drags to it, `fanCurveEditor.draw` renders the floor line, and `resetFanBtn` is
   desensitized with a `.block-note` beneath the Reset row pointing at Reset TDP
   (never a tooltip — see "Hints and block notes" below). Both the threshold and
   the floor come from `w.limits`, not from literals.
 - **Basic vs advanced TDP view**: basic mode is one slider applying a single value to
-  all three limits, capped at 70W. `power.NeedsAdvanced` decides whether a state can be
+  all three limits, capped at `BasicSliderMax()` (the safe maximum less 5 W). `power.NeedsAdvanced` decides whether a state can be
   shown there; `syncCustomView` force-checks the Advanced box when it cannot. Without
   that the slider clamps, the label misreports the hardware, and a save sends the
   clamped value — silently lowering the user's power limit.

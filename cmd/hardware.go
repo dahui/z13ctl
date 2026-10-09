@@ -125,3 +125,24 @@ func liveFanCurve(hw *device.Device) []api.FanCurvePoint {
 	}
 	return c
 }
+
+// hwmonPWMMax is the hwmon pwm ABI's ceiling — the interface's range, not a
+// device property — and is used only when a device declares no fan shape.
+const hwmonPWMMax = 255
+
+// fanPWMMax is the device's PWM ceiling, for turning a PWM into a percentage
+// in output. It comes from the fan shape the device data declares.
+func fanPWMMax(hw *device.Device) int {
+	if hw != nil && hw.Fans != nil {
+		if m := hw.Fans.Shape().PWMMax; m > 0 {
+			return m
+		}
+	}
+	return hwmonPWMMax
+}
+
+// pwmPercent is pwm as a rounded percentage of pwmMax — rounded, as the GUI
+// rounds, so a floor of 127 reads as the 50% it was chosen to be.
+func pwmPercent(pwm, pwmMax int) int {
+	return (pwm*100 + pwmMax/2) / pwmMax
+}

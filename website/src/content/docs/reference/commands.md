@@ -281,9 +281,11 @@ voltaire batterylimit [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print the current battery charge limit (percentage) |
-| `--set <percent>` | Set the battery charge limit (40–100) |
+| `--set <percent>` | Set the battery charge limit, within the device's range (40–100 on the GZ302EA) |
 
-Writing `100` removes any limit (charges to full).
+The range is device data — the kernel publishes none for the threshold — and an
+out-of-range value is refused with the range your machine accepts. Writing the
+top of the range (`100` on the GZ302EA) removes any limit (charges to full).
 
 ```sh
 voltaire batterylimit --get
@@ -449,7 +451,7 @@ balanced — Balanced
   Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo.
   35:0,45:0,55:55,65:90,75:130,85:180,95:225,105:255
 turbo — Turbo
-  Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.
+  Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above the safe maximum.
   35:127,45:140,55:165,65:190,75:235,85:255,95:255,105:255
 
 $ voltaire fancurve --preset quiet
@@ -491,15 +493,16 @@ cat $curve/pwm1_enable
 ```
 :::
 
-:::caution[Fan control is restricted above 75 W sustained TDP]
-While sustained TDP (PL1) is above 75 W, `fancurve --set` requires every point
+:::caution[Fan control is restricted above the safe sustained TDP]
+While sustained TDP (PL1) is above the device's safe maximum (75 W on the
+GZ302EA; `tdp --get` prints it), `fancurve --set` requires every point
 to clear the built-in high-TDP curve — an up-front refusal so you can see why,
 rather than storing a curve that would be altered on the way to the hardware.
-If you raise the limit *after* setting a curve, the points below 127 are
+If you raise the limit *after* setting a curve, the points below it are
 quietly raised to it instead and the rest are left alone (see [`tdp`](#tdp));
 the curve you saved is kept intact for when the limit comes back down. "Below
 the floor" means below the built-in curve's value *at that temperature*, not
-below its 127 PWM bottom.
+below its bottom (127 PWM on the GZ302EA).
 
 `--reset` is refused outright — firmware auto mode has no floor at all, and
 dropping to it would remove the cooling the power limit depends on. Lower the
@@ -540,7 +543,7 @@ voltaire tdp [flags]
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W, up to the kernel's maximum. Burst limits (PL2/PL3) need no `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
+| `--force` | Allow sustained TDP (PL1) above the device's safe maximum (`--get` prints it), up to the kernel's maximum. Burst limits (PL2/PL3) need no `--force`. Above the safe maximum, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 **Power limits:**
@@ -559,7 +562,7 @@ ones are deprecated — reading them logs a kernel notice, and distributions can
 build them out entirely — and are used only as a fallback. The accepted range
 comes from the kernel, and `--get` prints it:
 
-| Limit | asus-armoury (GZ302EA) | asus-nb-wmi |
+| Limit | asus-armoury (GZ302EA) | asus-nb-wmi (GZ302EA device data) |
 |-------|------------------------|-------------|
 | PL1 | 28–80W | 5–93W |
 | PL2 | 32–92W | 5–93W |
@@ -608,14 +611,16 @@ need ground-truth PPT readings.
 
 **Safety:**
 
-- The sustained limit (PL1) is capped at 75W unless `--force` is given, which
-  extends it to the kernel's maximum (80W on asus-armoury, 93W on asus-nb-wmi).
-  Burst limits (PL2/PL3) may go to the kernel's maximum without `--force`, since
-  short bursts are thermally safe.
-- When the **sustained** limit exceeds 75W, both fans are held to a minimum of
-  127 PWM (50%) before the TDP values are written. If that fan write fails —
-  or the kernel accepts it and then drops the curve — the TDP is not applied
-  at all. Burst limits above 75W do not trigger this on their own.
+- The sustained limit (PL1) is capped at the device's safe maximum unless
+  `--force` is given, which extends it to the kernel's maximum. `--get` prints
+  both; on the GZ302EA they are 75W, and 80W on asus-armoury (93W on
+  asus-nb-wmi). Burst limits (PL2/PL3) may go to the kernel's maximum without
+  `--force`, since short bursts are thermally safe.
+- When the **sustained** limit exceeds the safe maximum, the fans are held to
+  the device's high-TDP floor curve before the TDP values are written. If that
+  fan write fails — or the kernel accepts it and then drops the curve — the TDP
+  is not applied at all. Burst limits above the safe maximum do not trigger this
+  on their own.
 - **The floor is a per-point minimum, not a replacement curve.** Your curve is
   raised point by point to whichever is higher — your value, or the built-in
   curve's value **at that point's own temperature**, interpolated between the
@@ -633,9 +638,9 @@ need ground-truth PPT readings.
     stock" after every sleep/resume and every `tdp --set`.
 
 - The built-in curve is the floor, and the whole of it matters — not just its
-  127 PWM bottom. It is written whole only when the profile has no curve of
-  its own, but its rising section is what your curve is measured against at
-  higher temperatures:
+  bottom. It is written whole only when the profile has no curve of its own,
+  but its rising section is what your curve is measured against at higher
+  temperatures. The curve is device data; on the GZ302EA it is:
 
     | Temp | 30 °C | 40 °C | 50 °C | 60 °C | 65 °C | 70 °C | 75 °C | 80 °C |
     |------|-------|-------|-------|-------|-------|-------|-------|-------|
@@ -657,7 +662,7 @@ need ground-truth PPT readings.
 - `--reset` cannot drop to firmware auto while a high limit is in force, since
   firmware auto has no floor at all.
 
-:::danger[Run the daemon when sustaining above 75 W]
+:::danger[Run the daemon when sustaining above the safe maximum]
 Every `platform_profile` write — a GNOME power mode change, an AC/battery
 transition, Fn+F5 — releases custom fan curves, the high-TDP floor included.
 The firmware re-applies the profile's own power limits at the same time, but the
@@ -677,8 +682,8 @@ voltaire tdp --set 50
 # Set with individual PL overrides
 voltaire tdp --set 45 --pl2 55 --pl3 60
 
-# Force high sustained TDP (fans are held to a 50% floor first; 80W is
-# asus-armoury's maximum on the GZ302EA)
+# Force high sustained TDP (fans are held to the device's floor curve first;
+# 80W is asus-armoury's maximum on the GZ302EA)
 voltaire tdp --set 80 --force
 
 # Back to balanced and the firmware's own limits (also clears the undervolt)
@@ -737,7 +742,7 @@ voltaire undervolt [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print current CO offset (from daemon state) |
-| `--set <value>` | Set all-core CPU CO offset (0 to -40) |
+| `--set <value>` | Set all-core CPU CO offset: 0 or negative, within the device's range |
 | `--reset` | Reset CPU CO to stock (0). With no offset applied, reports that and sends nothing. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
@@ -756,9 +761,12 @@ one is applied and has to be cleared. Switching to a firmware profile,
 userspace messages to the SMU can collide with the kernel's own, and an
 unnecessary reset is the prime suspect in a hard lock seen during development.
 
-**Safety limits (matching G-Helper defaults):**
+**Safety limits.** The accepted range is device data (the daemon's
+`device-get` serves it as `undervolt.min`/`max`), and an out-of-range offset is
+refused with your machine's range. On the GZ302EA it matches G-Helper's
+defaults:
 
-| Parameter | Range |
+| Parameter | Range (GZ302EA) |
 |-----------|-------|
 | CPU CO | 0 to -40 |
 

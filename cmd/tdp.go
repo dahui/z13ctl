@@ -46,18 +46,17 @@ range the kernel accepts for each.
 With --set, writes power limits in watts. By default, all PPT values are set to
 the same value. Use --pl1, --pl2, --pl3 to override individual limits.
 
-Ranges come from the kernel where it reports them. On the GZ302EA asus-armoury
-accepts PL1 28–80W, PL2 32–92W and PL3 45–93W; a PL2 or PL3 below its minimum
-is raised to it (so --set 30 writes 30/32/45W, and the machine then sustains
-32W), and a PL1 outside its range is refused. The older interface accepts the
-device data's 5–93W.
+Ranges come from the kernel where it reports them (asus-armoury does), and from
+the device data where it does not; --get prints the ranges in force. A PL2 or
+PL3 below its minimum is raised to it, with a note saying so, and a PL1 outside
+its range is refused.
 
-Safety: The sustained power limit (PL1) is capped at 75W by default. Use --force
-to allow PL1 up to the kernel's maximum. When PL1 exceeds 75W, both fans are
-held to a curve with a 50% PWM floor that reaches 100% at 80°C, written before
-the power limit; if that write fails, or the kernel does not honour it, the TDP
-is not applied at all. Burst limits (PL2/PL3) need no --force since short
-bursts are thermally safe.
+Safety: the sustained power limit (PL1) is capped at the device's safe maximum,
+which --get also prints. Use --force to allow PL1 up to the kernel's maximum.
+Above the safe maximum the fans are held to the device's high-TDP floor curve,
+written before the power limit; if that write fails, or the kernel does not
+honour it, the TDP is not applied at all. Burst limits (PL2/PL3) need no --force
+since short bursts are thermally safe.
 
 Run the daemon to keep a custom TDP in force. Any system power profile change
 (GNOME power modes, power-profiles-daemon on plugging or unplugging the charger,
@@ -150,6 +149,10 @@ func runTdpGet() error {
 		fmt.Printf("  Interface:          %s (PL1 %d–%dW, PL2 %d–%dW, PL3 %d–%dW)\n", env.Interface,
 			env.TDPMin, env.TDPMaxForced, pl2.Min, pl2.Max, pl3.Min, pl3.Max)
 	}
+	// The help text cannot know this machine's numbers, so it points here.
+	if env.TDPMaxSafe > 0 {
+		fmt.Printf("  Safe maximum:       %dW sustained (above it needs --force and a fan floor)\n", env.TDPMaxSafe)
+	}
 	return nil
 }
 
@@ -239,7 +242,7 @@ func runTdpSet() error {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
 		}
-		printFloorNotice(env, pl1, preCurve, true)
+		printFloorNotice(env, fanPWMMax(hw), pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)
 		printNotes(notes)
 		return nil
@@ -260,7 +263,7 @@ func runTdpSet() error {
 	if err := hw.Power.ApplyTDPSafely(tdp, want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
-	printFloorNotice(env, pl1, want, false)
+	printFloorNotice(env, fanPWMMax(hw), pl1, want, false)
 	// Not only above the safe maximum: any profile change or fan release
 	// discards a custom limit of any size (z13ctl issue #22), and with no daemon
 	// nothing puts it back.
@@ -287,20 +290,29 @@ func printNotes(notes []string) {
 // two: with no custom curve at all the whole built-in floor curve is written, and
 // saying "points below 127 PWM were raised; every other point is unchanged" there
 // described points the user never set. DryRunTdp already distinguished the case.
-func printFloorNotice(env driver.PowerEnvelope, pl1 int, want []api.FanCurvePoint, viaDaemon bool) {
-	if pl1 <= env.TDPMaxSafe || len(env.FloorCurve) == 0 {
+func printFloorNotice(env driver.PowerEnvelope, pwmMax, pl1 int, want []api.FanCurvePoint, viaDaemon bool) {
+	if pl1 <= env.TDPMaxSafe {
 		return
 	}
-	minPWM := env.FloorCurve[0].PWM
+	bottom, top, topTemp, ok := safety.FloorSpan(env.FloorCurve)
+	if !ok {
+		return
+	}
+	pct := func(pwm int) int { return pwmPercent(pwm, pwmMax) }
+	// The floor as the device declares it: flat, or a ramp to its top.
+	shape := fmt.Sprintf("a flat %d PWM (%d%%) floor", bottom, pct(bottom))
+	if top > bottom {
+		shape = fmt.Sprintf("a %d PWM (%d%%) floor rising to %d PWM (%d%%) at %d°C",
+			bottom, pct(bottom), top, pct(top), topTemp)
+	}
 	switch {
 	case len(want) == 0:
-		fmt.Printf("Fans set to the built-in high-TDP curve: a %d PWM (50%%) floor rising to 100%% at 80°C\n",
-			minPWM)
+		fmt.Printf("Fans set to the built-in high-TDP curve: %s\n", shape)
 		fmt.Println("  (no custom fan curve was in force to keep)")
 	case safety.FloorAdjustsCurve(env, pl1, want):
 		fmt.Println("Fan curve points below the built-in high-TDP curve were raised to it; every")
-		fmt.Printf("  other point is unchanged. The floor rises with temperature — %d PWM (50%%) when\n", minPWM)
-		fmt.Println("  cool, 255 (100%) at 80°C — so a point can be raised even well above 50%")
+		fmt.Println("  other point is unchanged. The floor is measured at each point's own")
+		fmt.Printf("  temperature: %s\n", shape)
 	default:
 		fmt.Println("Your fan curve already clears the high-TDP floor and was kept exactly as drawn")
 	}
@@ -417,7 +429,7 @@ func init() {
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")
-	tdpCmd.Flags().BoolVar(&tdpForceFlag, "force", false, "Allow sustained TDP (PL1) above 75W (up to 93W)")
+	tdpCmd.Flags().BoolVar(&tdpForceFlag, "force", false, "Allow sustained TDP (PL1) above the safe maximum, up to the kernel's maximum (see --get)")
 	tdpCmd.Flags().StringVar(&tdpProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(tdpCmd)
 }

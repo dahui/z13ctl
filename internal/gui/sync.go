@@ -93,6 +93,7 @@ func (w *Window) refreshState() {
 			return
 		}
 		w.state = state
+		w.adoptStateLimits(state)
 		w.syncCustomView()
 		w.syncing = true
 		w.syncProfiles()

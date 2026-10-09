@@ -31,13 +31,14 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		custom profiles with their own fan curve, TDP, and undervolt.
 	</Card>
 	<Card title="Fan curves" icon="setting">
-		Custom 8-point fan curves via the asus-wmi hwmon interface, defended
+		Custom fan curves via the asus-wmi hwmon interface, defended
 		against the kernel silently dropping them.
 	</Card>
 	<Card title="TDP control" icon="warning">
 		CPU/GPU power limits (28–80 W sustained on the GZ302EA) through the
 		kernel's asus-armoury attributes, kept in force by the daemon, with an
-		automatic fan floor above 75 W sustained — 50% PWM rising to 100% at 80 °C.
+		automatic fan floor above the safe sustained limit (on the GZ302EA, 50% PWM
+		above 75 W, rising to 100% at 80 °C).
 	</Card>
 	<Card title="CPU undervolting" icon="download">
 		Lower voltage via AMD Curve Optimizer for better temperatures and power
@@ -49,7 +50,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 	</Card>
 </CardGrid>
 
-Also: battery charge limit (40–100%), POST boot sound, panel overdrive, and any
+Also: battery charge limit, POST boot sound, panel overdrive, and any
 other firmware toggle the device data describes.
 
 All features work without root after a one-time `setup` step, and all persist

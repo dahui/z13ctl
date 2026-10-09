@@ -80,6 +80,9 @@ type customView struct {
 	tdpPL1Label      *gtk.Label
 	tdpPL2Label      *gtk.Label
 	tdpPL3Label      *gtk.Label
+	// tdpWarn names the safe maximum, so it is a field: applyLimits rewrites
+	// it when the device's limits change under a running GUI.
+	tdpWarn *gtk.Label
 
 	fanCurve *fanCurveEditor
 
@@ -282,10 +285,12 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.tdpBasicScale = gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(w.limits.TDPMin), float64(w.limits.BasicSliderMax()), 1)
 	c.tdpBasicScale.SetDigits(0)
 	c.tdpBasicScale.SetDrawValue(false)
-	c.tdpBasicScale.SetValue(float64(50))
 	c.tdpBasicScale.SetFocusable(false)
 	w.wheelScrollsView(c.tdpBasicScale)
-	c.tdpBasicLabel = gtk.NewLabel("50 W")
+	// Labelled from the scale's own value (the bottom of the device's range
+	// until the first sync), never from a number of its own that could fall
+	// outside that range.
+	c.tdpBasicLabel = gtk.NewLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
 	c.tdpBasicLabel.AddCSSClass("scale-value")
 	c.tdpBasicScale.ConnectValueChanged(func() {
 		c.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
@@ -309,13 +314,11 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.tdpAdvancedBox = gtk.NewBox(gtk.OrientationVertical, 4)
 	c.tdpAdvancedBox.SetVisible(false)
 
-	tdpWarn := gtk.NewLabel(fmt.Sprintf(
-		"WARNING: Values above %dW may cause thermal throttling, instability, or hardware damage. Use at your own risk — we are not responsible for any damages.",
-		w.limits.TDPMaxSafe))
-	tdpWarn.SetWrap(true)
-	tdpWarn.SetHAlign(gtk.AlignStart)
-	tdpWarn.AddCSSClass("tdp-warning")
-	c.tdpAdvancedBox.Append(tdpWarn)
+	c.tdpWarn = gtk.NewLabel(tdpWarningText(w.limits))
+	c.tdpWarn.SetWrap(true)
+	c.tdpWarn.SetHAlign(gtk.AlignStart)
+	c.tdpWarn.AddCSSClass("tdp-warning")
+	c.tdpAdvancedBox.Append(c.tdpWarn)
 
 	// Each slider spans its own limit's range: on asus-armoury PL2 and PL3 have
 	// higher minimums and maximums than PL1, and PL1's range would offer values
@@ -342,7 +345,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	uvWarn.AddCSSClass("tdp-warning")
 	c.uvBox.Append(uvWarn)
 
-	c.uvCpuScale, c.uvCpuLabel = c.buildUvScale("CPU Curve Optimizer", -40, 0)
+	c.uvCpuScale, c.uvCpuLabel = c.buildUvScale("CPU Curve Optimizer", float64(w.limits.UVMin), float64(w.limits.UVMax))
 
 	// UV buttons. The drawer pairs Save UV | Reset UV; the window has no
 	// per-domain saves — the page's one commit button carries the offset
@@ -533,10 +536,9 @@ func (c *customView) buildTdpScale(label, desc string, lo, hi int) (*gtk.Scale, 
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(lo), float64(hi), 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(false)
-	sc.SetValue(50)
 	sc.SetFocusable(false)
 	w.wheelScrollsView(sc)
-	valLabel := gtk.NewLabel("50 W")
+	valLabel := gtk.NewLabel(fmt.Sprintf("%d W", lo))
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
 		valLabel.SetLabel(fmt.Sprintf("%d W", int(sc.Value())))
@@ -571,10 +573,12 @@ func (c *customView) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gt
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, lo, hi, 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(false)
-	sc.SetValue(0)
+	// Stock is the top of the range (0 on every device so far); starting there
+	// rather than at a literal 0 keeps the value inside whatever the device says.
+	sc.SetValue(hi)
 	sc.SetFocusable(false)
 	c.w.wheelScrollsView(sc)
-	valLabel := gtk.NewLabel(c.uvText(label, 0))
+	valLabel := gtk.NewLabel(c.uvText(label, int(hi)))
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
 		valLabel.SetLabel(c.uvText(label, int(sc.Value())))
@@ -1049,6 +1053,35 @@ func (w *Window) customViews() []*customView {
 func (w *Window) syncCustomView() {
 	for _, c := range w.customViews() {
 		c.sync()
+	}
+}
+
+// tdpWarningText is the advanced view's warning, naming the device's safe
+// maximum.
+func tdpWarningText(l limits.Limits) string {
+	return fmt.Sprintf("WARNING: Values above %dW may cause thermal throttling, instability, or hardware damage. Use at your own risk — we are not responsible for any damages.",
+		l.TDPMaxSafe)
+}
+
+// applyLimits moves every bound this editor took from w.limits at
+// construction onto the current value, in place — the slider ranges, the
+// warning's safe maximum, and the fan chart (which reads its bounds and floor
+// on every draw, so a repaint is all it needs). The caller holds w.syncing:
+// SetRange clamps a value that falls outside the new range, and the
+// value-changed handlers it fires must not read as edits. The values
+// themselves come back from the sync that follows.
+func (c *customView) applyLimits() {
+	l := c.w.limits
+	c.tdpBasicScale.SetRange(float64(l.TDPMin), float64(l.BasicSliderMax()))
+	c.tdpPL1Scale.SetRange(float64(l.TDPMin), float64(l.TDPMaxForced))
+	lo, hi := l.PL2Range()
+	c.tdpPL2Scale.SetRange(float64(lo), float64(hi))
+	lo, hi = l.PL3Range()
+	c.tdpPL3Scale.SetRange(float64(lo), float64(hi))
+	c.uvCpuScale.SetRange(float64(l.UVMin), float64(l.UVMax))
+	c.tdpWarn.SetLabel(tdpWarningText(l))
+	if c.fanCurve != nil {
+		c.fanCurve.area.QueueDraw()
 	}
 }
 

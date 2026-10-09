@@ -192,7 +192,21 @@ type BatteryConfig struct {
 	Method      string `toml:"method"`
 	ChargeLimit *bool  `toml:"charge_limit"` // pointer: absent means the default, not false
 	Health      bool   `toml:"health"`       // Status reports state of health
+
+	// ChargeLimitMin and ChargeLimitMax bound the accepted threshold, in
+	// percent. The kernel publishes no range for charge_control_end_threshold,
+	// so this is the one place it can come from; zero means the default below.
+	ChargeLimitMin int `toml:"charge_limit_min"`
+	ChargeLimitMax int `toml:"charge_limit_max"`
 }
+
+// The charge-limit range a device gets when its data declares none: what
+// every daemon accepted before the range was device data, so an existing
+// device file keeps its behaviour.
+const (
+	DefaultChargeLimitMin = 40
+	DefaultChargeLimitMax = 100
+)
 
 // Caps returns the battery capabilities this device declares.
 func (c BatteryConfig) Caps() driver.BatteryCaps {
@@ -200,7 +214,17 @@ func (c BatteryConfig) Caps() driver.BatteryCaps {
 	if c.ChargeLimit != nil {
 		limit = *c.ChargeLimit
 	}
-	return driver.BatteryCaps{ChargeLimit: limit, Health: c.Health}
+	caps := driver.BatteryCaps{ChargeLimit: limit, Health: c.Health}
+	if limit {
+		caps.ChargeLimitMin, caps.ChargeLimitMax = DefaultChargeLimitMin, DefaultChargeLimitMax
+		if c.ChargeLimitMin != 0 {
+			caps.ChargeLimitMin = c.ChargeLimitMin
+		}
+		if c.ChargeLimitMax != 0 {
+			caps.ChargeLimitMax = c.ChargeLimitMax
+		}
+	}
+	return caps
 }
 
 // CPUConfig declares CPU-level controls. It is a section rather than a bool
@@ -451,8 +475,18 @@ func (c Config) Validate() error {
 		}
 		// Same rule as an empty toggles block: a capability that offers nothing
 		// still tells every client the controls exist. Say so by omission.
-		if caps := c.Battery.Caps(); !caps.ChargeLimit && !caps.Health {
+		caps := c.Battery.Caps()
+		if !caps.ChargeLimit && !caps.Health {
 			fail("battery block offers neither charge_limit nor health; drop the block instead")
+		}
+		// A range on a battery with no limit to bound would be served as zero
+		// and silently ignored, which reads as a typo nobody is told about.
+		if !caps.ChargeLimit && (c.Battery.ChargeLimitMin != 0 || c.Battery.ChargeLimitMax != 0) {
+			fail("battery.charge_limit_min/max set with charge_limit = false")
+		}
+		if caps.ChargeLimit && (caps.ChargeLimitMin < 1 || caps.ChargeLimitMin >= caps.ChargeLimitMax || caps.ChargeLimitMax > 100) {
+			fail("battery charge limit range must satisfy 1 <= min < max <= 100 (got %d..%d)",
+				caps.ChargeLimitMin, caps.ChargeLimitMax)
 		}
 	}
 	if c.CPU != nil && c.CPU.Boost == "" {

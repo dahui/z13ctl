@@ -1700,11 +1700,21 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   no daemon, a pre-M2 daemon answering `unknown command`, a malformed reply —
   falls back rather than erroring, because a drawer with slightly wrong bounds
   is worth having and the daemon validates every write anyway.
-  Fetched **once, before any widget exists**: the two TDP scales and the fan
-  curve editor bind their ranges at construction, so applying limits later
-  means a rebuild path no second device exists to prove. The document is static
-  for the daemon's lifetime, so the only case this misses is the drawer
-  starting while the daemon is down.
+  **Fetched at startup and kept current, not fetched once** (2026-10-09). The
+  first version fetched the document once, before any widget existed, on the
+  belief that it was static and a later change would need a rebuild path. Both
+  premises were wrong. The document is not static: on asus-armoury the power
+  ranges are the kernel's, per power source, and a daemon restart can move them.
+  A drawer started against asus-nb-wmi kept PL1 at 5–93 W after the armoury
+  grant moved the daemon to 28–80 W. And no rebuild is needed: a slider's
+  bounds are a `SetRange` away. `internal/gui/limitsync.go` now refetches the
+  document on every daemon connection and lays get-state's live `tdp_limits`
+  over it on every refresh (`limits.WithTDPLimits`), and `applyLimits` moves
+  each built slider in place under `w.syncing`. Verified on hardware: a GUI
+  started with the daemon down logged `device limits changed tdpMin=28 tdpMax=80`
+  one second after the daemon came up, and the focus dump was byte-identical.
+  What it still cannot follow is a change in *which* controls exist; it logs
+  that and asks for a restart.
   `TestDocumentMatchesTheDrawersFallback` (`internal/daemon`) is the guard that
   makes the fallback safe: device TOML → driver envelope → wire → `FromDevice`
   must land exactly on `DefaultLimits`, or the drawer behaves differently
@@ -3125,10 +3135,37 @@ diff whenever a main release touches `api/`.
    — main's old api, wrong line numbers. Until the target passes repository
    flags (or the repo is renamed), generate from a copy of `api/` outside the
    repo; the committed page has no source links.
-7. **This machine needs `sudo voltaire setup` re-run**: the asus-armoury PPT
-   grant ported in 1.4 is not applied (`ppt_pl1_spl/current_value` is still
-   `root:root 644`), so the daemon falls back to asus-nb-wmi and `tdp_limits`
-   reports that backend. Correct behaviour, but armoury is untested live here.
+7. **Read device values from the device, not from literals** (Jeff,
+   2026-10-09). The precedence is: autodetected from the kernel or firmware, then
+   the device TOML, then a built-in default. That applies to every limit, range,
+   count or vocabulary, in validation, UI, help text and docs alike.
+   **Done 2026-10-09** (the power audit found no decision logic using literals;
+   everything it found was text):
+   - Help names no device numbers and points at `tdp --get`, which now prints the
+     safe maximum.
+   - The floor notices read `env.FloorCurve` (`safety.FloorSpan`) and the fan
+     shape's `PWMMax`.
+   - The charge-limit range is device data (`battery.charge_limit_min/max` →
+     `api.BatteryInfo`; the kernel publishes none).
+   - The GUI's undervolt and battery sliders bind to `limits` and follow the
+     daemon live (see the device-get entry above).
+   - The docs scope Z13 numbers as the GZ302EA's.
+
+   **The wider audit is done and is now a plan:**
+   `.claude/plans/device-values-audit.md`, covering profiles, fans, lighting,
+   toggles/charger/battery, GPU and telemetry, SMU, and setup. It subsumes the
+   roadmap's M2→M5 carry items. Its §0 is a **safety** fix:
+   `status`/`status --watch` and `fancurve --get` read the EC directly even
+   while the daemon has `ecWedged` latched.
+   *Armoury verified live 2026-10-09* after re-running setup. Under `yes` ×32,
+   measured with RAPL on performance (firmware alone 70.0 W at 92 °C):
+   - 30 W custom held 31.9 W through a foreign `pwm_enable=2` and a same-value
+     profile write. The policy watcher re-applied within the same second each
+     time.
+   - 20 W was refused (below 28).
+   - 80 W `--force` put the floor in place before the PPT write and held
+     80.0 W at 94 °C.
+   - `tdp --reset` landed on balanced at 52.0 W and skipped the SMU write.
 8. **M3 release mechanics** (table above), with the AUR side in
    `.claude/plans/voltaire-aur-playbook.md`.
 9. **M5** (plugin tier + OXP device, carrying the three M2 items above) and

@@ -428,6 +428,12 @@ const (
 type BatteryCaps struct {
 	ChargeLimit bool // the charge end threshold can be read and written
 	Health      bool // Status reports HealthPercent
+
+	// ChargeLimitMin and ChargeLimitMax are the inclusive range of percentages
+	// SetChargeLimit accepts. power_supply publishes the threshold but not its
+	// bounds, so these are device data rather than a reading. Zero when
+	// ChargeLimit is false.
+	ChargeLimitMin, ChargeLimitMax int
 }
 
 // Battery reads and writes battery charge policy.

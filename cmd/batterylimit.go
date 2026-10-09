@@ -27,7 +27,9 @@ sysfs interface.
 With --get, prints the current charge limit percentage.
 With --set, writes the threshold to the kernel (root or group access required).
 
-Range: 40–100. Writing 100 removes any limit (charges to full).`,
+The accepted range is device data, since the kernel does not publish one; an
+out-of-range value is refused with the range this machine accepts. Writing the
+top of the range removes any limit (charges to full).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !batteryGetFlag && batterySetFlag == "" {
@@ -35,9 +37,21 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 		}
 
 		if batterySetFlag != "" {
+			// The range comes from the device data, so the device is assembled
+			// before anything is sent. Assembly reads DMI and constructs drivers;
+			// it writes nothing.
+			hw, err := hardware()
+			if err != nil {
+				return err
+			}
+			if hw.Battery == nil || !hw.Battery.Caps().ChargeLimit {
+				return fmt.Errorf("no battery charge control on this device")
+			}
+			caps := hw.Battery.Caps()
 			limit, err := strconv.Atoi(batterySetFlag)
-			if err != nil || limit < 40 || limit > 100 {
-				return fmt.Errorf("invalid limit %q: must be an integer 40–100", batterySetFlag)
+			if err != nil || limit < caps.ChargeLimitMin || limit > caps.ChargeLimitMax {
+				return fmt.Errorf("invalid limit %q: must be an integer %d–%d",
+					batterySetFlag, caps.ChargeLimitMin, caps.ChargeLimitMax)
 			}
 
 			if dryRunFlag {
@@ -53,13 +67,6 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 				return nil
 			}
 
-			hw, err := hardware()
-			if err != nil {
-				return err
-			}
-			if hw.Battery == nil {
-				return fmt.Errorf("no battery charge control on this device")
-			}
 			if err := hw.Battery.SetChargeLimit(limit); err != nil {
 				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 			}
@@ -86,6 +93,6 @@ Range: 40–100. Writing 100 removes any limit (charges to full).`,
 
 func init() {
 	batterylimitCmd.Flags().BoolVar(&batteryGetFlag, "get", false, "Print the current battery charge limit")
-	batterylimitCmd.Flags().StringVar(&batterySetFlag, "set", "", "Set the battery charge limit (40–100)")
+	batterylimitCmd.Flags().StringVar(&batterySetFlag, "set", "", "Set the battery charge limit, in percent")
 	rootCmd.AddCommand(batterylimitCmd)
 }

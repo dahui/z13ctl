@@ -111,7 +111,12 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	}
 	if hw.Battery != nil {
 		caps := hw.Battery.Caps()
-		info.Battery = &api.BatteryInfo{ChargeLimit: caps.ChargeLimit, Health: caps.Health}
+		info.Battery = &api.BatteryInfo{
+			ChargeLimit:    caps.ChargeLimit,
+			ChargeLimitMin: caps.ChargeLimitMin,
+			ChargeLimitMax: caps.ChargeLimitMax,
+			Health:         caps.Health,
+		}
 	}
 	if hw.Telemetry != nil {
 		t := hw.Telemetry.Info()

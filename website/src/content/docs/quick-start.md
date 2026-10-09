@@ -123,9 +123,11 @@ custom values saved so `custom` stays re-selectable.
 Run the [daemon](/voltaire/reference/daemon/) to keep a custom TDP in force. The
 firmware re-applies the power profile's own limits whenever anything writes the
 profile (GNOME power modes, plugging or unplugging the charger) or resets the
-fans to auto, and the daemon is what puts yours back. Sustaining more than 75 W
-also holds both fans to a 50% PWM floor that rises to 100% at 80 °C, which the
-same profile writes release and the daemon restores.
+fans to auto, and the daemon is what puts yours back. Sustaining more than the
+device's safe maximum (`tdp --get` prints it; 75 W on the GZ302EA) also holds
+the fans to the device's floor curve — on the GZ302EA a 50% PWM floor that
+rises to 100% at 80 °C — which the same profile writes release and the daemon
+restores.
 
 ```sh
 # Check current TDP/PPT values
@@ -137,7 +139,8 @@ voltaire tdp --set 50
 # Set with individual PL overrides
 voltaire tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (above 75W, fans held to a 50% minimum; 80W is the maximum)
+# Force high TDP (above the safe maximum, fans held to the floor curve first;
+# 80W is asus-armoury's maximum on the GZ302EA)
 voltaire tdp --set 80 --force
 
 # Back to the balanced profile and the firmware's own limits
@@ -165,7 +168,8 @@ voltaire undervolt --set -20
 voltaire undervolt --reset
 ```
 
-Safety limit (matching G-Helper defaults): CPU 0 to -40.
+The accepted range is device data, and an out-of-range offset is refused with
+your machine's range; on the GZ302EA it is G-Helper's 0 to -40.
 
 ## Custom profiles
 

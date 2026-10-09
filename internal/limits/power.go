@@ -17,15 +17,18 @@
 // values, which are correct for the only device supported today.
 //
 // The daemon serves its limits over the API as the device-get document, and
-// FromDevice (device.go) is how a Limits is built from one: fetched once at
-// startup, Sanitized, falling back to DefaultLimits on any failure. DefaultLimits
-// remains that fallback rather than dead weight — it is what a drawer talking to
-// no daemon, or to one too old to answer device-get, builds its widgets from.
+// FromDevice (device.go) is how a Limits is built from one, Sanitized, falling
+// back to DefaultLimits on any failure. The power-limit ranges are also live —
+// the kernel's own, per power source on asus-armoury — and get-state carries
+// them as tdp_limits, which WithTDPLimits lays over a Limits on every refresh.
+// DefaultLimits remains the fallback rather than dead weight: it is what a GUI
+// talking to no daemon, or to one too old to answer device-get, starts from.
 //
 // Because it is a fallback and not the source, it has to keep agreeing with the
-// device data the daemon serves: TestFromDeviceMatchesDefaultLimitsOnTheZ13 is
-// the guard, and it is the reason the swap is a no-op on the only device shipping
-// today. Before that guard existed the drawer clamped at an 80% fan floor for a
+// Z13's device file: TestFromDeviceMatchesDefaultLimitsOnTheZ13 is the guard.
+// On a kernel with asus-armoury the live ranges then differ from it (28–80 W
+// PL1 rather than the file's 5–93), and that difference is the point — the
+// widgets follow the kernel, not the file. Before that guard existed the drawer clamped at an 80% fan floor for a
 // release after the daemon had dropped to a 50%-bottomed ramp — the same drift,
 // caught by nothing.
 //
@@ -34,6 +37,7 @@
 package limits
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -113,14 +117,22 @@ type Limits struct {
 	// machine's curves would offer the user a fan profile designed for hardware
 	// they are not running.
 	Presets []api.FanPreset
+
+	// UVMin..UVMax is the Curve Optimizer offset range (UVMin <= UVMax <= 0).
+	UVMin, UVMax int
+
+	// BatteryMin..BatteryMax is the charge limit range, in percent. The kernel
+	// publishes no range for the threshold, so the daemon serves device data.
+	BatteryMin, BatteryMax int
 }
 
-// DefaultLimits returns the 2025 ROG Flow Z13 (GZ302) values. These mirror
-// z13ctl's cli.TDPMin / TDPMaxSafe / TDPMaxForced / cli.HighTDPFanCurve and
-// cli.StockProfilePPT. Until the daemon serves them over the API, any change on
-// the daemon side must be copied here by hand — the floor dropped from a flat
-// 80% to this 50%-bottomed ramp in z13ctl v1.3.x and the drawer kept clamping
-// at 80% for a release, which is the drift this comment is warning about.
+// DefaultLimits returns the 2025 ROG Flow Z13 (GZ302) values, as its device
+// file declares them before the kernel's ranges are laid over the power
+// limits. It is the fallback for a GUI the daemon has not answered, not the
+// source: FromDevice is. TestFromDeviceMatchesDefaultLimitsOnTheZ13 and the
+// daemon's TestDocumentMatchesTheDrawersFallback keep the two agreeing, which
+// matters because the drawer once kept clamping at an 80% fan floor for a
+// release after the daemon had dropped to this 50%-bottomed ramp.
 func DefaultLimits() Limits {
 	return Limits{
 		Model:         "GZ302",
@@ -130,7 +142,11 @@ func DefaultLimits() Limits {
 		HighTDPMinPWM: 127, // FloorCurve's bottom: 50% of PWMMax
 		TempMin:       35,
 		TempMax:       105,
-		// cli.HighTDPFanCurve: 50% at idle temperatures, full speed by 80°C.
+		UVMin:         -40,
+		UVMax:         0,
+		BatteryMin:    40,
+		BatteryMax:    100,
+		// The device file's floor_curve: 50% at idle temperatures, full speed by 80°C.
 		// The ramp is what protects the APU; the bottom is what keeps it quiet.
 		FloorCurve: []api.FanCurvePoint{
 			{Temp: 30, PWM: 127},
@@ -168,7 +184,7 @@ func DefaultLimits() Limits {
 			},
 			{
 				Name: "turbo", Label: "Turbo",
-				Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.",
+				Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above the safe maximum.",
 				Curve: []api.FanCurvePoint{
 					{Temp: 35, PWM: 127}, {Temp: 45, PWM: 140}, {Temp: 55, PWM: 165}, {Temp: 65, PWM: 190},
 					{Temp: 75, PWM: 235}, {Temp: 85, PWM: 255}, {Temp: 95, PWM: 255}, {Temp: 105, PWM: 255},
@@ -285,8 +301,53 @@ func (l Limits) Sanitized() Limits {
 		l.HighTDPMinPWM = l.FloorCurve[0].PWM
 	}
 
+	// Undervolt and battery ranges: each falls back whole when absent or
+	// inconsistent. Zero-zero is "not served" (a daemon older than the field,
+	// or no document), and an inverted or out-of-domain range does not say
+	// which end is wrong.
+	if l.UVMin >= l.UVMax || l.UVMax > 0 {
+		l.UVMin, l.UVMax = d.UVMin, d.UVMax
+	}
+	if l.BatteryMin < 1 || l.BatteryMin >= l.BatteryMax || l.BatteryMax > 100 {
+		l.BatteryMin, l.BatteryMax = d.BatteryMin, d.BatteryMax
+	}
+
 	l.Presets = sanitizedPresets(l.Presets)
 	return l
+}
+
+// WithTDPLimits lays the power-limit ranges the running kernel accepts — the
+// tdp_limits field of get-state — over l, and returns the result Sanitized.
+//
+// The device document is fetched once, but these ranges are live: armoury
+// keeps separate AC and battery tables, and an install that gains the armoury
+// grant moves from asus-nb-wmi's ranges to the kernel's at the next daemon
+// start. get-state carries them on every reply, so a client that overlays
+// them on each sync follows both without asking twice. A nil t (a daemon that
+// cannot say right now, or one older than the field) leaves l as it is.
+func (l Limits) WithTDPLimits(t *api.TDPLimits) Limits {
+	if t == nil {
+		return l
+	}
+	if t.PL1.Max > 0 {
+		l.TDPMin, l.TDPMaxForced = t.PL1.Min, t.PL1.Max
+	}
+	if t.PL2.Max > 0 {
+		l.PL2Min, l.PL2Max = t.PL2.Min, t.PL2.Max
+	}
+	if t.PL3.Max > 0 {
+		l.PL3Min, l.PL3Max = t.PL3.Min, t.PL3.Max
+	}
+	if t.SafeMax > 0 {
+		l.TDPMaxSafe = t.SafeMax
+	}
+	return l.Sanitized()
+}
+
+// Equal reports whether two Limits describe the same bounds, so a client can
+// skip reconfiguring widgets when a refresh changed nothing.
+func (l Limits) Equal(o Limits) bool {
+	return reflect.DeepEqual(l, o)
 }
 
 // sanitizedPresets drops every preset the editor cannot load or the daemon

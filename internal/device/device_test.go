@@ -224,13 +224,16 @@ func TestBatteryCapsDefaults(t *testing.T) {
 		cfg  BatteryConfig
 		want driver.BatteryCaps
 	}{
-		{"bare block", BatteryConfig{Method: "m"}, driver.BatteryCaps{ChargeLimit: true}},
+		{"bare block", BatteryConfig{Method: "m"}, driver.BatteryCaps{ChargeLimit: true,
+			ChargeLimitMin: DefaultChargeLimitMin, ChargeLimitMax: DefaultChargeLimitMax}},
 		{"health declared", BatteryConfig{Method: "m", Health: true},
-			driver.BatteryCaps{ChargeLimit: true, Health: true}},
+			driver.BatteryCaps{ChargeLimit: true, Health: true,
+				ChargeLimitMin: DefaultChargeLimitMin, ChargeLimitMax: DefaultChargeLimitMax}},
 		{"limit explicitly off", BatteryConfig{Method: "m", ChargeLimit: &no, Health: true},
 			driver.BatteryCaps{Health: true}},
 		{"limit explicitly on", BatteryConfig{Method: "m", ChargeLimit: &yes},
-			driver.BatteryCaps{ChargeLimit: true}},
+			driver.BatteryCaps{ChargeLimit: true,
+				ChargeLimitMin: DefaultChargeLimitMin, ChargeLimitMax: DefaultChargeLimitMax}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.cfg.Caps(); got != tc.want {
@@ -310,6 +313,16 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 			no := false
 			c.Battery = &BatteryConfig{Method: "m", ChargeLimit: &no}
 		}, "drop the block instead"},
+		{"charge limit range inverted", func(c *Config) {
+			c.Battery = &BatteryConfig{Method: "m", ChargeLimitMin: 90, ChargeLimitMax: 60}
+		}, "1 <= min < max <= 100"},
+		{"charge limit max past 100", func(c *Config) {
+			c.Battery = &BatteryConfig{Method: "m", ChargeLimitMax: 110}
+		}, "1 <= min < max <= 100"},
+		{"charge limit range with no charge limit", func(c *Config) {
+			no := false
+			c.Battery = &BatteryConfig{Method: "m", ChargeLimit: &no, Health: true, ChargeLimitMin: 50}
+		}, "charge_limit = false"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -462,3 +475,33 @@ func (fakeTelemetry) Sample() (driver.Sample, error) { return driver.Sample{}, n
 type fakeButtons struct{}
 
 func (fakeButtons) Watch(context.Context, chan<- driver.ButtonEvent) error { return nil }
+
+// TestBatteryChargeLimitRange pins where the range comes from: the device data
+// when it declares one, the pre-existing 40–100 when it does not, and nothing
+// at all when there is no charge limit to bound.
+func TestBatteryChargeLimitRange(t *testing.T) {
+	no := false
+	tests := []struct {
+		name     string
+		cfg      BatteryConfig
+		min, max int
+	}{
+		{"undeclared takes the defaults", BatteryConfig{Method: "m"}, DefaultChargeLimitMin, DefaultChargeLimitMax},
+		{"declared wins", BatteryConfig{Method: "m", ChargeLimitMin: 50, ChargeLimitMax: 90}, 50, 90},
+		{"one side declared", BatteryConfig{Method: "m", ChargeLimitMin: 60}, 60, DefaultChargeLimitMax},
+		{"no charge limit, no range", BatteryConfig{Method: "m", ChargeLimit: &no, Health: true}, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := tt.cfg.Caps()
+			if caps.ChargeLimitMin != tt.min || caps.ChargeLimitMax != tt.max {
+				t.Errorf("range = %d–%d, want %d–%d", caps.ChargeLimitMin, caps.ChargeLimitMax, tt.min, tt.max)
+			}
+		})
+	}
+
+	z13 := z13Config(t)
+	if caps := z13.Battery.Caps(); caps.ChargeLimitMin != 40 || caps.ChargeLimitMax != 100 {
+		t.Errorf("Z13 range = %d–%d, want the declared 40–100", caps.ChargeLimitMin, caps.ChargeLimitMax)
+	}
+}

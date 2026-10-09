@@ -38,7 +38,7 @@ func z13Document() *api.DeviceInfo {
 				},
 				{
 					Name: "turbo", Label: "Turbo",
-					Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W.",
+					Description: "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above the safe maximum.",
 					Curve: []api.FanCurvePoint{
 						{Temp: 35, PWM: 127}, {Temp: 45, PWM: 140}, {Temp: 55, PWM: 165}, {Temp: 65, PWM: 190},
 						{Temp: 75, PWM: 235}, {Temp: 85, PWM: 255}, {Temp: 95, PWM: 255}, {Temp: 105, PWM: 255},

@@ -544,12 +544,14 @@ func (d *Daemon) restoreStockPPTErr(profile string) error {
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
-	limit, err := strconv.Atoi(req.Set)
-	if err != nil || limit < 40 || limit > 100 {
-		return response{OK: false, Error: "battery limit must be an integer 40–100"}
-	}
-	if d.hw == nil || d.hw.Battery == nil {
+	if d.hw == nil || d.hw.Battery == nil || !d.hw.Battery.Caps().ChargeLimit {
 		return response{OK: false, Error: "batterylimit: no battery charge control on this device"}
+	}
+	caps := d.hw.Battery.Caps()
+	limit, err := strconv.Atoi(req.Set)
+	if err != nil || limit < caps.ChargeLimitMin || limit > caps.ChargeLimitMax {
+		return response{OK: false, Error: fmt.Sprintf("battery limit must be an integer %d–%d",
+			caps.ChargeLimitMin, caps.ChargeLimitMax)}
 	}
 	if err := d.hw.Battery.SetChargeLimit(limit); err != nil {
 		return response{OK: false, Error: "batterylimit: " + err.Error()}

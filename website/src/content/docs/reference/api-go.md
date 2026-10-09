@@ -1777,10 +1777,14 @@ Target returns the profile to apply for the given power source, or "" when autos
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
+ChargeLimitMin and ChargeLimitMax are the inclusive range batterylimit accepts, in percent. The kernel publishes only the threshold itself, never its bounds, so they come from device data. Both are zero when ChargeLimit is false, and a daemon older than these fields omits them; a client should then assume 40–100, the range every daemon accepted before it said so.
+
 ```go
 type BatteryInfo struct {
-    ChargeLimit bool `json:"charge_limit,omitempty"` // batterylimit get/set work
-    Health      bool `json:"health,omitempty"`       // get-state reports state of health
+    ChargeLimit    bool `json:"charge_limit,omitempty"`     // batterylimit get/set work
+    ChargeLimitMin int  `json:"charge_limit_min,omitempty"` // lowest accepted limit, percent
+    ChargeLimitMax int  `json:"charge_limit_max,omitempty"` // highest accepted limit; writing it removes the cap
+    Health         bool `json:"health,omitempty"`           // get-state reports state of health
 }
 ```
 
@@ -2291,9 +2295,9 @@ A reserved firmware profile name is never custom, whatever the map contains. The
 
 TDPLimits describes the power limits the running kernel accepts, so a client can bound its controls instead of discovering the range from an error. It is reported by get\-state and never stored.
 
-The ranges come from the kernel at the time of the request: asus\-armoury reports per\-limit bounds \(on the GZ302EA, PL1 28–80, PL2 32–92, PL3 45–93 W\) and may report different ones on battery; the deprecated asus\-nb\-wmi interface has none of its own, so the daemon reports 5–93 W for it. A PL2 or PL3 below its minimum is raised to it when set; a PL1 outside its range is refused.
+The ranges come from the kernel at the time of the request: asus\-armoury reports per\-limit bounds \(on the GZ302EA, PL1 28–80, PL2 32–92, PL3 45–93 W\) and may report different ones on battery; the deprecated asus\-nb\-wmi interface has none of its own, so the daemon reports the device data's range for it. A PL2 or PL3 below its minimum is raised to it when set; a PL1 outside its range is refused.
 
-This is the field z13ctl 1.4 introduced, served unchanged so clients written against it keep their bounds. The same ranges are in the device\-get document's power section \(DeviceInfo.Power\), which is the place a 2.0 client reads them once rather than on every poll. Absent while the daemon cannot reach the embedded controller, and on a device with no known PPT interface.
+This is the field z13ctl 1.4 introduced, served unchanged so clients written against it keep their bounds. The device\-get document's power section \(DeviceInfo.Power\) carries the same ranges as of when it was fetched; this field is the live copy, so a client that bounds its controls from the document and overlays this on each refresh follows a change of power source or interface without refetching. Absent while the daemon cannot reach the embedded controller, and on a device with no known PPT interface — keep the last ranges then, rather than reading absence as "no limits".
 
 ```go
 type TDPLimits struct {

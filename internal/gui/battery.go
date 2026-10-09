@@ -42,7 +42,8 @@ func (w *Window) buildBatterySection() *gtk.Box {
 	return box
 }
 
-// newBatterySection creates a charge-limit block: the cap scale (40–100%),
+// newBatterySection creates a charge-limit block: the cap scale over the
+// device's range (w.limits; the kernel publishes none, so it is device data),
 // debounced.
 //
 // The window shows the percentage in a label beside the slider; the drawer
@@ -54,10 +55,12 @@ func (w *Window) buildBatterySection() *gtk.Box {
 func (w *Window) newBatterySection(desktop bool) (*batterySection, *gtk.Box) {
 	b := &batterySection{w: w}
 
-	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 40, 100, 1)
+	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal,
+		float64(w.limits.BatteryMin), float64(w.limits.BatteryMax), 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(!desktop)
-	sc.SetValue(80)
+	// The top of the range — no limit — until the first sync says otherwise.
+	sc.SetValue(float64(w.limits.BatteryMax))
 	sc.SetFocusable(false)
 	w.wheelScrollsView(sc)
 	sc.ConnectValueChanged(func() {
@@ -76,6 +79,13 @@ func (w *Window) newBatterySection(desktop bool) (*batterySection, *gtk.Box) {
 	box.Append(sectionLabel("BATTERY LIMIT"))
 	box.Append(sc)
 	return b, box
+}
+
+// applyLimits moves the scale onto the device's current range, in place. The
+// caller holds w.syncing, so a value SetRange clamps is not sent as an edit.
+func (b *batterySection) applyLimits() {
+	b.scale.SetRange(float64(b.w.limits.BatteryMin), float64(b.w.limits.BatteryMax))
+	b.syncValueLabel()
 }
 
 // syncValueLabel keeps the inline readout on the slider. A no-op in the drawer,

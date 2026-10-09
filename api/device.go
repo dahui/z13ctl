@@ -190,9 +190,17 @@ type CPUInfo struct {
 // being present means there is a battery to report on at all; the two fields
 // are independently absent, so a machine can report state of health while
 // exposing no charge-limit attribute, or the reverse.
+//
+// ChargeLimitMin and ChargeLimitMax are the inclusive range batterylimit
+// accepts, in percent. The kernel publishes only the threshold itself, never
+// its bounds, so they come from device data. Both are zero when ChargeLimit
+// is false, and a daemon older than these fields omits them; a client should
+// then assume 40–100, the range every daemon accepted before it said so.
 type BatteryInfo struct {
-	ChargeLimit bool `json:"charge_limit,omitempty"` // batterylimit get/set work
-	Health      bool `json:"health,omitempty"`       // get-state reports state of health
+	ChargeLimit    bool `json:"charge_limit,omitempty"`     // batterylimit get/set work
+	ChargeLimitMin int  `json:"charge_limit_min,omitempty"` // lowest accepted limit, percent
+	ChargeLimitMax int  `json:"charge_limit_max,omitempty"` // highest accepted limit; writing it removes the cap
+	Health         bool `json:"health,omitempty"`           // get-state reports state of health
 }
 
 // TelemetryInfo describes what the device's telemetry source reports, so a

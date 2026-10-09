@@ -132,3 +132,31 @@ func TestCheckFanFloorReleaseAtUsesTheEnvelopesBottom(t *testing.T) {
 		t.Errorf("error %q does not name this device's floor bottom", err)
 	}
 }
+
+func TestFloorSpan(t *testing.T) {
+	tests := []struct {
+		name                 string
+		floor                []api.FanCurvePoint
+		bottom, top, topTemp int
+		ok                   bool
+	}{
+		{"empty", nil, 0, 0, 0, false},
+		{"flat", []api.FanCurvePoint{{Temp: 0, PWM: 127}}, 127, 127, 0, true},
+		// The top is where the curve *first* reaches its maximum, so a ramp
+		// that plateaus is described by the start of the plateau.
+		{"ramp then plateau", []api.FanCurvePoint{
+			{Temp: 30, PWM: 127}, {Temp: 60, PWM: 200}, {Temp: 80, PWM: 255}, {Temp: 90, PWM: 255},
+		}, 127, 255, 80, true},
+		{"tops out below full speed", []api.FanCurvePoint{
+			{Temp: 40, PWM: 100}, {Temp: 85, PWM: 230},
+		}, 100, 230, 85, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, top, tt2, ok := FloorSpan(tt.floor)
+			if b != tt.bottom || top != tt.top || tt2 != tt.topTemp || ok != tt.ok {
+				t.Errorf("FloorSpan = %d,%d,%d,%v; want %d,%d,%d,%v", b, top, tt2, ok, tt.bottom, tt.top, tt.topTemp, tt.ok)
+			}
+		})
+	}
+}

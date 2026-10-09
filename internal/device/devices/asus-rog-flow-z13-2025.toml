@@ -63,7 +63,7 @@ curve       = [[35, 0], [45, 0], [55, 55], [65, 90], [75, 130], [85, 180], [95, 
 [[fans.presets]]
 name        = "turbo"
 label       = "Turbo"
-description = "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above 75W."
+description = "Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above the safe maximum."
 curve       = [[35, 127], [45, 140], [55, 165], [65, 190], [75, 235], [85, 255], [95, 255], [105, 255]]
 
 # PPT limits via the asus-nb-wmi platform device attributes (NOT
@@ -121,9 +121,14 @@ description = "Faster pixel response for the display (may cause ghosting)"
 
 # The ACPI battery reports energy_full / energy_full_design (µWh), not the
 # charge_* (µAh) pair — hence state of health is served as a ratio.
+#
+# The charge-limit range is declared because the kernel cannot say:
+# charge_control_end_threshold has no min/max attribute beside it.
 [battery]
-method = "power-supply"
-health = true
+method           = "power-supply"
+health           = true
+charge_limit_min = 40
+charge_limit_max = 100
 
 # cpufreq's global boost switch (/sys/devices/system/cpu/cpufreq/boost). Writing
 # it moves every policy at once: measured here, 0 drops scaling_max_freq from

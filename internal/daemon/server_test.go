@@ -160,13 +160,24 @@ func TestHandleBrightnessRejectsOutOfRange(t *testing.T) {
 	}
 }
 
+// TestHandleBatteryLimitRejectsOutOfRange drives the real Z13 assembly: every
+// value here is refused before SetChargeLimit, so no sysfs write is reached.
+// The range in the message comes from the device data, not a literal.
 func TestHandleBatteryLimitRejectsOutOfRange(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: testDev}
 	for _, v := range []string{"39", "101", "abc", ""} {
 		resp := d.handleBatteryLimit(request{Cmd: "batterylimit", Set: v})
-		if resp.OK {
-			t.Errorf("batterylimit %q was accepted, want a rejection", v)
+		if resp.OK || !strings.Contains(resp.Error, "40–100") {
+			t.Errorf("batterylimit %q = %+v, want a rejection naming the device's 40–100 range", v, resp)
 		}
+	}
+}
+
+func TestHandleBatteryLimitWithoutChargeControl(t *testing.T) {
+	d := &Daemon{}
+	resp := d.handleBatteryLimit(request{Cmd: "batterylimit", Set: "80"})
+	if resp.OK || !strings.Contains(resp.Error, "no battery charge control") {
+		t.Errorf("batterylimit on a device with no battery = %+v, want a capability refusal", resp)
 	}
 }
 

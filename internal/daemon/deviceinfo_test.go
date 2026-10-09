@@ -265,7 +265,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"battery":{"charge_limit":true,"health":true}`,
+		`"battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true}`,
 		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs","history_seconds":3600}`,
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true`,

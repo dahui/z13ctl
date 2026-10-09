@@ -38,8 +38,8 @@ negative (undervolt).
 
 With --reset, resets CPU CO to 0 (stock voltage).
 
-Safety limits (matching G-Helper defaults):
-  CPU: 0 to -40
+The accepted range is device data; an out-of-range offset is refused with the
+range this machine accepts.
 
 Requires the ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR).
 The amkillam fork is required for Strix Halo (Ryzen AI MAX+) support.
@@ -213,7 +213,7 @@ func runUndervoltReset() error {
 
 func init() {
 	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print current Curve Optimizer offset")
-	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set all-core CPU CO offset (0 to -40)")
+	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set all-core CPU CO offset (0 or negative)")
 	undervoltCmd.Flags().BoolVar(&uvResetFlag, "reset", false, "Reset CO to stock (0)")
 	undervoltCmd.Flags().StringVar(&uvProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(undervoltCmd)

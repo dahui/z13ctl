@@ -115,6 +115,24 @@ func FloorPWMAt(floor []api.FanCurvePoint, temp int) int {
 	return floor[len(floor)-1].PWM
 }
 
+// FloorSpan summarises a floor curve for display: its bottom PWM, its top PWM,
+// and the temperature at which it first reaches the top. Messages describing
+// the floor read these off the device's curve rather than restating one
+// machine's numbers — a floor that tops out at 90% by 85°C must not be
+// described as "100% at 80°C". ok is false for an empty floor.
+func FloorSpan(floor []api.FanCurvePoint) (bottom, top, topTemp int, ok bool) {
+	if len(floor) == 0 {
+		return 0, 0, 0, false
+	}
+	bottom, top, topTemp = floor[0].PWM, floor[0].PWM, floor[0].Temp
+	for _, p := range floor[1:] {
+		if p.PWM > top {
+			top, topTemp = p.PWM, p.Temp
+		}
+	}
+	return bottom, top, topTemp, true
+}
+
 // FloorAdjustsCurve reports whether FanCurveForTDP changes anything about want
 // — either raising one or more points to the floor curve, or writing the floor
 // whole because there is no want at all.

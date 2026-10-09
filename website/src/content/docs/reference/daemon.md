@@ -149,16 +149,20 @@ render controls against, instead of hardcoding one device's numbers:
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
   "undervolt":{"min":-40,"max":0},
-  "battery":{"charge_limit":true,"health":true},
-  "telemetry":{"history_seconds":300},
+  "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
+  "telemetry":{"history_seconds":3600},
   "buttons":true}}
 ```
 
 Capability discovery is **by absence**: a section that is missing means the
 device does not have that capability — never an error — and a client hides the
 corresponding controls. The document is built from device data, plus the power
-limit ranges the kernel reports, so fetching it once at startup and caching it
-is fine for everything but those ranges — see below.
+limit ranges the kernel reports. Fetch it at startup **and again whenever you
+reconnect** — a restarted daemon may report different limits (an upgrade, or a
+kernel interface that became writable) — and take the power ranges from
+`get-state`'s `tdp_limits` on each refresh, since those are live; see below.
+Bound every control from the document, never from numbers of your own: every
+value in it varies by device.
 
 Bounds worth knowing: `power.tdp_min`..`tdp_max_forced` is the range the
 sustained limit (PL1) accepts, and `power.pl2`/`pl3` the burst limits' ranges
@@ -198,7 +202,10 @@ needs nothing else.
 
 `battery` and `telemetry` are sections rather than plain `true` because their
 contents are independently absent. `battery.charge_limit` says the
-`batterylimit` commands work; `battery.health` says `get-state` reports
+`batterylimit` commands work, and `battery.charge_limit_min`/`charge_limit_max`
+are the percentages they accept — device data, because the kernel publishes no
+range for the threshold (a daemon older than the fields omits them; assume
+40–100 there). `battery.health` says `get-state` reports
 `battery_health`, the pack's full-charge capacity as a percentage of its design
 capacity (it is not clamped to 100 — a freshly calibrated pack reads slightly
 above design). `telemetry.history_seconds` is the largest history window worth
@@ -339,8 +346,8 @@ profiles.
 | Reset undervolt | `{"cmd":"undervolt-reset"}` | `ok` |
 
 The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
-value to all three. `force` is required for a sustained limit (PL1) above
-75 W.
+value to all three. `force` is required for a sustained limit (PL1) above the
+device's `power.tdp_max_safe`.
 
 All six commands accept an optional `profile` field naming the custom profile
 to edit. Absent or empty means the active profile — which is what every client
@@ -358,20 +365,21 @@ and answers `ok`. A client that offers profile targeting must probe first —
 what `voltaire` itself does before sending any `--profile` edit.
 :::
 
-:::caution[Fan commands are restricted above 75 W sustained TDP]
-While PL1 is above 75 W, both fans are held to a minimum of 127 PWM (50%).
-`fancurve` is rejected if any point falls below that floor, and
+:::caution[Fan commands are restricted above the safe sustained TDP]
+While PL1 is above `power.tdp_max_safe` (75 W on the GZ302EA), the fans are
+held to the device's `power.floor_curve`, measured at each point's own
+temperature. `fancurve` is rejected if any point falls below that floor, and
 `fancurve-reset` is rejected outright — firmware auto mode has no minimum.
 `tdp-reset` is the way out: it lowers the limit before releasing the fans.
 
-`tdp` applies the same rule in the other direction. Raising PL1 above 75 W
-writes the fan curve **first**, and if that write fails the power limit is not
+`tdp` applies the same rule in the other direction. Raising PL1 above the safe
+maximum writes the fan curve **first**, and if that write fails the power limit is not
 applied at all. The floor is a **per-point minimum against the built-in
 high-TDP curve**: each point is raised to that curve's value where it falls
 below it, and left exactly as stored where it does not, so a client sending a
 curve above it gets that curve rather than a substitute. Note this is the
-whole curve and not just its 127 PWM bottom — a curve flat at 50% is still
-raised at higher temperatures. The built-in curve is written whole only when
+whole curve and not just its bottom (127 PWM on the GZ302EA) — a curve flat at
+the bottom's value is still raised at higher temperatures. The built-in curve is written whole only when
 the profile has no curve of its own. The same holds for the daemon's own
 restore paths — startup, resume, and selecting a custom profile.
 :::
@@ -524,7 +532,7 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
 | `pending_reboot` | whether a changed firmware setting needs a restart; **absent** when the device cannot say |
 | `charger` | which power input is supplying the machine: `adapter`, `usb-c`, or `none`; **absent** when the device cannot say |
-| `tdp_limits` | the power limits the kernel accepts: `backend` (`asus-armoury` or `asus-nb-wmi`), `pl1`/`pl2`/`pl3` as `{min,max}` watts, and `safe_max` (the highest PL1 without `force`). Served for clients written against z13ctl 1.4; the [`device-get` power section](#device-capabilities) carries the same ranges and is the place to read them once. **Absent** while the embedded controller is not answering, and when no power-limit interface is known |
+| `tdp_limits` | the power limits the kernel accepts: `backend` (`asus-armoury` or `asus-nb-wmi`), `pl1`/`pl2`/`pl3` as `{min,max}` watts, and `safe_max` (the highest PL1 without `force`). Introduced for z13ctl 1.4 clients, and the live copy of the [`device-get` power section](#device-capabilities)'s ranges: overlay it on each refresh to follow a change of power source or interface. **Absent** while the embedded controller is not answering, and when no power-limit interface is known — keep the last ranges then |
 | `battery_health` | full-charge capacity as a percentage of design capacity |
 | `battery_energy_wh` | the pack's remaining energy in watt-hours |
 | `battery_energy_full_wh` | the pack's full-charge energy in watt-hours |
@@ -632,8 +640,8 @@ on driving the fans from the curve's PWM values with no idea the machine is
 asleep. Any curve whose low-temperature points are above zero then keeps the
 fans turning all night, and a machine on a high sustained TDP is worse: every
 point of the high-TDP floor curve
-([`tdp`](/voltaire/reference/commands/#tdp) applies it above 75 W) is at or
-above 50%.
+([`tdp`](/voltaire/reference/commands/#tdp) applies it above the safe
+maximum) is at or above its bottom — 50% on the GZ302EA.
 
 "On some machines" is doing real work in that sentence. On kernels and
 firmware combinations where the custom curve is dropped across the suspend
@@ -821,7 +829,7 @@ The daemon polls the fan curve device's `pwm_enable` — the driver's own
 "is the custom curve live" flag, so it catches every cause — every two
 seconds. When the curve has been dropped while your saved settings say it
 should still be in force, it writes the curve back — as saved, with only
-sub-floor points raised if a sustained TDP above 75 W requires it. The same
+sub-floor points raised if a sustained TDP above the safe maximum requires it. The same
 applies to the floor itself: without this, a power profile change would
 release the fans while the power limit stayed in place.
 

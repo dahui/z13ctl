@@ -33,18 +33,17 @@ var fancurveCmd = &cobra.Command{
 	Short: "Get or set custom fan curves via asus-nb-wmi hwmon",
 	Long: `Get or set custom fan curves via the Linux asus-nb-wmi hwmon sysfs interface.
 
-Both physical fans cool the same APU, so the same curve is always applied to
-both fans simultaneously.
+The same curve is always applied to every fan.
 
-With --get, prints the current 8-point fan curve, fan mode, and RPM.
+With --get, prints the current fan curve, fan mode, and RPM.
 
-With --set, writes a custom 8-point fan curve to both fans. The curve must be
-specified as 8 comma-separated temp:speed pairs where temp is in Celsius and
-speed is either a PWM value (0–255) or a percentage with a % suffix (0–100%).
-Both formats can be mixed. Temps must be monotonically increasing; speed values
-must be non-decreasing.
+With --set, writes a custom fan curve to every fan. The curve is a list of
+comma-separated temp:speed pairs, one per curve point (--get shows how many the
+device takes), where temp is in Celsius and speed is either a raw PWM value or a
+percentage with a % suffix (0–100%). Both formats can be mixed. Temps must be
+monotonically increasing; speed values must be non-decreasing.
 
-With --reset, restores firmware auto mode (pwm_enable=2) for both fans.
+With --reset, restores firmware auto mode (pwm_enable=2) for every fan.
 
 The mode shown by --get is the truth: "custom" means the kernel is honouring
 your curve, "auto" means it is not, whatever points are listed. The kernel
@@ -57,9 +56,10 @@ Use --profile <name> to store a curve in a profile you are NOT running: nothing
 is written to the fans, which is how you build the profile 'voltaire autoswitch'
 selects on battery.
 
-Safety: while sustained TDP (PL1) is above 75W, every curve point must be at
-least 127 PWM (50%) and --reset is refused, since firmware auto mode has no
-minimum. Lower the limit first with 'voltaire tdp --reset'. A curve stored in a
+Safety: while sustained TDP (PL1) is above the device's safe maximum ('voltaire
+tdp --get' prints it), every curve point must meet the device's high-TDP floor
+curve at that point's temperature, and --reset is refused, since firmware auto
+mode has no minimum. Lower the limit first with 'voltaire tdp --reset'. A curve stored in a
 profile you are not running is checked against that profile's own power limit.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -179,9 +179,9 @@ func runFanCurveGet() error {
 		fmt.Printf("  error reading curve: %v\n", curveErr)
 		return nil
 	}
+	pwmMax := fanPWMMax(hw)
 	for _, p := range curve {
-		pct := p.PWM * 100 / 255
-		fmt.Printf("  %3d°C: %3d/255 (%2d%%)\n", p.Temp, p.PWM, pct)
+		fmt.Printf("  %3d°C: %3d/%d (%2d%%)\n", p.Temp, p.PWM, pwmMax, pwmPercent(p.PWM, pwmMax))
 	}
 	return nil
 }
