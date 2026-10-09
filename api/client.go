@@ -353,7 +353,9 @@ func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 
 // SendTdpSetFor stores TDP limits in the named custom profile. An empty profile
 // means the active one, in which case the limits are also written to hardware;
-// naming a profile that is not active only records them.
+// naming a profile that is not active only records them. The accepted ranges
+// are in State.TDPLimits: a PL2 or PL3 below its minimum is raised to it, and a
+// PL1 outside its range, or above SafeMax without force, is refused.
 func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 	handled, resp, err := sendCommand(request{
 		Cmd:     "tdp",
@@ -379,7 +381,8 @@ func SendTdpReset() (bool, error) {
 }
 
 // SendTdpResetFor clears the TDP limits from the named custom profile. An empty
-// profile means the active one, which also restores stock power limits.
+// profile means the active one, which also switches to balanced and hands the
+// power limits back to the firmware.
 func SendTdpResetFor(profile string) (bool, error) {
 	handled, resp, err := sendCommand(request{Cmd: "tdp-reset", Profile: profile})
 	if !handled || err != nil {
@@ -432,7 +435,8 @@ func SendUndervoltReset() (bool, error) {
 }
 
 // SendUndervoltResetFor clears the Curve Optimizer offset from the named custom
-// profile. An empty profile means the active one, which also resets hardware.
+// profile. An empty profile means the active one, which also resets hardware if
+// an offset is applied.
 func SendUndervoltResetFor(profile string) (bool, error) {
 	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset", Profile: profile})
 	if !handled || err != nil {

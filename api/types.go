@@ -27,7 +27,7 @@ type State struct {
 	TDP                *TDPState                `json:"tdp,omitempty"`         // projection; see the type doc
 	TDPLimits          *TDPLimits               `json:"tdp_limits,omitempty"`  // get-state only; what the kernel accepts
 	Undervolt          *UndervoltState          `json:"undervolt,omitempty"`   // projection; see the type doc
-	UndervoltAvailable bool                     `json:"undervolt_available"`   // true if ryzen_smu is loaded
+	UndervoltAvailable bool                     `json:"undervolt_available"`   // ryzen_smu loaded; after the first undervolt write, whether CO works
 	OnAC               bool                     `json:"on_ac"`                 // true when running on mains power
 	Temperature        int                      `json:"temperature,omitempty"` // APU temp, degrees Celsius
 	FanRPM             int                      `json:"fan_rpm,omitempty"`     // fan1 speed in RPM

@@ -351,9 +351,14 @@ needs to be done by hand.
 
 On `get-state` requests the daemon also populates `temperature` (APU die
 temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
-is plugged in), `undervolt_available` (whether the `ryzen_smu` kernel module
-is present), and `tdp_limits` from live sysfs reads. These are not persisted —
+is plugged in), `undervolt_available`, and `tdp_limits` from live sysfs reads. These are not persisted —
 they are real-time values.
+
+`undervolt_available` is true while the `ryzen_smu` module is loaded, until the
+first undervolt write tests whether that build supports Curve Optimizer on this
+machine; after that it is the test's answer. The daemon does not run the test
+just to answer `get-state`, because the test sends the same command as an
+undervolt reset.
 
 `tdp_limits` is the range the kernel accepts for each power limit, so a client
 can bound its controls rather than discover the range from an error:
@@ -490,8 +495,7 @@ These are lost across a sleep cycle and must be rewritten:
 On `PrepareForSleep(false)` the daemon restores lighting (regardless of profile)
 and all custom-profile volatile settings from its saved state. Fan curves, TDP,
 and undervolt are only restored when a custom profile is active; under a stock
-profile the firmware manages fan curves, and the profile's stock PPT values were
-already written to hardware when that profile was selected. The curve goes on
+profile the firmware manages the fans and power limits itself. The curve goes on
 before the TDP, so the high-TDP floor is written last and wins.
 
 The [reconciliation watcher](#custom-fan-curve-reconciliation) stands down between

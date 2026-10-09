@@ -79,8 +79,8 @@ func runStatus() error {
 		fmt.Println("TDP:     N/A")
 	}
 
-	// Undervolt (Curve Optimizer). Ask the daemon, which probed once at startup
-	// and cached the answer.
+	// Undervolt (Curve Optimizer). Ask the daemon: module presence until an
+	// undervolt write has probed, the probe's cached answer after.
 	//
 	// status must NOT call SMUProbeUndervolt itself: the probe writes a CO
 	// offset of 0, which is exactly a reset, and the cache that makes that

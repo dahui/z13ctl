@@ -80,8 +80,8 @@ When using --set, all three limits are set to the same value by default. Use
 
 Setting a TDP edits the custom profile you are running, creating and
 activating "custom" if a firmware profile is active. Switching back to a
-firmware profile restores that profile's stock PPT values to hardware while
-keeping every custom profile saved, so they stay re-selectable.
+firmware profile hands the power limits back to the firmware while keeping
+every custom profile saved, so they stay re-selectable.
 
 Use --profile <name> to store limits in a profile you are NOT running: nothing
 is written to hardware, which is how you build the profile 'z13ctl autoswitch'
@@ -285,7 +285,7 @@ func runTdpReset() error {
 			fmt.Printf("Cleared the power limits from profile %s\n", tdpProfileFlag)
 			return nil
 		}
-		fmt.Println("TDP reset: switched to balanced profile (stock PPT restored)")
+		fmt.Println("TDP reset: switched to balanced profile (firmware power limits restored)")
 		return nil
 	}
 
@@ -344,7 +344,7 @@ func parsePLOverrides(watts int) (pl1, pl2, pl3 int, err error) {
 func init() {
 	tdpCmd.Flags().BoolVar(&tdpGetFlag, "get", false, "Print current TDP power limits")
 	tdpCmd.Flags().StringVar(&tdpSetFlag, "set", "", "Set TDP power limit in watts")
-	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and restore its stock PPT values")
+	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and hand the power limits back to the firmware")
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")

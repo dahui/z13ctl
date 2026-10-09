@@ -104,6 +104,20 @@ api.SendAutoswitchSet(true, "balanced", "battery-uv")
     machine**, and answers `ok`. Call `SendProfileList` first: an older daemon
     answers `unknown command`, and that is the only reliable signal.
 
+**Power limit ranges.** Since api v1.3.0, `get-state` reports
+`State.TDPLimits`: the interface in use and the range the kernel accepts for
+each limit (PL1 28–80, PL2 32–92, PL3 45–93 W through asus-armoury on the
+GZ302EA). Bound your controls with it rather than hard-coding a range, and read
+it from the latest state, since it can change with the power source. It is nil
+when no power limit interface exists. On asus-armoury `State.TDP` reports
+`APUSPPT` and `PlatformSPPT` as 0, because that interface does not expose them.
+
+```go
+if l := state.TDPLimits; l != nil {
+    slider.SetRange(l.PL1.Min, l.PL1.Max)  // above l.SafeMax needs force
+}
+```
+
 ---
 
 ## Socket path
@@ -170,6 +184,7 @@ if handled && err == nil {
     fmt.Println("tdp:", state.TDP)
     fmt.Println("undervolt:", state.Undervolt)
     fmt.Println("undervolt available:", state.UndervoltAvailable)
+    fmt.Println("power limit ranges:", state.TDPLimits)
     fmt.Println("APU temp:", state.Temperature, "°C")
     fmt.Println("fan RPM:", state.FanRPM)
 }

@@ -142,8 +142,8 @@ behaviour z13ctl has always had. `--create` makes more.
     Only `--set` creates and activates `custom`. `fancurve --reset`,
     `tdp --reset` and `undervolt --reset` run while a firmware profile is
     selected affect **hardware only**: the fans go to firmware auto, the power
-    limits to that profile's stock values, the Curve Optimizer to zero, and every
-    saved custom profile is left exactly as it was.
+    limits back to the firmware's own, the Curve Optimizer to zero if an offset was
+    applied, and every saved custom profile is left exactly as it was.
 
     Through v1.3.0 they resolved to `custom` and committed it cleared — so
     `tdp --reset` on `balanced` silently deleted the fan curve and power limits
@@ -427,7 +427,7 @@ z13ctl tdp [flags]
 |------|-------------|
 | `--get` | Print current PPT values and the range the kernel accepts for each |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile, reset fan curves to auto and the undervolt to stock, and restore balanced's stock PPT |
+| `--reset` | Switch to balanced profile, reset the undervolt to stock, and hand the power limits and fans back to the firmware |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
@@ -474,6 +474,18 @@ profile hands the limits back to the firmware: z13ctl writes that profile's
 stock values (which brings a high custom limit down first) and then releases the
 fans to firmware auto, which makes the firmware re-apply the profile's own
 limits. The saved custom values are kept, so `custom` stays re-selectable.
+
+!!! warning "Run the daemon to keep a custom TDP"
+    On the Flow Z13 the firmware re-applies the active power profile's own limits
+    whenever anything writes `platform_profile` — even the profile already set, as
+    power-profiles-daemon does on plugging or unplugging the charger — and
+    whenever anything hands the fans back to firmware auto. `--get` and `status`
+    cannot see it: the readback shows the last value written. The
+    [daemon](daemon.md#custom-fan-curve-reconciliation) is told by the kernel about
+    these writes (with one exception, described there) and re-applies the custom
+    limit within two seconds.
+    Without it, the limit is lost until the next `tdp --set`, which says so when it
+    applies a limit directly.
 
 !!! note "PPT readback values"
     The values shown by `--get` are the kernel driver's cached values — what was
@@ -534,12 +546,13 @@ limits. The saved custom values are kept, so `custom` stays re-selectable.
   firmware auto has no floor at all.
 
 !!! danger "Run the daemon when sustaining above 75 W"
-    The kernel releases custom fan curves on every `platform_profile` write, and
-    the power limit survives it — so a GNOME power mode change or an AC/battery
-    transition can leave the machine drawing >75 W sustained with the fans back on
-    the firmware's ordinary curve. The [daemon](daemon.md) watches for that and
-    restores the floor within a couple of seconds. Without it, that state persists
-    until you re-apply the curve yourself.
+    Every `platform_profile` write — a GNOME power mode change, an AC/battery
+    transition, Fn+F5 — releases custom fan curves, the high-TDP floor included.
+    The firmware re-applies the profile's own power limits at the same time, but
+    the limit reads back unchanged, so z13ctl cannot confirm the high limit is gone
+    and treats the floor as still required. The [daemon](daemon.md) restores the
+    floor and then the limit within a couple of seconds. Without it, both stay
+    lost until you set them again.
 
 ```sh
 # Read current TDP values
@@ -551,10 +564,11 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high sustained TDP (fans are held to a 50% floor first)
-z13ctl tdp --set 85 --force
+# Force high sustained TDP (fans are held to a 50% floor first; 80W is
+# asus-armoury's maximum on the GZ302EA)
+z13ctl tdp --set 80 --force
 
-# Reset to balanced profile (restores balanced's stock PPT and clears the undervolt)
+# Back to balanced and the firmware's own limits (also clears the undervolt)
 z13ctl tdp --reset
 ```
 
@@ -575,7 +589,7 @@ z13ctl undervolt [flags]
 |------|-------------|
 | `--get` | Print current CO offset (from daemon state) |
 | `--set <value>` | Set all-core CPU CO offset (0 to -40) |
-| `--reset` | Reset CPU CO to stock (0) |
+| `--reset` | Reset CPU CO to stock (0). With no offset applied, reports that and sends nothing. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 CO values have no sysfs readback — `--get` returns the last-applied values from
@@ -584,7 +598,14 @@ output indicates that the saved offsets are not currently applied. If the daemon
 is not running, reports "not set".
 
 CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
-them automatically on startup and resume when the custom profile is active.
+them automatically on startup and resume when a custom profile with an offset is
+active.
+
+z13ctl only talks to the SMU when an offset is about to be applied, or when one
+is applied and has to be cleared. Switching to a firmware profile, `tdp --reset`
+and `undervolt --reset` send nothing when no offset is applied: userspace
+messages to the SMU can collide with the kernel's own, and an unnecessary reset
+is the prime suspect in a hard lock seen during development.
 
 **Safety limits (matching G-Helper defaults):**
 
@@ -632,8 +653,10 @@ z13ctl status
 This command is read-only and takes no flags. Values are read directly from
 sysfs, with two exceptions: undervolt has no sysfs readback, so the line reports
 availability rather than the active offset; and the TDP line asks the daemon
-which profile is active, because a custom TDP of exactly 5 W is otherwise
-indistinguishable from the kernel's stale 5 W boot cache.
+which profile is active, because a custom TDP equal to the kernel's untouched
+boot-time values (asus-armoury's defaults, or asus-nb-wmi's 5 W) is otherwise
+indistinguishable from them. Like `tdp --get`, the TDP line shows the limits last
+written, which the firmware may since have replaced; see [`tdp`](#tdp).
 
 ```sh
 z13ctl status
@@ -645,9 +668,11 @@ z13ctl status
 # Battery: 74% (limit: 80%)
 ```
 
-The undervolt line comes from the daemon, which tests Curve Optimizer support
-once at startup. Without a daemon, `status` can only confirm that the module is
-loaded and says so:
+The undervolt line comes from the daemon. It reports `available` while the
+module is loaded, until the first undervolt write tests whether this
+`ryzen_smu` build supports Curve Optimizer on the machine; from then on it
+reports the test's answer. Without a daemon, `status` can only confirm that the
+module is loaded and says so:
 
 ```
 # UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)

@@ -118,14 +118,20 @@ instantaneous spikes for milliseconds. Setting all three to the same value gives
 a flat power cap; setting PL2 and PL3 higher allows bursty workloads to
 temporarily exceed PL1.
 
-Setting a custom TDP switches to the `custom` profile. Switching back to a stock
-profile restores that profile's stock PPT values to hardware, while keeping the
-custom values saved so `custom` stays re-selectable.
+The kernel sets the range. On the GZ302EA PL1 can be 28–80W, PL2 32–92W and PL3
+45–93W; a PL2 or PL3 below its minimum is raised to it, so `--set 30` writes
+30/32/45W and the machine sustains 32W.
 
-Sustaining more than 75 W holds both fans to a 50% PWM floor that rises to 100%
-at 80 °C. Run the [daemon](daemon.md) if you use that: a system power profile
-change releases the floor in the kernel while the power limit stays in force,
-and the daemon is what puts it back.
+Setting a custom TDP switches to the `custom` profile. Switching back to a stock
+profile hands the power limits back to the firmware, while keeping the custom
+values saved so `custom` stays re-selectable.
+
+Run the [daemon](daemon.md) to keep a custom TDP in force. The firmware
+re-applies the power profile's own limits whenever anything writes the profile
+(GNOME power modes, plugging or unplugging the charger) or resets the fans to
+auto, and the daemon is what puts yours back. Sustaining more than 75 W also
+holds both fans to a 50% PWM floor that rises to 100% at 80 °C, which the same
+profile writes release and the daemon restores.
 
 ```sh
 # Check current TDP/PPT values
@@ -137,10 +143,10 @@ z13ctl tdp --set 50
 # Set with individual PL overrides
 z13ctl tdp --set 45 --pl2 55 --pl3 60
 
-# Force high TDP (above 75W, fans set to 50% minimum)
-z13ctl tdp --set 85 --force
+# Force high TDP (above 75W, fans held to a 50% minimum; 80W is the maximum)
+z13ctl tdp --set 80 --force
 
-# Reset to balanced profile (restores balanced's stock PPT)
+# Back to the balanced profile and the firmware's own limits
 z13ctl tdp --reset
 ```
 
