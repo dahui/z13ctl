@@ -1,18 +1,22 @@
 package cmd
 
-// tdp.go — "tdp" subcommand: read or set TDP power limits via the Linux
-// asus-nb-wmi PPT sysfs attributes. No HID access required.
+// tdp.go — "tdp" subcommand: read or set TDP power limits through the device's
+// power limiter (asus-armoury or asus-nb-wmi PPT on the Z13). No HID access required.
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/daemon"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
@@ -31,26 +35,36 @@ var (
 
 var tdpCmd = &cobra.Command{
 	Use:   "tdp",
-	Short: "Get or set TDP power limits via asus-nb-wmi PPT",
-	Long: `Get or set TDP power limits via the Linux asus-nb-wmi PPT sysfs attributes.
+	Short: "Get or set TDP power limits (PPT)",
+	Long: `Get or set TDP power limits. On the ROG Flow Z13 they go through the
+kernel's asus-armoury firmware-attributes, or the older asus-nb-wmi PPT
+attributes on kernels that do not expose them there.
 
-With --get, prints all current PPT (Package Power Tracking) values.
+With --get, prints the current PPT (Package Power Tracking) values and the
+range the kernel accepts for each.
 
 With --set, writes power limits in watts. By default, all PPT values are set to
 the same value. Use --pl1, --pl2, --pl3 to override individual limits.
 
-Safety: The sustained power limit (PL1) is capped at 75W by default. Use --force
-to allow PL1 up to 93W (the absolute hardware maximum for the ROG Flow Z13
-GZ302E). When PL1 exceeds 75W, both fans are held to a curve with a 50% PWM
-floor that reaches 100% at 80°C, written before the power limit; if that write
-fails, or the kernel does not honour it, the TDP is not applied at all. Burst
-limits (PL2/PL3) are allowed up to 93W without --force since short bursts are
-thermally safe.
+Ranges come from the kernel where it reports them. On the GZ302EA asus-armoury
+accepts PL1 28–80W, PL2 32–92W and PL3 45–93W; a PL2 or PL3 below its minimum
+is raised to it (so --set 30 writes 30/32/45W, and the machine then sustains
+32W), and a PL1 outside its range is refused. The older interface accepts the
+device data's 5–93W.
 
-Run the daemon when sustaining above 75W. The kernel releases custom fan curves
-on every system power profile change while the power limit survives it, so
-without the daemon to restore the floor the machine can end up at high power on
-the firmware's ordinary fan curve.
+Safety: The sustained power limit (PL1) is capped at 75W by default. Use --force
+to allow PL1 up to the kernel's maximum. When PL1 exceeds 75W, both fans are
+held to a curve with a 50% PWM floor that reaches 100% at 80°C, written before
+the power limit; if that write fails, or the kernel does not honour it, the TDP
+is not applied at all. Burst limits (PL2/PL3) need no --force since short
+bursts are thermally safe.
+
+Run the daemon to keep a custom TDP in force. Any system power profile change
+(GNOME power modes, power-profiles-daemon on plugging or unplugging the charger,
+Fn+F5) or fan release by another tool makes the firmware re-apply the profile's
+own limits, and a profile change also releases custom fan curves; the daemon
+notices and restores both. Without it, the limit and the fan floor are lost
+until the next 'tdp --set'.
 
 With --reset, switches to the balanced profile, writes balanced's stock PPT
 values (bringing a high custom limit down first), and then resets fan curves to
@@ -63,8 +77,9 @@ PPT attributes:
                      several seconds before throttling back to PL1.
   PL3/fPPT         — Fast boost: the maximum instantaneous power the APU can
                      draw for millisecond-scale spikes (e.g. launching an app).
-  APU sPPT         — APU-specific short-term limit (automatically set to PL2).
-  Platform sPPT    — Platform-level short-term limit (automatically set to PL2).
+  APU sPPT         — APU-specific short-term limit (automatically set to PL2;
+                     not exposed by asus-armoury on the GZ302EA).
+  Platform sPPT    — Platform-level short-term limit (as APU sPPT).
 
 When using --set, all three limits are set to the same value by default. Use
 --pl1, --pl2, and --pl3 to set them independently — for example, --set 45
@@ -72,8 +87,8 @@ When using --set, all three limits are set to the same value by default. Use
 
 Setting a TDP edits the custom profile you are running, creating and
 activating "custom" if a firmware profile is active. Switching back to a
-firmware profile restores that profile's stock PPT values to hardware while
-keeping every custom profile saved, so they stay re-selectable.
+firmware profile hands the power limits back to the firmware while keeping
+every custom profile saved, so they stay re-selectable.
 
 Use --profile <name> to store limits in a profile you are NOT running: nothing
 is written to hardware, which is how you build the profile 'voltaire autoswitch'
@@ -102,17 +117,39 @@ func runTdpGet() error {
 	if hw.Power == nil {
 		return fmt.Errorf("no power limit control on this device")
 	}
-	tdp, err := hw.Power.ReadEffective(effectiveProfileForTDP(hw))
-	if err != nil {
-		return fmt.Errorf("reading TDP: %w", err)
+	// The daemon when it is running: it refuses the read while the EC is not
+	// answering (on asus-armoury each limit read is a live ACPI call), where a
+	// read from here would go straight into the stalled EC.
+	var tdp api.TDPState
+	handled, value, sendErr := api.SendTdpGet()
+	switch {
+	case handled && sendErr != nil:
+		return sendErr
+	case handled:
+		if err = json.Unmarshal([]byte(value), &tdp); err != nil {
+			return fmt.Errorf("reading TDP: %w", err)
+		}
+	default:
+		if tdp, err = hw.Power.ReadEffective(effectiveProfileForTDP(hw)); err != nil {
+			return fmt.Errorf("reading TDP: %w", err)
+		}
 	}
 
 	fmt.Println("TDP Power Limits (watts):")
 	fmt.Printf("  PL1 (SPL):          %d\n", tdp.PL1SPL)
 	fmt.Printf("  PL2 (sPPT):         %d\n", tdp.PL2SPPT)
 	fmt.Printf("  PL3 (fPPT):         %d\n", tdp.FPPT)
-	fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
-	fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
+	// 0 means the interface does not expose it (asus-armoury on the GZ302EA).
+	if tdp.APUSPPT != 0 || tdp.PlatformSPPT != 0 {
+		fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
+		fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
+	}
+	env := powerEnvFor(hw)
+	if env.Interface != "" {
+		pl2, pl3 := safety.PL2Range(env), safety.PL3Range(env)
+		fmt.Printf("  Interface:          %s (PL1 %d–%dW, PL2 %d–%dW, PL3 %d–%dW)\n", env.Interface,
+			env.TDPMin, env.TDPMaxForced, pl2.Min, pl2.Max, pl3.Min, pl3.Max)
+	}
 	return nil
 }
 
@@ -161,31 +198,15 @@ func runTdpSet() error {
 	if hw.Power == nil {
 		return fmt.Errorf("no power limit control on this device")
 	}
-	env := hw.Power.Envelope()
+	env := powerEnvFor(hw)
 
-	// PL1 (sustained) requires --force above the safe max. PL2/PL3 (burst) are
-	// allowed up to the hardware max without --force since short bursts are
-	// thermally safe.
-	pl1Max := env.TDPMaxSafe
-	if tdpForceFlag {
-		pl1Max = env.TDPMaxForced
-	}
-	if pl1 < env.TDPMin || pl1 > pl1Max {
-		if pl1 > env.TDPMaxSafe && !tdpForceFlag {
-			return fmt.Errorf("PL1 value %dW exceeds safe sustained maximum (%dW); use --force to allow up to %dW",
-				pl1, env.TDPMaxSafe, env.TDPMaxForced)
-		}
-		return fmt.Errorf("PL1 value %dW out of range %d–%d", pl1, env.TDPMin, pl1Max)
-	}
-	for _, v := range []struct {
-		name  string
-		value int
-	}{
-		{"PL2", pl2}, {"PL3", pl3},
-	} {
-		if v.value < env.TDPMin || v.value > env.TDPMaxForced {
-			return fmt.Errorf("%s value %dW out of range %d–%d", v.name, v.value, env.TDPMin, env.TDPMaxForced)
-		}
+	// The one validation the daemon shares (safety.ResolveTDP): PL1 refused
+	// outside its range, PL2/PL3 above theirs refused and below theirs raised,
+	// with a note for each raise. Resolved here as well as in the daemon so the
+	// notes print either way.
+	tdp, notes, err := safety.ResolveTDP(env, watts, pl1, pl2, pl3, tdpForceFlag)
+	if err != nil {
+		return errors.New(strings.Replace(err.Error(), "use force", "use --force", 1))
 	}
 
 	if dryRunFlag {
@@ -193,7 +214,8 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(env, watts, pl1, pl2, pl3, tdpForceFlag, liveFanCurve(hw))
+		cli.DryRunTdp(env, tdp, tdpForceFlag, liveFanCurve(hw), asusz13.PlanTDPWrites(tdp))
+		printNotes(notes)
 		return nil
 	}
 
@@ -219,6 +241,7 @@ func runTdpSet() error {
 		}
 		printFloorNotice(env, pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)
+		printNotes(notes)
 		return nil
 	}
 
@@ -234,18 +257,27 @@ func runTdpSet() error {
 	// curve is well above it. preCurve was sampled before the socket attempt,
 	// which never wrote anything on this branch, so it is still current.
 	want := preCurve
-	if err := hw.Power.ApplyTDPSafely(cli.TDPStateFor(watts, pl1, pl2, pl3), want); err != nil {
+	if err := hw.Power.ApplyTDPSafely(tdp, want); err != nil {
 		return fmt.Errorf("setting TDP: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
 	printFloorNotice(env, pl1, want, false)
-	if pl1 > env.TDPMaxSafe {
-		fmt.Println("  Warning: a system power profile change (GNOME power modes,")
-		fmt.Println("  power-profiles-daemon, Fn+F5) releases custom curves in the kernel driver while")
-		fmt.Println("  this power limit stays in force, and the voltaire daemon is not running to")
-		fmt.Println("  restore them. Start the daemon (see 'voltaire daemon') before sustaining >75W.")
-	}
+	// Not only above the safe maximum: any profile change or fan release
+	// discards a custom limit of any size (z13ctl issue #22), and with no daemon
+	// nothing puts it back.
+	fmt.Println("  Note: a system power profile change (GNOME power modes, power-profiles-daemon")
+	fmt.Println("  on plugging or unplugging the charger, Fn+F5) makes the firmware re-apply its")
+	fmt.Println("  own limits and releases custom fan curves, and the voltaire daemon is not")
+	fmt.Println("  running to restore them. Start it (see 'voltaire daemon') to keep this limit.")
 	fmt.Printf("TDP set to %dW\n", watts)
+	printNotes(notes)
 	return nil
+}
+
+// printNotes prints what ResolveTDP changed about the request.
+func printNotes(notes []string) {
+	for _, n := range notes {
+		fmt.Printf("  %s\n", n)
+	}
 }
 
 // printFloorNotice explains what the high-TDP floor did to the fan curve, if
@@ -287,7 +319,7 @@ func runTdpReset() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunTdpReset(envOf(hw))
+		cli.DryRunTdpReset(powerEnvFor(hw))
 		return nil
 	}
 
@@ -302,7 +334,7 @@ func runTdpReset() error {
 			fmt.Printf("Cleared the power limits from profile %s\n", tdpProfileFlag)
 			return nil
 		}
-		fmt.Println("TDP reset: switched to balanced profile (stock PPT restored)")
+		fmt.Println("TDP reset: switched to balanced profile (firmware power limits restored)")
 		return nil
 	}
 
@@ -381,7 +413,7 @@ func parsePLOverrides(watts int) (pl1, pl2, pl3 int, err error) {
 func init() {
 	tdpCmd.Flags().BoolVar(&tdpGetFlag, "get", false, "Print current TDP power limits")
 	tdpCmd.Flags().StringVar(&tdpSetFlag, "set", "", "Set TDP power limit in watts")
-	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and restore its stock PPT values")
+	tdpCmd.Flags().BoolVar(&tdpResetFlag, "reset", false, "Reset to balanced profile and hand the power limits back to the firmware")
 	tdpCmd.Flags().StringVar(&tdpPL1Flag, "pl1", "", "Override PL1/SPL (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL2Flag, "pl2", "", "Override PL2/sPPT (watts)")
 	tdpCmd.Flags().StringVar(&tdpPL3Flag, "pl3", "", "Override PL3/fPPT (watts)")

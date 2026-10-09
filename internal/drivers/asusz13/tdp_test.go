@@ -24,9 +24,11 @@ import (
 func usePPTTempDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	orig := pptBasePath
-	pptBasePath = dir
-	t.Cleanup(func() { pptBasePath = orig })
+	seedLegacyPPT(t, dir)
+	// Both roots, not just pptBasePath: with only that swapped, armoury on the
+	// machine running the test was the interface in use and took the writes.
+	swap(t, &pptBasePath, dir)
+	swap(t, &sysFirmwareAttrDir, dir+"/no-armoury")
 	return dir
 }
 
@@ -525,7 +527,12 @@ func TestEditTimeFloorCheck(t *testing.T) {
 	})
 
 	t.Run("unreadable PPT does not block fan control", func(t *testing.T) {
-		newFakeSysfs(t) // no ppt_* files written
+		f := newFakeSysfs(t)
+		for _, l := range pptLimits {
+			if err := os.Remove(f.ppt + "/" + l.legacy); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := eng.ReadEffective("custom"); err == nil {
 			t.Fatal("ReadEffective() = nil error on an empty tree; the case would not exercise the skip")
 		}

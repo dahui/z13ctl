@@ -82,6 +82,11 @@ type reconcileObs struct {
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
 	PL1        int                 // effective sustained limit in watts; -1 if unreadable
 	ProfileHW  string              // platform_profile; a change means the firmware reset the power limits
+	// PolicyWritten: the kernel reported a thermal policy write since the last
+	// tick — a platform_profile write or a fan release, same-value ones included
+	// (watchPolicyWrites). Like a change in ProfileHW it means the firmware reset
+	// the power limits.
+	PolicyWritten bool
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
@@ -96,6 +101,10 @@ type reconcileAction struct {
 	// meaning a PrepareForSleep(false) never arrived. See reconcileTick.
 	Undervolt *int
 	Reason    string
+	// Routine marks an action whose only evidence is the kernel's notification.
+	// The daemon's own fan releases produce that too, so it is logged at Info
+	// rather than as a warning after every tdp --set.
+	Routine bool
 }
 
 // none reports whether the action would touch anything.
@@ -217,30 +226,45 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 		}
 	}
 
-	// PPT is defended against third parties (asusctl, ryzenadj), not against
-	// the kernel: a platform_profile write does not reset the ppt_* values.
 	// A platform_profile write — power-profiles-daemon on an AC transition, Fn+F5,
-	// asusctl, anyone — makes the firmware re-apply that profile's own power
-	// limits, and the limiter's readback goes on showing ours, so the drift check
-	// below cannot see it (issue #22). Two traces of such a write are observable:
-	// platform_profile itself changing, and a custom curve found dropped, since the
-	// same write clears the curve's enable. Either one means the saved TDP has to be
-	// re-written even though the readback still matches it. A same-value write on a
-	// profile with no curve leaves neither trace and stays invisible; nothing in
-	// sysfs records it.
-	policyWritten := act.Curve != nil ||
-		(prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW)
+	// asusctl, anyone — or a fan release makes the firmware re-apply the
+	// profile's own power limits, and the limiter's readback goes on showing
+	// ours, so the drift check below cannot see it (z13ctl issue #22). Three
+	// traces of such a write are observable: the kernel's own notification
+	// (PolicyWritten), platform_profile itself changing, and a custom curve found
+	// dropped, since the same write clears the curve's enable. Any one means the
+	// saved TDP has to be re-written even though the readback still matches it.
+	// The notification is the only one a same-value write on a curveless profile
+	// leaves — power-profiles-daemon on a charger transition that keeps the
+	// profile, or another tool releasing fans already on auto — and the other
+	// two remain for a device or kernel where it does not arrive.
+	profileChanged := prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW
+	policyWritten := act.Curve != nil || obs.PolicyWritten || profileChanged
 
+	// The saved TDP as the interface will hold it (safety.EffectiveTDP), never the
+	// stored value: a profile saved under asus-nb-wmi's 5 W floor reads back as
+	// asus-armoury's 28 W, and comparing the raw value would see drift on every
+	// tick and re-write the limit every two seconds forever.
+	var want *api.TDPState
+	if obs.WantTDP != nil {
+		eff := safety.EffectiveTDP(env, *obs.WantTDP)
+		want = &eff
+	}
 	switch {
-	case obs.WantTDP != nil && obs.PL1 != -1 && obs.PL1 != obs.WantTDP.PL1SPL:
-		act.TDP = obs.WantTDP
+	case want != nil && obs.PL1 != -1 && obs.PL1 != want.PL1SPL:
+		act.TDP = want
 		if act.Reason == "" {
 			act.Reason = "sustained TDP no longer matches the saved custom value"
 		}
-	case obs.WantTDP != nil && policyWritten:
-		act.TDP = obs.WantTDP
-		if act.Reason == "" {
+	case want != nil && policyWritten:
+		act.TDP = want
+		switch {
+		case act.Reason != "":
+		case profileChanged:
 			act.Reason = "platform profile was rewritten, which resets custom power limits"
+		default:
+			act.Reason = "the kernel reported a platform profile write or fan release, which resets custom power limits"
+			act.Routine = true
 		}
 	}
 
@@ -332,21 +356,25 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// evidence the EC came back.
 	if wedged {
 		if d.probeEC() != ecReady {
+			// Return before observing: the tick would stand down anyway, and on
+			// asus-armoury the PPT reads below are live ACPI calls (each evaluates
+			// the AC adapter's _PSR), not caches — reading them here would walk
+			// into the stalled EC every two seconds.
 			slog.Debug("reconcile watcher standing down: the EC is still not answering")
-		} else {
-			d.setECWedged(false)
-			active, ok := s.ActiveCustomProfile()
-			if !ok || active.Empty() {
-				slog.Info("EC answering again after resume")
-				return prev
-			}
-			// hwMu is held and d.mu is not, which is what applyCustomHW requires.
-			// It is the full sequence — Curve Optimizer included — rather than the
-			// curve and TDP this watcher would otherwise repair on its own.
-			slog.Info("EC answering again after resume; restoring custom profile", "profile", active.Name)
-			d.applyCustomHW(active)
 			return prev
 		}
+		d.setECWedged(false)
+		active, ok := s.ActiveCustomProfile()
+		if !ok || active.Empty() {
+			slog.Info("EC answering again after resume")
+			return prev
+		}
+		// hwMu is held and d.mu is not, which is what applyCustomHW requires.
+		// It is the full sequence — Curve Optimizer included — rather than the
+		// curve and TDP this watcher would otherwise repair on its own.
+		slog.Info("EC answering again after resume; restoring custom profile", "profile", active.Name)
+		d.applyCustomHW(active)
+		return prev
 	}
 
 	obs := reconcileObs{
@@ -370,23 +398,39 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		}
 	}
 
-	// Cheap enough to read unconditionally, and reading them even when the
-	// profile is stock keeps lastHW meaningful for the log line. A capability
-	// the device does not have observes as unreadable, which the tick never
-	// acts on — the watcher is inert per missing capability by construction.
+	// The fan mode and platform_profile are driver caches, cheap enough to read
+	// unconditionally, and reading them even when the profile is stock keeps
+	// lastHW meaningful for the log line. A capability the device does not have
+	// observes as unreadable, which the tick never acts on — the watcher is
+	// inert per missing capability by construction.
 	if d.hw != nil && d.hw.Fans != nil {
 		if mode, err := d.hw.Fans.ReadMode(); err == nil {
 			obs.CurveMode = mode
 		}
 	}
-	if d.hw != nil && d.hw.Power != nil {
+	// The power limits are not, on asus-armoury: each read evaluates the AC
+	// adapter's _PSR. So they are read only when the tick can act on them — a
+	// custom profile — and not while suspending, which includes the post-resume
+	// wait for the EC (waitForEC) before the wedge latch is set: the tick stands
+	// down then anyway. Past the stand-down ceiling the tick acts with PL1
+	// unread, and the next tick, with the flag cleared, reads it.
+	readPower := obs.Custom && !suspending && d.hw != nil && d.hw.Power != nil
+	if readPower {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
 		}
 	}
 	obs.ProfileHW = d.profileHW()
+	// Consumed here, after every early return above: a write seen while the
+	// watcher stood down (suspend, wedged EC) is followed by a full re-apply on
+	// resume or recovery anyway.
+	obs.PolicyWritten = d.policyWritten.Swap(false)
 
-	st, act := reconcileTick(prev, obs, d.env())
+	env := d.cachedEnv()
+	if readPower {
+		env = d.env()
+	}
+	st, act := reconcileTick(prev, obs, env)
 
 	// The tick decided the suspending flag is stale — a PrepareForSleep(false)
 	// that never arrived. Clear it so the flag stops suppressing anything else
@@ -402,8 +446,11 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	}
 
 	logf := slog.Warn
-	if st.quiet {
+	switch {
+	case st.quiet:
 		logf = slog.Debug
+	case act.Routine:
+		logf = slog.Info
 	}
 	logf("reconciling custom thermal settings",
 		"reason", act.Reason,

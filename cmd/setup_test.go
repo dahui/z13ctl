@@ -36,7 +36,8 @@ var sysfsGrants = []struct {
 	{name: "battery charge threshold", match: "charge_control_end_threshold", rules: true, service: true},
 	{name: "boot sound", match: "attributes/boot_sound/current_value", rules: true, service: true},
 	{name: "panel overdrive", match: "attributes/panel_overdrive/current_value", rules: true, service: true},
-	{name: "PPT power limits", match: "/sys/devices/platform/asus-nb-wmi/ppt_*", rules: true, service: true},
+	{name: "armoury PPT power limits", match: "/sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value", rules: true, service: true},
+	{name: "PPT power limits (asus-nb-wmi fallback)", match: "/sys/devices/platform/asus-nb-wmi/ppt_*", rules: true, service: true},
 	{name: "ryzen_smu", match: "/sys/kernel/ryzen_smu_drv/", service: true},
 	// Service only, and unusually so: cpufreq's boost switch is a plain kobject
 	// rather than a device, so udevadm cannot even name it and no rule can

@@ -7,7 +7,7 @@
 #   - Armoury Crate button input device for daemon button watcher
 #   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
-#   - asus-nb-wmi PPT power limit attributes for TDP control
+#   - asus-armoury PPT power limit attributes for TDP control (asus-nb-wmi ppt_* as fallback)
 #   - powercap RAPL energy_uj for package-power telemetry (read only)
 #
 # Keep this in sync with buildRulesContent() in cmd/setup.go, which generates the
@@ -21,6 +21,7 @@ ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="users"
 ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value"
 ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e \"$$f\" ] || continue; chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", RUN+="/bin/sh -c 'chgrp users /sys%p/pwm*; chmod g+w /sys%p/pwm*'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f in /sys%p/pwm*_enable; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 # ppt_* are usually created after this add event (later in asus_nb_wmi probe()), so

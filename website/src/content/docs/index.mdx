@@ -35,8 +35,9 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		against the kernel silently dropping them.
 	</Card>
 	<Card title="TDP control" icon="warning">
-		CPU/GPU power limits from 5 to 93 W, with an automatic fan floor above
-		75 W sustained — 50% PWM rising to 100% at 80 °C.
+		CPU/GPU power limits (28–80 W sustained on the GZ302EA) through the
+		kernel's asus-armoury attributes, kept in force by the daemon, with an
+		automatic fan floor above 75 W sustained — 50% PWM rising to 100% at 80 °C.
 	</Card>
 	<Card title="CPU undervolting" icon="download">
 		Lower voltage via AMD Curve Optimizer for better temperatures and power

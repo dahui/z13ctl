@@ -4,6 +4,7 @@ Description=voltaire sysfs permissions (battery + firmware-attributes + PPT + cp
 # after all observable udev child-device events. udev RUN+= cannot catch it.
 # firmware-attributes current_value files may be created after the parent ADD event.
 # ppt_* on the asus-nb-wmi platform device are created late in the same probe(),
+# as are asus-armoury's ppt_*/current_value under firmware-attributes,
 # so the udev rule for them is best-effort only and this service is the reliable path.
 # cpufreq's global boost switch is not a udev device at all — the path is a
 # plain kobject, so udevadm info answers "Unknown device" and no rule can
@@ -18,6 +19,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e "$$f" ] || continue; chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp users "$$f" && chmod g+w "$$f" || true; done'

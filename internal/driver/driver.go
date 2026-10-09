@@ -110,6 +110,26 @@ type PowerEnvelope struct {
 	TDPMaxSafe   int // above this the force flag and the fan floor apply
 	TDPMaxForced int // absolute ceiling, force flag or not
 
+	// Interface names the kernel interface the limits go through
+	// ("asus-armoury", "asus-nb-wmi"); "" when the driver reports none.
+	Interface string
+
+	// PL2 and PL3 are the ranges the interface accepts for the burst limits. A
+	// zero range means TDPMin..TDPMaxForced, which is what device data alone
+	// describes. A driver that reads the kernel's own bounds fills them in, and
+	// overrides TDPMin/TDPMaxForced with the kernel's PL1 range as well.
+	PL2, PL3 PowerRange
+
+	// NoSPPTMirrors says the interface has no APU or Platform sPPT. They read
+	// as 0 and are never written; resolving a TDP leaves them 0.
+	NoSPPTMirrors bool
+
+	// Initial is what the interface's cache holds before anything writes it,
+	// for the fields where that is known (zero fields are not compared). A
+	// readback equal to it says nothing about the limits in force, so
+	// safety.CacheStale substitutes the stock row for it.
+	Initial api.TDPState
+
 	// StockProfilePPT maps each firmware profile name to the PPT values the
 	// daemon writes when that profile is selected, before the fan release that
 	// makes the firmware re-apply its own limits. On the Z13 only PL1 matches
@@ -123,6 +143,20 @@ type PowerEnvelope struct {
 	// curve: a 50% bottom ramping to full speed at 80°C.
 	FloorCurve []api.FanCurvePoint
 }
+
+// DeviceEnvelope is implemented by a PowerLimiter whose Envelope reads the
+// kernel. It returns the envelope from device data alone, touching nothing —
+// what the daemon serves while the embedded controller is not answering, when a
+// read of the kernel's bounds could reach it.
+type DeviceEnvelope interface {
+	DeviceEnvelope() PowerEnvelope
+}
+
+// PowerRange is an inclusive range in watts.
+type PowerRange struct{ Min, Max int }
+
+// IsZero reports whether r is unset.
+func (r PowerRange) IsZero() bool { return r == PowerRange{} }
 
 // PowerLimiter reads and writes a device's power limits.
 //
@@ -178,6 +212,16 @@ type ProfileController interface {
 	Names() []string
 	Get() (string, error)
 	Set(name string) error
+}
+
+// PolicyWriteNotifier is implemented by a ProfileController whose firmware
+// resets the power limits on writes that leave nothing to observe — a
+// same-value profile write, or a fan release onto fans already on auto (z13ctl
+// issue #22). It names the sysfs attributes the kernel sysfs_notify()s on each
+// such write; the daemon polls them for POLLPRI and re-applies a custom TDP.
+// Paths that do not exist are skipped.
+type PolicyWriteNotifier interface {
+	PolicyWritePaths() []string
 }
 
 // ToggleKind says how a firmware toggle's value is shaped. Only booleans exist

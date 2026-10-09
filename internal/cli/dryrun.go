@@ -276,7 +276,8 @@ func DryRunFanCurveReset() {
 
 // DryRunTdp prints the sysfs writes for a TDP set operation.
 //
-// The limits come from TDPStateFor and the fan state from the same
+// s is the request as safety.ResolveTDP resolved it, and the fan state comes
+// from the same
 // FanCurveForTDP / FloorAdjustsCurve pair ApplyTDPSafely uses, so the *rule*
 // cannot drift from the real path. The input can: live is the curve the caller
 // intends to run — the CLI passes the assembled device's live curve — while the
@@ -299,11 +300,14 @@ func DryRunFanCurveReset() {
 // whole floor curve would always be written above the safe max, which stopped
 // being true once the floor became a per-point minimum rather than a replacement
 // curve.
-func DryRunTdp(env driver.PowerEnvelope, watts, pl1, pl2, pl3 int, force bool, live []api.FanCurvePoint) {
+//
+// writes is the plan from asusz13.PlanTDPWrites, passed in for the same reason
+// as live: discovering the PPT interface in here would make the output depend on
+// the machine running the tests.
+func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.FanCurvePoint, writes []asusz13.PPTWrite) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	s := TDPStateFor(watts, pl1, pl2, pl3)
 	if force {
-		fmt.Printf("--force given: sustained limit allowed above %dW (hardware max %dW)\n",
+		fmt.Printf("--force given: sustained limit allowed above %dW (up to %dW)\n",
 			env.TDPMaxSafe, env.TDPMaxForced)
 	}
 	if s.PL1SPL > env.TDPMaxSafe {
@@ -330,18 +334,13 @@ func DryRunTdp(env driver.PowerEnvelope, watts, pl1, pl2, pl3 int, force bool, l
 		fmt.Printf("  (sustained %dW is above the %dW safe max; if the fan write fails the TDP is not applied at all)\n",
 			s.PL1SPL, env.TDPMaxSafe)
 	}
-	base := asusz13.FindPPTBasePath()
-	for _, w := range []struct {
-		attr  string
-		watts int
-	}{
-		{"ppt_pl1_spl", s.PL1SPL},
-		{"ppt_pl2_sppt", s.PL2SPPT},
-		{"ppt_fppt", s.FPPT},
-		{"ppt_apu_sppt", s.APUSPPT},
-		{"ppt_platform_sppt", s.PlatformSPPT},
-	} {
-		fmt.Printf("Would write %d to %s/%s\n", w.watts, base, w.attr)
+	if len(writes) == 0 {
+		fmt.Printf("Would write PL1=%dW PL2=%dW PL3=%dW (no PPT power limit interface found)\n",
+			s.PL1SPL, s.PL2SPPT, s.FPPT)
+		return
+	}
+	for _, w := range writes {
+		fmt.Printf("Would write %d to %s\n", w.Watts, w.Path)
 	}
 }
 

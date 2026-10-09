@@ -17,7 +17,8 @@ ordinary one-shot CLI invocations cannot:
   lighting (the firmware does not restore it on its own).
 - **Custom fan curve reconciliation** — re-applies your custom fan curve (and the
   high-TDP fan floor) after the kernel driver drops it, which it does on every
-  system power profile change.
+  system power profile change, and your custom power limits after the firmware
+  resets them, which it does on every power profile write or fan release.
 - **HID device ownership** — holds the hidraw devices open continuously so that
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
@@ -138,7 +139,9 @@ render controls against, instead of hardcoding one device's numbers:
   "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255,
           "presets":[{"name":"quiet","label":"Quiet","description":"Fans stopped until 60°C, ...",
                       "curve":[{"temp":35,"pwm":0},{"temp":50,"pwm":0}, "..."]}, "..."]},
-  "power":{"tdp_min":5,"tdp_max_safe":75,"tdp_max_forced":93,
+  "power":{"tdp_min":28,"tdp_max_safe":75,"tdp_max_forced":80,
+           "interface":"asus-armoury",
+           "pl2":{"min":32,"max":92},"pl3":{"min":45,"max":93},
            "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."],
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
   "profiles":{"names":["quiet","balanced","performance"]},
@@ -153,10 +156,21 @@ render controls against, instead of hardcoding one device's numbers:
 
 Capability discovery is **by absence**: a section that is missing means the
 device does not have that capability — never an error — and a client hides the
-corresponding controls. The document is built from device data, so it is
-static for the daemon's lifetime: fetch it once at startup and cache it.
+corresponding controls. The document is built from device data, plus the power
+limit ranges the kernel reports, so fetching it once at startup and caching it
+is fine for everything but those ranges — see below.
 
-Bounds worth knowing: `fans.temp_min`/`temp_max` are the curve editor's
+Bounds worth knowing: `power.tdp_min`..`tdp_max_forced` is the range the
+sustained limit (PL1) accepts, and `power.pl2`/`pl3` the burst limits' ranges
+(absent means PL1's). Where the kernel reports its own bounds the daemon serves
+those rather than the device data's — on the GZ302EA through asus-armoury, named
+in `power.interface` — so they can differ from one kernel to the next, and on a
+device whose firmware keeps separate AC and battery tables, between power
+sources (the GZ302EA's agree). A `tdp` request below a burst limit's minimum is
+raised to it, and one above its maximum refused. While the embedded controller
+is not answering after a resume, the daemon serves the last ranges it read
+rather than reading the kernel, since on asus-armoury each read is a live ACPI
+call. `fans.temp_min`/`temp_max` are the curve editor's
 display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].id` is the wire identifier the `feature` commands
@@ -573,9 +587,10 @@ On startup the daemon reads this file, resolves what the current power source
 calls for if autoswitch is configured, and restores all saved settings before
 accepting any connections. If the active profile is a custom one, its fan
 curve, TDP, and undervolt are re-applied to the hardware. If it is a firmware
-profile, that profile's measured PPT values are written instead — the kernel's
-`ppt_*` attributes come up holding a stale 5 W default after boot, and nothing
-else restores them.
+profile, the limits are handed back to the firmware: that profile's stock values
+are written, then the fans are released to firmware auto, which makes the
+firmware re-apply the profile's own limits. (The release is skipped when a fan
+curve set by another tool is in force.)
 
 :::caution[Downgrading loses named profiles]
 A daemon from before named profiles reads only the top-level fields and drops
@@ -689,8 +704,7 @@ These are lost across a sleep cycle and must be rewritten:
 On `PrepareForSleep(false)` the daemon restores lighting (regardless of
 profile) and all custom-profile volatile settings from its saved state. Fan
 curves, TDP, and undervolt are only restored when a custom profile is active;
-under a stock profile the firmware manages fan curves, and the profile's stock
-PPT values were already written to hardware when that profile was selected.
+under a stock profile the firmware manages the fans and power limits itself.
 The curve goes on before the TDP, so the high-TDP floor is written last and
 wins.
 
@@ -772,6 +786,20 @@ journalctl --user -u voltaire -f
 # After a profile change: reconciling custom thermal settings
 #   reason="saved custom fan curve was disabled" platform_profile=balanced pwm_enable=2
 ```
+
+Custom power limits need the same defence, and a harder one to see. On the Flow
+Z13 the firmware re-applies the active power profile's own limits whenever
+anything writes `platform_profile` — **even the profile already set**, as
+`power-profiles-daemon` does on a charger transition that keeps it — and
+whenever anything hands the fans back to firmware auto, even fans already on it.
+The power limit files go on showing the custom value, so nothing that reads them
+can tell. The kernel does report both writes, and the daemon listens for them,
+re-writing a custom profile's power limits within two seconds of each. Its own
+fan releases are reported the same way, so a re-apply logged at `INFO` just
+after `tdp --set` is expected. Fan releases are reported through an
+`asus-nb-wmi` attribute that kernels built without the deprecated asus-wmi
+attributes do not have; on those, a release by another tool on fans already on
+auto goes unnoticed until the next platform profile write.
 
 The daemon never writes `platform_profile` itself — your desktop stays in
 charge of the power profile. Reconciliation only runs while a custom profile

@@ -286,7 +286,9 @@ func (d *Daemon) releaseVolatileState() {
 			obs.CurveMode = mode
 		}
 	}
-	if d.hw != nil && d.hw.Power != nil {
+	// Not while wedged: sleepTick stands down then anyway, and on asus-armoury a
+	// PPT read evaluates the AC adapter's _PSR — a live ACPI call into the EC.
+	if !wedged && d.hw != nil && d.hw.Power != nil {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
 		}

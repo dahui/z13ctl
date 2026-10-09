@@ -89,7 +89,7 @@ func runProfileSet() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunProfile(envOf(hw), profile)
+		cli.DryRunProfile(powerEnvFor(hw), profile)
 		return nil
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // ParseColor parses a color name or 6-digit hex string (RRGGBB) into R, G, B
@@ -103,26 +104,10 @@ func ParseFanCurve(shape driver.FanShape, s string) ([]api.FanCurvePoint, error)
 // into the five PPT values. pl1/pl2/pl3 override watts when non-zero; APU sPPT
 // and Platform sPPT always follow PL2.
 //
-// Exposed separately from any write path so callers can hand the resolved
-// state to the safety engine's ApplyTDPSafely, which needs to know PL1 before
-// deciding whether the fan floor applies.
+// It is safety.TDPStateFor, which ResolveTDP builds on; this name stays for the
+// callers that resolve without validating (the dry run's preview).
 func TDPStateFor(watts, pl1, pl2, pl3 int) api.TDPState {
-	if pl1 == 0 {
-		pl1 = watts
-	}
-	if pl2 == 0 {
-		pl2 = watts
-	}
-	if pl3 == 0 {
-		pl3 = watts
-	}
-	return api.TDPState{
-		PL1SPL:       pl1,
-		PL2SPPT:      pl2,
-		FPPT:         pl3,
-		APUSPPT:      pl2,
-		PlatformSPPT: pl2,
-	}
+	return safety.TDPStateFor(watts, pl1, pl2, pl3)
 }
 
 // ValidateProfileName checks a user-supplied custom profile name.

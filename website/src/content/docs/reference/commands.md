@@ -118,11 +118,11 @@ voltaire profile [flags]
 asus-wmi. These three names are **reserved**: a custom profile can never take
 one, so `--set balanced` always reaches the firmware profile.
 
-Setting a firmware profile resets fan curves to firmware auto mode, resets the
-CPU undervolt to stock, and writes that profile's measured stock PPT values
-back to hardware. The firmware does *not* re-apply per-profile power limits on
-its own, so voltaire restores them explicitly. Your custom profiles are
-untouched and can be selected again at any time. [`tdp --reset`](#tdp) behaves
+Setting a firmware profile resets the CPU undervolt to stock and hands the power
+limits and fans back to the firmware: voltaire writes that profile's stock PPT
+values, then releases the fans to firmware auto, which makes the firmware
+re-apply the profile's own limits. Your custom profiles are untouched and can be
+selected again at any time. [`tdp --reset`](#tdp) behaves
 the same way, since it also lands on a firmware profile.
 
 ### Custom profiles
@@ -148,9 +148,9 @@ limit — you had long since stopped using.)
 :::note[`--reset` while a firmware profile is active does not touch your profiles]
 Only `--set` creates and activates `custom`. `fancurve --reset`, `tdp --reset`
 and `undervolt --reset` run while a firmware profile is selected affect
-**hardware only**: the fans go to firmware auto, the power limits to that
-profile's stock values, the Curve Optimizer to zero, and every saved custom
-profile is left exactly as it was.
+**hardware only**: the fans go to firmware auto, the power limits back to the
+firmware's own, the Curve Optimizer to zero if an offset was applied, and every
+saved custom profile is left exactly as it was.
 
 Through v1.3.0 (as z13ctl) they resolved to `custom` and committed it
 cleared — so `tdp --reset` on `balanced` silently deleted the fan curve and
@@ -523,9 +523,10 @@ voltaire fancurve --reset
 
 ## tdp
 
-Get, set, or reset TDP (Thermal Design Power) limits via the asus-nb-wmi PPT
-(Package Power Tracking) sysfs attributes. Root or group access required; see
-[setup](#setup).
+Get, set, or reset TDP (Thermal Design Power) limits — the PPT (Package Power
+Tracking) limits. On the ROG Flow Z13 they go through the kernel's asus-armoury
+firmware-attributes, or the older asus-nb-wmi PPT attributes on kernels that do
+not expose them there. Root or group access required; see [setup](#setup).
 
 ```
 voltaire tdp [flags]
@@ -533,24 +534,44 @@ voltaire tdp [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print current PPT values |
+| `--get` | Print current PPT values and the range the kernel accepts for each |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to balanced profile, reset fan curves to auto and the undervolt to stock, and restore balanced's stock PPT |
+| `--reset` | Switch to balanced profile, reset the undervolt to stock, and hand the power limits and fans back to the firmware |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
+| `--force` | Allow sustained TDP (PL1) above 75W, up to the kernel's maximum. Burst limits (PL2/PL3) need no `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
-**PPT attributes:**
+**Power limits:**
 
-| Attribute | Limit | Description |
-|-----------|-------|-------------|
-| `ppt_pl1_spl` | PL1 — Sustained | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
-| `ppt_pl2_sppt` | PL2 — Short-term boost | Power the APU can draw for several seconds before throttling to PL1. |
-| `ppt_fppt` | PL3 — Fast boost | Maximum instantaneous power for millisecond-scale spikes. |
-| `ppt_apu_sppt` | APU short-term | APU-specific short-term limit; automatically mirrors PL2. |
-| `ppt_platform_sppt` | Platform short-term | Platform-level short-term limit; automatically mirrors PL2. |
+| Limit | asus-armoury attribute | asus-nb-wmi attribute | Description |
+|-------|------------------------|-----------------------|-------------|
+| PL1 — Sustained | `ppt_pl1_spl` | `ppt_pl1_spl` | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
+| PL2 — Short-term boost | `ppt_pl2_sppt` | `ppt_pl2_sppt` | Power the APU can draw for several seconds before throttling to PL1. |
+| PL3 — Fast boost | `ppt_pl3_fppt` | `ppt_fppt` | Maximum instantaneous power for millisecond-scale spikes. |
+| APU short-term | — | `ppt_apu_sppt` | APU-specific short-term limit; mirrors PL2. Not exposed by asus-armoury on the GZ302EA. |
+| Platform short-term | — | `ppt_platform_sppt` | Platform-level short-term limit; mirrors PL2. As APU short-term. |
+
+**Which interface, and its ranges.** asus-armoury is used whenever the kernel
+exposes its PPT attributes (mainline 7.x carries the GZ302EA's); the asus-nb-wmi
+ones are deprecated — reading them logs a kernel notice, and distributions can
+build them out entirely — and are used only as a fallback. The accepted range
+comes from the kernel, and `--get` prints it:
+
+| Limit | asus-armoury (GZ302EA) | asus-nb-wmi |
+|-------|------------------------|-------------|
+| PL1 | 28–80W | 5–93W |
+| PL2 | 32–92W | 5–93W |
+| PL3 | 45–93W | 5–93W |
+
+A PL2 or PL3 below its minimum is raised to it, and `--set` says so: on
+asus-armoury `--set 30` writes 30/32/45W. The raised PL2 is what the machine
+then sustains — under load it held 32W for four minutes rather than settling to
+30W — so 32W is the practical floor on asus-armoury. A PL1 outside its range is
+refused. A custom profile saved with values outside the range (for example 15W,
+from an older version) still applies, at the nearest value the kernel accepts;
+the saved profile is not changed.
 
 With `--set`, all three limits default to the same value. Use `--pl1`,
 `--pl2`, and `--pl3` to set them independently — a stepped configuration like
@@ -558,23 +579,39 @@ With `--set`, all three limits default to the same value. Use `--pl1`,
 instantaneous peaks to 65W.
 
 Setting a custom TDP switches to the `custom` profile. Switching back to a
-stock profile writes that profile's measured stock PPT values to hardware —
-the firmware does *not* re-apply them on a `platform_profile` change, so
-voltaire restores them explicitly. The saved custom values are kept, so
-`custom` stays re-selectable.
+stock profile hands the limits back to the firmware: voltaire writes that
+profile's stock values (which brings a high custom limit down first) and then
+releases the fans to firmware auto, which makes the firmware re-apply the
+profile's own limits. The saved custom values are kept, so `custom` stays
+re-selectable.
+
+:::caution[Run the daemon to keep a custom TDP]
+On the Flow Z13 the firmware re-applies the active power profile's own limits
+whenever anything writes `platform_profile` — even the profile already set, as
+power-profiles-daemon does on plugging or unplugging the charger — and whenever
+anything hands the fans back to firmware auto. `--get` and `status` cannot see
+it: the readback shows the last value written. The
+[daemon](/voltaire/reference/daemon/#custom-fan-curve-reconciliation) is told by
+the kernel about these writes (with one exception, described there) and
+re-applies the custom limit within two seconds. Without it, the limit is lost
+until the next `tdp --set`, which says so when it applies a limit directly.
+:::
 
 :::note[PPT readback values]
-The values shown by `--get` are the kernel driver's cached values. After a
-fresh boot they hold a stale 5W default until something writes them; voltaire
-substitutes the measured per-profile table in that case. Use `ryzenadj -i` if
-you need ground-truth PPT readings.
+The values shown by `--get` are the kernel driver's cached values — what was
+last written, not what is in force. asus-armoury's cache starts at its default
+(60/75/86W on AC, 45/52/71W on battery, kept separately for each power source)
+and asus-nb-wmi's at 5W; until something writes them on a stock profile,
+voltaire reports that profile's stock values instead. Use `ryzenadj -i` if you
+need ground-truth PPT readings.
 :::
 
 **Safety:**
 
-- Default range: 5–75W for the sustained limit (PL1); `--force` extends it to
-  5–93W. Burst limits (PL2/PL3) may go to 93W without `--force`, since short
-  bursts are thermally safe.
+- The sustained limit (PL1) is capped at 75W unless `--force` is given, which
+  extends it to the kernel's maximum (80W on asus-armoury, 93W on asus-nb-wmi).
+  Burst limits (PL2/PL3) may go to the kernel's maximum without `--force`, since
+  short bursts are thermally safe.
 - When the **sustained** limit exceeds 75W, both fans are held to a minimum of
   127 PWM (50%) before the TDP values are written. If that fan write fails —
   or the kernel accepts it and then drops the curve — the TDP is not applied
@@ -621,12 +658,13 @@ you need ground-truth PPT readings.
   firmware auto has no floor at all.
 
 :::danger[Run the daemon when sustaining above 75 W]
-The kernel releases custom fan curves on every `platform_profile` write, and
-the power limit survives it — so a GNOME power mode change or an AC/battery
-transition can leave the machine drawing >75 W sustained with the fans back on
-the firmware's ordinary curve. The [daemon](/voltaire/reference/daemon/)
-watches for that and restores the floor within a couple of seconds. Without
-it, that state persists until you re-apply the curve yourself.
+Every `platform_profile` write — a GNOME power mode change, an AC/battery
+transition, Fn+F5 — releases custom fan curves, the high-TDP floor included.
+The firmware re-applies the profile's own power limits at the same time, but the
+limit reads back unchanged, so voltaire cannot confirm the high limit is gone
+and treats the floor as still required. The
+[daemon](/voltaire/reference/daemon/) restores the floor and then the limit
+within a couple of seconds. Without it, both stay lost until you set them again.
 :::
 
 ```sh
@@ -639,10 +677,11 @@ voltaire tdp --set 50
 # Set with individual PL overrides
 voltaire tdp --set 45 --pl2 55 --pl3 60
 
-# Force high sustained TDP (fans are held to a 50% floor first)
-voltaire tdp --set 85 --force
+# Force high sustained TDP (fans are held to a 50% floor first; 80W is
+# asus-armoury's maximum on the GZ302EA)
+voltaire tdp --set 80 --force
 
-# Reset to balanced profile (restores balanced's stock PPT and clears the undervolt)
+# Back to balanced and the firmware's own limits (also clears the undervolt)
 voltaire tdp --reset
 ```
 
@@ -699,7 +738,7 @@ voltaire undervolt [flags]
 |------|-------------|
 | `--get` | Print current CO offset (from daemon state) |
 | `--set <value>` | Set all-core CPU CO offset (0 to -40) |
-| `--reset` | Reset CPU CO to stock (0) |
+| `--reset` | Reset CPU CO to stock (0). With no offset applied, reports that and sends nothing. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 CO values have no sysfs readback — `--get` returns the last-applied values
@@ -708,7 +747,14 @@ the output indicates that the saved offsets are not currently applied. If the
 daemon is not running, reports "not set".
 
 CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
-them automatically on startup and resume when the custom profile is active.
+them automatically on startup and resume when a custom profile with an offset is
+active.
+
+voltaire only talks to the SMU when an offset is about to be applied, or when
+one is applied and has to be cleared. Switching to a firmware profile,
+`tdp --reset` and `undervolt --reset` send nothing when no offset is applied:
+userspace messages to the SMU can collide with the kernel's own, and an
+unnecessary reset is the prime suspect in a hard lock seen during development.
 
 **Safety limits (matching G-Helper defaults):**
 
@@ -756,8 +802,10 @@ voltaire status
 This command is read-only. Values are read directly from sysfs, with two
 exceptions: undervolt has no sysfs readback, so the line reports availability
 rather than the active offset; and the TDP line asks the daemon which profile is
-active, because a custom TDP of exactly 5 W is otherwise indistinguishable from
-the kernel's stale 5 W boot cache.
+active, because a custom TDP equal to the kernel's untouched boot-time values
+(asus-armoury's defaults, or asus-nb-wmi's 5 W) is otherwise indistinguishable
+from them. Like `tdp --get`, the TDP line shows the limits last written, which
+the firmware may since have replaced; see [`tdp`](#tdp).
 
 **Flags:**
 
@@ -776,9 +824,11 @@ voltaire status
 # Battery: 74% (limit: 80%)
 ```
 
-The undervolt line comes from the daemon, which tests Curve Optimizer support
-once at startup. Without a daemon, `status` can only confirm that the module
-is loaded and says so:
+The undervolt line comes from the daemon. It reports `available` while the
+module is loaded, until the first undervolt write tests whether this
+`ryzen_smu` build supports Curve Optimizer on the machine; from then on it
+reports the test's answer. Without a daemon, `status` can only confirm that the
+module is loaded and says so:
 
 ```
 # UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)
@@ -829,7 +879,7 @@ not require the daemon to be running.
 Install udev rules and a boot service granting a group read/write access to
 the ASUS HID devices, performance profile, battery charge limit, firmware
 attributes (boot sound, panel overdrive), hwmon fan curve attributes,
-asus-nb-wmi PPT power limit attributes for TDP control, and ryzen_smu sysfs
+asus-armoury PPT power limit attributes (and asus-nb-wmi's, as the fallback) for TDP control, and ryzen_smu sysfs
 files for undervolting (if the module is loaded).
 
 ```

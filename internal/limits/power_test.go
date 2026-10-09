@@ -913,3 +913,50 @@ func TestPWMAtInterpolatesAndClamps(t *testing.T) {
 		t.Errorf("PWMAt(nil) = %d, want PWMMin", got)
 	}
 }
+
+// armouryLimits is the GZ302EA's drawer limits as the daemon reports them on
+// asus-armoury: per-limit ranges for the burst limits.
+func armouryLimits() Limits {
+	l := DefaultLimits()
+	l.TDPMin, l.TDPMaxForced = 28, 80
+	l.PL2Min, l.PL2Max = 32, 92
+	l.PL3Min, l.PL3Max = 45, 93
+	return l
+}
+
+func TestBurstRangesFallBackToPL1s(t *testing.T) {
+	d := DefaultLimits()
+	if lo, hi := d.PL2Range(); lo != d.TDPMin || hi != d.TDPMaxForced {
+		t.Errorf("PL2Range() with none reported = %d–%d, want PL1's %d–%d", lo, hi, d.TDPMin, d.TDPMaxForced)
+	}
+	a := armouryLimits()
+	if lo, hi := a.PL3Range(); lo != 45 || hi != 93 {
+		t.Errorf("PL3Range() = %d–%d, want 45–93", lo, hi)
+	}
+}
+
+// TestNeedsAdvancedAcceptsARaisedBasicSave: on asus-armoury a basic-view save of
+// 30 W is stored as 30/32/45, and must still read back as a basic setting.
+func TestNeedsAdvancedAcceptsARaisedBasicSave(t *testing.T) {
+	a := armouryLimits()
+	if a.NeedsAdvanced(true, api.TDPState{PL1SPL: 30, PL2SPPT: 32, FPPT: 45}) {
+		t.Error("a raised basic save (30/32/45) was sent to the advanced view")
+	}
+	if !a.NeedsAdvanced(true, api.TDPState{PL1SPL: 30, PL2SPPT: 40, FPPT: 45}) {
+		t.Error("a hand-set PL2 of 40 W is not a basic save and needs the advanced view")
+	}
+	if !DefaultLimits().NeedsAdvanced(true, api.TDPState{PL1SPL: 30, PL2SPPT: 32, FPPT: 45}) {
+		t.Error("without reported burst minimums, 30/32/45 cannot come from a basic save")
+	}
+}
+
+func TestFromDeviceCarriesBurstRanges(t *testing.T) {
+	l := FromDevice(&api.DeviceInfo{Power: &api.PowerInfo{
+		TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80,
+		PL2: &api.PowerRange{Min: 32, Max: 92}, PL3: &api.PowerRange{Min: 45, Max: 93},
+	}})
+	if l.PL2Min != 32 || l.PL2Max != 92 || l.PL3Min != 45 || l.PL3Max != 93 {
+		t.Errorf("FromDevice burst ranges = PL2 %d–%d, PL3 %d–%d; want 32–92, 45–93",
+			l.PL2Min, l.PL2Max, l.PL3Min, l.PL3Max)
+	}
+}

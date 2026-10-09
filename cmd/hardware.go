@@ -76,6 +76,38 @@ func envOf(hw *device.Device) driver.PowerEnvelope {
 	return hw.Power.Envelope()
 }
 
+// powerEnvFor returns the power envelope to validate and describe a CLI
+// request against. With a daemon running it is the daemon's (device-get): on
+// asus-armoury a read of the kernel's bounds is a live ACPI call, and the daemon
+// serves a cached envelope rather than make one while the EC is not answering —
+// the CLI reading the bounds itself would walk into the stalled EC the daemon is
+// avoiding. With no daemon there is no latch to honour, and the driver is asked.
+func powerEnvFor(hw *device.Device) driver.PowerEnvelope {
+	if handled, info, err := api.SendDeviceGet(); handled && err == nil && info != nil && info.Power != nil {
+		return envFromInfo(info.Power)
+	}
+	return envOf(hw)
+}
+
+// envFromInfo is the envelope a device-get document describes.
+func envFromInfo(p *api.PowerInfo) driver.PowerEnvelope {
+	env := driver.PowerEnvelope{
+		TDPMin:          p.TDPMin,
+		TDPMaxSafe:      p.TDPMaxSafe,
+		TDPMaxForced:    p.TDPMaxForced,
+		Interface:       p.Interface,
+		FloorCurve:      append([]api.FanCurvePoint(nil), p.FloorCurve...),
+		StockProfilePPT: p.StockProfilePPT,
+	}
+	if p.PL2 != nil {
+		env.PL2 = driver.PowerRange{Min: p.PL2.Min, Max: p.PL2.Max}
+	}
+	if p.PL3 != nil {
+		env.PL3 = driver.PowerRange{Min: p.PL3.Min, Max: p.PL3.Max}
+	}
+	return env
+}
+
 // liveFanCurve returns the fan curve currently in force, or nil when there is
 // none — no fan control, fans not in custom mode, or an unreadable curve. The
 // mode gate matters: the curve registers survive a release on the Z13, so

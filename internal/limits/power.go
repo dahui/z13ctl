@@ -76,13 +76,18 @@ const CurvePoints = 8
 // rather than a field because "cap the simple slider a little under the safe max"
 // is the drawer's choice; only the safe max itself is a device fact.
 type Limits struct {
-	Model         string // e.g. "GZ302EA"; for logs and bug reports
-	TDPMin        int    // absolute minimum sustained limit
-	TDPMaxSafe    int    // above this the daemon requires the force flag
-	TDPMaxForced  int    // absolute hardware maximum
-	HighTDPMinPWM int    // FloorCurve's bottom, for display text; 0 = no floor
-	TempMin       int    // fan curve temperature axis, Celsius
-	TempMax       int
+	Model        string // e.g. "GZ302EA"; for logs and bug reports
+	TDPMin       int    // absolute minimum sustained limit
+	TDPMaxSafe   int    // above this the daemon requires the force flag
+	TDPMaxForced int    // absolute hardware maximum
+	// PL2Min..PL2Max and PL3Min..PL3Max are the burst limits' ranges; zero means
+	// TDPMin..TDPMaxForced. The daemon reports them where the kernel's bounds
+	// differ by limit (asus-armoury: PL2 32–92, PL3 45–93 W on the GZ302EA).
+	PL2Min, PL2Max int
+	PL3Min, PL3Max int
+	HighTDPMinPWM  int // FloorCurve's bottom, for display text; 0 = no floor
+	TempMin        int // fan curve temperature axis, Celsius
+	TempMax        int
 
 	// FloorCurve is the per-point fan floor the daemon enforces while the
 	// sustained limit exceeds TDPMaxSafe. It is a floor *curve*, not a scalar:
@@ -374,6 +379,30 @@ func (l Limits) BasicSliderMax() int {
 	return l.TDPMin
 }
 
+// PL2Range returns the short-boost slider's bounds.
+func (l Limits) PL2Range() (lo, hi int) { return l.burstRange(l.PL2Min, l.PL2Max) }
+
+// PL3Range returns the fast-boost slider's bounds.
+func (l Limits) PL3Range() (lo, hi int) { return l.burstRange(l.PL3Min, l.PL3Max) }
+
+func (l Limits) burstRange(lo, hi int) (rangeLo, rangeHi int) {
+	if lo <= 0 || hi < lo {
+		return l.TDPMin, l.TDPMaxForced
+	}
+	return lo, hi
+}
+
+// BasicTriple is what a basic-view save of watts stores: the daemon raises a
+// burst limit below its minimum to it, so 30 W on asus-armoury is 30/32/45.
+func (l Limits) BasicTriple(watts int) api.TDPState {
+	if watts <= 0 { // no reading yet: nothing was raised
+		return api.TDPState{PL1SPL: watts, PL2SPPT: watts, FPPT: watts}
+	}
+	pl2lo, _ := l.PL2Range()
+	pl3lo, _ := l.PL3Range()
+	return api.TDPState{PL1SPL: watts, PL2SPPT: max(watts, pl2lo), FPPT: max(watts, pl3lo)}
+}
+
 // ForceRequired reports whether a TDP request needs the force flag, which the
 // daemon demands for a sustained limit above TDPMaxSafe.
 func (l Limits) ForceRequired(pl1 int) bool {
@@ -482,8 +511,11 @@ func (l Limits) IsStockPPT(t api.TDPState) bool {
 // the power limits at the firmware's values, so the reading must also differ
 // from the stock defaults.
 //
-// A basic save round-trips as PL1 == PL2 == FPPT, because the daemon defaults the
-// blank PL fields to the single value, so an equal triple never trips this.
+// A basic save round-trips as BasicTriple — PL1 == PL2 == FPPT, except where a
+// burst limit was raised to its minimum — because the daemon defaults the blank
+// PL fields to the single value, so a basic save never trips this. Comparing for
+// plain equality instead flipped every low basic save on asus-armoury (30 W
+// stores 30/32/45) into the advanced view.
 func (l Limits) NeedsAdvanced(isCustom bool, t api.TDPState) bool {
 	if !isCustom || l.IsStockPPT(t) {
 		return false
@@ -491,7 +523,8 @@ func (l Limits) NeedsAdvanced(isCustom bool, t api.TDPState) bool {
 	if t.PL1SPL > l.BasicSliderMax() {
 		return true
 	}
-	return t.PL1SPL != t.PL2SPPT || t.PL2SPPT != t.FPPT
+	b := l.BasicTriple(t.PL1SPL)
+	return t.PL2SPPT != b.PL2SPPT || t.FPPT != b.FPPT
 }
 
 // FanCurveIsCustom reports whether a fan curve reported by the daemon is actually

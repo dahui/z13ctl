@@ -16,6 +16,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func FormatFanCurve\(points \[\]FanCurvePoint\) string](<#FormatFanCurve>)
 - [func IsStockProfileName\(name string\) bool](<#IsStockProfileName>)
 - [func SendApply\(device, color, color2, mode, speed string, brightness int\) \(bool, error\)](<#SendApply>)
 - [func SendAutoswitchGet\(\) \(handled bool, value string, err error\)](<#SendAutoswitchGet>)
@@ -25,6 +26,8 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [func SendBootSoundGet\(\) \(handled bool, value int, err error\)](<#SendBootSoundGet>)
 - [func SendBootSoundSet\(value int\) \(bool, error\)](<#SendBootSoundSet>)
 - [func SendBrightness\(device string, level int\) \(bool, error\)](<#SendBrightness>)
+- [func SendCPUBoostGet\(\) \(handled, on bool, err error\)](<#SendCPUBoostGet>)
+- [func SendCPUBoostSet\(on bool\) \(bool, error\)](<#SendCPUBoostSet>)
 - [func SendFanCurveGet\(\) \(handled bool, value string, err error\)](<#SendFanCurveGet>)
 - [func SendFanCurveReset\(\) \(bool, error\)](<#SendFanCurveReset>)
 - [func SendFanCurveResetFor\(profile string\) \(bool, error\)](<#SendFanCurveResetFor>)
@@ -46,6 +49,8 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [func SendTdpResetFor\(profile string\) \(bool, error\)](<#SendTdpResetFor>)
 - [func SendTdpSet\(watts, pl1, pl2, pl3 string, force bool\) \(bool, error\)](<#SendTdpSet>)
 - [func SendTdpSetFor\(profile, watts, pl1, pl2, pl3 string, force bool\) \(bool, error\)](<#SendTdpSetFor>)
+- [func SendTuningReset\(\) \(bool, error\)](<#SendTuningReset>)
+- [func SendTuningResetFor\(profile string\) \(bool, error\)](<#SendTuningResetFor>)
 - [func SendUndervoltGet\(\) \(handled bool, value string, err error\)](<#SendUndervoltGet>)
 - [func SendUndervoltReset\(\) \(bool, error\)](<#SendUndervoltReset>)
 - [func SendUndervoltResetFor\(profile string\) \(bool, error\)](<#SendUndervoltResetFor>)
@@ -58,6 +63,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type AutoswitchState](<#AutoswitchState>)
   - [func \(a \*AutoswitchState\) Target\(onAC bool\) string](<#AutoswitchState.Target>)
 - [type BatteryInfo](<#BatteryInfo>)
+- [type CPUInfo](<#CPUInfo>)
 - [type CustomProfile](<#CustomProfile>)
   - [func \(p CustomProfile\) Empty\(\) bool](<#CustomProfile.Empty>)
 - [type DeviceInfo](<#DeviceInfo>)
@@ -65,9 +71,11 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type FanCurvePoint](<#FanCurvePoint>)
 - [type FanCurveState](<#FanCurveState>)
 - [type FanInfo](<#FanInfo>)
+- [type FanPreset](<#FanPreset>)
 - [type LightingInfo](<#LightingInfo>)
 - [type LightingState](<#LightingState>)
 - [type PowerInfo](<#PowerInfo>)
+- [type PowerRange](<#PowerRange>)
 - [type ProfileInfo](<#ProfileInfo>)
 - [type State](<#State>)
   - [func SendGetState\(\) \(bool, \*State, error\)](<#SendGetState>)
@@ -172,8 +180,17 @@ var ErrUnknownCommand = errors.New("daemon does not support this command")
 var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
+<a name="FormatFanCurve"></a>
+## func FormatFanCurve
+
+```go
+func FormatFanCurve(points []FanCurvePoint) string
+```
+
+FormatFanCurve renders points in the "temp:pwm,temp:pwm,..." form that SendFanCurveSet and the fancurve command take. It is the inverse of the daemon's own parser and lives here so that a client holding a curve — a FanPreset's, or one it built — never has to restate the wire format.
+
 <a name="IsStockProfileName"></a>
-## func [IsStockProfileName](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L216>)
+## func IsStockProfileName
 
 ```go
 func IsStockProfileName(name string) bool
@@ -182,7 +199,7 @@ func IsStockProfileName(name string) bool
 IsStockProfileName reports whether name is one of the reserved firmware profile names.
 
 <a name="SendApply"></a>
-## func [SendApply](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L213>)
+## func SendApply
 
 ```go
 func SendApply(device, color, color2, mode, speed string, brightness int) (bool, error)
@@ -223,7 +240,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchGet"></a>
-## func [SendAutoswitchGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L616>)
+## func SendAutoswitchGet
 
 ```go
 func SendAutoswitchGet() (handled bool, value string, err error)
@@ -272,7 +289,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchSet"></a>
-## func [SendAutoswitchSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L597>)
+## func SendAutoswitchSet
 
 ```go
 func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error)
@@ -314,7 +331,7 @@ func main() {
 </details>
 
 <a name="SendBatteryLimitGet"></a>
-## func [SendBatteryLimitGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L276>)
+## func SendBatteryLimitGet
 
 ```go
 func SendBatteryLimitGet() (handled bool, limit int, err error)
@@ -355,7 +372,7 @@ func main() {
 </details>
 
 <a name="SendBatteryLimitSet"></a>
-## func [SendBatteryLimitSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L305>)
+## func SendBatteryLimitSet
 
 ```go
 func SendBatteryLimitSet(limit int) (bool, error)
@@ -396,7 +413,7 @@ func main() {
 </details>
 
 <a name="SendBootSoundGet"></a>
-## func [SendBootSoundGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L342>)
+## func SendBootSoundGet
 
 ```go
 func SendBootSoundGet() (handled bool, value int, err error)
@@ -437,7 +454,7 @@ func main() {
 </details>
 
 <a name="SendBootSoundSet"></a>
-## func [SendBootSoundSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L317>)
+## func SendBootSoundSet
 
 ```go
 func SendBootSoundSet(value int) (bool, error)
@@ -478,7 +495,7 @@ func main() {
 </details>
 
 <a name="SendBrightness"></a>
-## func [SendBrightness](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L247>)
+## func SendBrightness
 
 ```go
 func SendBrightness(device string, level int) (bool, error)
@@ -518,8 +535,28 @@ func main() {
 </p>
 </details>
 
+<a name="SendCPUBoostGet"></a>
+## func SendCPUBoostGet
+
+```go
+func SendCPUBoostGet() (handled, on bool, err error)
+```
+
+SendCPUBoostGet reads whether boost clocks are currently enabled, from the hardware rather than from cached state. Returns \(false, false, nil\) if the daemon is not running.
+
+<a name="SendCPUBoostSet"></a>
+## func SendCPUBoostSet
+
+```go
+func SendCPUBoostSet(on bool) (bool, error)
+```
+
+SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off. Returns \(false, nil\) if the daemon is not running.
+
+Unlike the firmware toggles this looks like, the setting is not kept by the machine: cpufreq comes back with boost enabled on every boot, so the daemon records the choice and restores it at startup.
+
 <a name="SendFanCurveGet"></a>
-## func [SendFanCurveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L378>)
+## func SendFanCurveGet
 
 ```go
 func SendFanCurveGet() (handled bool, value string, err error)
@@ -560,7 +597,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveReset"></a>
-## func [SendFanCurveReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L411>)
+## func SendFanCurveReset
 
 ```go
 func SendFanCurveReset() (bool, error)
@@ -601,7 +638,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveResetFor"></a>
-## func [SendFanCurveResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L418>)
+## func SendFanCurveResetFor
 
 ```go
 func SendFanCurveResetFor(profile string) (bool, error)
@@ -642,7 +679,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSet"></a>
-## func [SendFanCurveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L392>)
+## func SendFanCurveSet
 
 ```go
 func SendFanCurveSet(curve string) (bool, error)
@@ -683,7 +720,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSetFor"></a>
-## func [SendFanCurveSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L399>)
+## func SendFanCurveSetFor
 
 ```go
 func SendFanCurveSetFor(profile, curve string) (bool, error)
@@ -725,7 +762,7 @@ func main() {
 </details>
 
 <a name="SendFeatureGet"></a>
-## func [SendFeatureGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L680>)
+## func SendFeatureGet
 
 ```go
 func SendFeatureGet(id string) (handled bool, value int, err error)
@@ -766,7 +803,7 @@ func main() {
 </details>
 
 <a name="SendFeatureSet"></a>
-## func [SendFeatureSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L697>)
+## func SendFeatureSet
 
 ```go
 func SendFeatureSet(id string, value int) (bool, error)
@@ -807,7 +844,7 @@ func main() {
 </details>
 
 <a name="SendOff"></a>
-## func [SendOff](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L234>)
+## func SendOff
 
 ```go
 func SendOff(device string) (bool, error)
@@ -848,7 +885,7 @@ func main() {
 </details>
 
 <a name="SendPanelOverdriveGet"></a>
-## func [SendPanelOverdriveGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L360>)
+## func SendPanelOverdriveGet
 
 ```go
 func SendPanelOverdriveGet() (handled bool, value int, err error)
@@ -889,7 +926,7 @@ func main() {
 </details>
 
 <a name="SendPanelOverdriveSet"></a>
-## func [SendPanelOverdriveSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L329>)
+## func SendPanelOverdriveSet
 
 ```go
 func SendPanelOverdriveSet(value int) (bool, error)
@@ -930,7 +967,7 @@ func main() {
 </details>
 
 <a name="SendProfileCreate"></a>
-## func [SendProfileCreate](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L543>)
+## func SendProfileCreate
 
 ```go
 func SendProfileCreate(name string) (bool, error)
@@ -972,7 +1009,7 @@ func main() {
 </details>
 
 <a name="SendProfileDelete"></a>
-## func [SendProfileDelete](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L569>)
+## func SendProfileDelete
 
 ```go
 func SendProfileDelete(name string) (bool, error)
@@ -1014,7 +1051,7 @@ func main() {
 </details>
 
 <a name="SendProfileGet"></a>
-## func [SendProfileGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L261>)
+## func SendProfileGet
 
 ```go
 func SendProfileGet() (handled bool, profile string, err error)
@@ -1055,7 +1092,7 @@ func main() {
 </details>
 
 <a name="SendProfileList"></a>
-## func [SendProfileList](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L583>)
+## func SendProfileList
 
 ```go
 func SendProfileList() (handled bool, value string, err error)
@@ -1106,7 +1143,7 @@ func main() {
 </details>
 
 <a name="SendProfileSave"></a>
-## func [SendProfileSave](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L556>)
+## func SendProfileSave
 
 ```go
 func SendProfileSave(name string) (bool, error)
@@ -1148,7 +1185,7 @@ func main() {
 </details>
 
 <a name="SendProfileSet"></a>
-## func [SendProfileSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L293>)
+## func SendProfileSet
 
 ```go
 func SendProfileSet(profile string) (bool, error)
@@ -1189,7 +1226,7 @@ func main() {
 </details>
 
 <a name="SendTdpGet"></a>
-## func [SendTdpGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L431>)
+## func SendTdpGet
 
 ```go
 func SendTdpGet() (handled bool, value string, err error)
@@ -1230,7 +1267,7 @@ func main() {
 </details>
 
 <a name="SendTdpReset"></a>
-## func [SendTdpReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L472>)
+## func SendTdpReset
 
 ```go
 func SendTdpReset() (bool, error)
@@ -1253,7 +1290,7 @@ import (
 )
 
 func main() {
-	// Reset to balanced profile, restoring its stock PPT and auto fan curves.
+	// Reset to balanced profile, handing the power limits and fans back to the firmware.
 	handled, err := api.SendTdpReset()
 	if !handled {
 		fmt.Println("daemon not running")
@@ -1271,13 +1308,13 @@ func main() {
 </details>
 
 <a name="SendTdpResetFor"></a>
-## func [SendTdpResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L478>)
+## func SendTdpResetFor
 
 ```go
 func SendTdpResetFor(profile string) (bool, error)
 ```
 
-SendTdpResetFor clears the TDP limits from the named custom profile. An empty profile means the active one, which also restores stock power limits.
+SendTdpResetFor clears the TDP limits from the named custom profile. An empty profile means the active one, which also switches to balanced and hands the power limits back to the firmware.
 
 <details><summary>Example</summary>
 <p>
@@ -1311,7 +1348,7 @@ func main() {
 </details>
 
 <a name="SendTdpSet"></a>
-## func [SendTdpSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L445>)
+## func SendTdpSet
 
 ```go
 func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error)
@@ -1352,13 +1389,13 @@ func main() {
 </details>
 
 <a name="SendTdpSetFor"></a>
-## func [SendTdpSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L452>)
+## func SendTdpSetFor
 
 ```go
 func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error)
 ```
 
-SendTdpSetFor stores TDP limits in the named custom profile. An empty profile means the active one, in which case the limits are also written to hardware; naming a profile that is not active only records them.
+SendTdpSetFor stores TDP limits in the named custom profile. An empty profile means the active one, in which case the limits are also written to hardware; naming a profile that is not active only records them. The accepted ranges are in the device\-get document's PowerInfo: a PL2 or PL3 below its minimum is raised to it, and a PL1 outside its range, or above TDPMaxSafe without force, is refused.
 
 <details><summary>Example</summary>
 <p>
@@ -1394,8 +1431,30 @@ func main() {
 </p>
 </details>
 
+<a name="SendTuningReset"></a>
+## func SendTuningReset
+
+```go
+func SendTuningReset() (bool, error)
+```
+
+SendTuningReset clears every tuning override at once — fan curve, power limits and Curve Optimizer offset — and lands on the "balanced" profile.
+
+It is not the same as issuing the three resets in sequence. Each of those has to lower power before releasing the fans, so doing it by hand in the wrong order leaves a window at a high sustained limit with no fan floor; sending one command puts that ordering inside the daemon where it cannot be got wrong.
+
+Returns \(false, nil\) if the daemon is not running. A daemon older than this command answers "unknown command", so a client offering it should be prepared to fall back to the three individual resets.
+
+<a name="SendTuningResetFor"></a>
+## func SendTuningResetFor
+
+```go
+func SendTuningResetFor(profile string) (bool, error)
+```
+
+SendTuningResetFor clears every tuning override from the named custom profile. An empty profile means the active one, which also writes hardware; naming a profile that is not running stores the change only.
+
 <a name="SendUndervoltGet"></a>
-## func [SendUndervoltGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L491>)
+## func SendUndervoltGet
 
 ```go
 func SendUndervoltGet() (handled bool, value string, err error)
@@ -1436,7 +1495,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltReset"></a>
-## func [SendUndervoltReset](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L525>)
+## func SendUndervoltReset
 
 ```go
 func SendUndervoltReset() (bool, error)
@@ -1477,13 +1536,13 @@ func main() {
 </details>
 
 <a name="SendUndervoltResetFor"></a>
-## func [SendUndervoltResetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L531>)
+## func SendUndervoltResetFor
 
 ```go
 func SendUndervoltResetFor(profile string) (bool, error)
 ```
 
-SendUndervoltResetFor clears the Curve Optimizer offset from the named custom profile. An empty profile means the active one, which also resets hardware.
+SendUndervoltResetFor clears the Curve Optimizer offset from the named custom profile. An empty profile means the active one, which also resets hardware if an offset is applied.
 
 <details><summary>Example</summary>
 <p>
@@ -1517,7 +1576,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSet"></a>
-## func [SendUndervoltSet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L506>)
+## func SendUndervoltSet
 
 ```go
 func SendUndervoltSet(cpu string) (bool, error)
@@ -1558,7 +1617,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSetFor"></a>
-## func [SendUndervoltSetFor](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L513>)
+## func SendUndervoltSetFor
 
 ```go
 func SendUndervoltSetFor(profile, cpu string) (bool, error)
@@ -1598,7 +1657,7 @@ func main() {
 </details>
 
 <a name="SocketPath"></a>
-## func [SocketPath](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L44>)
+## func SocketPath
 
 ```go
 func SocketPath() string
@@ -1607,7 +1666,7 @@ func SocketPath() string
 SocketPath returns the canonical runtime path for the daemon's Unix socket.
 
 <a name="SocketPaths"></a>
-## func [SocketPaths](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L56>)
+## func SocketPaths
 
 ```go
 func SocketPaths() []string
@@ -1618,7 +1677,7 @@ SocketPaths returns every socket path the daemon serves, canonical first.
 The second entry is the pre\-rename z13ctl path. The daemon listens on both through the whole 2.x line so clients that hardcode the old path — the Decky plugin speaks it directly, and pre\-2.0 Go clients compiled it in — keep working across the rename; it is removed at 3.0. Clients dial in order and use the first that answers, which also covers the upgrade window where a pre\-2.0 daemon is still running on the old path only.
 
 <a name="Subscribe"></a>
-## func [Subscribe](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L730>)
+## func Subscribe
 
 ```go
 func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error)
@@ -1677,7 +1736,7 @@ func main() {
 </details>
 
 <a name="ValidateProfileName"></a>
-## func [ValidateProfileName](<https://github.com/dahui/z13ctl/blob/main/api/profilename.go#L35>)
+## func ValidateProfileName
 
 ```go
 func ValidateProfileName(name string) error
@@ -1690,7 +1749,7 @@ The firmware profile names are reserved so that selecting one always reaches the
 Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
 
 <a name="AutoswitchState"></a>
-## type [AutoswitchState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L244-L248>)
+## type AutoswitchState
 
 AutoswitchState configures automatic profile selection by power source. An empty AC or Battery target means "leave the profile alone on that source", which is how a caller hands one side back to power\-profiles\-daemon.
 
@@ -1703,7 +1762,7 @@ type AutoswitchState struct {
 ```
 
 <a name="AutoswitchState.Target"></a>
-### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L252>)
+### func \(\*AutoswitchState\) Target
 
 ```go
 func (a *AutoswitchState) Target(onAC bool) string
@@ -1712,7 +1771,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="BatteryInfo"></a>
-## type [BatteryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L130-L133>)
+## type BatteryInfo
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
@@ -1723,8 +1782,23 @@ type BatteryInfo struct {
 }
 ```
 
+<a name="CPUInfo"></a>
+## type CPUInfo
+
+CPUInfo says what CPU\-level controls the device offers. A section rather than a bool for the same reason BatteryInfo is one: its contents are independently absent, so a machine that gains a second CPU control later can say so without this field having meant two things.
+
+```go
+type CPUInfo struct {
+    // Boost is true when cpuboost get/set work. Boost clocks are a kernel
+    // runtime setting rather than a firmware one — they come back on at every
+    // boot — so unlike a toggle in Toggles the daemon persists and restores the
+    // user's choice.
+    Boost bool `json:"boost,omitempty"`
+}
+```
+
 <a name="CustomProfile"></a>
-## type [CustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L228-L233>)
+## type CustomProfile
 
 CustomProfile is a named set of custom hardware settings. Each subsystem is a pointer so that nil means "this profile does not control that subsystem", which is what lets a profile stay loadable as new subsystems are added.
 
@@ -1738,7 +1812,7 @@ type CustomProfile struct {
 ```
 
 <a name="CustomProfile.Empty"></a>
-### func \(CustomProfile\) [Empty](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L237>)
+### func \(CustomProfile\) Empty
 
 ```go
 func (p CustomProfile) Empty() bool
@@ -1747,7 +1821,7 @@ func (p CustomProfile) Empty() bool
 Empty reports whether the profile controls no subsystem at all. An empty profile cannot be activated: there would be nothing to apply.
 
 <a name="DeviceInfo"></a>
-## type [DeviceInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L16-L32>)
+## type DeviceInfo
 
 DeviceInfo describes the assembled device: its identity, the capabilities it has, and the limits that go with them. Returned by SendDeviceGet.
 
@@ -1762,6 +1836,7 @@ type DeviceInfo struct {
     Lighting  *LightingInfo  `json:"lighting,omitempty"`
     Toggles   []ToggleInfo   `json:"toggles,omitempty"`
     Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
+    CPU       *CPUInfo       `json:"cpu,omitempty"`
     Battery   *BatteryInfo   `json:"battery,omitempty"`
     Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
@@ -1772,7 +1847,7 @@ type DeviceInfo struct {
 ```
 
 <a name="SendDeviceGet"></a>
-### func [SendDeviceGet](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L647>)
+### func SendDeviceGet
 
 ```go
 func SendDeviceGet() (handled bool, info *DeviceInfo, err error)
@@ -1820,7 +1895,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L310-L313>)
+## type FanCurvePoint
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -1832,7 +1907,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L316-L319>)
+## type FanCurveState
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -1844,7 +1919,7 @@ type FanCurveState struct {
 ```
 
 <a name="FanInfo"></a>
-## type [FanInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L37-L42>)
+## type FanInfo
 
 FanInfo is the device's fan\-curve shape: how many points a curve holds and the axes an editor should draw. TempMin/TempMax are the editor's temperature axis, not validation bounds — the hardware tolerates points outside them.
 
@@ -1854,11 +1929,39 @@ type FanInfo struct {
     TempMin int `json:"temp_min"` // degrees Celsius
     TempMax int `json:"temp_max"`
     PWMMax  int `json:"pwm_max"`
+
+    // Presets are named starting-point curves the device data ships, in the
+    // order a client should offer them. Empty means the device declares none,
+    // in which case a client shows no preset control at all rather than an
+    // empty list — capability by absence, as everywhere else in this document.
+    //
+    // A preset is only ever a curve: applying one is the ordinary fancurve set
+    // with the preset's points, so every check that governs a hand-drawn curve
+    // governs a preset too. There is deliberately no preset for firmware auto,
+    // which is a fan *mode* rather than a curve and has its own command
+    // (fancurve --reset).
+    Presets []FanPreset `json:"presets,omitempty"`
+}
+```
+
+<a name="FanPreset"></a>
+## type FanPreset
+
+FanPreset is one named fan curve offered as a starting point. Name is the wire/CLI identifier \(lowercase, matched case\-insensitively\); Label is what to show; Description is optional prose for a tooltip.
+
+Both strings are device data rather than client\-side text for the same reason ToggleInfo.Description is: what a curve does to a \*particular\* machine — where its fans stop, how hot it lets the package run — is hardware knowledge a client rendering these generically cannot derive, and a name is not always title\-case \("zero\-rpm" is "Zero RPM", not "Zero\-Rpm"\).
+
+```go
+type FanPreset struct {
+    Name        string          `json:"name"`
+    Label       string          `json:"label"`
+    Description string          `json:"description,omitempty"`
+    Curve       []FanCurvePoint `json:"curve"`
 }
 ```
 
 <a name="LightingInfo"></a>
-## type [LightingInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L70-L72>)
+## type LightingInfo
 
 LightingInfo lists the addressable lighting zone names.
 
@@ -1869,7 +1972,7 @@ type LightingInfo struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L300-L307>)
+## type LightingState
 
 LightingState captures all parameters needed to reproduce one lighting zone.
 
@@ -1885,9 +1988,11 @@ type LightingState struct {
 ```
 
 <a name="PowerInfo"></a>
-## type [PowerInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L48-L61>)
+## type PowerInfo
 
 PowerInfo is the device's power\-limit envelope. Sustained limits above TDPMaxSafe require the caller's explicit force flag and put the fans on FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means the device imposes no floor.
+
+TDPMin..TDPMaxForced is the range the sustained limit \(PL1\) accepts. Where the daemon can read the kernel's own bounds it reports those — on the GZ302EA through asus\-armoury, PL1 28–80, PL2 32–92 and PL3 45–93 W — so they can differ from the device data, and can differ between AC and battery on a device whose firmware keeps separate tables.
 
 ```go
 type PowerInfo struct {
@@ -1895,6 +2000,16 @@ type PowerInfo struct {
     TDPMaxSafe   int             `json:"tdp_max_safe"`
     TDPMaxForced int             `json:"tdp_max_forced"`
     FloorCurve   []FanCurvePoint `json:"floor_curve,omitempty"`
+
+    // Interface names the kernel interface the limits go through
+    // ("asus-armoury", "asus-nb-wmi"); empty when the daemon reports none.
+    Interface string `json:"interface,omitempty"`
+
+    // PL2 and PL3 are the ranges the burst limits accept; absent means
+    // TDPMin..TDPMaxForced. A request below a burst limit's minimum is raised to
+    // it, and one above its maximum is refused.
+    PL2 *PowerRange `json:"pl2,omitempty"`
+    PL3 *PowerRange `json:"pl3,omitempty"`
 
     // StockProfilePPT maps each firmware profile name to the PPT values the
     // daemon writes when that profile is selected. A client needs these to tell
@@ -1906,8 +2021,20 @@ type PowerInfo struct {
 }
 ```
 
+<a name="PowerRange"></a>
+## type PowerRange
+
+PowerRange is an inclusive range in watts.
+
+```go
+type PowerRange struct {
+    Min int `json:"min"`
+    Max int `json:"max"`
+}
+```
+
 <a name="ProfileInfo"></a>
-## type [ProfileInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L65-L67>)
+## type ProfileInfo
 
 ProfileInfo lists the firmware performance profiles. These are also the reserved names: a custom profile can never take one of them.
 
@@ -1918,7 +2045,7 @@ type ProfileInfo struct {
 ```
 
 <a name="State"></a>
-## type [State](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L17-L138>)
+## type State
 
 State holds the last\-applied settings for all controllable subsystems. It is returned by SendGetState and broadcast as part of daemon responses.
 
@@ -1934,14 +2061,24 @@ type State struct {
     PanelOverdrive     int                      `json:"panel_overdrive,omitempty"`
     CustomProfiles     map[string]CustomProfile `json:"custom_profiles,omitempty"` // saved custom profiles keyed by name
     Autoswitch         *AutoswitchState         `json:"autoswitch,omitempty"`
-    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`    // projection; see the type doc
-    TDP                *TDPState                `json:"tdp,omitempty"`          // projection; see the type doc
-    Undervolt          *UndervoltState          `json:"undervolt,omitempty"`    // projection; see the type doc
-    UndervoltAvailable bool                     `json:"undervolt_available"`    // true if ryzen_smu is loaded
-    OnAC               bool                     `json:"on_ac"`                  // true when running on mains power
-    SourceKnown        bool                     `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
-    Temperature        int                      `json:"temperature,omitempty"`  // APU temp, degrees Celsius
-    FanRPM             int                      `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+    FanCurve           *FanCurveState           `json:"fan_curve,omitempty"` // projection; see the type doc
+    TDP                *TDPState                `json:"tdp,omitempty"`       // projection; see the type doc
+    Undervolt          *UndervoltState          `json:"undervolt,omitempty"` // projection; see the type doc
+    UndervoltAvailable bool                     `json:"undervolt_available"` // ryzen_smu loaded; after the first undervolt write, whether CO works
+
+    // CPUBoost is whether the CPU's opportunistic boost clocks are enabled.
+    //
+    // A pointer, and absent rather than false when it could not be read — the
+    // same rule State.Features follows for a toggle whose value is unknown, and
+    // for the same reason: false is "boost is off", a claim about the machine,
+    // and a client showing a switch has to be able to render "I do not know".
+    // A device with no boost control omits it too, so a client that hides the
+    // control on absence is right on both counts.
+    CPUBoost    *bool `json:"cpu_boost,omitempty"`
+    OnAC        bool  `json:"on_ac"`                  // true when running on mains power
+    SourceKnown bool  `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
+    Temperature int   `json:"temperature,omitempty"`  // APU temp, degrees Celsius
+    FanRPM      int   `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 
     // RPM is every fan the device reports, in the driver's order; FanRPM is
     // RPM[0]. Both are carried because they answer different questions and one
@@ -1999,6 +2136,19 @@ type State struct {
     // reported as zero — zero is "off", which is a claim about the hardware.
     Features map[string]int `json:"features,omitempty"`
 
+    // PendingReboot reports whether a changed firmware setting is waiting on a
+    // restart to take effect.
+    //
+    // A pointer for the same reason CPUBoost is one: absent means the device
+    // cannot say, which is not "nothing is pending" and must not be rendered as
+    // it. A pre-2.0 daemon, or a device whose firmware interface has no such
+    // flag, omits the field entirely.
+    //
+    // It exists because a BIOS setting that silently needs a reboot looks
+    // exactly like one that did not work — the switch moves, the machine does
+    // not change, and nothing on screen accounts for the gap.
+    PendingReboot *bool `json:"pending_reboot,omitempty"`
+
     // BatteryLevel is the pack's current charge as a percentage, zero when the
     // device has no battery.
     //
@@ -2022,6 +2172,18 @@ type State struct {
     // BatteryLevel and Battery lets a client say "81%, holding at your 75%
     // limit" instead of showing a bare zero.
     BatteryState string `json:"battery_state,omitempty"`
+
+    // Charger names which power input is supplying the machine: "adapter"
+    // (a proprietary high-wattage DC input), "usb-c", or "none". Absent when
+    // the device cannot say, which includes every device with only one way to
+    // take power.
+    //
+    // It is not derivable from OnAC and does not replace it. The Z13 takes power
+    // two ways and its Mains supply reads online for *both* — correctly, since
+    // mains power is attached either way — so OnAC answers "is it plugged in"
+    // and this answers "into what". The two inputs have very different ceilings,
+    // which is what makes the distinction worth carrying.
+    Charger string `json:"charger,omitempty"`
 
     // BatteryHealth is full-charge capacity as a percentage of design
     // capacity, or zero when the device does not report it — which is what
@@ -2050,7 +2212,7 @@ type State struct {
 ```
 
 <a name="SendGetState"></a>
-### func [SendGetState](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L630>)
+### func SendGetState
 
 ```go
 func SendGetState() (bool, *State, error)
@@ -2091,7 +2253,7 @@ func main() {
 </details>
 
 <a name="State.ActiveCustomProfile"></a>
-### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L287>)
+### func \(State\) ActiveCustomProfile
 
 ```go
 func (s State) ActiveCustomProfile() (CustomProfile, bool)
@@ -2100,7 +2262,7 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool)
 ActiveCustomProfile returns the active custom profile and true, or the zero value and false when a stock profile is active.
 
 <a name="State.InCustomProfile"></a>
-### func \(State\) [InCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L283>)
+### func \(State\) InCustomProfile
 
 ```go
 func (s State) InCustomProfile() bool
@@ -2109,7 +2271,7 @@ func (s State) InCustomProfile() bool
 InCustomProfile reports whether the active profile is a custom one.
 
 <a name="State.IsCustomProfile"></a>
-### func \(State\) [IsCustomProfile](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L271>)
+### func \(State\) IsCustomProfile
 
 ```go
 func (s State) IsCustomProfile(name string) bool
@@ -2122,7 +2284,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L330-L336>)
+## type TDPState
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -2137,7 +2299,7 @@ type TDPState struct {
 ```
 
 <a name="TelemetryInfo"></a>
-## type [TelemetryInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L148-L155>)
+## type TelemetryInfo
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
@@ -2155,7 +2317,7 @@ type TelemetryInfo struct {
 ```
 
 <a name="TelemetrySample"></a>
-## type [TelemetrySample](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L153-L202>)
+## type TelemetrySample
 
 TelemetrySample is one reading from the daemon's sample history, as returned by SendTelemetryHistory. The daemon samples at 1 Hz.
 
@@ -2217,7 +2379,7 @@ type TelemetrySample struct {
 ```
 
 <a name="SendTelemetryHistory"></a>
-### func [SendTelemetryHistory](<https://github.com/dahui/z13ctl/blob/main/api/client.go#L666>)
+### func SendTelemetryHistory
 
 ```go
 func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample, err error)
@@ -2267,7 +2429,7 @@ func main() {
 </details>
 
 <a name="ToggleInfo"></a>
-## type [ToggleInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L78-L98>)
+## type ToggleInfo
 
 ToggleInfo describes one firmware toggle the device offers. ID is the wire identifier for the feature/feature\-get commands; Label is a human\-readable fallback for clients with no nicer name of their own. Kind says how the value is shaped — "bool" toggles take 0 or 1.
 
@@ -2296,7 +2458,7 @@ type ToggleInfo struct {
 ```
 
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/z13ctl/blob/main/api/device.go#L121-L124>)
+## type UndervoltInfo
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 
@@ -2308,7 +2470,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/z13ctl/blob/main/api/types.go#L324-L327>)
+## type UndervoltState
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

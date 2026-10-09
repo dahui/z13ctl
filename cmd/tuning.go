@@ -55,7 +55,7 @@ func runTuningReset() error {
 		if err != nil {
 			return err
 		}
-		cli.DryRunTuningReset(envOf(hw))
+		cli.DryRunTuningReset(powerEnvFor(hw))
 		return nil
 	}
 
@@ -70,7 +70,7 @@ func runTuningReset() error {
 			fmt.Printf("Cleared every tuning override from profile %s\n", tuningProfileFlag)
 			return nil
 		}
-		fmt.Println("Tuning reset: switched to balanced profile (stock PPT restored, fans on firmware auto)")
+		fmt.Println("Tuning reset: switched to balanced profile (firmware power limits and fans restored)")
 		return nil
 	}
 
@@ -84,7 +84,7 @@ func runTuningReset() error {
 	if err := runTdpResetDirect(); err != nil {
 		return err
 	}
-	fmt.Println("Tuning reset: switched to balanced profile (stock PPT restored, fans on firmware auto)")
+	fmt.Println("Tuning reset: switched to balanced profile (firmware power limits and fans restored)")
 	fmt.Println("  (no daemon running, so no saved profile was changed)")
 	return nil
 }

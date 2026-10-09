@@ -19,6 +19,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
 	"github.com/dahui/voltaire/v2/internal/limits"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // TestDeviceGetProjectsTheAssembledDevice pins the document against the same
@@ -511,5 +512,32 @@ func TestToggleSourceSurvivesADriverThatSetsIt(t *testing.T) {
 	if got[0].Source != want {
 		t.Errorf("source = %q, want %q — the core substitution overwrote a declared source",
 			got[0].Source, want)
+	}
+}
+
+// TestDeviceGetCarriesTheKernelsRanges: when the driver reports the kernel's
+// own ranges (asus-armoury), the document carries them, burst limits included,
+// so a client bounds each slider by what the daemon will accept.
+func TestDeviceGetCarriesTheKernelsRanges(t *testing.T) {
+	env := testEnv
+	env.Interface = "asus-armoury"
+	env.TDPMin, env.TDPMaxForced = 28, 80
+	env.PL2 = driver.PowerRange{Min: 32, Max: 92}
+	env.PL3 = driver.PowerRange{Min: 45, Max: 93}
+	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: deviceFileEnvelope{env: env}}}
+
+	p := (&Daemon{hw: hw}).handleDeviceGet().Device.Power
+	if p == nil {
+		t.Fatal("power section missing")
+	}
+	if p.Interface != "asus-armoury" || p.TDPMin != 28 || p.TDPMaxForced != 80 {
+		t.Errorf("power = %+v, want asus-armoury with PL1 28–80", p)
+	}
+	if p.PL2 == nil || *p.PL2 != (api.PowerRange{Min: 32, Max: 92}) ||
+		p.PL3 == nil || *p.PL3 != (api.PowerRange{Min: 45, Max: 93}) {
+		t.Errorf("burst ranges = %+v / %+v, want 32–92 / 45–93", p.PL2, p.PL3)
+	}
+	if testDocPower := (&Daemon{hw: testDev}).handleDeviceGet().Device.Power; testDocPower.PL2 != nil {
+		t.Errorf("device data alone reported a PL2 range %+v; absent means PL1's", testDocPower.PL2)
 	}
 }

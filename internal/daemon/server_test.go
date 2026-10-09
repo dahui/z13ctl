@@ -12,6 +12,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 func TestDispatchUnknownCommand(t *testing.T) {
@@ -36,10 +37,15 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 		{"non-numeric pl2", request{Cmd: "tdp", Set: "40", PL2: "x"}, "invalid pl2"},
 		{"non-numeric pl3", request{Cmd: "tdp", Set: "40", PL3: "x"}, "invalid pl3"},
 		{"pl1 below minimum", request{Cmd: "tdp", Set: "1"}, "out of range"},
-		{"pl1 above safe max without force", request{Cmd: "tdp", Set: "80"}, "use force flag"},
+		{"pl1 above safe max without force", request{Cmd: "tdp", Set: "80"}, "use force"},
 		{"pl1 above hardware max even with force", request{Cmd: "tdp", Set: "200", Force: true}, "out of range"},
 		{"pl2 above hardware max", request{Cmd: "tdp", Set: "40", PL2: "200"}, "out of range"},
-		{"pl3 below minimum", request{Cmd: "tdp", Set: "40", PL3: "1"}, "out of range"},
+		{"pl3 above hardware max", request{Cmd: "tdp", Set: "40", PL3: "200"}, "out of range"},
+		// Every case must be refused on both interfaces' ranges — asus-armoury's
+		// (PL1 28–80, PL2 32–92, PL3 45–93 on the GZ302EA) and the device file's
+		// 5–93 — since testDev reads whichever the machine has. A PL2 or PL3 below
+		// its minimum is raised, not refused, so it is not a rejection case at all:
+		// "pl3 below minimum" stood here and would now write the real limits.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,8 +64,8 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 // TestHandleTDPForceBoundaryRejections pins the asymmetry between sustained and
 // burst limits: PL1 needs the force flag above TDPMaxSafe.
 //
-// Only rejection cases belong here. handleTDP writes straight to the real
-// /sys/devices/platform/asus-nb-wmi/ppt_* nodes once validation passes, and
+// Only rejection cases belong here. handleTDP writes straight to the real PPT
+// attributes (asus-armoury's, or asus-nb-wmi's ppt_*) once validation passes, and
 // the Z13 driver's path vars are unexported, so a case that gets past validation
 // would change the developer's actual power limits as a test side effect.
 // Accepted-input behaviour is covered hermetically in internal/drivers/asusz13/tdp_test.go.
@@ -393,7 +399,7 @@ func TestDispatchRefusesECCommandsWhileWedged(t *testing.T) {
 	for _, cmd := range []string{
 		"profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
 		"batterylimit", "bootsound", "paneloverdrive", "feature",
-		"bootsound-get", "paneloverdrive-get", "feature-get",
+		"bootsound-get", "paneloverdrive-get", "feature-get", "tdp-get",
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
@@ -415,7 +421,7 @@ func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
 		"apply", "off", "brightness", "profile-get", "profile-create", "profile-save",
 		"profile-delete", "profile-list", "autoswitch", "autoswitch-get",
 		"batterylimit-get", "device-get", "telemetry-history", "cpuboost", "cpuboost-get",
-		"fancurve-get", "tdp-get", "undervolt", "undervolt-get", "undervolt-reset",
+		"fancurve-get", "undervolt", "undervolt-get", "undervolt-reset",
 		"get-state", "subscribe",
 	} {
 		if ecGuarded(cmd) {
@@ -468,5 +474,136 @@ func TestAutoswitchGetReportsUnknownSourceWhileWedged(t *testing.T) {
 		if !wedged && (!read || !got.Known || !got.OnAC) {
 			t.Errorf("healthy: read=%v source=%+v, want the battery driver's answer", read, got)
 		}
+	}
+}
+
+// TestGetStateSkipsArmouryPPTWhileWedged: on asus-armoury every PPT read —
+// current_value and the bounds alike — goes through get_current_tunables(),
+// which evaluates the AC adapter's _PSR to choose the AC or battery table. That
+// is a live ACPI call into the EC, not the cache asus-nb-wmi's ppt_* were, so
+// while the latch is set get-state must not read the limits.
+//
+// Hermetic with the gate in place: nothing is read. Without it the test reads
+// the machine's real PPT interface and fails on any machine that has one.
+func TestGetStateSkipsArmouryPPTWhileWedged(t *testing.T) {
+	d := &Daemon{hw: testDev, ecWedged: true}
+	resp := d.dispatch(request{Cmd: "get-state"})
+	if !resp.OK || resp.State == nil {
+		t.Fatalf("get-state while wedged = %+v, want OK: it is a read, not refused", resp)
+	}
+	if resp.State.TDP != nil {
+		t.Errorf("tdp while wedged = %+v, want the state projection (none here), not a readback", resp.State.TDP)
+	}
+}
+
+// countingPower is a power limiter that counts how often its envelope is read,
+// and (when limitReads is set) how often its limits are.
+type countingPower struct {
+	reads      *int
+	limitReads *int
+	live       driver.PowerEnvelope
+	data       driver.PowerEnvelope
+}
+
+func (p countingPower) Read() (api.TDPState, error) {
+	if p.limitReads != nil {
+		*p.limitReads++
+	}
+	return api.TDPState{PL1SPL: 40, PL2SPPT: 40, FPPT: 45}, nil
+}
+func (countingPower) Apply(api.TDPState) error { return nil }
+func (p countingPower) Envelope() driver.PowerEnvelope {
+	*p.reads++
+	return p.live
+}
+func (p countingPower) DeviceEnvelope() driver.PowerEnvelope { return p.data }
+
+// TestEnvDoesNotReadTheKernelWhileWedged: the envelope the daemon validates and
+// serves comes from the driver, which on asus-armoury reads the kernel's bounds
+// (a live _PSR evaluation each). While the EC is not answering it must come
+// from the last good read, or from device data when there is none — never the
+// driver. device-get goes through the same path.
+func TestEnvDoesNotReadTheKernelWhileWedged(t *testing.T) {
+	reads := 0
+	live := driver.PowerEnvelope{TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80, Interface: "asus-armoury"}
+	data := driver.PowerEnvelope{TDPMin: 5, TDPMaxSafe: 75, TDPMaxForced: 93}
+	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &reads, live: live, data: data}}}
+
+	d := &Daemon{hw: hw, ecWedged: true}
+	if got := d.env(); got.TDPMin != data.TDPMin || got.Interface != "" {
+		t.Errorf("env() wedged with nothing cached = %+v, want the device data", got)
+	}
+	if p := d.handleDeviceGet().Device.Power; p == nil || p.TDPMin != data.TDPMin {
+		t.Errorf("device-get wedged with nothing cached = %+v, want the device data", p)
+	}
+	if reads != 0 {
+		t.Fatalf("the driver's envelope was read %d times while wedged, want none", reads)
+	}
+
+	d.setECWedged(false)
+	if got := d.env(); got.Interface != "asus-armoury" || reads != 1 {
+		t.Fatalf("env() answering = %+v after %d reads, want the driver's, read once", got, reads)
+	}
+	d.setECWedged(true)
+	if got := d.env(); got.Interface != "asus-armoury" || got.TDPMin != 28 {
+		t.Errorf("env() wedged after a good read = %+v, want that read", got)
+	}
+	if p := d.handleDeviceGet().Device.Power; p == nil || p.Interface != "asus-armoury" {
+		t.Errorf("device-get wedged after a good read = %+v, want that read", p)
+	}
+	if reads != 1 {
+		t.Errorf("the driver's envelope was read %d times, want 1: none while wedged", reads)
+	}
+}
+
+// TestEnvReusesARecentRead: the reconcile watcher asks for the envelope every
+// two seconds, and on asus-armoury a fresh one is nine live ACPI evaluations.
+func TestEnvReusesARecentRead(t *testing.T) {
+	reads := 0
+	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &reads}}}
+	d := &Daemon{hw: hw}
+	d.env()
+	d.env()
+	if reads != 1 {
+		t.Errorf("two env() calls within the TTL read the driver %d times, want 1", reads)
+	}
+	orig := envCacheTTL
+	envCacheTTL = 0
+	t.Cleanup(func() { envCacheTTL = orig })
+	d.env()
+	if reads != 2 {
+		t.Errorf("env() past the TTL read the driver %d times in all, want 2", reads)
+	}
+}
+
+// TestReconcileReadsPowerOnlyWhenItCanAct: on asus-armoury every limit read is
+// a live _PSR evaluation, so the watcher reads them only for a custom profile it
+// is not standing down for. A stock profile only ever fed a log line, and
+// while suspending — which covers the post-resume wait for the EC, before the
+// wedge latch is set — the tick stands down regardless.
+func TestReconcileReadsPowerOnlyWhenItCanAct(t *testing.T) {
+	tdp := &api.TDPState{PL1SPL: 40, PL2SPPT: 40, FPPT: 45}
+	tests := []struct {
+		name       string
+		profile    string
+		suspending bool
+		wantReads  bool
+	}{
+		{"stock profile", "balanced", false, false},
+		{"custom profile while suspending", "custom", true, false},
+		{"custom profile", "custom", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envReads, limitReads := 0, 0
+			hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &envReads, limitReads: &limitReads}}}
+			d := &Daemon{hw: hw, suspending: tt.suspending}
+			d.state.Profile = tt.profile
+			d.state.CustomProfiles = map[string]api.CustomProfile{"custom": {Name: "custom", TDP: tdp}}
+			d.reconcileOnce(reconcileState{lastHW: "balanced"})
+			if got := limitReads > 0 || envReads > 0; got != tt.wantReads {
+				t.Errorf("power reads = %d limits / %d envelope, want any = %v", limitReads, envReads, tt.wantReads)
+			}
+		})
 	}
 }

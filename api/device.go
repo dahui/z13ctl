@@ -74,11 +74,27 @@ type FanPreset struct {
 // TDPMaxSafe require the caller's explicit force flag and put the fans on
 // FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means
 // the device imposes no floor.
+//
+// TDPMin..TDPMaxForced is the range the sustained limit (PL1) accepts. Where
+// the daemon can read the kernel's own bounds it reports those — on the
+// GZ302EA through asus-armoury, PL1 28–80, PL2 32–92 and PL3 45–93 W — so they
+// can differ from the device data, and can differ between AC and battery on a
+// device whose firmware keeps separate tables.
 type PowerInfo struct {
 	TDPMin       int             `json:"tdp_min"`
 	TDPMaxSafe   int             `json:"tdp_max_safe"`
 	TDPMaxForced int             `json:"tdp_max_forced"`
 	FloorCurve   []FanCurvePoint `json:"floor_curve,omitempty"`
+
+	// Interface names the kernel interface the limits go through
+	// ("asus-armoury", "asus-nb-wmi"); empty when the daemon reports none.
+	Interface string `json:"interface,omitempty"`
+
+	// PL2 and PL3 are the ranges the burst limits accept; absent means
+	// TDPMin..TDPMaxForced. A request below a burst limit's minimum is raised to
+	// it, and one above its maximum is refused.
+	PL2 *PowerRange `json:"pl2,omitempty"`
+	PL3 *PowerRange `json:"pl3,omitempty"`
 
 	// StockProfilePPT maps each firmware profile name to the PPT values the
 	// daemon writes when that profile is selected. A client needs these to tell
@@ -87,6 +103,12 @@ type PowerInfo struct {
 	// hardcoded table is answering for the wrong machine the moment voltaire
 	// supports a second one. Empty means the device declares no stock table.
 	StockProfilePPT map[string]TDPState `json:"stock_profile_ppt,omitempty"`
+}
+
+// PowerRange is an inclusive range in watts.
+type PowerRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
 }
 
 // ProfileInfo lists the firmware performance profiles. These are also the

@@ -53,11 +53,11 @@ func (e Engine) Read() (api.TDPState, error) {
 }
 
 // ReadEffective returns the current power limits, substituting the envelope's
-// stock row when hardware reports the stale boot cache. The asus-nb-wmi PPT
-// attributes come up holding the envelope's minimum (5W on the Z13) after
-// module load and do not reflect the EC's real per-profile limits until
-// something writes them, so a raw read straight after boot is wrong in the
-// most alarming way possible.
+// stock row when hardware reports the stale boot cache (CacheStale). The PPT
+// attributes come up holding the interface's initial values after module load —
+// 5W on asus-nb-wmi, asus-armoury's defaults — and do not reflect the EC's real
+// per-profile limits until something writes them, so a raw read straight after
+// boot is wrong in the most alarming way possible.
 //
 // profile must be the *effective* profile — for daemon callers the daemon's
 // own state ("custom", or a custom profile's name, when one is active), NOT
@@ -71,12 +71,28 @@ func (e Engine) ReadEffective(profile string) (api.TDPState, error) {
 	if err != nil {
 		return s, err
 	}
-	if s.PL1SPL == e.Power.Envelope().TDPMin {
-		if stock, ok := e.Power.Envelope().StockProfilePPT[profile]; ok {
-			return stock, nil
-		}
+	// The envelope only when a stock row could replace the reading: a driver
+	// may read the kernel to build it (asus-armoury's bounds, each a live ACPI
+	// call), and a custom profile — what the reconcile watcher reads every two
+	// seconds — never substitutes. The row itself is device data, and the same
+	// in every envelope a driver reports.
+	if _, ok := e.deviceEnvelope().StockProfilePPT[profile]; !ok {
+		return s, nil
+	}
+	if env := e.Power.Envelope(); CacheStale(env, s) {
+		return env.StockProfilePPT[profile], nil
 	}
 	return s, nil
+}
+
+// deviceEnvelope is the envelope from device data alone where the driver can
+// give it without reading the kernel (driver.DeviceEnvelope), and the full
+// envelope where it cannot.
+func (e Engine) deviceEnvelope() driver.PowerEnvelope {
+	if de, ok := e.Power.(driver.DeviceEnvelope); ok {
+		return de.DeviceEnvelope()
+	}
+	return e.Power.Envelope()
 }
 
 // CheckFanFloorRelease reports whether the fans may be released to firmware

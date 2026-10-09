@@ -31,7 +31,7 @@ type State struct {
 	FanCurve           *FanCurveState           `json:"fan_curve,omitempty"` // projection; see the type doc
 	TDP                *TDPState                `json:"tdp,omitempty"`       // projection; see the type doc
 	Undervolt          *UndervoltState          `json:"undervolt,omitempty"` // projection; see the type doc
-	UndervoltAvailable bool                     `json:"undervolt_available"` // true if ryzen_smu is loaded
+	UndervoltAvailable bool                     `json:"undervolt_available"` // ryzen_smu loaded; after the first undervolt write, whether CO works
 
 	// CPUBoost is whether the CPU's opportunistic boost clocks are enabled.
 	//

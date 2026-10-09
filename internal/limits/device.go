@@ -40,6 +40,12 @@ func FromDevice(info *api.DeviceInfo) Limits {
 
 	if p := info.Power; p != nil {
 		l.TDPMin, l.TDPMaxSafe, l.TDPMaxForced = p.TDPMin, p.TDPMaxSafe, p.TDPMaxForced
+		if r := p.PL2; r != nil {
+			l.PL2Min, l.PL2Max = r.Min, r.Max
+		}
+		if r := p.PL3; r != nil {
+			l.PL3Min, l.PL3Max = r.Min, r.Max
+		}
 		l.FloorCurve = append([]api.FanCurvePoint(nil), p.FloorCurve...)
 
 		// Seed the scalar from the curve's bottom before Sanitized runs.

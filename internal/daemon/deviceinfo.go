@@ -20,7 +20,7 @@ import (
 )
 
 func (d *Daemon) handleDeviceGet() response {
-	return response{OK: true, Device: deviceInfoFor(d.hw)}
+	return response{OK: true, Device: deviceInfoForEnv(d.hw, d.env())}
 }
 
 // deviceInfoFor builds the capability/limits document clients render their
@@ -28,6 +28,16 @@ func (d *Daemon) handleDeviceGet() response {
 // omitted section, never an error. The floor curve is copied so the wire
 // document cannot alias the envelope's own slice.
 func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
+	if hw == nil || hw.Power == nil {
+		return deviceInfoForEnv(hw, driver.PowerEnvelope{})
+	}
+	return deviceInfoForEnv(hw, hw.Power.Envelope())
+}
+
+// deviceInfoForEnv is deviceInfoFor with the power envelope supplied, which is
+// how the daemon serves it: through d.env(), so a request while the EC is not
+// answering does not read the kernel's bounds.
+func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceInfo {
 	if hw == nil {
 		return &api.DeviceInfo{}
 	}
@@ -44,12 +54,21 @@ func deviceInfoFor(hw *device.Device) *api.DeviceInfo {
 		}
 	}
 	if hw.Power != nil {
-		env := hw.Power.Envelope()
 		info.Power = &api.PowerInfo{
 			TDPMin:       env.TDPMin,
 			TDPMaxSafe:   env.TDPMaxSafe,
 			TDPMaxForced: env.TDPMaxForced,
 			FloorCurve:   append([]api.FanCurvePoint(nil), env.FloorCurve...),
+			Interface:    env.Interface,
+		}
+		// The burst limits' own ranges, when the driver reports them (asus-armoury
+		// does): a client bounding all three sliders by PL1's range offers values
+		// the daemon then raises (PL3 below 45 W) or refuses (PL2 above 80 W).
+		if !env.PL2.IsZero() {
+			info.Power.PL2 = &api.PowerRange{Min: env.PL2.Min, Max: env.PL2.Max}
+		}
+		if !env.PL3.IsZero() {
+			info.Power.PL3 = &api.PowerRange{Min: env.PL3.Min, Max: env.PL3.Max}
 		}
 		// Copied for the same reason as the floor curve: the wire document must
 		// not alias the envelope's own map, or a client that mutated what it was

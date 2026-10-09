@@ -77,17 +77,34 @@ func (fanController) LiveCurve() ([]api.FanCurvePoint, error) {
 	return curves[0], nil
 }
 
-// NewPowerLimiter returns the asus-nb-wmi PPT driver, whose envelope comes
-// from device data — the single source of the Z13's power numbers.
+// NewPowerLimiter returns the PPT driver: asus-armoury when the kernel exposes
+// the limits there, asus-nb-wmi otherwise (see tdp.go). Its envelope comes from
+// device data — the single source of the Z13's safe maximum, stock rows and fan
+// floor — with the active interface's own ranges laid over it.
 func NewPowerLimiter(env driver.PowerEnvelope) driver.PowerLimiter {
 	return powerLimiter{env: env}
 }
 
 type powerLimiter struct{ env driver.PowerEnvelope }
 
-func (powerLimiter) Read() (api.TDPState, error)      { return ReadAllPPT() }
-func (powerLimiter) Apply(s api.TDPState) error       { return SetTDPState(s) }
-func (l powerLimiter) Envelope() driver.PowerEnvelope { return l.env }
+func (powerLimiter) Read() (api.TDPState, error) { return ReadAllPPT() }
+func (powerLimiter) Apply(s api.TDPState) error  { return SetTDPState(s) }
+
+// DeviceEnvelope is the device data alone (driver.DeviceEnvelope). Envelope
+// reads armoury's bounds, and every armoury PPT read evaluates the AC adapter's
+// _PSR to choose its AC or battery table — a live ACPI call.
+func (l powerLimiter) DeviceEnvelope() driver.PowerEnvelope { return l.env }
+
+// Envelope is read per call, as the interface is: armoury's bounds belong to
+// the power source in use now. With no PPT interface at all the device data
+// stands alone, and the write itself then fails, which is the honest answer.
+func (l powerLimiter) Envelope() driver.PowerEnvelope {
+	b, err := activePPT()
+	if err != nil {
+		return l.env
+	}
+	return b.withBounds().envelope(l.env)
+}
 
 // NewProfileController returns the platform-profile driver. names are the
 // firmware profile names from device data — also the reserved names.
@@ -96,6 +113,22 @@ func NewProfileController(names []string) driver.ProfileController {
 }
 
 type profileController struct{ names []string }
+
+// PolicyWritePaths names the attributes the kernel notifies when the firmware
+// re-applies a profile's power limits (driver.PolicyWriteNotifier).
+// /sys/firmware/acpi/platform_profile is notified after every successful
+// profile write, same-value ones included (drivers/acpi/platform_profile.c).
+// asus-nb-wmi's throttle_thermal_policy is notified by asus-wmi's
+// throttle_thermal_policy_write(), which every profile write and every
+// pwm_enable=2 on the fan-curve device goes through — that shared call is why a
+// fan release resets the limits. It exists only under
+// CONFIG_ASUS_WMI_DEPRECATED_ATTRS, and reading it logs no deprecation notice
+// (its show function, unlike the ppt_* ones, never calls
+// asus_wmi_show_deprecated). Verified on a GZ302EA, kernel 7.2: a redundant
+// pwm_enable=2 raises POLLPRI on it, and armoury PPT writes do not.
+func (profileController) PolicyWritePaths() []string {
+	return []string{sysProfileACPI, pptBasePath + "/throttle_thermal_policy"}
+}
 
 func (p profileController) Names() []string {
 	out := make([]string, len(p.names))

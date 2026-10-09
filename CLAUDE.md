@@ -44,7 +44,7 @@ cmd/                         Cobra subcommands
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs); --preset/--list-presets
                              resolve a named device curve into the same --set path
   cpuboost.go                get/set cpufreq boost clocks
-  tdp.go                     get/set/reset TDP power limits (asus-nb-wmi PPT sysfs)
+  tdp.go                     get/set/reset TDP power limits (asus-armoury PPT, asus-nb-wmi fallback)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
@@ -74,6 +74,9 @@ internal/
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
                              stands down while d.suspending, with a tick-counted staleness ceiling
+    policywatch.go           poll(POLLPRI) on the attributes the profile driver names (driver.PolicyWriteNotifier):
+                             reports every profile write and fan release, same-value ones included, to the
+                             reconcile watcher (z13ctl issue #22)
     profile.go               applyProfileLocked/applyCustomHW/applyStockHW, edit-target resolution,
                              profile create/save/delete/list handlers
     powersource.go           AC/battery autoswitch watcher; pure powerTick seam + powerSourceOnce;
@@ -137,12 +140,15 @@ internal/
                              while runtime_status reads active (opening it resumes the NPU)
       net.go                 /proc/net/dev byte counters, summed over physical interfaces
                              only (a /sys/class/net/*/device link) so tunnels never double-count
-      tdp.go                 PPT read/write: SetTDP, SetTDPState, ReadAllPPT
+      tdp.go                 PPT interface choice (asus-armoury, else asus-nb-wmi) and I/O: ReadAllPPT,
+                             SetTDPState (clamps into armoury's range), PlanTDPWrites; the envelope overlay
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
       undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues
       paths.go               sysfs roots as vars (injectable by tests); see Testing
       sysfs_fake_test.go     fake sysfs tree + fakeSMU mailbox + ppdRunner stub
       fan_sysfs_test.go / smu_test.go / tdp_test.go / power_test.go / undervolt_test.go
+      ppt_test.go            interface selection, kernel-range envelope, clamping, armoury readback
+      main_test.go           TestMain: every writable sysfs root points nowhere until a fake swaps it in
       rapl_test.go / battery_test.go / gpu_test.go / cpu_test.go / net_test.go
       register/             blank-import side-effect package wiring it into the registry
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
@@ -151,6 +157,8 @@ internal/
                              parameterized by driver.PowerEnvelope
     safety.go                pure rules: FanCurveForTDP, FloorPWMAt, FloorAdjustsCurve,
                              CheckCurveAgainstTDP, CheckFanFloorReleaseAt
+    limits.go                the ranges: ResolveTDP (shared CLI/daemon validation; raises PL2/PL3 to
+                             their minimums), EffectiveTDP, CacheStale, PL1/PL2/PL3Range, TDPStateFor
     engine.go                Engine{Fans, Power} — the only path to a PPT write:
                              ApplyTDPSafely, ReleaseTDP, Read, ReadEffective, RestoreStock,
                              CheckFanFloorRelease, Envelope. Device carries the Engine, not
@@ -579,9 +587,14 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Other attributes exist (`charge_mode` is read-only charger type detection). PPT
   controls were empty on Z13 on early kernels for want of DMI calibration data;
   7.x kernels carry a GZ302EA entry and expose `ppt_pl1_spl`/`ppt_pl2_sppt`/
-  `ppt_pl3_fppt` (PL1 28–80, PL2 32–92, PL3 45–93; no APU/Platform sPPT). They
-  write the same WMI IDs as the `asus-nb-wmi` path, and `current_value` is
-  armoury's own cache, so it never reflects writes made the other way.
+  `ppt_pl3_fppt` (PL1 28–80, PL2 32–92, PL3 45–93; no APU/Platform sPPT), and
+  voltaire writes power limits through them — see the TDP note. They write the
+  same WMI IDs as the `asus-nb-wmi` path, and `current_value` is armoury's own
+  per-power-source value, so it never reflects writes made the other way.
+  **Every armoury PPT read is a live ACPI call**: `current_value`, `min_value`,
+  `max_value` and `default_value` all go through `get_current_tunables()`, which
+  calls `power_supply_is_system_supplied()` to pick the AC or battery table — the
+  AC adapter's `_PSR`, each time. See the wedged-EC note.
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
   `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute
@@ -631,13 +644,43 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `d.mu` across the `cli.*` calls and now snapshots first, so the order holds
   everywhere. `*-get` handlers deliberately do not take `hwMu`: blocking a GUI
   read behind a fan write sequence would be a regression.
-- **TDP (PPT power limits)**: Direct platform device attributes at
-  `/sys/devices/platform/asus-nb-wmi/ppt_*`, which the kernel now warns is
-  deprecated in favour of asus-armoury (see the firmware-attributes note; migration
-  is pending, issue #22). Five attributes: `ppt_pl1_spl` (Sustained),
-  `ppt_pl2_sppt` (Short Boost), `ppt_fppt` (Fast Boost), `ppt_apu_sppt`,
-  `ppt_platform_sppt`. Safety limits: 5–75W (safe), up to 93W with `--force`
-  (G-Helper absolute max for 2025 Z13 GZ302E). When the **sustained** limit
+- **TDP (PPT power limits)** go through asus-armoury whenever it exposes them,
+  and through the deprecated `/sys/devices/platform/asus-nb-wmi/ppt_*` only as a
+  fallback (`internal/drivers/asusz13/tdp.go`; ported from z13ctl v1.4.0, issue
+  #22). Those exist only under `CONFIG_ASUS_WMI_DEPRECATED_ATTRS`, so a
+  distribution can build them out, and *reading* them logs the kernel's
+  once-per-boot deprecation notice. The two write the same WMI device IDs and
+  each keeps its own cache, so a read or write never mixes them. The interface is
+  chosen per call (`activePPT`), because armoury keeps separate AC and battery
+  tables (on the GZ302EA the min/max agree and only the defaults differ: 60/75/86
+  AC, 45/52/71 battery). Each armoury read is a `_PSR` evaluation, so reads are
+  kept down: selection reads only PL1's two bounds, the rest load on demand
+  (`withBounds`, for the envelope and clamping), `Engine.ReadEffective` builds the
+  envelope only when the profile has a stock row to substitute (custom profiles,
+  what the watcher reads, never do), and `d.env()` reuses a read for
+  `envCacheTTL` (30 s). Armoury is chosen only when PL1's `current_value` is
+  writable by this process: an install that has not re-run `voltaire setup`
+  since the grant was added keeps writing asus-nb-wmi's attributes rather than
+  failing every TDP write with EACCES. armoury's PL3 is `ppt_pl3_fppt`, not `ppt_fppt`, and it
+  exposes no APU/Platform sPPT, which then read as 0 and are never written.
+  **The kernel's ranges reach everything through the envelope**:
+  `powerLimiter.Envelope()` lays the active interface over the device file's —
+  on armoury `TDPMin`/`TDPMaxForced` become PL1's 28–80, and `PL2`/`PL3`,
+  `NoSPPTMirrors`, `Interface` and `Initial` (the defaults, the boot cache) are
+  set; on asus-nb-wmi the device file's 5–93 stand. `device-get` serves the
+  ranges, and the drawer bounds each slider by its own (`limits.PL2Range`/
+  `PL3Range`). `safety.ResolveTDP` is the one validation the CLI and daemon share:
+  PL1 outside its range is refused, PL1 above `TDPMaxSafe` needs force, and
+  PL2/PL3 below their minimum are *raised* with a note (`--set 30` stores
+  30/32/45) — and `limits.NeedsAdvanced` compares against `BasicTriple`, or every
+  low basic-view save would flip the drawer to advanced. The raise is not
+  cosmetic: 30/32/45 held 32 W under load for four minutes (z13ctl, measured
+  2026-10-08), so 32 W is armoury's practical floor. `SetTDPState` clamps into
+  armoury's range and logs, so a profile saved under the old 5 W floor still
+  applies and the stored value is untouched. **Anything comparing a wanted TDP
+  with a readback must compare `safety.EffectiveTDP(env, want)`** — the
+  reconcile tick does, or a 15 W profile reading back 28 W would be re-written
+  every two seconds forever; `customLimitInForce` likewise. When the **sustained** limit
   (PL1) exceeds 75W, both fans must be on a curve that holds a 50% PWM floor,
   written with `pwm_enable=1` before the PPT writes, and the TDP is not applied at
   all if that fails (see `ApplyTDPSafely`). The floor is applied per point against
@@ -1288,17 +1331,35 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `FanController.Release` cannot be removed (the engine needs it), so
   `internal/daemon/release_guard_test.go` source-scans `internal/daemon` and `cmd`
   and fails on any direct `Fans.Release()`. **The reconcile watcher re-writes the
-  TDP on any observed policy write** — `platform_profile` changing between ticks,
-  or a custom curve found dropped — because the drift check compares against the
-  readback and can never fire for this. A same-value write on a curveless profile
-  leaves no trace at all and remains uncorrected. Never treat a `ppt_*` readback
+  TDP on any observed policy write** — the kernel's notification,
+  `platform_profile` changing between ticks, or a custom curve found dropped —
+  because the drift check compares against the readback and can never fire for
+  this. On a curveless profile two writes leave no trace in sysfs: a same-value
+  profile write (power-profiles-daemon on a charger edge) and another tool
+  writing `pwm_enable=2` to fans already on auto. `watchPolicyWrites`
+  (`policywatch.go`) closes both: the profile driver names the attributes the
+  kernel `sysfs_notify`s (`driver.PolicyWriteNotifier`; asusz13 returns
+  `/sys/firmware/acpi/platform_profile`, notified on every profile write, and
+  asus-nb-wmi's `throttle_thermal_policy`, notified by
+  `throttle_thermal_policy_write()` — the call both a profile write and a
+  curve-device release make, which is *why* a release resets the limits). The
+  watcher polls them for `POLLPRI` and sets `d.policyWritten`, which the next
+  tick consumes as `obs.PolicyWritten`. `throttle_thermal_policy` exists only
+  under `CONFIG_ASUS_WMI_DEPRECATED_ATTRS` (without it a foreign redundant
+  release is invisible again); reading it logs no deprecation notice, and armoury
+  PPT writes do not notify it, so a re-apply cannot feed itself. Our own fan
+  releases notify too and already re-wrote the limit, so a re-apply whose only
+  evidence is the notification is `act.Routine` and logs at Info. Verified on a
+  GZ302EA (z13ctl A/B and this port): 30–40 W custom on performance held through
+  foreign releases and same-value writes, where one takes the machine to 70 W.
+  Never treat a `ppt_*` readback
   as proof that a limit is in force; the safety rig's `held`/`firmware` fields
   emulate the reset for exactly this reason.
 - **`ReadEffectivePPT` must be passed the *effective* profile**, not
   `platform_profile`. `platform_profile` is never "custom", so passing it makes a
-  legitimate 5W custom TDP (5W is a legal value — `TDPMin`) indistinguishable
-  from the kernel's stale 5W cache, and the stock table gets reported instead of
-  the real values. The daemon passes `d.effectiveProfile()`; `cmd/` uses
+  legitimate custom TDP equal to the boot cache (`safety.CacheStale`: 5 W on
+  asus-nb-wmi, every limit at its default on armoury) indistinguishable from it,
+  and the stock table gets reported instead of the real values. The daemon passes `d.effectiveProfile()`; `cmd/` uses
   `effectiveProfileForTDP()`, which asks the daemon first and falls back to sysfs.
 - **Undervolt (Curve Optimizer)**: CPU voltage reduction via AMD Curve Optimizer,
   using direct SMU communication through the `ryzen_smu` kernel module's sysfs
@@ -1435,8 +1496,23 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   which would make the sampler the most frequent thing walking into the EC.
   `dispatch` refuses the commands in `ecGuarded` with `errECWedged` (v2 adds
   `feature`, `feature-get` and `tuning-reset` to main's list). `get-state` skips
-  `batteryStatus`, `readFeatures`, `Telemetry.Sample` and the `Fans.ReadRPM`
-  fallback. Reads count because the PR #26 trace's mutex holder was asusd
+  `batteryStatus`, `readFeatures`, `Telemetry.Sample`, the `Fans.ReadRPM`
+  fallback, and the PPT readback. **asus-armoury PPT reads are live `_PSR`
+  calls** (see the firmware-attributes note), so with the armoury port `tdp-get`
+  joined `ecGuarded`, `reconcileOnce` returns before observing, the sleep hook
+  skips its PPT read, and `d.env()` stops asking the driver for the envelope — it
+  serves the last one read while the EC answered, or the device data alone
+  (`driver.DeviceEnvelope`); `device-get` goes through it. z13ctl 1.4.0 shipped
+  without these; the fix is on main for 1.4.1. **The CLI must not read the limits
+  itself while a daemon is up**: `tdp --get` and `status` ask the daemon
+  (`tdp-get`, refused while latched), `tdp --set` and the dry runs validate
+  against the daemon's `device-get` envelope (`powerEnvFor`), and the
+  `fancurve --set`/`--reset` floor checks run only on the dry-run and no-daemon
+  paths, the daemon making the same check itself. A CLI read would walk into the
+  stalled EC the daemon is avoiding. The reconcile watcher also reads the limits
+  only for a custom profile it is not standing down for: `suspending` covers the
+  post-resume `waitForEC` window, up to 20 s before the latch is set, during
+  which the tick stands down anyway. Reads count because the PR #26 trace's mutex holder was asusd
   *reading*. `Run()` probes before `restoreHardwareAtStartup`, because a daemon
   restarted after a bad resume would otherwise write everything with the
   in-memory latch gone. There is no ceiling: `reconcileOnce` probes once per tick
@@ -2658,6 +2734,23 @@ before any hardware access — `server_test.go` documents this at
 `handleTDP` validation will change the machine's actual power limits.
 `deviceinfo_test.go` is the exception and says why: `deviceInfoFor` is a pure
 projection of constructor data, so it can drive the real Z13 assembly safely.
+
+`internal/drivers/asusz13/main_test.go`'s `TestMain` points every writable sysfs
+root at a nonexistent directory before any test runs, so a test that forgets the
+fake fails with "no such file" rather than touching the machine. It was added
+during the armoury port, after `tdp_test.go`'s `usePPTTempDir` (which swapped
+only `pptBasePath`) let three tests find the real armoury attributes and try to
+write them; their permissions were all that stopped it. The fake has the five
+asus-nb-wmi PPT files at the 5 W boot cache; `f.withArmouryPPT(t)` adds armoury's
+three with the GZ302EA bounds, making armoury the interface in use.
+
+The PPT driver's envelope now reads the kernel, so the daemon's shared `testDev`
+reports the device file's envelope (`deviceFileEnvelope` in `devices_test.go`)
+and `testEnv` is built from the device file directly — otherwise every
+envelope-reading test would depend on whether the machine running it has
+asus-armoury. Reads and writes still reach the real driver, so the
+rejection-paths-only rule stands: a TDP rejection case must be refused on both
+interfaces' ranges, and a PL2/PL3 below its minimum is raised, not refused.
 
 ## Build / release
 

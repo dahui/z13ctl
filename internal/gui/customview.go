@@ -317,9 +317,17 @@ func newCustomView(w *Window, host viewHost) *customView {
 	tdpWarn.AddCSSClass("tdp-warning")
 	c.tdpAdvancedBox.Append(tdpWarn)
 
-	c.tdpPL1Scale, c.tdpPL1Label = c.buildTdpScale("PL1 (SPL)", "Sustained power limit — the long-term average power the CPU targets.")
-	c.tdpPL2Scale, c.tdpPL2Label = c.buildTdpScale("PL2 (SPPT)", "Short boost — maximum power during brief burst workloads.")
-	c.tdpPL3Scale, c.tdpPL3Label = c.buildTdpScale("PL3 (FPPT)", "Fast boost — peak instantaneous power for single-threaded spikes.")
+	// Each slider spans its own limit's range: on asus-armoury PL2 and PL3 have
+	// higher minimums and maximums than PL1, and PL1's range would offer values
+	// the daemon raises or refuses.
+	pl2lo, pl2hi := w.limits.PL2Range()
+	pl3lo, pl3hi := w.limits.PL3Range()
+	c.tdpPL1Scale, c.tdpPL1Label = c.buildTdpScale("PL1 (SPL)", "Sustained power limit — the long-term average power the CPU targets.",
+		w.limits.TDPMin, w.limits.TDPMaxForced)
+	c.tdpPL2Scale, c.tdpPL2Label = c.buildTdpScale("PL2 (SPPT)", "Short boost — maximum power during brief burst workloads.",
+		pl2lo, pl2hi)
+	c.tdpPL3Scale, c.tdpPL3Label = c.buildTdpScale("PL3 (FPPT)", "Fast boost — peak instantaneous power for single-threaded spikes.",
+		pl3lo, pl3hi)
 
 	// --- UNDERVOLT (inside advanced box) ---
 	c.uvBox = gtk.NewBox(gtk.OrientationVertical, 4)
@@ -513,7 +521,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 
 // buildTdpScale creates a labeled TDP slider and appends it to the advanced
 // box. Returns the scale and value label.
-func (c *customView) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) {
+func (c *customView) buildTdpScale(label, desc string, lo, hi int) (*gtk.Scale, *gtk.Label) {
 	w := c.w
 	nameLabel := gtk.NewLabel(label)
 	nameLabel.SetHAlign(gtk.AlignStart)
@@ -522,7 +530,7 @@ func (c *customView) buildTdpScale(label, desc string) (*gtk.Scale, *gtk.Label) 
 	descLabel.SetHAlign(gtk.AlignStart)
 	descLabel.SetWrap(true)
 	descLabel.AddCSSClass("scale-value")
-	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(w.limits.TDPMin), float64(w.limits.TDPMaxForced), 1)
+	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(lo), float64(hi), 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(false)
 	sc.SetValue(50)

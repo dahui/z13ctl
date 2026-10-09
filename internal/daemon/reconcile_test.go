@@ -8,11 +8,16 @@ package daemon
 // the apply path would write the developer's actual fan hardware.
 
 import (
+	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 // tick is reconcileTick judged against the Z13 envelope, which is what every
@@ -651,6 +656,9 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 		obs       reconcileObs
 		wantTDP   bool
 		wantCurve bool
+		// wantRoutine: the notification is the only evidence, which the daemon's
+		// own fan releases also produce, so it must not be logged as a warning.
+		wantRoutine bool
 	}{
 		{
 			// PPD on an AC transition, on a curveless profile: the only trace.
@@ -667,6 +675,53 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			obs:       reconcileObs{Custom: true, WantCurve: saved, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced"},
 			wantTDP:   true,
 			wantCurve: true,
+		},
+		{
+			// The remaining #22 case: PPD re-writes the *same* profile on a charger
+			// transition, or another tool releases fans already on auto, on a
+			// curveless custom profile. platform_profile reads the same and there
+			// is no curve to find dropped; only the kernel's notification says the
+			// limit was reset.
+			name:        "same-value write reported by the kernel",
+			lastHW:      "balanced",
+			obs:         reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:     true,
+			wantRoutine: true,
+		},
+		{
+			// The notification alone is enough even on the first tick.
+			name:        "reported write on the first tick",
+			lastHW:      "",
+			obs:         reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:     true,
+			wantRoutine: true,
+		},
+		{
+			// A profile change is evidence of its own, and stays a warning when the
+			// notification arrives with it.
+			name:    "reported write that also changed the profile",
+			lastHW:  "balanced",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "performance", PolicyWritten: true},
+			wantTDP: true,
+		},
+		{
+			// So is a dropped curve.
+			name:      "reported write that dropped the curve",
+			lastHW:    "balanced",
+			obs:       reconcileObs{Custom: true, WantCurve: saved, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
+			wantTDP:   true,
+			wantCurve: true,
+		},
+		{
+			name:   "reported write but the profile sets no TDP",
+			lastHW: "balanced",
+			obs:    reconcileObs{Custom: true, CurveMode: 2, PL1: 52, ProfileHW: "balanced", PolicyWritten: true},
+		},
+		{
+			// Our own profile writes notify too; they land on firmware profiles.
+			name:   "reported write on a firmware profile",
+			lastHW: "balanced",
+			obs:    reconcileObs{WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true},
 		},
 		{
 			// The daemon's first observation has nothing to compare against.
@@ -703,9 +758,96 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			if !act.none() && act.Reason == "" {
 				t.Error("an action was returned with no reason to log")
 			}
+			if act.Routine != tt.wantRoutine {
+				t.Errorf("routine = %v, want %v (reason %q)", act.Routine, tt.wantRoutine, act.Reason)
+			}
 			if st.lastHW != tt.obs.ProfileHW {
 				t.Errorf("lastHW = %q, want %q latched for the next tick", st.lastHW, tt.obs.ProfileHW)
 			}
 		})
 	}
 }
+
+// TestReconcileComparesTheEffectiveTDP: a profile saved under asus-nb-wmi's 5 W
+// floor reads back clamped on asus-armoury. Comparing the stored value would see
+// drift on every tick and re-write the limit every two seconds forever.
+func TestReconcileComparesTheEffectiveTDP(t *testing.T) {
+	env := testEnv
+	env.Interface = "asus-armoury"
+	env.TDPMin, env.TDPMaxForced = 28, 80
+	env.PL2 = driver.PowerRange{Min: 32, Max: 92}
+	env.PL3 = driver.PowerRange{Min: 45, Max: 93}
+	env.NoSPPTMirrors = true
+
+	stored := &api.TDPState{PL1SPL: 15, PL2SPPT: 15, FPPT: 15, APUSPPT: 15, PlatformSPPT: 15}
+	obs := reconcileObs{Custom: true, WantTDP: stored, CurveMode: 2, PL1: 28, ProfileHW: "balanced"}
+	if _, act := reconcileTick(reconcileState{lastHW: "balanced"}, obs, env); act.TDP != nil {
+		t.Fatalf("a 15 W profile reading back armoury's 28 W was re-applied (%q): it would be every tick", act.Reason)
+	}
+	obs.PL1 = 60 // someone else's limit
+	_, act := reconcileTick(reconcileState{lastHW: "balanced"}, obs, env)
+	if act.TDP == nil || *act.TDP != (api.TDPState{PL1SPL: 28, PL2SPPT: 32, FPPT: 45}) {
+		t.Errorf("re-applied TDP = %+v, want the profile as armoury holds it (28/32/45)", act.TDP)
+	}
+}
+
+// TestWatchPolicyWritesIgnoresAPlainFile: the watcher waits for POLLPRI, which
+// only sysfs_notify raises. A regular file never raises it, so the watcher must
+// neither report a write nor spin, and must return once ctx ends. A missing
+// attribute (throttle_thermal_policy on a kernel built without the deprecated
+// asus-wmi attributes) must not stop it watching the other. (The real
+// notification cannot be produced outside sysfs; it is verified on hardware.)
+func TestWatchPolicyWritesIgnoresAPlainFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/platform_profile"
+	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{hw: &device.Device{Profiles: notifyingProfiles{paths: []string{path, dir + "/throttle_thermal_policy"}}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { d.watchPolicyWrites(ctx); close(done) }()
+
+	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchPolicyWrites did not return after ctx ended")
+	}
+	if d.policyWritten.Load() {
+		t.Error("a plain file write was reported as a thermal policy write")
+	}
+}
+
+// TestWatchPolicyWritesWithNothingToWatch: with no attribute present, or a
+// profile driver that names none, the watcher returns at once instead of
+// polling nothing until shutdown.
+func TestWatchPolicyWritesWithNothingToWatch(t *testing.T) {
+	dir := t.TempDir()
+	for name, d := range map[string]*Daemon{
+		"attributes missing": {hw: &device.Device{Profiles: notifyingProfiles{paths: []string{dir + "/a", dir + "/b"}}}},
+		"driver names none":  {hw: &device.Device{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan struct{})
+			go func() { d.watchPolicyWrites(context.Background()); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("watchPolicyWrites kept running with nothing to watch")
+			}
+		})
+	}
+}
+
+// notifyingProfiles is a profile driver that names policy attributes and does
+// nothing else.
+type notifyingProfiles struct{ paths []string }
+
+func (notifyingProfiles) Names() []string              { return nil }
+func (notifyingProfiles) Get() (string, error)         { return "balanced", nil }
+func (notifyingProfiles) Set(string) error             { return nil }
+func (p notifyingProfiles) PolicyWritePaths() []string { return p.paths }

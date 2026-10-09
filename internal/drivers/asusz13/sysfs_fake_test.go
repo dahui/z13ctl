@@ -107,6 +107,11 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	f.ppdCalls = &ppdCalls
 	t.Cleanup(func() { ppdRunner = origPPD })
 
+	// The five asus-nb-wmi PPT attributes, at the 5 W the kernel caches on module
+	// load. Backend selection looks for ppt_pl1_spl, so a tree without them has
+	// no power limit interface at all.
+	seedLegacyPPT(t, f.ppt)
+
 	swap(t, &sysHwmonDir, root+"/hwmon")
 	swap(t, &sysProfileDir, root+"/platform-profile")
 	swap(t, &sysProfileACPI, root+"/acpi_platform_profile")
@@ -116,6 +121,38 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	swap(t, &pptBasePath, f.ppt)
 	swap(t, &smuDriverPath, f.smu)
 	return f
+}
+
+// seedLegacyPPT writes the five asus-nb-wmi PPT attributes into dir at 5 W.
+func seedLegacyPPT(t *testing.T, dir string) {
+	t.Helper()
+	for _, l := range pptLimits {
+		if err := os.WriteFile(dir+"/"+l.legacy, []byte("5\n"), 0o644); err != nil {
+			t.Fatalf("seeding %s: %v", l.legacy, err)
+		}
+	}
+}
+
+// armouryFakeBounds are the GZ302EA's asus-armoury PPT bounds on AC (min, max,
+// default), as 7.x kernels report them.
+var armouryFakeBounds = map[string][3]int{
+	"ppt_pl1_spl":  {28, 80, 60},
+	"ppt_pl2_sppt": {32, 92, 75},
+	"ppt_pl3_fppt": {45, 93, 86},
+}
+
+// withArmouryPPT adds asus-armoury's three PPT attributes, each at its default,
+// which makes armoury the interface in use. The asus-nb-wmi files stay, so a
+// test can prove they are never touched.
+func (f *fakeSysfs) withArmouryPPT(t *testing.T) {
+	t.Helper()
+	for name, b := range armouryFakeBounds {
+		dir := f.firmware + "/" + name
+		f.writeFile(t, dir+"/min_value", strconv.Itoa(b[0]))
+		f.writeFile(t, dir+"/max_value", strconv.Itoa(b[1]))
+		f.writeFile(t, dir+"/default_value", strconv.Itoa(b[2]))
+		f.writeFile(t, dir+"/current_value", strconv.Itoa(b[2]))
+	}
 }
 
 // swap points a path var at v and restores it when the test ends.

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -86,6 +87,17 @@ type Daemon struct {
 	// telemetry sampler reads fan RPM over WMI every second — so every watcher,
 	// the socket dispatcher and get-state consult it.
 	ecWedged bool
+
+	// policyWritten is set by watchPolicyWrites whenever the kernel reports a
+	// thermal policy write — a platform_profile write or a fan release,
+	// same-value ones included — and consumed by the next reconcile tick. Atomic
+	// because the watcher sets it without d.mu.
+	policyWritten atomic.Bool
+
+	// envCache is the last power envelope read while the EC answered, which env
+	// serves while it does not, and for envCacheTTL after the read. Guarded by mu.
+	envCache   *driver.PowerEnvelope
+	envCacheAt time.Time
 
 	// telemetry is the sampler's history ring, sized by Run from the device's
 	// declared window. It carries its own lock and is never read directly —
@@ -255,6 +267,11 @@ func Run(ctx context.Context, opts Options) error {
 	// State-driven, so it is a no-op on a machine that never uses a custom
 	// profile; register it unconditionally.
 	go d.watchReconcile(ctx)
+
+	// Tells the reconcile watcher about profile writes and fan releases that
+	// leave no other trace: each one resets the power limits (z13ctl issue #22).
+	// Inert on a device whose profile driver names no attributes to watch.
+	go d.watchPolicyWrites(ctx)
 
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)
@@ -637,12 +654,63 @@ func (d *Daemon) setECWedged(v bool) {
 // device has no power control. The zero value declares no limits and no floor
 // curve, which makes every safety check a pass-through — the correct reading
 // of "this device imposes nothing".
+//
+// While the EC is not answering it does not ask the driver: on asus-armoury the
+// envelope is read from the kernel, and every armoury PPT read evaluates the AC
+// adapter's _PSR (get_current_tunables -> power_supply_is_system_supplied), a
+// live ACPI call. It serves the last envelope read while the EC answered, or
+// the device data alone (driver.DeviceEnvelope) when there is none. Callers
+// must not hold d.mu.
+//
+// A read is also reused for envCacheTTL, since the reconcile watcher asks every
+// two seconds and a fresh armoury envelope is nine ACPI evaluations. The ranges
+// belong to the power source in use, so a plug change can leave them stale for
+// that long; the driver clamps every write to the kernel's current range
+// regardless, so the cost is a request validated against the previous table.
 func (d *Daemon) env() driver.PowerEnvelope {
 	if d.hw == nil || d.hw.Power == nil {
 		return driver.PowerEnvelope{}
 	}
-	return d.hw.Power.Envelope()
+	d.mu.Lock()
+	wedged, cached, at := d.ecWedged, d.envCache, d.envCacheAt
+	d.mu.Unlock()
+	if wedged || (cached != nil && time.Since(at) < envCacheTTL) {
+		return d.storedEnv(cached)
+	}
+	env := d.hw.Power.Envelope()
+	d.mu.Lock()
+	d.envCache, d.envCacheAt = &env, time.Now()
+	d.mu.Unlock()
+	return env
 }
+
+// cachedEnv is env without ever asking the driver: the last envelope read, or
+// the device data alone. For callers that only need the device's own numbers
+// (the safe maximum, the floor curve) on a path that runs when the EC may not
+// be answering. Callers must not hold d.mu.
+func (d *Daemon) cachedEnv() driver.PowerEnvelope {
+	if d.hw == nil || d.hw.Power == nil {
+		return driver.PowerEnvelope{}
+	}
+	d.mu.Lock()
+	cached := d.envCache
+	d.mu.Unlock()
+	return d.storedEnv(cached)
+}
+
+// storedEnv returns cached, or the device data when nothing has been read yet.
+func (d *Daemon) storedEnv(cached *driver.PowerEnvelope) driver.PowerEnvelope {
+	if cached != nil {
+		return *cached
+	}
+	if de, ok := d.hw.Power.Power.(driver.DeviceEnvelope); ok {
+		return de.DeviceEnvelope()
+	}
+	return driver.PowerEnvelope{}
+}
+
+// envCacheTTL is how long env reuses an envelope read. A var for tests.
+var envCacheTTL = 30 * time.Second
 
 // acPower reports the power source, with known=false when it cannot be
 // observed — no battery capability, or no readable Mains supply. Callers must

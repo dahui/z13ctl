@@ -36,7 +36,8 @@ Run everything as your ordinary user. Helpers used throughout:
 ```sh
 SOCK="$XDG_RUNTIME_DIR/voltaire/voltaire.sock"   # the z13ctl compat path answers identically
 CURVE=$(dirname "$(grep -l asus_custom_fan_curve /sys/class/hwmon/hwmon*/name)")
-PPT=/sys/devices/platform/asus-nb-wmi
+PPT=/sys/class/firmware-attributes/asus-armoury/attributes   # ppt_*/current_value
+OLDPPT=/sys/devices/platform/asus-nb-wmi                     # the deprecated fallback
 PROFILE=/sys/firmware/acpi/platform_profile
 ```
 
@@ -105,17 +106,23 @@ output.
 
 The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 
-- [ ] `./voltaire tdp --get` matches `cat $PPT/ppt_pl1_spl` and friends.
-- [ ] `./voltaire tdp --set 45` — all five `ppt_*` files read 45.
+- [ ] `./voltaire tdp --get` matches `cat $PPT/ppt_pl{1_spl,2_sppt,3_fppt}/current_value`,
+      prints no APU/Platform lines, and names `asus-armoury` with PL1 28–80W,
+      PL2 32–92W, PL3 45–93W. (On a kernel without armoury PPT it names
+      `asus-nb-wmi` and reads `$OLDPPT/ppt_*`; check against those instead.)
+- [ ] `./voltaire tdp --set 45` — armoury's three read 45; `$OLDPPT/ppt_*` are
+      not written (note their values before, compare after).
+- [ ] `./voltaire tdp --set 30` — prints that PL2 and PL3 were raised; armoury
+      reads 30/32/45.
 - [ ] `./voltaire tdp --set 80` (no `--force`) — refused, names the 75 W safe max
-      and the 93 W ceiling. `ppt_pl1_spl` still 45.
+      and the 80 W ceiling. `ppt_pl1_spl` still 30.
 - [ ] `./voltaire tdp --set 80 --force` — succeeds, **and** `pwm*_enable` are `1`
       with every curve point at or above the floor ramp (bottom 127). The
       warning about running without the daemon prints.
 - [ ] `./voltaire fancurve --reset` while at 80 W — refused (releasing to
       firmware auto above the safe max is exactly what the floor forbids).
-- [ ] `./voltaire tdp --reset` — `$PROFILE` reads `balanced`, `ppt_*` hold
-      balanced's stock row, `pwm*_enable` back to `2`.
+- [ ] `./voltaire tdp --reset` — `$PROFILE` reads `balanced`, armoury holds
+      balanced's stock row (52/71/70), `pwm*_enable` back to `2`.
 
 ## 5. Undervolt, toggles, battery — no daemon
 
@@ -154,10 +161,12 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
       hold under systemd (both `ListenStream=` fds) and under a hand-run
       `./voltaire daemon` (self-created sockets) alike.
 - [ ] `ask '{"cmd":"device-get"}'` returns the capability document, and its
-      numbers are the device file's, not defaults: fan shape, `tdp_min` /
-      `tdp_max_safe` / `tdp_max_forced`, the floor curve, profile names,
-      lighting zones, the toggle list, and the undervolt range. A capability
-      the machine lacks is an **absent key**, never an error.
+      numbers are the device file's, not defaults: fan shape, `tdp_max_safe`,
+      the floor curve, profile names, lighting zones, the toggle list, and the
+      undervolt range. The power ranges are the kernel's: on asus-armoury
+      `interface` is `asus-armoury`, `tdp_min`/`tdp_max_forced` are 28/80, and
+      `pl2`/`pl3` are 32–92 / 45–93. A capability the machine lacks is an
+      **absent key**, never an error.
 - [ ] `./voltaire feature --list` names the same toggles as the document;
       `--get <id>` reads hardware; `--set <id>=<v>` round-trips in sysfs; and
       an unknown id is refused by name. This is the generic path to the same
@@ -166,8 +175,8 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 ## 7. Profiles and custom profiles (daemon)
 
 - [ ] `./voltaire profile --set performance` — `$PROFILE` reads `performance`,
-      `ppt_*` hold performance's stock row (issue #12: voltaire writes it, the
-      firmware does not).
+      armoury holds performance's stock row (70/86/86): voltaire writes the row,
+      then releases the fans, which makes the firmware re-apply its own limits.
 - [ ] `./voltaire tdp --set 40` while on a firmware profile — creates and
       activates `custom`; `./voltaire profile --get` says `custom`, sysfs PPT
       reads 40.
@@ -182,6 +191,16 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
       (still 40).
 - [ ] `./voltaire profile --set gaming` — PPT now 35. `./voltaire profile --set
       custom` — PPT back to 40 (A→B→A gives the same machine).
+- [ ] **The limit survives other tools** (issue #22): with `custom` at 40 W and
+      no fan curve, `echo 2 | tee $CURVE/pwm1_enable` (fans already on auto) and
+      `echo performance | tee /sys/class/platform-profile/*/profile` (the
+      profile already set) each log `reconciling custom thermal settings` at
+      INFO within two seconds, with the reason "the kernel reported a platform
+      profile write or fan release". The daemon's startup log names both watched
+      attributes ("thermal policy write watcher started"). PPT reads 40
+      throughout — but that proves nothing on its own (the readback never
+      moves); under load, RAPL `energy_uj` should show ~40 W, not the
+      profile's ~70 W.
 - [ ] `./voltaire profile --set balanced` — stock row restored, fans auto, CO
       cleared; `./voltaire profile --list` still shows both custom profiles.
 - [ ] `./voltaire profile --create balanced` — refused (reserved name).
@@ -305,6 +324,9 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       Activating the profile afterwards applies what was stored.
 - [ ] The editor on the **running** profile shows no note and committing moves
       sysfs, exactly as 1.x did.
+- [ ] Advanced TDP view on asus-armoury: the PL2 slider spans 32–92 W and the PL3
+      slider 45–93 W, while PL1 spans 28–80 W. A basic-view save of 30 W stores
+      30/32/45 and the drawer stays in the basic view afterwards.
 - [ ] Fan floor in a stored edit follows the *profile's* TDP: store 80W in a
       non-running profile — its editor draws the floor line even while the
       machine sits at stock limits, and Reset Fans is refused/insensitive

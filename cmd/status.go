@@ -122,9 +122,18 @@ func statusReport(out io.Writer) error {
 		outf("Power:   %s%s\n", source, autoswitchNote(onAC))
 	}
 
-	// TDP power limits.
+	// TDP power limits: the daemon's reading when it is running, since it
+	// withholds the read while the EC is not answering (on asus-armoury each
+	// limit read is a live ACPI call). A refused read prints N/A.
 	tdpShown := false
-	if hw.Power != nil {
+	if handled, value, err := api.SendTdpGet(); handled {
+		var tdp api.TDPState
+		if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
+			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
+				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
+			tdpShown = true
+		}
+	} else if hw.Power != nil {
 		if tdp, tErr := hw.Power.ReadEffective(profile); tErr == nil {
 			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
 				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
@@ -135,8 +144,8 @@ func statusReport(out io.Writer) error {
 		outln("TDP:     N/A")
 	}
 
-	// Undervolt (Curve Optimizer). Ask the daemon, which probed once at startup
-	// and cached the answer.
+	// Undervolt (Curve Optimizer). Ask the daemon: module presence until an
+	// undervolt write has probed, the probe's cached answer after.
 	//
 	// status must NOT probe itself: ProbeAvailable writes a CO offset of 0,
 	// which is exactly a reset, and the cache that makes that harmless in the

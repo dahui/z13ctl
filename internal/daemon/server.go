@@ -132,7 +132,7 @@ func ecGuarded(cmd string) bool {
 	switch cmd {
 	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
 		"batterylimit", "bootsound", "paneloverdrive", "feature",
-		"bootsound-get", "paneloverdrive-get", "feature-get":
+		"bootsound-get", "paneloverdrive-get", "feature-get", "tdp-get":
 		return true
 	}
 	return false
@@ -294,8 +294,12 @@ func (d *Daemon) dispatch(req request) response {
 		s.FanCurve = d.readFanCurveHW()
 		// Populate TDP, substituting per-profile defaults if sysfs is stale.
 		// Pass the daemon's own profile: platform_profile is never "custom", so
-		// using it would report the stock table for a legitimate 5W custom TDP.
-		if d.hw != nil && d.hw.Power != nil {
+		// using it would report the stock table for a legitimate custom TDP that
+		// happens to equal the interface's boot cache (safety.CacheStale).
+		// Not while wedged: on asus-armoury each PPT read evaluates the AC
+		// adapter's _PSR to pick the AC or battery table — a live ACPI call, where
+		// asus-nb-wmi's ppt_* were caches. s.TDP keeps the state projection.
+		if !wedged && d.hw != nil && d.hw.Power != nil {
 			if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 				s.TDP = &tdp
 			}
@@ -841,8 +845,9 @@ func (d *Daemon) handleTDPGet() response {
 // effectiveProfile returns the profile to use when interpreting PPT values:
 // the daemon's own state when set, falling back to platform_profile. The
 // distinction matters because "custom" is a virtual profile that is never
-// written to platform_profile, so sysfs alone cannot tell a legitimate 5W
-// custom TDP from the kernel's stale 5W cache.
+// written to platform_profile, so sysfs alone cannot tell a legitimate custom
+// TDP from the interface's untouched boot cache (5 W on asus-nb-wmi, the
+// defaults on asus-armoury; safety.CacheStale).
 func (d *Daemon) effectiveProfile() string {
 	d.mu.Lock()
 	p := d.state.Profile
@@ -881,23 +886,18 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 	env := d.env()
 
-	// PL1 (sustained) requires force flag above the safe max. PL2/PL3 (burst)
-	// allowed up to the hardware max.
-	pl1Max := env.TDPMaxSafe
-	if req.Force {
-		pl1Max = env.TDPMaxForced
+	// The one validation the CLI shares: PL1 refused outside its range (and
+	// above the safe maximum without force), PL2/PL3 above theirs refused and
+	// below theirs raised — asus-armoury requires PL2 >= 32 and PL3 >= 45 on the
+	// GZ302EA, so a unified 30 W stores 30/32/45.
+	tdp, notes, err := safety.ResolveTDP(env, watts, pl1, pl2, pl3, req.Force)
+	if err != nil {
+		return response{OK: false, Error: "tdp: " + err.Error()}
 	}
-	if pl1 < env.TDPMin || pl1 > pl1Max {
-		if pl1 > env.TDPMaxSafe && !req.Force {
-			return response{OK: false, Error: fmt.Sprintf("PL1 %dW exceeds safe sustained max (%dW); use force flag", pl1, env.TDPMaxSafe)}
-		}
-		return response{OK: false, Error: fmt.Sprintf("PL1 %dW out of range %d–%d", pl1, env.TDPMin, pl1Max)}
+	for _, n := range notes {
+		slog.Info("tdp: " + n)
 	}
-	for _, v := range []int{pl2, pl3} {
-		if v < env.TDPMin || v > env.TDPMaxForced {
-			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, env.TDPMin, env.TDPMaxForced)}
-		}
-	}
+	pl1 = tdp.PL1SPL
 
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
@@ -913,8 +913,6 @@ func (d *Daemon) handleTDP(req request) response {
 	// the target here is also what keeps wantCurve below nil, so the fans stay
 	// on firmware auto instead of adopting whatever curve "custom" stored last.
 	target = target.freshImplicit()
-
-	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
 
 	// A profile that is not running must still be storable only in a state that
 	// is safe to activate: a high sustained limit alongside a curve that dips
@@ -953,9 +951,9 @@ func (d *Daemon) handleTDP(req request) response {
 		case safety.FloorAdjustsCurve(env, pl1, wantCurve):
 			slog.Warn("fan curve points below the high-TDP floor were raised to it", "pl1", pl1)
 		}
-		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name)
+		slog.Info("tdp", "pl1", tdp.PL1SPL, "pl2", tdp.PL2SPPT, "pl3", tdp.FPPT, "profile", target.Name)
 	} else {
-		slog.Info("tdp", "pl1", pl1, "pl2", pl2, "pl3", pl3, "profile", target.Name, "applied", false)
+		slog.Info("tdp", "pl1", tdp.PL1SPL, "pl2", tdp.PL2SPPT, "pl3", tdp.FPPT, "profile", target.Name, "applied", false)
 	}
 
 	p := target.Profile

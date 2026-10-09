@@ -27,7 +27,7 @@ require (
 	github.com/dahui/voltaire/api/v2 v2.0.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.46.0
 )
 
 // The api module is unpublished until the v2.0.0 release; drop this directive

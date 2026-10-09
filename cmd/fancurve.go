@@ -204,16 +204,25 @@ func runFanCurveSet() error {
 	// deliberately not a refusal. Only meaningful for the running machine: when
 	// --profile names another profile the daemon checks the curve against that
 	// profile's own TDP, since hardware says nothing about a profile that is
-	// not applied.
-	if fanCurveProfileFlag == "" && hw.Power != nil {
-		if tdp, rErr := hw.Power.ReadEffective(effectiveProfileForTDP(hw)); rErr == nil {
-			if cErr := safety.CheckCurveAgainstTDP(hw.Power.Envelope(), points, tdp.PL1SPL); cErr != nil {
-				return cErr
-			}
+	// not applied. Run here only where the daemon will not: a dry run, and the
+	// no-daemon path. The daemon makes the same check itself, and the CLI reading
+	// the limits while it is up would bypass its wedged-EC gate (on asus-armoury
+	// each read is a live ACPI call).
+	checkFloor := func() error {
+		if fanCurveProfileFlag != "" || hw.Power == nil {
+			return nil
 		}
+		tdp, rErr := hw.Power.ReadEffective(effectiveProfileForTDP(hw))
+		if rErr != nil {
+			return nil
+		}
+		return safety.CheckCurveAgainstTDP(hw.Power.Envelope(), points, tdp.PL1SPL)
 	}
 
 	if dryRunFlag {
+		if err := checkFloor(); err != nil {
+			return err
+		}
 		if fanCurveProfileFlag != "" {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "fan curve")
 			return nil
@@ -246,6 +255,9 @@ func runFanCurveSet() error {
 	if hw.Fans == nil {
 		return fmt.Errorf("no fan control on this device")
 	}
+	if err := checkFloor(); err != nil {
+		return err
+	}
 	if err := hw.Fans.ApplyCurve(points); err != nil {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
@@ -263,20 +275,26 @@ func runFanCurveReset() error {
 		return err
 	}
 
-	// Checked before the dry-run branch, as in runFanCurveSet: this is a
-	// read-only check, and a dry run that reported success for a reset the real
-	// command would refuse would be worse than useless.
-	//
 	// Firmware auto has no PWM floor, so releasing the fans while a high
 	// sustained TDP is still in force removes the protection the high-TDP curve
 	// provides. "tdp --reset" is the way out — it lowers power first.
-	if fanCurveProfileFlag == "" && hw.Power != nil {
-		if err := hw.Power.CheckFanFloorRelease(effectiveProfileForTDP(hw)); err != nil {
-			return err
+	//
+	// Checked in the dry run, since a dry run that reported success for a reset
+	// the real command would refuse would be worse than useless, and on the
+	// no-daemon path. The daemon makes the same check itself, and the CLI
+	// reading the limits while it is up would bypass its wedged-EC gate (on
+	// asus-armoury each read is a live ACPI call), as in runFanCurveSet.
+	checkRelease := func() error {
+		if fanCurveProfileFlag != "" || hw.Power == nil {
+			return nil
 		}
+		return hw.Power.CheckFanFloorRelease(effectiveProfileForTDP(hw))
 	}
 
 	if dryRunFlag {
+		if err := checkRelease(); err != nil {
+			return err
+		}
 		if fanCurveProfileFlag != "" {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "cleared fan curve")
 			return nil
@@ -305,6 +323,9 @@ func runFanCurveReset() error {
 	if hw.Fans == nil {
 		return fmt.Errorf("no fan control on this device")
 	}
+	if err := checkRelease(); err != nil {
+		return err
+	}
 	if err := hw.ReleaseFans(customLimitInForce(hw)); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
@@ -319,22 +340,26 @@ func runFanCurveReset() error {
 //
 // With no daemon there is no profile state, and the limiter's cache — whatever
 // was last written — is the only record. It counts as a custom limit only when it
-// is neither the kernel's stale boot cache (the envelope minimum) nor the active
-// firmware profile's stock row: re-writing either would replace the firmware's
-// limits with ours. A deliberate minimum-watts limit is indistinguishable from
-// the stale cache here and is not kept; the daemon has no such blind spot.
+// is neither the interface's untouched boot cache (safety.CacheStale: 5 W on
+// asus-nb-wmi, the defaults on asus-armoury) nor the active firmware profile's
+// stock row as the interface holds it: re-writing either would replace the
+// firmware's limits with ours. A deliberate limit equal to the boot cache is
+// indistinguishable from it here and is not kept; the daemon has no such blind
+// spot.
 func customLimitInForce(hw *device.Device) *api.TDPState {
 	if hw.Power == nil {
 		return nil
 	}
 	env := hw.Power.Envelope()
 	cur, err := hw.Power.Read()
-	if err != nil || cur.PL1SPL == env.TDPMin || cur.PL1SPL > env.TDPMaxSafe {
+	if err != nil || safety.CacheStale(env, cur) || cur.PL1SPL > env.TDPMaxSafe {
 		return nil
 	}
 	if hw.Profiles != nil {
 		if profile, err := hw.Profiles.Get(); err == nil {
-			if stock, ok := env.StockProfilePPT[profile]; ok && stock == cur {
+			// EffectiveTDP: on asus-armoury the row reads back without APU and
+			// Platform sPPT, so the raw row never equals the readback.
+			if stock, ok := env.StockProfilePPT[profile]; ok && safety.EffectiveTDP(env, stock) == cur {
 				return nil
 			}
 		}
