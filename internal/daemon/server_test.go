@@ -412,3 +412,31 @@ func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
 		t.Errorf("profile-list while wedged = %+v, want OK: it touches only state", resp)
 	}
 }
+
+// TestAutoswitchGetReportsUnknownSourceWhileWedged covers the one EC read the
+// v1.3.3 latch missed. autoswitch-get changes nothing, so it was never in
+// ecGuarded, but its live source comes from OnACPower, and the AC driver answers
+// that by evaluating _PSR on the EC. While wedged it must report the source as
+// unknown without reading it.
+//
+// The assertion is hermetic: with the gate in place nothing is read. Without it
+// the test reads the machine's real Mains supply, and fails on any machine that
+// has one, which is what makes it a regression test on the Z13.
+func TestAutoswitchGetReportsUnknownSourceWhileWedged(t *testing.T) {
+	t.Parallel()
+	d := &Daemon{ecWedged: true}
+	resp := d.dispatch(request{Cmd: "autoswitch-get"})
+	if !resp.OK {
+		t.Fatalf("autoswitch-get while wedged = %+v, want OK: it is a read, not refused", resp)
+	}
+	var got struct {
+		OnAC  bool `json:"on_ac"`
+		Known bool `json:"source_known"`
+	}
+	if err := json.Unmarshal([]byte(resp.Value), &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", resp.Value, err)
+	}
+	if got.Known || got.OnAC {
+		t.Errorf("source while wedged = %+v, want unknown: the AC read is an EC call", got)
+	}
+}

@@ -887,7 +887,10 @@ contrib/
   caches (AC `online`, `boot_sound`, `panel_overdrive`, fan RPM). The PR #26 trace
   is why reads count: the mutex holder there was asusd *reading*, not a writer.
   The cached reads (`ppt_*`, the curve `pwm*` files, `platform_profile`,
-  `charge_control_end_threshold`) stay live. `Run()` probes once before
+  `charge_control_end_threshold`) stay live. `autoswitch-get` reports the source
+  as unknown while latched rather than calling `cli.OnACPower()` (AC `_PSR`).
+  v1.3.3 missed it because the command stores nothing and so never looked like
+  hardware access. Audit by *what is read*, not by whether a command mutates. `Run()` probes once before
   `restoreHardwareAtStartup`, since a daemon restarted after a bad resume would
   otherwise write everything into the EC with the in-memory latch gone.
   **`ENOENT` is "no battery" only if there was none before the suspend.**
