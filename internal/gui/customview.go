@@ -644,10 +644,10 @@ func (c *customView) fanFloorPWM() int {
 	return c.w.limits.FanFloorPWM(c.editorFloorPL1)
 }
 
-// pwmPct renders a PWM value as a rounded percentage for display. Plain integer
-// division reads 127 (the 50% floor) as "49%".
-func pwmPct(pwm int) int {
-	return (pwm*100 + limits.PWMMax/2) / limits.PWMMax
+// pwmPct renders a PWM value as a rounded percentage of the device's ceiling
+// for display. Plain integer division reads 127 (the 50% floor) as "49%".
+func pwmPct(pwm, pwmMax int) int {
+	return (pwm*100 + pwmMax/2) / pwmMax
 }
 
 // sync populates the custom view widgets for the current edit target. Which
@@ -725,8 +725,12 @@ func (c *customView) sync() {
 	// Redraw either way — the PWM floor line depends on the target's limit,
 	// which may have just changed.
 	if c.fanCurve != nil {
-		if pts, ok := profileui.CurveToShow(plan, es.FanCurve); ok {
-			copy(c.fanCurve.points[:], pts)
+		// FitCurve refuses a curve sized for other hardware whole: the old
+		// copy into a fixed array truncated a longer one and left the
+		// previous curve's tail under a shorter one.
+		pts, ok := profileui.CurveToShow(plan, es.FanCurve)
+		if fitted, fits := w.limits.FitCurve(pts); ok && fits {
+			c.fanCurve.points = fitted
 		} else {
 			c.fanCurve.points = w.limits.DefaultCurve()
 		}
@@ -785,7 +789,11 @@ func (c *customView) syncTelemetry(st *api.State) {
 		c.telemetryTempLabel.SetLabel(fmt.Sprintf("APU: %d°C", st.Temperature))
 	}
 	if c.telemetryFanLabel != nil {
-		c.telemetryFanLabel.SetLabel(fmt.Sprintf("Fan: %d RPM", st.FanRPM))
+		text := profileui.FanRPMText(st)
+		if text == "" {
+			text = "N/A"
+		}
+		c.telemetryFanLabel.SetLabel("Fans: " + text)
 	}
 }
 
@@ -850,7 +858,7 @@ func (c *customView) syncFanResetSensitivity() {
 	if floored {
 		setBlockNote(c.resetNote, fmt.Sprintf(
 			"Reset Fans unavailable while sustained TDP is above %dW — fans must hold the floor curve shown in the editor (%d%% minimum). Use Reset TDP first.",
-			c.w.limits.TDPMaxSafe, pwmPct(floorMin)))
+			c.w.limits.TDPMaxSafe, pwmPct(floorMin, c.w.limits.PWMMax)))
 		return
 	}
 	setBlockNote(c.resetNote, "")
@@ -1081,6 +1089,14 @@ func (c *customView) applyLimits() {
 	c.uvCpuScale.SetRange(float64(l.UVMin), float64(l.UVMax))
 	c.tdpWarn.SetLabel(tdpWarningText(l))
 	if c.fanCurve != nil {
+		// A curve of the old length cannot be edited or sent against the new
+		// shape; the placeholder is honest until the next sync adopts the
+		// daemon's curve again.
+		if len(c.fanCurve.points) != l.Points {
+			c.fanCurve.points = l.DefaultCurve()
+			c.fanCurve.enforceConstraints(0)
+			c.syncPresetHighlight()
+		}
 		c.fanCurve.area.QueueDraw()
 	}
 }

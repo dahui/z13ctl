@@ -199,18 +199,24 @@ func (f *fakeSysfs) withProfileDevice(t *testing.T, name, choices, current strin
 // so read paths have something to find.
 func (f *fakeSysfs) seedFanCurveFiles(t *testing.T, temp, pwm int) {
 	t.Helper()
-	for _, fan := range fanNames {
-		for i := 1; i <= fanCurvePoints; i++ {
-			f.writeFile(t, f.hwmon+"/pwm"+itoa(fan.index)+"_auto_point"+itoa(i)+"_temp", itoa(temp+i))
-			f.writeFile(t, f.hwmon+"/pwm"+itoa(fan.index)+"_auto_point"+itoa(i)+"_pwm", itoa(pwm+i))
+	for _, fan := range fakeFanChannels {
+		for i := 1; i <= fakeCurvePoints; i++ {
+			f.writeFile(t, f.hwmon+"/pwm"+itoa(fan)+"_auto_point"+itoa(i)+"_temp", itoa(temp+i))
+			f.writeFile(t, f.hwmon+"/pwm"+itoa(fan)+"_auto_point"+itoa(i)+"_pwm", itoa(pwm+i))
 		}
-		f.writeFile(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable", "2")
-		f.writeFile(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable", "2")
-		f.writeFile(t, f.hwmonRead+"/fan"+itoa(fan.index)+"_input", itoa(3000+fan.index))
+		f.writeFile(t, f.hwmon+"/pwm"+itoa(fan)+"_enable", "2")
+		f.writeFile(t, f.hwmonRead+"/pwm"+itoa(fan)+"_enable", "2")
+		f.writeFile(t, f.hwmonRead+"/fan"+itoa(fan)+"_input", itoa(3000+fan))
 	}
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// The fake's fan hardware: the Z13's two channels and eight-point curves. Only
+// the fake knows these numbers — the driver enumerates them.
+var fakeFanChannels = []int{1, 2}
+
+const fakeCurvePoints = 8
 
 // fakeSMU emulates the ryzen_smu mailbox: a command write is answered by the
 // configured response code on the following read, which plain files cannot do.

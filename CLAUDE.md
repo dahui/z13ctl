@@ -130,7 +130,8 @@ internal/
                              ryzen_smu CO. This is where internal/cli's hardware code
                              moved at M1 — same files, same tests, same assertions.
       drivers.go             the driver.* implementations the registry constructs
-      fan.go                 hwmon discovery, curve read/write (both fans), RPM, mode control,
+      fan.go                 hwmon discovery; channels, points and fans enumerated from attribute
+                             names; curve read/write (every channel), RPM, mode control,
                              SetAllFansFullSpeed, VerifyFanCurveActive
       sysfs.go               FindProfilePath, SetProfile, battery threshold, boot sound,
                              panel overdrive, APU temperature, battery capacity
@@ -287,7 +288,7 @@ prefix:
 | `cli.HighTDPFanCurve`, `cli.TDPMaxSafe`, `cli.HighTDPMinPWM` | `driver.PowerEnvelope` fields, from the device TOML |
 | `cli.StockProfilePPT` | `driver.PowerEnvelope.StockProfilePPT`, loaded by `internal/device/config.go` |
 | `cli.SetProfile`, `cli.IsStockProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/asusz13` |
-| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.LiveFanCurve`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` |
+| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.LiveFanCurve`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` (`SetBothFanCurves`/`ReadBothFan*` are now `SetFanCurves`/`ReadFanCurves`/`ReadFanRPMs`, over every enumerated channel) |
 | `cli.SMUAvailable`, `cli.SMUProbeUndervolt`, `cli.SetCurveOptimizer`, `cli.ResetCurveOptimizer` | `internal/drivers/asusz13` |
 | `cli.ValidateProfileName` | still `cli` — a wrapper delegating to `api.ValidateProfileName` |
 | `cli.ParseFanCurve`, `cli.ParseColor`, `cli.ResolveColor`, `cli.DryRun*` | still `cli` — presentation, no hardware |
@@ -602,7 +603,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   calls `power_supply_is_system_supplied()` to pick the AC or battery table — the
   AC adapter's `_PSR`, each time. See the wedged-EC note.
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
-  `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
+  `pwm_enable`) and `asus_custom_fan_curve` (curve points + `pwm_enable`; 2
+  channels × 8 points on the Z13).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute
   via `FindFanHwmonPath()`. `pwm_enable` values: 0=full-speed, 1=custom,
   2=auto/firmware. Modes 1 and 2 go to the **curve device only**: the base `asus`
@@ -611,8 +613,33 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   fan before returning — so syncing the mode there, which z13ctl did through
   v1.2.1, would disable the curve it had just enabled on any kernel or SKU that
   accepts the write. Only `SetAllFansFullSpeed` (mode 0) and the RPM reads use the
-  base device. Both fans cool the same APU (no discrete GPU), so the same curve is
-  always applied to both fans simultaneously.
+  base device. One curve goes to every curve channel — the `FanController`
+  contract, and right on the Z13, where both fans cool the one APU.
+- **The fan hardware's shape is enumerated, and a mismatch with the device
+  data fails closed** (2026-10-09). The driver lists hwmon attribute names —
+  `pwm<N>_auto_point<k>_temp` on the curve device, `fan<N>_input` on the
+  readings device — so how many curve channels, points per curve and fans
+  there are is the kernel's answer; listing a directory reads no attribute, so
+  none of it touches the EC. Channels that disagree on their point count are
+  an error, never a guess. `fanController.Shape()` lays the kernel's count over
+  the device data on first use; when the two differ, the *data's* shape stands
+  with a warning, because the presets and `floor_curve` are sized for it, and
+  `SetFanCurves` refuses any curve not sized for the kernel's — so every curve
+  write fails, and with it any TDP that needs the floor, while a release still
+  works. `FanShape.Labels` (served as `fans.labels`) names each fan: the TOML's
+  `fans.labels`, else the kernel's `fan<N>_label` tidied ("cpu_fan" → "CPU
+  fan"), else "Fan N". The Z13 declares "Fan 1"/"Fan 2" because asus-wmi's
+  `cpu_fan`/`gpu_fan` describe a discrete GPU it does not have.
+  On the GUI side `limits.Curve` is a slice whose length is the served
+  `fans.points`, with the editor's axis on the served `pwm_max`. `FitCurve` is
+  the one gate a curve from outside enters the editor through: the old
+  `copy(points[:], pts)` into a fixed `[8]` array silently truncated a longer
+  curve and left the previous curve's tail under a shorter one.
+  There is deliberately **no `fans.shared_curve` key**. The audit proposed one,
+  but nothing would read it — the interface writes one curve to every fan — and
+  a declared-but-unread field is the failure the "capability the document
+  declares must be one the driver actually reads" entry warns about. A device
+  needing per-fan curves needs an interface change.
 - **A custom fan curve is dropped by any `platform_profile` write** (issue #15).
   `throttle_thermal_policy_write()` — which every profile write goes through —
   ends by clearing `custom_fan_curves[*].enabled`, and `fan_curve_write()` then
@@ -988,8 +1015,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   specific to the floor. `FloorPWMAt` now delegates, and
   `TestPWMAtAndFloorPWMAtAgree` keeps them one function, because if they diverge
   the editor's dot and the daemon's floor stop agreeing about what a curve says
-  at a temperature. Note `limits.Curve` is a fixed **array**, so callers pass
-  `curve[:]`.
+  at a temperature.
 - **A fan-curve preset is sugar for a curve, and the single most important
   thing about it is that nothing applies one but the user.** `z13ctl-plus` made
   its Quiet *profile* auto-apply a `QuietFanCurve()`, and that curve is what
@@ -1783,10 +1809,10 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   **Capability *absence* is still not handled.** A nil `Power` or `Fans`
   section means the device lacks that capability and its controls should be
   hidden; `FromDevice` fills in defaults instead, because `Limits` describes
-  bounds and cannot say "this control does not exist". Same reasoning defers
-  `Curve` becoming a slice (`Shape().Points`) and firmware profile names coming
-  from `ProfileInfo` rather than `api.StockProfiles`: all three need a device
-  that actually differs before they can be anything but untested generality.
+  bounds and cannot say "this control does not exist". That one needs a device
+  that actually lacks a capability before it can be anything but untested
+  generality. (`Curve` becoming a slice and firmware profile names from
+  `ProfileInfo` both landed with the 2026-10-09 device-values audit.)
 - **A capability the document declares must be one the driver actually reads.**
   Capability discovery is by absence, so a declared-but-unread source does not
   degrade to "nothing shown" — it degrades to a dashboard drawing a graph that
@@ -3171,9 +3197,9 @@ on main is the list still to port.
 
 Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
-instead); `limits.Curve` becoming a slice gated by `Shape().Points`. (Firmware
-profile names from `api.ProfileInfo` rather than `api.StockProfiles` landed
-2026-10-09 with the device-values audit.) The two device-document fields the plan specified and M2
+instead). (Firmware profile names from `api.ProfileInfo` and `limits.Curve`
+as a slice sized by the served `fans.points` both landed 2026-10-09 with the
+device-values audit.) The two device-document fields the plan specified and M2
 left out — `battery.health` and `telemetry.{power_draw,history_seconds}` — are
 **done**; they were M4 prerequisites, since the dashboard and telemetry ring
 were specified to read them. `undervolt_available` is still not derived from

@@ -201,3 +201,15 @@ func TestFromDeviceDoesNotAliasTheDocument(t *testing.T) {
 		t.Errorf("StockProfilePPT aliases the document: got %d", got.StockProfilePPT["balanced"].PL1SPL)
 	}
 }
+
+// The editor is sized from what the daemon serves: a device with six points
+// under a 200 ceiling gets a six-point editor on a 200 axis, not the Z13's.
+func TestFromDeviceCarriesTheCurveShape(t *testing.T) {
+	l := FromDevice(&api.DeviceInfo{Fans: &api.FanInfo{Points: 6, TempMin: 40, TempMax: 90, PWMMax: 200}})
+	if l.Points != 6 || l.PWMMax != 200 {
+		t.Errorf("FromDevice = points %d, pwm_max %d; want 6, 200", l.Points, l.PWMMax)
+	}
+	if c := l.DefaultCurve(); len(c) != 6 {
+		t.Errorf("DefaultCurve has %d points, want 6", len(c))
+	}
+}

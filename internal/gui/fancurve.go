@@ -73,7 +73,7 @@ func (fc *fanCurveEditor) floor() []api.FanCurvePoint {
 // enforceConstraints repairs the curve after point idx moved. The rules live in
 // internal/limits, where they are unit tested.
 func (fc *fanCurveEditor) enforceConstraints(idx int) {
-	fc.limits().EnforceCurve(&fc.points, idx, fc.floor())
+	fc.limits().EnforceCurve(fc.points, idx, fc.floor())
 }
 
 // Coordinate mapping.
@@ -82,7 +82,7 @@ func (fc *fanCurveEditor) tempToX(temp int) float64 {
 	return fc.chartX + (float64(temp-lo)/float64(hi-lo))*fc.chartW
 }
 func (fc *fanCurveEditor) pwmToY(pwm int) float64 {
-	return fc.chartY + fc.chartH - (float64(pwm)/float64(limits.PWMMax))*fc.chartH // inverted
+	return fc.chartY + fc.chartH - (float64(pwm)/float64(fc.limits().PWMMax))*fc.chartH // inverted
 }
 func (fc *fanCurveEditor) xToTemp(x float64) int {
 	lo, hi := fc.tempRange()
@@ -96,12 +96,13 @@ func (fc *fanCurveEditor) xToTemp(x float64) int {
 	return t
 }
 func (fc *fanCurveEditor) yToPWM(y float64) int {
-	p := int(math.Round((fc.chartY + fc.chartH - y) / fc.chartH * float64(limits.PWMMax)))
+	pwmMax := fc.limits().PWMMax
+	p := int(math.Round((fc.chartY + fc.chartH - y) / fc.chartH * float64(pwmMax)))
 	if p < limits.PWMMin {
 		p = limits.PWMMin
 	}
-	if p > limits.PWMMax {
-		p = limits.PWMMax
+	if p > pwmMax {
+		p = pwmMax
 	}
 	return p
 }
@@ -197,7 +198,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 	cr.SetLineWidth(0.5 * s)
 	// Horizontal: 0%, 25%, 50%, 75%, 100%.
 	for _, pct := range []float64{0, 25, 50, 75, 100} {
-		y := fc.pwmToY(int(pct / 100.0 * limits.PWMMax))
+		y := fc.pwmToY(int(pct / 100.0 * float64(fc.limits().PWMMax)))
 		cr.MoveTo(fc.chartX, y)
 		cr.LineTo(fc.chartX+fc.chartW, y)
 	}
@@ -216,7 +217,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 	cr.SetFontSize(fontSize)
 	// Y-axis labels.
 	for _, pct := range []int{0, 25, 50, 75, 100} {
-		y := fc.pwmToY(int(float64(pct) / 100.0 * limits.PWMMax))
+		y := fc.pwmToY(int(float64(pct) / 100.0 * float64(fc.limits().PWMMax)))
 		cr.MoveTo(2*s, y+3*s)
 		cr.ShowText(fmt.Sprintf("%d%%", pct))
 	}
@@ -259,7 +260,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 		cr.MoveTo(fc.chartX+4*s, leftY-4*s)
 		// Bottom and top read off the device's floor (Sanitized keeps it
 		// non-decreasing, so the last point is the highest), not "–100%".
-		bottom, top := pwmPct(floor[0].PWM), pwmPct(floor[len(floor)-1].PWM)
+		bottom, top := pwmPct(floor[0].PWM, fc.limits().PWMMax), pwmPct(floor[len(floor)-1].PWM, fc.limits().PWMMax)
 		span := fmt.Sprintf("%d–%d%%", bottom, top)
 		if top == bottom {
 			span = fmt.Sprintf("%d%%", bottom)
@@ -292,7 +293,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 			// high-TDP floor (drawn separately above) can raise the effective
 			// value. Claiming the latter would need the applied curve, which
 			// this widget deliberately does not have.
-			pwm := limits.PWMAt(fc.points[:], apuTemp)
+			pwm := limits.PWMAt(fc.points, apuTemp)
 			py := fc.pwmToY(pwm)
 			cr.SetSourceRGBA(tr, tg, tb, 0.85)
 			cr.Arc(tx, py, fc.pointRadius()*0.75, 0, 2*math.Pi)
@@ -300,7 +301,7 @@ func (fc *fanCurveEditor) draw(cr *cairo.Context, width, height int) {
 
 			// Above the dot, or below it when the curve is near the top of the
 			// chart and the label would be clipped.
-			label := fmt.Sprintf("%d%%", pwmPct(pwm))
+			label := fmt.Sprintf("%d%%", pwmPct(pwm, fc.limits().PWMMax))
 			cr.SetFontSize(fontSize)
 			ext := cr.TextExtents(label)
 			lx := tx - ext.Width/2

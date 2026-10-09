@@ -198,6 +198,13 @@ type reading struct {
 // maxGap of zero or less means DefaultMaxGap; a caller that genuinely wants
 // every reading joined can pass a very large one, but nothing does.
 func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Duration) Plot {
+	return BuildLabeled(samples, now, window, maxGap, nil)
+}
+
+// BuildLabeled is Build with the device's fan names (api.FanInfo.Labels, in
+// rpm order). A fan without one is "Fan N"; a single fan is unlabelled either
+// way, since the card's heading already says Fan.
+func BuildLabeled(samples []api.TelemetrySample, now time.Time, window, maxGap time.Duration, fanLabels []string) Plot {
 	if window <= 0 || len(samples) == 0 {
 		return Plot{}
 	}
@@ -266,7 +273,7 @@ func Build(samples []api.TelemetrySample, now time.Time, window, maxGap time.Dur
 	for i := range fans {
 		label := ""
 		if fans > 1 {
-			label = fanLabel(i)
+			label = fanLabel(i, fanLabels)
 		}
 		specs = append(specs, spec{kind: KindFan, label: label,
 			value: func(s api.TelemetrySample) (float64, bool) {
@@ -477,10 +484,13 @@ func gather(samples []api.TelemetrySample, start time.Time,
 	return out
 }
 
-// fanLabel names one fan of several. Devices with a single fan get the bare
-// "Fan" label instead, so the common case does not read as though a second one
-// were missing.
-func fanLabel(i int) string {
+// fanLabel names one fan of several: the device's name for it, else its
+// position. Devices with a single fan get the bare "Fan" label instead, so the
+// common case does not read as though a second one were missing.
+func fanLabel(i int, labels []string) string {
+	if i < len(labels) && labels[i] != "" {
+		return labels[i]
+	}
 	return "Fan " + strconv.Itoa(i+1)
 }
 

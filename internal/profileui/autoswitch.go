@@ -5,7 +5,12 @@ package profileui
 
 // autoswitch.go — the autoswitch section's choices and the power-source label.
 
-import "github.com/dahui/voltaire/api/v2"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/dahui/voltaire/api/v2"
+)
 
 // LeaveAlone is the wire value for "do not change the profile on this power
 // source" — the empty target the daemon hands back to power-profiles-daemon.
@@ -102,6 +107,28 @@ func PowerLabel(s *api.State) string {
 		return "AC"
 	}
 	return "Battery"
+}
+
+// FanRPMText is the live fan readout: every fan the daemon reports, in its
+// order ("2100 / 2350 RPM"), or "" when it reports none — a daemon withholding
+// EC reads, or a device with no fans. A daemon older than the rpm slice reports
+// fan 1 alone, which is shown alone rather than as a list with a gap.
+func FanRPMText(s *api.State) string {
+	if s == nil {
+		return ""
+	}
+	rpms := s.RPM
+	if len(rpms) == 0 {
+		if s.FanRPM <= 0 {
+			return ""
+		}
+		rpms = []int{s.FanRPM}
+	}
+	parts := make([]string, len(rpms))
+	for i, r := range rpms {
+		parts[i] = strconv.Itoa(r)
+	}
+	return strings.Join(parts, " / ") + " RPM"
 }
 
 // SourceLabel is PowerLabel with the input named where the device can tell

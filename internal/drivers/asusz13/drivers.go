@@ -19,20 +19,87 @@ import (
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
-// NewFanController returns the asus-nb-wmi fan driver with the given shape
-// (from device data).
+// NewFanController returns the asus-nb-wmi fan driver. shape is the device
+// data's; the kernel's own answer is laid over it on first use (see Shape), so
+// the constructor stays pure.
 func NewFanController(shape driver.FanShape) driver.FanController {
-	return fanController{shape: shape}
+	return &fanController{data: shape}
 }
 
-type fanController struct{ shape driver.FanShape }
+type fanController struct {
+	data driver.FanShape
 
-func (f fanController) Shape() driver.FanShape { return f.shape }
-
-func (fanController) ReadRPM() ([]int, error) {
-	rpms, err := ReadBothFanRPM()
-	return rpms[:], err
+	once  sync.Once
+	shape driver.FanShape
 }
+
+// Shape is the device data with the kernel's answer laid over it, resolved
+// once: the points per curve and the fans that report a speed come from hwmon's
+// attribute names (listing a directory, never an EC read).
+//
+// The kernel's point count must match the device data's. When it does not, the
+// data's shape stands and a warning says why fan control will fail: the presets
+// and the high-TDP floor curve in the data are sized for the data's count, and
+// SetFanCurves refuses any curve not sized for the kernel's — so every curve
+// write fails closed, and with it any power limit that needs the floor.
+// Release still works, which is the direction that is always safe.
+func (f *fanController) Shape() driver.FanShape {
+	f.once.Do(func() {
+		f.shape = f.data
+		if _, n, err := FanCurveShape(); err == nil {
+			switch {
+			case f.data.Points == 0:
+				f.shape.Points = n
+			case n != f.data.Points:
+				slog.Warn("fan curve point count differs from device data; custom fan curves will be refused",
+					"kernel", n, "device_data", f.data.Points)
+			}
+		}
+		f.shape.Labels = fanLabels(f.data.Labels, FanKernelLabels())
+	})
+	return f.shape
+}
+
+// fanLabels resolves each fan's display name: the device data's where it
+// names one, else the kernel's (fan1_label "cpu_fan" → "CPU fan"), else
+// "Fan N". The kernel decides how many fans there are; with no kernel answer
+// the data's list stands alone.
+func fanLabels(declared, kernel []string) []string {
+	if len(kernel) == 0 {
+		return slices.Clone(declared)
+	}
+	out := make([]string, len(kernel))
+	for i, k := range kernel {
+		switch {
+		case i < len(declared) && declared[i] != "":
+			out[i] = declared[i]
+		case k != "":
+			out[i] = prettyFanLabel(k)
+		default:
+			out[i] = fmt.Sprintf("Fan %d", i+1)
+		}
+	}
+	return out
+}
+
+// prettyFanLabel turns a kernel fan label into display text: underscores to
+// spaces, known acronyms upper-cased, the first letter capitalised.
+func prettyFanLabel(k string) string {
+	words := strings.Fields(strings.ReplaceAll(k, "_", " "))
+	for i, w := range words {
+		switch strings.ToLower(w) {
+		case "cpu", "gpu", "apu", "vrm", "pch", "ssd":
+			words[i] = strings.ToUpper(w)
+		}
+	}
+	out := strings.Join(words, " ")
+	if out == "" {
+		return k
+	}
+	return strings.ToUpper(out[:1]) + out[1:]
+}
+
+func (*fanController) ReadRPM() ([]int, error) { return ReadFanRPMs() }
 
 // ReadMode reports the curve device's pwm_enable folded to one value: custom
 // (1) only when every readable fan reports the curve active — the
@@ -46,7 +113,7 @@ func (fanController) ReadRPM() ([]int, error) {
 // the answer would leave the reconcile watcher and the sleep hook blind on the
 // channel the machine does have. Only when no channel is readable at all does
 // this return -1, meaning unknown.
-func (fanController) ReadMode() (int, error) {
+func (*fanController) ReadMode() (int, error) {
 	modes, err := ReadFanCurveModes()
 	if err != nil {
 		return 0, err
@@ -64,17 +131,17 @@ func (fanController) ReadMode() (int, error) {
 	return mode, nil
 }
 
-func (fanController) ApplyCurve(pts []api.FanCurvePoint) error { return SetBothFanCurves(pts) }
+func (*fanController) ApplyCurve(pts []api.FanCurvePoint) error { return SetFanCurves(pts) }
 
-func (fanController) Release() error { return ResetAllFanCurves() }
+func (*fanController) Release() error { return ResetAllFanCurves() }
 
 // LiveCurve returns the curve programmed into the curve registers whether or
 // not it is active — the interface's contract, since the registers survive a
 // release on the Z13. "The curve in force" is a composition the caller makes
 // from this plus ReadMode (the no-daemon CLI's liveFanCurve helper is exactly
 // that composition).
-func (fanController) LiveCurve() ([]api.FanCurvePoint, error) {
-	curves, err := ReadBothFanCurves()
+func (*fanController) LiveCurve() ([]api.FanCurvePoint, error) {
+	curves, err := ReadFanCurves()
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +509,7 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 }
 
 // NewTelemetry returns the telemetry source described by device data: APU
-// temperature and both fan speeds from hwmon, the package energy counter from
+// temperature and every fan speed from hwmon, the package energy counter from
 // powercap RAPL, and battery flow plus state of charge from power_supply.
 func NewTelemetry(info driver.TelemetryInfo) driver.Telemetry {
 	return telemetry{info: info}
@@ -466,8 +533,8 @@ func (t telemetry) Sample() (driver.Sample, error) {
 		return s, err
 	}
 	s.TempC = temp
-	if rpms, err := ReadBothFanRPM(); err == nil {
-		s.RPM = rpms[:]
+	if rpms, err := ReadFanRPMs(); err == nil {
+		s.RPM = rpms
 	}
 	// The counter, not a power figure: converting needs the previous reading,
 	// and this driver holds no state (see driver.Sample).

@@ -12,6 +12,7 @@ package daemon
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -44,7 +45,8 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model}
 	if hw.Fans != nil {
 		s := hw.Fans.Shape()
-		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax}
+		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax,
+			Labels: slices.Clone(s.Labels)}
 		// Copied, not aliased, for the same reason as the floor curve below:
 		// each preset owns a points slice, so a per-preset copy is what a deep
 		// copy means here — a new outer slice alone still shares every curve.

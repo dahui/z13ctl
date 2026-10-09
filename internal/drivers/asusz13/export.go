@@ -16,14 +16,15 @@ func ProfileNameForDevice(deviceDir, asusProfile string) string {
 // (a var internally, so the fake sysfs tree can redirect it).
 func SysProfileDir() string { return sysProfileDir }
 
-// FanPWMIndices returns the hwmon pwm indices of the device's fans, in write
-// order — what a dry run needs to spell out per-fan attribute paths.
+// FanPWMIndices returns the hwmon pwm channels of the curve device, in write
+// order — what a dry run needs to spell out per-fan attribute paths. Empty
+// when the curve device is absent.
 func FanPWMIndices() []int {
-	out := make([]int, len(fanNames))
-	for i, f := range fanNames {
-		out[i] = f.index
+	dir := FindFanCurveHwmonPath()
+	if dir == "" {
+		return nil
 	}
-	return out
+	return curveModeChannels(dir)
 }
 
 // EncodeCOValue returns the SMU argument a Curve Optimizer offset encodes to,

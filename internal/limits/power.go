@@ -51,12 +51,16 @@ import (
 // profiles are firmware-managed.
 const ProfileCustom = "custom"
 
-// PWM bounds. Unlike the TDP limits these are the hwmon interface's own range,
-// not a device characteristic.
+// PWM bounds of the hwmon interface itself. A device's own ceiling is
+// Limits.PWMMax, which may be lower and is never higher.
 const (
-	PWMMin = 0
-	PWMMax = 255
+	PWMMin      = 0
+	HwmonPWMMax = 255
 )
+
+// MaxCurvePoints bounds Limits.Points. hwmon has no ceiling of its own; this is
+// a sanity bound on a served value, well above any curve device that exists.
+const MaxCurvePoints = 32
 
 // Fan pwm_enable modes as reported by sysfs and passed through by the daemon's
 // get-state. Note these are the raw hwmon values, not the 0=auto/1=custom
@@ -66,12 +70,6 @@ const (
 	FanModeCustom    = 1
 	FanModeAuto      = 2
 )
-
-// CurvePoints is the number of points in a fan curve. It is fixed at 8 because
-// Curve is a fixed-size array; if a future device needs a different count this
-// becomes a Limits field and Curve becomes a slice, losing the compile-time
-// length guarantee. Worth deciding deliberately rather than by accident.
-const CurvePoints = 8
 
 // Limits describes one device's power and thermal envelope — everything the
 // drawer needs that varies with the hardware.
@@ -92,6 +90,13 @@ type Limits struct {
 	HighTDPMinPWM  int // FloorCurve's bottom, for display text; 0 = no floor
 	TempMin        int // fan curve temperature axis, Celsius
 	TempMax        int
+
+	// Points is how many points a fan curve holds and PWMMax the PWM ceiling,
+	// both as the daemon serves them (the kernel's count where it can read
+	// one). Every Curve this package hands out has exactly Points points:
+	// FitCurve is the gate a curve from anywhere else goes through.
+	Points int
+	PWMMax int
 
 	// FloorCurve is the per-point fan floor the daemon enforces while the
 	// sustained limit exceeds TDPMaxSafe. It is a floor *curve*, not a scalar:
@@ -145,6 +150,8 @@ func DefaultLimits() Limits {
 		HighTDPMinPWM: 127, // FloorCurve's bottom: 50% of PWMMax
 		TempMin:       35,
 		TempMax:       105,
+		Points:        8,
+		PWMMax:        255,
 		UVMin:         -40,
 		UVMax:         0,
 		BatteryMin:    40,
@@ -197,19 +204,28 @@ func DefaultLimits() Limits {
 	}
 }
 
-// PresetCurve returns the named preset's points as an editor Curve, matching
-// case-insensitively. Sanitized has already dropped any preset whose length
-// does not fit, so a hit always fills the array exactly.
+// PresetCurve returns a copy of the named preset's points as an editor Curve,
+// matching case-insensitively. Sanitized has already dropped any preset whose
+// length does not fit, and FitCurve checks again.
 func (l Limits) PresetCurve(name string) (Curve, bool) {
 	for _, p := range l.Presets {
-		if !strings.EqualFold(p.Name, name) || len(p.Curve) != CurvePoints {
-			continue
+		if strings.EqualFold(p.Name, name) {
+			return l.FitCurve(p.Curve)
 		}
-		var c Curve
-		copy(c[:], p.Curve)
-		return c, true
 	}
-	return Curve{}, false
+	return nil, false
+}
+
+// FitCurve returns a copy of pts as an editor Curve, or false when it does not
+// hold exactly Points points. It is the one way a curve from outside this
+// package — the daemon's state, a preset — becomes something the editor holds,
+// so a curve sized for different hardware is refused whole rather than
+// truncated or padded with the previous curve's points.
+func (l Limits) FitCurve(pts []api.FanCurvePoint) (Curve, bool) {
+	if len(pts) != l.Points {
+		return nil, false
+	}
+	return append(Curve(nil), pts...), true
 }
 
 // PresetMatching returns the name of the preset c is exactly equal to, or "" if
@@ -219,7 +235,7 @@ func (l Limits) PresetCurve(name string) (Curve, bool) {
 // would misreport what is about to be committed.
 func (l Limits) PresetMatching(c Curve) string {
 	for _, p := range l.Presets {
-		if len(p.Curve) != CurvePoints {
+		if len(p.Curve) != len(c) {
 			continue
 		}
 		match := true
@@ -266,6 +282,12 @@ func (l Limits) Sanitized() Limits {
 	if l.TempMax <= 0 {
 		l.TempMax = d.TempMax
 	}
+	if l.Points < 2 || l.Points > MaxCurvePoints {
+		l.Points = d.Points
+	}
+	if l.PWMMax <= PWMMin || l.PWMMax > HwmonPWMMax {
+		l.PWMMax = d.PWMMax
+	}
 
 	// Ordering and width invariants, not just presence. A per-field default fixes
 	// a value the daemon never sent; these catch values it sent that cannot be
@@ -283,7 +305,7 @@ func (l Limits) Sanitized() Limits {
 	// daemon rejects; at TempMin == TempMax the editor's coordinate mapping
 	// divides by zero and every point lands on a NaN. The invariant was asserted
 	// in the tests but never enforced, so it held only for limits compiled in.
-	if l.TempMax-l.TempMin < CurvePoints-1 {
+	if l.TempMax-l.TempMin < l.Points-1 {
 		l.TempMin, l.TempMax = d.TempMin, d.TempMax
 	}
 
@@ -293,10 +315,10 @@ func (l Limits) Sanitized() Limits {
 	if l.HighTDPMinPWM < PWMMin {
 		l.HighTDPMinPWM = PWMMin
 	}
-	if l.HighTDPMinPWM > PWMMax {
-		l.HighTDPMinPWM = PWMMax
+	if l.HighTDPMinPWM > l.PWMMax {
+		l.HighTDPMinPWM = l.PWMMax
 	}
-	l.FloorCurve = sanitizedFloor(l.FloorCurve, l.HighTDPMinPWM)
+	l.FloorCurve = sanitizedFloor(l.FloorCurve, l.HighTDPMinPWM, l.PWMMax)
 	if len(l.FloorCurve) > 0 {
 		l.HighTDPMinPWM = l.FloorCurve[0].PWM
 	}
@@ -312,7 +334,7 @@ func (l Limits) Sanitized() Limits {
 		l.BatteryMin, l.BatteryMax = d.BatteryMin, d.BatteryMax
 	}
 
-	l.Presets = sanitizedPresets(l.Presets)
+	l.Presets = sanitizedPresets(l.Presets, l.Points, l.PWMMax)
 	return l
 }
 
@@ -358,17 +380,17 @@ func (l Limits) Equal(o Limits) bool {
 // keeping in degraded form, while a preset is a convenience — silently
 // offering the user a *repaired* curve under a name the device chose would put
 // our arithmetic behind the device's label. The length test is the one that
-// earns its keep: Curve is a fixed CurvePoints array, so a preset of any other
-// length cannot be loaded into the editor at all.
-func sanitizedPresets(in []api.FanPreset) []api.FanPreset {
+// earns its keep: a preset of any other length than the device's curves is one
+// the daemon would refuse to write.
+func sanitizedPresets(in []api.FanPreset, points, pwmMax int) []api.FanPreset {
 	var out []api.FanPreset
 	for _, p := range in {
-		if p.Name == "" || len(p.Curve) != CurvePoints {
+		if p.Name == "" || len(p.Curve) != points {
 			continue
 		}
 		ok := true
 		for i, pt := range p.Curve {
-			if pt.PWM < PWMMin || pt.PWM > PWMMax {
+			if pt.PWM < PWMMin || pt.PWM > pwmMax {
 				ok = false
 				break
 			}
@@ -400,7 +422,7 @@ func sanitizedPresets(in []api.FanPreset) []api.FanPreset {
 // before per-point floors existed (or a daemon serving only the scalar); the
 // flat synthesis keeps the editor holding that line rather than dropping the
 // constraint. Zero scalar with no curve stays "no floor" — zero is legitimate.
-func sanitizedFloor(floor []api.FanCurvePoint, minPWM int) []api.FanCurvePoint {
+func sanitizedFloor(floor []api.FanCurvePoint, minPWM, pwmMax int) []api.FanCurvePoint {
 	flat := func() []api.FanCurvePoint {
 		if minPWM <= PWMMin {
 			return nil
@@ -417,8 +439,8 @@ func sanitizedFloor(floor []api.FanCurvePoint, minPWM int) []api.FanCurvePoint {
 		if out[i].PWM < PWMMin {
 			out[i].PWM = PWMMin
 		}
-		if out[i].PWM > PWMMax {
-			out[i].PWM = PWMMax
+		if out[i].PWM > pwmMax {
+			out[i].PWM = pwmMax
 		}
 		if i > 0 && (out[i].Temp <= out[i-1].Temp || out[i].PWM < out[i-1].PWM) {
 			return flat()
@@ -596,43 +618,64 @@ func (l Limits) NeedsAdvanced(isCustom bool, t api.TDPState) bool {
 // switching to a stock profile resets the mode to FanModeAuto but leaves the old
 // custom points perfectly readable. Drawing them then shows the user a curve the
 // firmware is not following.
+//
+// Whether the points fit the editor is a separate question, FitCurve's.
 func FanCurveIsCustom(fc *api.FanCurveState) bool {
-	return fc != nil && fc.Mode == FanModeCustom && len(fc.Points) == CurvePoints
+	return fc != nil && fc.Mode == FanModeCustom && len(fc.Points) > 0
 }
 
-// Curve is an 8-point fan curve, ordered by ascending temperature.
-type Curve [CurvePoints]api.FanCurvePoint
+// Curve is a fan curve held by the editor, ordered by ascending temperature.
+// Its length is the device's Limits.Points.
+type Curve []api.FanCurvePoint
 
-// DefaultCurve returns the curve shown before the daemon reports one, fitted to
-// this device's temperature range.
+// defaultCurveShape is the hand-tuned placeholder, drawn for an eight-point
+// curve over 35–100°C with the hwmon ceiling.
+var defaultCurveShape = []api.FanCurvePoint{
+	{Temp: 35, PWM: 0},
+	{Temp: 45, PWM: 25},
+	{Temp: 50, PWM: 50},
+	{Temp: 60, PWM: 80},
+	{Temp: 70, PWM: 120},
+	{Temp: 80, PWM: 170},
+	{Temp: 90, PWM: 220},
+	{Temp: 100, PWM: 255},
+}
+
+// DefaultCurve returns the curve shown before the daemon reports one, with
+// this device's point count, fitted to its temperature range and PWM ceiling.
 //
-// The shape is hand-tuned for the Z13 and is returned unchanged there. On a
-// device with a narrower range EnforceCurve pulls it into bounds; the result is
-// no longer hand-tuned, but it is valid, which is what matters for a placeholder.
+// The shape is hand-tuned for an eight-point curve on the full hwmon range and
+// is returned unchanged there (the Z13). With any other count, the points are
+// spread evenly across the same span and take the shape's value at their
+// temperature, scaled to the device's ceiling; EnforceCurve then pulls the
+// result into bounds. No longer hand-tuned, but valid, which is what matters
+// for a placeholder.
 func (l Limits) DefaultCurve() Curve {
-	c := Curve{
-		{Temp: 35, PWM: 0},
-		{Temp: 45, PWM: 25},
-		{Temp: 50, PWM: 50},
-		{Temp: 60, PWM: 80},
-		{Temp: 70, PWM: 120},
-		{Temp: 80, PWM: 170},
-		{Temp: 90, PWM: 220},
-		{Temp: 100, PWM: 255},
+	var c Curve
+	if l.Points == len(defaultCurveShape) && l.PWMMax == HwmonPWMMax {
+		c = append(c, defaultCurveShape...)
+	} else {
+		first, last := defaultCurveShape[0].Temp, defaultCurveShape[len(defaultCurveShape)-1].Temp
+		n := max(l.Points, 2)
+		for i := range n {
+			t := first + (last-first)*i/(n-1)
+			pwm := PWMAt(defaultCurveShape, t) * l.PWMMax / HwmonPWMMax
+			c = append(c, api.FanCurvePoint{Temp: t, PWM: pwm})
+		}
 	}
-	l.EnforceCurve(&c, 0, nil)
+	l.EnforceCurve(c, 0, nil)
 	return c
 }
 
 // String renders the curve in the daemon's "temp:pwm,temp:pwm,..." wire format.
-func (c Curve) String() string { return api.FormatFanCurve(c[:]) }
+func (c Curve) String() string { return api.FormatFanCurve(c) }
 
 // EnforceCurve repairs the curve after point idx has been moved, so that it
 // always satisfies what the firmware and daemon require:
 //
 //   - temperatures strictly increase
 //   - PWM never decreases
-//   - every point sits within [minPWM, PWMMax] and [TempMin, TempMax]
+//   - every point sits within [minPWM, l.PWMMax] and [TempMin, TempMax]
 //
 // floor comes from ActiveFloor: nil when unconstrained, the device's floor
 // curve while a high sustained limit is applied. Each point's PWM is held at or
@@ -652,7 +695,9 @@ func (c Curve) String() string { return api.FormatFanCurve(c[:]) }
 // instead would push its left-hand neighbours below the minimum, and the final
 // clamp would then pile them all onto TempMin — producing duplicate temperatures
 // that are not strictly increasing.
-func (l Limits) EnforceCurve(c *Curve, idx int, floor []api.FanCurvePoint) {
+//
+// c is repaired in place.
+func (l Limits) EnforceCurve(c Curve, idx int, floor []api.FanCurvePoint) {
 	if idx < 0 || idx >= len(c) {
 		return
 	}
@@ -667,8 +712,8 @@ func (l Limits) EnforceCurve(c *Curve, idx int, floor []api.FanCurvePoint) {
 		if floorMin := FloorPWMAt(floor, p.Temp); p.PWM < floorMin {
 			p.PWM = floorMin
 		}
-		if p.PWM > PWMMax {
-			p.PWM = PWMMax
+		if p.PWM > l.PWMMax {
+			p.PWM = l.PWMMax
 		}
 	}
 
@@ -720,8 +765,8 @@ func (l Limits) EnforceCurve(c *Curve, idx int, floor []api.FanCurvePoint) {
 		}
 	}
 	// The forward spread can push the tail past the maximum; pull it back from
-	// the end. There is always room because TempMax-TempMin is at least
-	// CurvePoints-1 for any sane device.
+	// the end. There is always room because Sanitized keeps TempMax-TempMin at
+	// least Points-1.
 	if last := len(c) - 1; c[last].Temp > l.TempMax {
 		c[last].Temp = l.TempMax
 	}

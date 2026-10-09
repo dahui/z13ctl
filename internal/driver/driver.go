@@ -39,11 +39,21 @@ var ErrUnsupported = errors.New("driver: not supported on this device")
 // FanShape describes a device's fan-curve envelope: how many points a curve
 // holds and the axes they live on. The GUI's editor and the daemon's parser
 // both derive their bounds from this rather than from constants.
+//
+// A driver that can enumerate its hardware reports what the kernel exposes —
+// Points is the kernel's count where it can be read, the device data's
+// otherwise — so a client never sizes an editor from a number the hardware
+// would refuse.
 type FanShape struct {
 	Points  int // points per curve (8 on the Z13)
 	TempMin int // curve temperature axis, Celsius
 	TempMax int
 	PWMMax  int // hwmon PWM ceiling (255)
+
+	// Labels names each fan that reports a speed, in ReadRPM's order: device
+	// data where it names one, else the kernel's label, else "Fan N". Empty
+	// when the driver cannot say how many fans there are.
+	Labels []string
 
 	// Presets are the device's named starting-point curves, in declaration
 	// order. They ride here rather than on the FanController because they are

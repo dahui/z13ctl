@@ -223,6 +223,13 @@ func TestFanLabels(t *testing.T) {
 	two := telemetryplot.Build([]api.TelemetrySample{sampleAt(0, 50, []int{2000, 2100})}, now, time.Minute, 0)
 	find(t, two, telemetryplot.KindFan, "Fan 1")
 	find(t, two, telemetryplot.KindFan, "Fan 2")
+
+	// The device's names win; a fan it does not name keeps its position.
+	named := telemetryplot.BuildLabeled([]api.TelemetrySample{sampleAt(0, 50, []int{2000, 2100, 2200})},
+		now, time.Minute, 0, []string{"CPU fan", ""})
+	find(t, named, telemetryplot.KindFan, "CPU fan")
+	find(t, named, telemetryplot.KindFan, "Fan 2")
+	find(t, named, telemetryplot.KindFan, "Fan 3")
 }
 
 // TestRaggedFanSlices covers a driver returning a shorter slice on a failed

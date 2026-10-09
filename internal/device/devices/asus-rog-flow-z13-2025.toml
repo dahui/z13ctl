@@ -31,6 +31,11 @@ temp_max = 105
 # 10 with no release at all.
 sleep_release_settle_ms = 3000
 
+# The kernel labels these cpu_fan and gpu_fan, a naming asus-wmi uses across the
+# range; on the Z13 both fans cool the one APU and there is no discrete GPU, so
+# the labels would describe hardware the machine does not have.
+labels = ["Fan 1", "Fan 2"]
+
 # Named starting points, offered only when the user picks one — never applied by
 # a profile switch. That coupling is what the z13ctl-plus fork shipped and then
 # deleted: its Quiet profile auto-applied a quiet curve, and any curve with a

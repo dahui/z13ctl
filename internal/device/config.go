@@ -7,6 +7,7 @@ package device
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,6 +68,11 @@ type FansConfig struct {
 	// hold: only a machine where the early wake was measured carries one.
 	SleepReleaseSettleMs int `toml:"sleep_release_settle_ms"`
 
+	// Labels names the fans that report a speed, in the kernel's channel
+	// order. Optional: a fan with no entry takes the kernel's own label, else
+	// "Fan N". Worth setting where the kernel's label is wrong for the machine.
+	Labels []string `toml:"labels"`
+
 	Presets []FanPresetConfig `toml:"presets"`
 }
 
@@ -87,7 +93,8 @@ type FanPresetConfig struct {
 // Shape returns the driver.FanShape this config describes.
 func (c FansConfig) Shape() driver.FanShape {
 	s := driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255,
-		SleepReleaseSettle: time.Duration(c.SleepReleaseSettleMs) * time.Millisecond}
+		SleepReleaseSettle: time.Duration(c.SleepReleaseSettleMs) * time.Millisecond,
+		Labels:             slices.Clone(c.Labels)}
 	for _, p := range c.Presets {
 		preset := api.FanPreset{Name: p.Name, Label: p.Label, Description: p.Description}
 		for _, pt := range p.Curve {

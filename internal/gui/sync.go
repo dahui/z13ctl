@@ -58,7 +58,10 @@ func (w *Window) updateHeader() {
 	if w.headerTelemetry == nil || w.state == nil {
 		return
 	}
-	text := fmt.Sprintf("%d°C · %d RPM", w.state.Temperature, w.state.FanRPM)
+	text := fmt.Sprintf("%d°C", w.state.Temperature)
+	if f := profileui.FanRPMText(w.state); f != "" {
+		text += " · " + f
+	}
 	if p := profileui.SourceLabel(w.state); p != "" {
 		text = p + " · " + text
 	}

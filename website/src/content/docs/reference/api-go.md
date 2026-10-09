@@ -1970,7 +1970,7 @@ type FanCurveState struct {
 <a name="FanInfo"></a>
 ## type FanInfo
 
-FanInfo is the device's fan\-curve shape: how many points a curve holds and the axes an editor should draw. TempMin/TempMax are the editor's temperature axis, not validation bounds — the hardware tolerates points outside them.
+FanInfo is the device's fan\-curve shape: how many points a curve holds and the axes an editor should draw. TempMin/TempMax are the editor's temperature axis, not validation bounds — the hardware tolerates points outside them. Points is the kernel's count where the daemon can read it; size an editor from it, never from a constant.
 
 ```go
 type FanInfo struct {
@@ -1978,6 +1978,11 @@ type FanInfo struct {
     TempMin int `json:"temp_min"` // degrees Celsius
     TempMax int `json:"temp_max"`
     PWMMax  int `json:"pwm_max"`
+
+    // Labels names each fan, in the order get-state's rpm reports them, so
+    // its length is the number of fans. Absent from a daemon older than the
+    // field, or one that cannot say; a client then labels by position.
+    Labels []string `json:"labels,omitempty"`
 
     // Presets are named starting-point curves the device data ships, in the
     // order a client should offer them. Empty means the device declares none,
@@ -2546,6 +2551,11 @@ type ToggleInfo struct {
     // knowledge — whether panel overdrive causes ghosting is a fact about the
     // panel — and a client rendering these rows generically cannot know it.
     Description string `json:"description,omitempty"`
+
+    // Values are the legal values, from the firmware where it reports them;
+    // absent means the kind's own (0 and 1 for "bool"). A daemon older than
+    // the field omits it.
+    Values []int `json:"values,omitempty"`
 
     // Source is where the toggle comes from: ToggleSourceCore for one a
     // compiled-in driver provides, "plugin:<id>" for one an external plugin

@@ -241,14 +241,18 @@ func DryRunFeature(id string, value int) {
 }
 
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
-// The same curve is written to both fans.
+// The same curve is written to every fan's curve channel.
 func DryRunFanCurve(points []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	curveDir := asusz13.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	for _, idx := range asusz13.FanPWMIndices() {
+	chans := asusz13.FanPWMIndices()
+	if len(chans) == 0 {
+		fmt.Printf("Would write the curve to every pwm*_auto_point* channel in %s and set each pwm*_enable to 1 (custom)\n", curveDir)
+	}
+	for _, idx := range chans {
 		for i, p := range points {
 			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_temp\n", p.Temp, curveDir, idx, i+1)
 			fmt.Printf("Would write %d to %s/pwm%d_auto_point%d_pwm\n", p.PWM, curveDir, idx, i+1)
@@ -258,14 +262,18 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 	fmt.Printf("Would read %s/pwm*_enable back to confirm the kernel kept the curve\n", curveDir)
 }
 
-// DryRunFanCurveReset prints the sysfs writes for a fan curve reset (both fans).
+// DryRunFanCurveReset prints the sysfs writes for a fan curve reset (every fan).
 func DryRunFanCurveReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	curveDir := asusz13.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	for _, idx := range asusz13.FanPWMIndices() {
+	chans := asusz13.FanPWMIndices()
+	if len(chans) == 0 {
+		fmt.Printf("Would write 2 (auto) to every pwm*_enable in %s\n", curveDir)
+	}
+	for _, idx := range chans {
 		fmt.Printf("Would write 2 (auto) to %s/pwm%d_enable\n", curveDir, idx)
 	}
 }
@@ -317,13 +325,13 @@ func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.
 		}
 		switch {
 		case len(live) == 0:
-			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM) to both fans in %s\n",
+			fmt.Printf("Would write the high-TDP fan curve (minimum %d PWM) to every fan in %s\n",
 				floorMin, curveDir)
 		case safety.FloorAdjustsCurve(env, s.PL1SPL, live):
 			fmt.Println("Would raise the current fan curve's points below the device's high-TDP curve")
-			fmt.Printf("  to it, leaving every other point as-is, and write it to both fans in %s\n", curveDir)
+			fmt.Printf("  to it, leaving every other point as-is, and write it to every fan in %s\n", curveDir)
 		default:
-			fmt.Printf("Would write the current fan curve back to both fans in %s unchanged:\n", curveDir)
+			fmt.Printf("Would write the current fan curve back to every fan in %s unchanged:\n", curveDir)
 			fmt.Println("  it already clears the device's high-TDP curve at every temperature")
 		}
 		fmt.Printf("Would write 1 (custom) to %s/pwm{1,2}_enable\n", curveDir)

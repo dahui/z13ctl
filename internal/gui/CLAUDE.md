@@ -90,7 +90,7 @@ internal/gui/
   customsend.go                 How that view addresses its target: editPlan, the GTK-thread
                                 snapshots (tdpRequest), probeStoredTarget, every save/reset
   profiles.go                   Its profile selector and inline name entry (on customView)
-  fancurve.go                   The 8-point fan curve chart: mapping, hit test, Cairo drawing
+  fancurve.go                   The fan curve chart (the device's point count): mapping, hit test, Cairo drawing
   sync.go                       Daemon state sync, refreshState, the get-state telemetry poll,
                                 and API send functions
   color.go                      colorInput widget: swatch + presets + Custom button
@@ -1707,7 +1707,7 @@ Feature-complete for both KDE and gamescope modes:
 - Profile switching via buttons (quiet/balanced/performance/custom)
 - Custom profile view with:
   - TDP control: basic (single watt slider) and advanced (PL1/PL2/PL3) modes
-  - Fan curve editor: 8-point Cairo graph with drag interaction, 35–105°C range
+  - Fan curve editor: Cairo graph with drag interaction, sized by the device's fans.points/pwm_max over its temp_min–temp_max axis
   - Undervolt: CPU Curve Optimizer slider (inside advanced TDP box, hidden when
     `ryzen_smu` unavailable). Slider shows 0 when not on custom profile.
     iGPU CO is not supported on Strix Halo.

@@ -3,12 +3,16 @@ package asusz13
 // fan.go — hwmon sysfs path discovery and I/O helpers for ASUS fan curves.
 // Discovers hwmon devices by name attribute (not by number, which is unstable).
 //
-// The 2025 ROG Flow Z13 has an APU with two physical fans but no discrete GPU.
-// Both fans cool the same chip, so the same curve is always applied to both.
+// The channels, the points per curve and the fans that report a speed are all
+// enumerated from hwmon's attribute names, never assumed: the driver writes one
+// curve to every curve channel (the FanController contract), so a device whose
+// fans need different curves needs a different interface, not a flag here.
 
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,10 +23,7 @@ import (
 const (
 	// hwmon device names exposed by the asus-wmi kernel driver.
 	hwmonNameReadings = "asus"                  // fan RPM + pwm_enable
-	hwmonNameCurves   = "asus_custom_fan_curve" // 8-point curves + pwm_enable
-
-	fanCurvePoints = 8
-	fanCount       = 2 // fan 1 (pwm1) and fan 2 (pwm2)
+	hwmonNameCurves   = "asus_custom_fan_curve" // curve points + pwm_enable
 )
 
 // fanWriteInt is the pwm_enable write used by setFanMode. It is a var purely so
@@ -31,14 +32,15 @@ const (
 // platform_profile write produces. Plain files cannot reproduce that.
 var fanWriteInt = writeIntFile
 
-// fanNames maps internal fan names to their hwmon index (1 or 2).
-var fanNames = [fanCount]struct {
-	name  string
-	index int
-}{
-	{"fan1", 1},
-	{"fan2", 2},
-}
+// The attribute names the channels are enumerated from. hwmon's own ABI, so
+// the shape of the fan hardware is the kernel's answer rather than a constant:
+// how many fans report a speed, how many have a curve, and how many points
+// each curve holds.
+var (
+	fanInputRe   = regexp.MustCompile(`^fan(\d+)_input$`)
+	curvePointRe = regexp.MustCompile(`^pwm(\d+)_auto_point(\d+)_temp$`)
+	pwmEnableRe  = regexp.MustCompile(`^pwm(\d+)_enable$`)
+)
 
 // FindFanHwmonPath returns the sysfs hwmon directory whose name attribute
 // matches the given value. Returns "" if not found. hwmon numbers are
@@ -71,45 +73,174 @@ func FindFanCurveHwmonPath() string {
 	return FindFanHwmonPath(hwmonNameCurves)
 }
 
-// ReadBothFanRPM reads the current RPM for both fans.
-// Returns [2]int with fan1 and fan2 RPM values.
-func ReadBothFanRPM() ([fanCount]int, error) {
+// channelsMatching returns the sorted, distinct first submatch of re over the
+// entries of dir — the hwmon channel numbers carrying that attribute. Listing
+// a directory reads no attribute, so this never reaches the EC.
+func channelsMatching(dir string, re *regexp.Regexp) []int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, e := range entries {
+		m := re.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[1]); err == nil && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// fanInputChannels returns the channels of the fans that report a speed.
+func fanInputChannels(dir string) []int { return channelsMatching(dir, fanInputRe) }
+
+// curveModeChannels returns every channel on the curve device with a mode or
+// a curve point — what a mode read or write walks. A channel with an enable
+// file and no points still has a mode worth verifying.
+func curveModeChannels(dir string) []int {
+	out := channelsMatching(dir, pwmEnableRe)
+	for _, n := range channelsMatching(dir, curvePointRe) {
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// curveShape returns the channels that carry a curve and the number of points
+// each holds. Every channel must hold the same contiguous 1..n: the driver
+// writes one curve to all of them (the FanController contract), so channels
+// that disagree are an error rather than a guess at which one to believe.
+func curveShape(dir string) (chans []int, points int, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+	perChan := map[int][]int{}
+	for _, e := range entries {
+		m := curvePointRe.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		ch, err1 := strconv.Atoi(m[1])
+		pt, err2 := strconv.Atoi(m[2])
+		if err1 == nil && err2 == nil {
+			perChan[ch] = append(perChan[ch], pt)
+		}
+	}
+	if len(perChan) == 0 {
+		return nil, 0, fmt.Errorf("hwmon device %q exposes no curve points", hwmonNameCurves)
+	}
+	for ch, pts := range perChan {
+		slices.Sort(pts)
+		for i, p := range pts {
+			if p != i+1 {
+				return nil, 0, fmt.Errorf("fan curve channel %d has a gap at point %d", ch, i+1)
+			}
+		}
+		if points == 0 {
+			points = len(pts)
+		} else if len(pts) != points {
+			return nil, 0, fmt.Errorf("fan curve channels disagree on the point count (%d and %d)", points, len(pts))
+		}
+		chans = append(chans, ch)
+	}
+	slices.Sort(chans)
+	return chans, points, nil
+}
+
+// FanCurveShape returns the kernel's curve channels and points per curve, or
+// an error when the curve device is absent or malformed.
+func FanCurveShape() (chans []int, points int, err error) {
+	dir := FindFanCurveHwmonPath()
+	if dir == "" {
+		return nil, 0, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+	}
+	return curveShape(dir)
+}
+
+// ReadFanRPMs reads the current RPM of every fan that reports one, in channel
+// order. A fan the kernel does not list is simply not there; one it lists but
+// cannot read fails the whole read, since that is an EC that is not answering
+// rather than a missing fan.
+func ReadFanRPMs() ([]int, error) {
 	dir := FindFanReadingsHwmonPath()
 	if dir == "" {
-		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
+		return nil, fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
 	}
-	var rpms [fanCount]int
-	for i, f := range fanNames {
-		v, err := readIntFile(dir + "/" + fmt.Sprintf("fan%d_input", f.index))
+	chans := fanInputChannels(dir)
+	if len(chans) == 0 {
+		return nil, fmt.Errorf("hwmon device %q reports no fan speeds", hwmonNameReadings)
+	}
+	rpms := make([]int, 0, len(chans))
+	for _, ch := range chans {
+		v, err := readIntFile(dir + "/" + fmt.Sprintf("fan%d_input", ch))
 		if err != nil {
-			return rpms, fmt.Errorf("reading fan%d RPM: %w", f.index, err)
+			return nil, fmt.Errorf("reading fan%d RPM: %w", ch, err)
 		}
-		rpms[i] = v
+		rpms = append(rpms, v)
 	}
 	return rpms, nil
 }
 
-// ReadFanCurveModes returns the pwm_enable value for each fan on the curve
-// hwmon device, using -1 for a channel that cannot be read. Unlike
-// ReadBothFanModes it does not fail the whole read because one channel is
-// missing: a SKU that exposes only the CPU curve is a supported configuration,
-// and the reconcile watcher must still be able to act on the channel it has.
-// An error is returned only when the hwmon device itself is absent.
-func ReadFanCurveModes() ([fanCount]int, error) {
+// FanKernelLabels returns the kernel's fan*_label for every fan that reports a
+// speed, in ReadFanRPMs order, "" where a fan has none. A label is a static
+// string the driver formats, not an EC read.
+func FanKernelLabels() []string {
+	dir := FindFanReadingsHwmonPath()
+	if dir == "" {
+		return nil
+	}
+	chans := fanInputChannels(dir)
+	out := make([]string, len(chans))
+	for i, ch := range chans {
+		if data, err := os.ReadFile(dir + "/" + fmt.Sprintf("fan%d_label", ch)); err == nil {
+			out[i] = strings.TrimSpace(string(data))
+		}
+	}
+	return out
+}
+
+// fanCurveMode pairs a curve-device channel with its pwm_enable value.
+type fanCurveMode struct{ channel, mode int }
+
+// ReadFanCurveModes returns the pwm_enable value for each channel on the curve
+// hwmon device, using -1 for a channel whose mode cannot be read. A missing
+// channel is not a failure: a SKU that exposes only the CPU curve is a
+// supported configuration, and the reconcile watcher must still be able to
+// act on the channel it has. An error is returned only when the hwmon device
+// itself is absent.
+func ReadFanCurveModes() ([]int, error) {
+	modes, err := readFanCurveModes()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int, len(modes))
+	for i, m := range modes {
+		out[i] = m.mode
+	}
+	return out, nil
+}
+
+func readFanCurveModes() ([]fanCurveMode, error) {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
-		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+		return nil, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	var modes [fanCount]int
-	for i, f := range fanNames {
-		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", f.index))
+	var out []fanCurveMode
+	for _, ch := range curveModeChannels(dir) {
+		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", ch))
 		if err != nil {
-			modes[i] = -1
-			continue
+			v = -1
 		}
-		modes[i] = v
+		out = append(out, fanCurveMode{ch, v})
 	}
-	return modes, nil
+	return out, nil
 }
 
 // VerifyFanCurveActive reports whether the kernel is actually honouring the
@@ -125,95 +256,88 @@ func ReadFanCurveModes() ([fanCount]int, error) {
 // A channel that cannot be read is deliberately not a failure: unverifiable is
 // not the same as failed, and hard-failing there would make fan control (and
 // with it the high-TDP floor) unavailable on any SKU that does not expose
-// pwm2_enable on the curve device.
+// every channel's pwm_enable on the curve device.
 func VerifyFanCurveActive() error {
-	modes, err := ReadFanCurveModes()
+	modes, err := readFanCurveModes()
 	if err != nil {
 		return err
 	}
-	for i, m := range modes {
-		if m == -1 || m == 1 {
+	for _, m := range modes {
+		if m.mode == -1 || m.mode == 1 {
 			continue
 		}
 		return fmt.Errorf(
 			"custom fan curve was written but the kernel is not honouring it (pwm%d_enable = %d, %s): "+
 				"a platform_profile change disables custom fan curves in the kernel driver; re-apply the curve",
-			fanNames[i].index, m, driver.FanModeName(m))
+			m.channel, m.mode, driver.FanModeName(m.mode))
 	}
 	return nil
 }
 
-// ReadBothFanModes reads the pwm_enable value for both fans from the curve
-// hwmon device. Returns 0 (full-speed), 1 (custom), or 2 (auto/firmware).
-func ReadBothFanModes() ([fanCount]int, error) {
+// ReadFanCurves reads the curve programmed on every curve channel.
+func ReadFanCurves() ([][]api.FanCurvePoint, error) {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
-		return [fanCount]int{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+		return nil, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	var modes [fanCount]int
-	for i, f := range fanNames {
-		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", f.index))
-		if err != nil {
-			return modes, fmt.Errorf("reading fan%d mode: %w", f.index, err)
-		}
-		modes[i] = v
+	chans, n, err := curveShape(dir)
+	if err != nil {
+		return nil, err
 	}
-	return modes, nil
-}
-
-// ReadBothFanCurves reads the 8-point fan curve for both fans.
-func ReadBothFanCurves() ([fanCount][]api.FanCurvePoint, error) {
-	dir := FindFanCurveHwmonPath()
-	if dir == "" {
-		return [fanCount][]api.FanCurvePoint{}, fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
-	}
-	var curves [fanCount][]api.FanCurvePoint
-	for fi, f := range fanNames {
-		points := make([]api.FanCurvePoint, fanCurvePoints)
-		for i := range fanCurvePoints {
-			temp, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_temp", f.index, i+1))
+	curves := make([][]api.FanCurvePoint, 0, len(chans))
+	for _, ch := range chans {
+		points := make([]api.FanCurvePoint, n)
+		for i := range n {
+			temp, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_temp", ch, i+1))
 			if err != nil {
-				return curves, fmt.Errorf("reading fan%d curve point %d temp: %w", f.index, i+1, err)
+				return nil, fmt.Errorf("reading fan%d curve point %d temp: %w", ch, i+1, err)
 			}
-			pwm, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_pwm", f.index, i+1))
+			pwm, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_auto_point%d_pwm", ch, i+1))
 			if err != nil {
-				return curves, fmt.Errorf("reading fan%d curve point %d pwm: %w", f.index, i+1, err)
+				return nil, fmt.Errorf("reading fan%d curve point %d pwm: %w", ch, i+1, err)
 			}
 			points[i] = api.FanCurvePoint{Temp: temp, PWM: pwm}
 		}
-		curves[fi] = points
+		curves = append(curves, points)
 	}
 	return curves, nil
 }
 
-// SetBothFanCurves writes the same 8-point fan curve to both fans, enables
-// custom mode (pwm_enable=1) on both, and verifies that the kernel kept it.
+// SetFanCurves writes the same curve to every curve channel, enables custom
+// mode (pwm_enable=1) on each, and verifies that the kernel kept it. The curve
+// must hold exactly as many points as the kernel's curves do.
 //
 // The readback is not paranoia: the driver drops custom curves on any
 // platform_profile write without reporting anything to the process that set
 // them, so without it every caller reports success for a curve that is no
 // longer in effect — including ApplyTDPSafely, whose thermal floor depends on
 // this write having stuck.
-func SetBothFanCurves(points []api.FanCurvePoint) error {
-	if len(points) != fanCurvePoints {
-		return fmt.Errorf("fan curve must have exactly %d points, got %d", fanCurvePoints, len(points))
-	}
+func SetFanCurves(points []api.FanCurvePoint) error {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	for _, f := range fanNames {
+	chans, n, err := curveShape(dir)
+	if err != nil {
+		return err
+	}
+	if len(points) != n {
+		return fmt.Errorf("fan curve must have exactly %d points, got %d", n, len(points))
+	}
+	for _, ch := range chans {
 		for i, p := range points {
-			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_temp", f.index, i+1), p.Temp); err != nil {
-				return fmt.Errorf("writing fan%d curve point %d temp: %w", f.index, i+1, err)
+			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_temp", ch, i+1), p.Temp); err != nil {
+				return fmt.Errorf("writing fan%d curve point %d temp: %w", ch, i+1, err)
 			}
-			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_pwm", f.index, i+1), p.PWM); err != nil {
-				return fmt.Errorf("writing fan%d curve point %d pwm: %w", f.index, i+1, err)
+			if err := writeIntFile(dir+"/"+fmt.Sprintf("pwm%d_auto_point%d_pwm", ch, i+1), p.PWM); err != nil {
+				return fmt.Errorf("writing fan%d curve point %d pwm: %w", ch, i+1, err)
 			}
 		}
 	}
-	if err := setAllFanModes(1); err != nil { // enable custom mode on both
-		return err
+	for _, ch := range chans { // enable custom mode on every curve channel
+		if err := setFanMode(ch, 1); err != nil {
+			return err
+		}
 	}
 	return VerifyFanCurveActive()
 }
@@ -253,20 +377,28 @@ func setFanMode(idx, mode int) error {
 	return nil
 }
 
-// setAllFanModes writes pwm_enable for both fans.
+// setAllFanModes writes pwm_enable for every channel on the curve device.
 func setAllFanModes(mode int) error {
-	for _, f := range fanNames {
-		if err := setFanMode(f.index, mode); err != nil {
+	dir := FindFanCurveHwmonPath()
+	if dir == "" {
+		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
+	}
+	chans := curveModeChannels(dir)
+	if len(chans) == 0 {
+		return fmt.Errorf("hwmon device %q exposes no fan channels", hwmonNameCurves)
+	}
+	for _, ch := range chans {
+		if err := setFanMode(ch, mode); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ResetAllFanCurves restores firmware auto mode for both fans, and verifies that
+// ResetAllFanCurves restores firmware auto mode for every fan, and verifies that
 // the kernel kept it.
 //
-// The readback matters for the same reason SetBothFanCurves has one, in the
+// The readback matters for the same reason SetFanCurves has one, in the
 // mirror image: a release the driver silently ignores is indistinguishable from
 // success, and the sleep hook (internal/daemon/resume.go) needs the difference.
 // Firmware auto is what lets the EC stop the fans through s2idle, so a release
@@ -279,30 +411,30 @@ func ResetAllFanCurves() error {
 	return verifyFanModeReleased()
 }
 
-// verifyFanModeReleased reports whether both fans are on firmware auto.
+// verifyFanModeReleased reports whether every fan is on firmware auto.
 //
 // As in VerifyFanCurveActive, a channel that cannot be read is deliberately not
 // a failure — unverifiable is not the same as failed, and hard-failing there
-// would break fan control on any SKU that does not expose pwm2_enable on the
-// curve device. Mode 0 is also accepted: forced full speed is not a curve, so
-// the release has nothing left to undo.
+// would break fan control on any SKU that does not expose every channel's
+// pwm_enable on the curve device. Mode 0 is also accepted: forced full speed is
+// not a curve, so the release has nothing left to undo.
 func verifyFanModeReleased() error {
-	modes, err := ReadFanCurveModes()
+	modes, err := readFanCurveModes()
 	if err != nil {
 		return err
 	}
-	for i, m := range modes {
-		if m == -1 || m == 0 || m == 2 {
+	for _, m := range modes {
+		if m.mode == -1 || m.mode == 0 || m.mode == 2 {
 			continue
 		}
 		return fmt.Errorf(
 			"fans were released to firmware auto but the kernel is not honouring it (pwm%d_enable = %d, %s)",
-			fanNames[i].index, m, driver.FanModeName(m))
+			m.channel, m.mode, driver.FanModeName(m.mode))
 	}
 	return nil
 }
 
-// SetAllFansFullSpeed forces both fans to maximum speed.
+// SetAllFansFullSpeed forces every fan to maximum speed.
 // Only the base "asus" hwmon device supports pwm_enable=0, and only pwm1_enable
 // is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
 // is sufficient to force both physical fans to full speed.

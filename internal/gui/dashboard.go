@@ -613,7 +613,11 @@ func (d *dashboardView) refresh() {
 				d.apply(telemetryplot.Plot{}, handled, err)
 				return
 			}
-			d.apply(telemetryplot.Build(samples, time.Now(), d.span, 0), true, nil)
+			var fanLabels []string
+			if doc := d.w.device; doc != nil && doc.Fans != nil {
+				fanLabels = doc.Fans.Labels
+			}
+			d.apply(telemetryplot.BuildLabeled(samples, time.Now(), d.span, 0, fanLabels), true, nil)
 		})
 	}()
 }

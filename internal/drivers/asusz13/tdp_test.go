@@ -154,9 +154,9 @@ func TestApplyTDPSafely(t *testing.T) {
 		if got != high {
 			t.Errorf("PPT = %+v, want %+v", got, high)
 		}
-		curves, err := ReadBothFanCurves()
+		curves, err := ReadFanCurves()
 		if err != nil {
-			t.Fatalf("ReadBothFanCurves() = %v, want nil", err)
+			t.Fatalf("ReadFanCurves() = %v, want nil", err)
 		}
 		for fan, points := range curves {
 			for i, p := range points {
@@ -165,9 +165,9 @@ func TestApplyTDPSafely(t *testing.T) {
 				}
 			}
 		}
-		modes, err := ReadBothFanModes()
+		modes, err := ReadFanCurveModes()
 		if err != nil {
-			t.Fatalf("ReadBothFanModes() = %v, want nil", err)
+			t.Fatalf("ReadFanCurveModes() = %v, want nil", err)
 		}
 		for fan, m := range modes {
 			if m != 1 {
@@ -203,7 +203,7 @@ func TestApplyTDPSafely(t *testing.T) {
 
 	// The other half of failing closed: the write is accepted but the kernel
 	// does not keep the mode, which is what a concurrent platform_profile write
-	// produces. Before the readback in SetBothFanCurves this looked like success
+	// produces. Before the readback in SetFanCurves this looked like success
 	// and the machine ran above the safe sustained max with no floor at all.
 	t.Run("refuses the TDP when the fan curve does not stick", func(t *testing.T) {
 		f := newFakeSysfs(t)
@@ -245,9 +245,9 @@ func TestApplyTDPSafely(t *testing.T) {
 			t.Fatalf("ApplyTDPSafely() = %v, want nil", err)
 		}
 
-		curves, err := ReadBothFanCurves()
+		curves, err := ReadFanCurves()
 		if err != nil {
-			t.Fatalf("ReadBothFanCurves() = %v, want nil", err)
+			t.Fatalf("ReadFanCurves() = %v, want nil", err)
 		}
 		for fan, points := range curves {
 			for i, p := range points {
@@ -286,9 +286,9 @@ func TestApplyTDPSafely(t *testing.T) {
 		if err := eng.ApplyTDPSafely(high, want); err != nil {
 			t.Fatalf("ApplyTDPSafely() = %v, want nil", err)
 		}
-		curves, err := ReadBothFanCurves()
+		curves, err := ReadFanCurves()
 		if err != nil {
-			t.Fatalf("ReadBothFanCurves() = %v, want nil", err)
+			t.Fatalf("ReadFanCurves() = %v, want nil", err)
 		}
 		for fan, points := range curves {
 			for i, p := range points {
@@ -313,9 +313,9 @@ func TestApplyTDPSafely(t *testing.T) {
 		if got != safe {
 			t.Errorf("PPT = %+v, want %+v", got, safe)
 		}
-		modes, err := ReadBothFanModes()
+		modes, err := ReadFanCurveModes()
 		if err != nil {
-			t.Fatalf("ReadBothFanModes() = %v, want nil", err)
+			t.Fatalf("ReadFanCurveModes() = %v, want nil", err)
 		}
 		for fan, m := range modes {
 			if m != 2 {
@@ -483,7 +483,7 @@ func TestFanCurveForTDP(t *testing.T) {
 // skip the check when ReadEffective errors, and check reproduces that rule.
 func TestEditTimeFloorCheck(t *testing.T) {
 	eng, env := z13Engine(t)
-	lowCurve := make([]api.FanCurvePoint, fanCurvePoints)
+	lowCurve := make([]api.FanCurvePoint, fakeCurvePoints)
 	for i := range lowCurve {
 		lowCurve[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 100}
 	}

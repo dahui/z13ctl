@@ -3,8 +3,8 @@ package cmd
 // fancurve.go — "fancurve" subcommand: read or set custom fan curves via the
 // Linux asus-nb-wmi hwmon sysfs interface. No HID access required.
 //
-// Both physical fans cool the same APU, so the same curve is always applied
-// to both fans simultaneously.
+// The driver applies one curve to every fan (the FanController contract); how
+// many fans and points there are is the device's answer, not this file's.
 
 import (
 	"fmt"
@@ -240,7 +240,7 @@ func runFanCurveSet() error {
 			fmt.Print(profileEditMessage(fanCurveProfileFlag, ""))
 			return nil
 		}
-		fmt.Println("Fan curves set for both fans (custom mode enabled)")
+		fmt.Println("Fan curve set on every fan (custom mode enabled)")
 		fmt.Println("  Note: the kernel driver drops custom fan curves whenever the system power")
 		fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5). The voltaire")
 		fmt.Println("  daemon watches for that and re-applies this curve within a couple of seconds.")
@@ -259,7 +259,7 @@ func runFanCurveSet() error {
 	if err := hw.Fans.ApplyCurve(points); err != nil {
 		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
-	fmt.Println("Fan curves set for both fans (custom mode enabled)")
+	fmt.Println("Fan curve set on every fan (custom mode enabled)")
 	fmt.Println("  Warning: the kernel driver drops custom fan curves whenever the system power")
 	fmt.Println("  profile changes (GNOME power modes, power-profiles-daemon, Fn+F5), and the")
 	fmt.Println("  voltaire daemon is not running to restore it. Re-run this command after any")
@@ -312,7 +312,7 @@ func runFanCurveReset() error {
 			fmt.Printf("Cleared the fan curve from profile %s\n", fanCurveProfileFlag)
 			return nil
 		}
-		fmt.Println("Fan curves reset to auto mode (both fans)")
+		fmt.Println("Fan curves reset to auto mode (every fan)")
 		return nil
 	}
 	if err := requireDaemonForProfile(fanCurveProfileFlag); err != nil {
@@ -327,7 +327,7 @@ func runFanCurveReset() error {
 	if err := hw.ReleaseFans(customLimitInForce(hw)); err != nil {
 		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
 	}
-	fmt.Println("Fan curves reset to auto mode (both fans)")
+	fmt.Println("Fan curves reset to auto mode (every fan)")
 	return nil
 }
 
@@ -367,7 +367,7 @@ func customLimitInForce(hw *device.Device) *api.TDPState {
 
 func init() {
 	fancurveCmd.Flags().BoolVar(&fanCurveGetFlag, "get", false, "Print the current fan curve, mode, and RPM")
-	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom 8-point fan curve (temp:pwm or temp:pct%,...)")
+	fancurveCmd.Flags().StringVar(&fanCurveSetFlag, "set", "", "Set a custom fan curve, one temp:pwm or temp:pct% pair per point (--get shows how many)")
 	fancurveCmd.Flags().BoolVar(&fanCurveResetFlag, "reset", false, "Restore firmware auto fan mode")
 	fancurveCmd.Flags().StringVar(&fanCurvePresetFlag, "preset", "", "Apply a named preset curve (see --list-presets)")
 	fancurveCmd.Flags().BoolVar(&fanCurveListPresetsFlag, "list-presets", false, "List the preset curves this device offers")

@@ -4,6 +4,7 @@
 package limits
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -25,6 +26,10 @@ func otherDevice() Limits {
 		HighTDPMinPWM: 0, // this device has no high-TDP fan floor
 		TempMin:       40,
 		TempMax:       90,
+		// A different curve device too: six points under a lower ceiling, so
+		// nothing here can pass by assuming the Z13's eight and 255.
+		Points: 6,
+		PWMMax: 200,
 		StockProfilePPT: map[string]api.TDPState{
 			"quiet":       {PL1SPL: 10, PL2SPPT: 15, FPPT: 15},
 			"balanced":    {PL1SPL: 20, PL2SPPT: 28, FPPT: 26},
@@ -45,8 +50,8 @@ func TestDefaultLimitsAreSelfConsistent(t *testing.T) {
 			t.Errorf("%s: TempMin %d not below TempMax %d", l.Model, l.TempMin, l.TempMax)
 		}
 		// A curve needs one degree per point.
-		if got := l.TempMax - l.TempMin; got < CurvePoints {
-			t.Errorf("%s: temperature range %d too narrow for %d points", l.Model, got, CurvePoints)
+		if got := l.TempMax - l.TempMin; got < l.Points {
+			t.Errorf("%s: temperature range %d too narrow for %d points", l.Model, got, l.Points)
 		}
 		if b := l.BasicSliderMax(); b <= l.TDPMin || b > l.TDPMaxSafe {
 			t.Errorf("%s: BasicSliderMax %d outside (%d, %d]", l.Model, b, l.TDPMin, l.TDPMaxSafe)
@@ -240,8 +245,8 @@ func TestSanitizedFloorCurve(t *testing.T) {
 	t.Run("out-of-range floor PWMs are clamped", func(t *testing.T) {
 		in := Limits{FloorCurve: []api.FanCurvePoint{{Temp: 30, PWM: -5}, {Temp: 80, PWM: 999}}}
 		got := in.Sanitized()
-		if got.FloorCurve[0].PWM != PWMMin || got.FloorCurve[1].PWM != PWMMax {
-			t.Errorf("clamped floor = %v, want PWMs [%d %d]", got.FloorCurve, PWMMin, PWMMax)
+		if got.FloorCurve[0].PWM != PWMMin || got.FloorCurve[1].PWM != HwmonPWMMax {
+			t.Errorf("clamped floor = %v, want PWMs [%d %d]", got.FloorCurve, PWMMin, HwmonPWMMax)
 		}
 	})
 	t.Run("does not mutate the caller's slice", func(t *testing.T) {
@@ -479,7 +484,7 @@ func TestNeedsAdvancedUsesTheDevicesCeiling(t *testing.T) {
 }
 
 func TestFanCurveIsCustom(t *testing.T) {
-	eight := make([]api.FanCurvePoint, CurvePoints)
+	eight := make([]api.FanCurvePoint, testPoints)
 
 	tests := []struct {
 		name string
@@ -506,9 +511,11 @@ func TestFanCurveIsCustom(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "custom mode but a short curve is unusable",
+			// In force is in force; whether it fits the editor is FitCurve's
+			// question, not this one's.
+			name: "custom mode with a curve of another length",
 			fc:   &api.FanCurveState{Mode: FanModeCustom, Points: eight[:3]},
-			want: false,
+			want: true,
 		},
 		{
 			name: "custom mode with no points",
@@ -543,8 +550,10 @@ func TestDefaultCurveUnchangedOnTheZ13(t *testing.T) {
 // collapsing every out-of-range point onto the maximum.
 func TestEnforceCurve_NormalizesACurveFromAnotherDevice(t *testing.T) {
 	narrow := otherDevice()
-	c := DefaultLimits().DefaultCurve() // 35–100°C, outside narrow's 40–90
-	narrow.EnforceCurve(&c, 0, nil)
+	wide := DefaultLimits()
+	wide.Points = narrow.Points
+	c := wide.DefaultCurve() // 35–100°C, outside narrow's 40–90
+	narrow.EnforceCurve(c, 0, nil)
 	assertCurveValid(t, narrow, c, nil)
 }
 
@@ -566,7 +575,7 @@ func TestEnforceCurve_TemperaturesStrictlyIncrease(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
 	c[3].Temp = 20
-	l.EnforceCurve(&c, 3, nil)
+	l.EnforceCurve(c, 3, nil)
 
 	if want := l.TempMin + 3; c[3].Temp != want {
 		t.Errorf("dragged point temp = %d, want %d (leaves room for points 0-2)", c[3].Temp, want)
@@ -580,9 +589,9 @@ func TestEnforceCurve_LeavesRoomAboveDraggedPoint(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
 	c[4].Temp = 999
-	l.EnforceCurve(&c, 4, nil)
+	l.EnforceCurve(c, 4, nil)
 
-	if want := l.TempMax - (CurvePoints - 1 - 4); c[4].Temp != want {
+	if want := l.TempMax - (testPoints - 1 - 4); c[4].Temp != want {
 		t.Errorf("dragged point temp = %d, want %d (leaves room for points 5-7)", c[4].Temp, want)
 	}
 	assertCurveValid(t, l, c, nil)
@@ -592,7 +601,7 @@ func TestEnforceCurve_PWMNeverDecreases(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
 	c[1].PWM = 240
-	l.EnforceCurve(&c, 1, nil)
+	l.EnforceCurve(c, 1, nil)
 
 	if c[1].PWM != 240 {
 		t.Errorf("dragged point PWM = %d, want 240 preserved", c[1].PWM)
@@ -604,7 +613,7 @@ func TestEnforceCurve_DraggedPointWinsOverNeighbours(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
 	c[5].PWM = 30
-	l.EnforceCurve(&c, 5, nil)
+	l.EnforceCurve(c, 5, nil)
 
 	if c[5].PWM != 30 {
 		t.Errorf("dragged point PWM = %d, want 30 preserved", c[5].PWM)
@@ -617,13 +626,13 @@ func TestEnforceCurve_ClampsOutOfRange(t *testing.T) {
 	c := l.DefaultCurve()
 	c[7].Temp = 500
 	c[7].PWM = 9000
-	l.EnforceCurve(&c, 7, nil)
+	l.EnforceCurve(c, 7, nil)
 
 	if c[7].Temp != l.TempMax {
 		t.Errorf("temp = %d, want clamped to %d", c[7].Temp, l.TempMax)
 	}
-	if c[7].PWM != PWMMax {
-		t.Errorf("PWM = %d, want clamped to %d", c[7].PWM, PWMMax)
+	if c[7].PWM != HwmonPWMMax {
+		t.Errorf("PWM = %d, want clamped to %d", c[7].PWM, HwmonPWMMax)
 	}
 	assertCurveValid(t, l, c, nil)
 }
@@ -637,7 +646,7 @@ func TestEnforceCurve_ClampsOutOfRange(t *testing.T) {
 func TestEnforceCurve_HighTDPFloorLiftsEveryPoint(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve() // most of its points sit below the ramp
-	l.EnforceCurve(&c, 0, l.FloorCurve)
+	l.EnforceCurve(c, 0, l.FloorCurve)
 
 	for i, p := range c {
 		if floorMin := FloorPWMAt(l.FloorCurve, p.Temp); p.PWM < floorMin {
@@ -648,8 +657,8 @@ func TestEnforceCurve_HighTDPFloorLiftsEveryPoint(t *testing.T) {
 	if c[0].PWM != l.HighTDPMinPWM {
 		t.Errorf("coolest point PWM = %d, want lifted only to the %d bottom", c[0].PWM, l.HighTDPMinPWM)
 	}
-	if c[7].PWM != PWMMax {
-		t.Errorf("hottest point PWM = %d, want %d (ramp is full speed past 80°C)", c[7].PWM, PWMMax)
+	if c[7].PWM != HwmonPWMMax {
+		t.Errorf("hottest point PWM = %d, want %d (ramp is full speed past 80°C)", c[7].PWM, HwmonPWMMax)
 	}
 	assertCurveValid(t, l, c, l.FloorCurve)
 }
@@ -657,10 +666,10 @@ func TestEnforceCurve_HighTDPFloorLiftsEveryPoint(t *testing.T) {
 func TestEnforceCurve_DragBelowFloorIsLifted(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
-	l.EnforceCurve(&c, 0, l.FloorCurve) // start from a floored curve
+	l.EnforceCurve(c, 0, l.FloorCurve) // start from a floored curve
 
 	c[2].PWM = 10 // user drags a point to the bottom
-	l.EnforceCurve(&c, 2, l.FloorCurve)
+	l.EnforceCurve(c, 2, l.FloorCurve)
 
 	if floorMin := FloorPWMAt(l.FloorCurve, c[2].Temp); c[2].PWM < floorMin {
 		t.Errorf("dragged point (%d°C) PWM = %d, want lifted to at least %d", c[2].Temp, c[2].PWM, floorMin)
@@ -673,14 +682,14 @@ func TestEnforceCurve_DragBelowFloorIsLifted(t *testing.T) {
 func TestEnforceCurve_DragToHotterTempRaisesTheFloor(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
-	l.EnforceCurve(&c, 0, l.FloorCurve)
+	l.EnforceCurve(c, 0, l.FloorCurve)
 
 	c[6].Temp = 95 // well past the ramp's 80°C full-speed knee
 	c[6].PWM = 130 // fine at idle temperatures, far below the floor at 95°C
-	l.EnforceCurve(&c, 6, l.FloorCurve)
+	l.EnforceCurve(c, 6, l.FloorCurve)
 
-	if c[6].PWM != PWMMax {
-		t.Errorf("point at %d°C PWM = %d, want %d (floor is full speed there)", c[6].Temp, c[6].PWM, PWMMax)
+	if c[6].PWM != HwmonPWMMax {
+		t.Errorf("point at %d°C PWM = %d, want %d (floor is full speed there)", c[6].Temp, c[6].PWM, HwmonPWMMax)
 	}
 	assertCurveValid(t, l, c, l.FloorCurve)
 }
@@ -691,10 +700,10 @@ func TestEnforceCurve_Idempotent(t *testing.T) {
 		c := l.DefaultCurve()
 		c[4].PWM = 12
 		c[4].Temp = 33
-		l.EnforceCurve(&c, 4, floor)
-		once := c
-		l.EnforceCurve(&c, 4, floor)
-		if c != once {
+		l.EnforceCurve(c, 4, floor)
+		once := slices.Clone(c)
+		l.EnforceCurve(c, 4, floor)
+		if !slices.Equal(c, once) {
 			t.Errorf("floor %v: second pass changed the curve: %v then %v", floor, once, c)
 		}
 	}
@@ -703,10 +712,10 @@ func TestEnforceCurve_Idempotent(t *testing.T) {
 func TestEnforceCurve_OutOfRangeIndexIsIgnored(t *testing.T) {
 	l := DefaultLimits()
 	c := l.DefaultCurve()
-	before := c
-	l.EnforceCurve(&c, -1, nil)
-	l.EnforceCurve(&c, CurvePoints, nil)
-	if c != before {
+	before := slices.Clone(c)
+	l.EnforceCurve(c, -1, nil)
+	l.EnforceCurve(c, testPoints, nil)
+	if !slices.Equal(c, before) {
 		t.Error("out-of-range index modified the curve")
 	}
 }
@@ -717,11 +726,11 @@ func TestEnforceCurve_OutOfRangeIndexIsIgnored(t *testing.T) {
 func TestEnforceCurve_AllIndicesAtBothExtremesOnEveryDevice(t *testing.T) {
 	for _, l := range []Limits{DefaultLimits(), otherDevice()} {
 		for _, floor := range [][]api.FanCurvePoint{nil, l.FloorCurve} {
-			for idx := 0; idx < CurvePoints; idx++ {
+			for idx := 0; idx < l.Points; idx++ {
 				for _, temp := range []int{-100, 0, 20, 500} {
 					c := l.DefaultCurve()
 					c[idx].Temp = temp
-					l.EnforceCurve(&c, idx, floor)
+					l.EnforceCurve(c, idx, floor)
 					assertCurveValid(t, l, c, floor)
 				}
 			}
@@ -734,12 +743,15 @@ func TestEnforceCurve_AllIndicesAtBothExtremesOnEveryDevice(t *testing.T) {
 // the daemon makes.
 func assertCurveValid(t *testing.T, l Limits, c Curve, floor []api.FanCurvePoint) {
 	t.Helper()
+	if len(c) != l.Points {
+		t.Errorf("%s: curve has %d points, want the device's %d", l.Model, len(c), l.Points)
+	}
 	for i, p := range c {
 		if p.Temp < l.TempMin || p.Temp > l.TempMax {
 			t.Errorf("%s: point %d temp = %d, outside [%d,%d]", l.Model, i, p.Temp, l.TempMin, l.TempMax)
 		}
-		if floorMin := FloorPWMAt(floor, p.Temp); p.PWM < floorMin || p.PWM > PWMMax {
-			t.Errorf("%s: point %d (%d°C) PWM = %d, outside [%d,%d]", l.Model, i, p.Temp, p.PWM, floorMin, PWMMax)
+		if floorMin := min(FloorPWMAt(floor, p.Temp), l.PWMMax); p.PWM < floorMin || p.PWM > l.PWMMax {
+			t.Errorf("%s: point %d (%d°C) PWM = %d, outside [%d,%d]", l.Model, i, p.Temp, p.PWM, floorMin, l.PWMMax)
 		}
 		if i > 0 {
 			if c[i].Temp <= c[i-1].Temp {
@@ -764,11 +776,14 @@ func assertLimitsUsable(t *testing.T, l Limits) {
 	if l.TDPMaxSafe > l.TDPMaxForced {
 		t.Errorf("TDPMaxSafe %d above TDPMaxForced %d", l.TDPMaxSafe, l.TDPMaxForced)
 	}
-	if got := l.TempMax - l.TempMin; got < CurvePoints-1 {
-		t.Errorf("temperature range %d too narrow for %d points", got, CurvePoints)
+	if got := l.TempMax - l.TempMin; got < l.Points-1 {
+		t.Errorf("temperature range %d too narrow for %d points", got, l.Points)
 	}
-	if l.HighTDPMinPWM < PWMMin || l.HighTDPMinPWM > PWMMax {
-		t.Errorf("HighTDPMinPWM %d outside [%d,%d]", l.HighTDPMinPWM, PWMMin, PWMMax)
+	if l.PWMMax <= PWMMin || l.PWMMax > HwmonPWMMax {
+		t.Errorf("PWMMax %d outside (%d,%d]", l.PWMMax, PWMMin, HwmonPWMMax)
+	}
+	if l.HighTDPMinPWM < PWMMin || l.HighTDPMinPWM > l.PWMMax {
+		t.Errorf("HighTDPMinPWM %d outside [%d,%d]", l.HighTDPMinPWM, PWMMin, l.PWMMax)
 	}
 	if len(l.FloorCurve) > 0 {
 		if l.FloorCurve[0].PWM != l.HighTDPMinPWM {
@@ -802,7 +817,7 @@ func TestSanitizedRepairsInconsistentLimits(t *testing.T) {
 		{"temp axis inverted", Limits{TempMin: 90, TempMax: 40}},
 		{"temp axis collapsed", Limits{TempMin: 50, TempMax: 50}},
 		{"temp axis too narrow for the curve", Limits{TempMin: 50, TempMax: 55}},
-		{"temp axis exactly one degree short", Limits{TempMin: 40, TempMax: 40 + CurvePoints - 2}},
+		{"temp axis exactly one degree short", Limits{TempMin: 40, TempMax: 40 + testPoints - 2}},
 		{"safe max below the minimum", Limits{TDPMin: 60, TDPMaxSafe: 30, TDPMaxForced: 90}},
 		{"safe max above the forced max", Limits{TDPMin: 5, TDPMaxSafe: 95, TDPMaxForced: 90}},
 		{"min equals safe max", Limits{TDPMin: 50, TDPMaxSafe: 50, TDPMaxForced: 90}},
@@ -862,14 +877,14 @@ func TestSanitizedIsIdempotent(t *testing.T) {
 // prevents, stated end to end: take the narrowest axis Sanitized will accept,
 // push a point to each extreme, and require a valid curve every time.
 func TestEnforceCurveOnNarrowestAcceptedAxis(t *testing.T) {
-	l := Limits{TempMin: 40, TempMax: 40 + CurvePoints - 1}.Sanitized()
+	l := Limits{TempMin: 40, TempMax: 40 + testPoints - 1}.Sanitized()
 	assertLimitsUsable(t, l)
 
-	for idx := 0; idx < CurvePoints; idx++ {
+	for idx := 0; idx < testPoints; idx++ {
 		for _, temp := range []int{-100, 0, l.TempMin, l.TempMax, 10000} {
 			c := l.DefaultCurve()
 			c[idx].Temp = temp
-			l.EnforceCurve(&c, idx, nil)
+			l.EnforceCurve(c, idx, nil)
 			assertCurveValid(t, l, c, nil)
 		}
 	}
@@ -957,5 +972,61 @@ func TestFromDeviceCarriesBurstRanges(t *testing.T) {
 	if l.PL2Min != 32 || l.PL2Max != 92 || l.PL3Min != 45 || l.PL3Max != 93 {
 		t.Errorf("FromDevice burst ranges = PL2 %d–%d, PL3 %d–%d; want 32–92, 45–93",
 			l.PL2Min, l.PL2Max, l.PL3Min, l.PL3Max)
+	}
+}
+
+// testPoints is the point count of DefaultLimits (the Z13's), which most of
+// these tables are written against.
+const testPoints = 8
+
+// FitCurve is the gate a curve from outside the package goes through, and the
+// fix for the editor's old copy-into-an-array: a curve sized for other
+// hardware was silently truncated (or left the previous curve's tail in place).
+func TestFitCurveRefusesAnotherLength(t *testing.T) {
+	l := otherDevice().Sanitized()
+	if _, ok := l.FitCurve(DefaultLimits().DefaultCurve()); ok {
+		t.Error("an 8-point curve fitted a 6-point device")
+	}
+	six := l.DefaultCurve()
+	got, ok := l.FitCurve(six)
+	if !ok || !slices.Equal(got, six) {
+		t.Fatalf("FitCurve(own length) = %v, %v", got, ok)
+	}
+	got[0].PWM = 99
+	if six[0].PWM == 99 {
+		t.Error("FitCurve aliased its input")
+	}
+}
+
+// The placeholder takes the device's point count and ceiling, and is the
+// hand-tuned shape exactly where it was drawn for (the Z13's 8 at 255).
+func TestDefaultCurveFollowsTheDevicesShape(t *testing.T) {
+	if got := DefaultLimits().DefaultCurve().String(); got != "35:0,45:25,50:50,60:80,70:120,80:170,90:220,100:255" {
+		t.Errorf("Z13 placeholder = %s, want the hand-tuned curve unchanged", got)
+	}
+	l := otherDevice().Sanitized()
+	c := l.DefaultCurve()
+	if len(c) != 6 || c[len(c)-1].PWM != l.PWMMax {
+		t.Errorf("6-point/200 placeholder = %s", c)
+	}
+	assertCurveValid(t, l, c, nil)
+}
+
+// A served point count or ceiling outside what any curve device can mean falls
+// back to the default rather than sizing an editor from it.
+func TestSanitizedCurveShape(t *testing.T) {
+	for _, tt := range []struct {
+		in, wantPoints, inPWM, wantPWM int
+	}{
+		{0, 8, 0, 255},   // not served: a daemon older than the field
+		{1, 8, 300, 255}, // one point is not a curve; above the hwmon ABI
+		{6, 6, 100, 100}, // a real, different device
+		{99, 8, -1, 255},
+	} {
+		l := Limits{Points: tt.in, PWMMax: tt.inPWM}.Sanitized()
+		if l.Points != tt.wantPoints || l.PWMMax != tt.wantPWM {
+			t.Errorf("Sanitized(points %d, pwm %d) = %d, %d; want %d, %d",
+				tt.in, tt.inPWM, l.Points, l.PWMMax, tt.wantPoints, tt.wantPWM)
+		}
 	}
 }

@@ -82,6 +82,7 @@ func FromDevice(info *api.DeviceInfo) Limits {
 
 	if f := info.Fans; f != nil {
 		l.TempMin, l.TempMax = f.TempMin, f.TempMax
+		l.Points, l.PWMMax = f.Points, f.PWMMax
 		// Copied per preset, not just the outer slice: the document is cached
 		// for the process lifetime and Sanitized hands this straight to the
 		// caller, so a shared points slice would let the editor's own repairs

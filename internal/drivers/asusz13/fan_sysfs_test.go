@@ -32,37 +32,37 @@ func TestFindFanHwmonPathMissingDir(t *testing.T) {
 	}
 }
 
-func TestSetBothFanCurvesWritesBothFansAndEnablesCustom(t *testing.T) {
+func TestSetFanCurvesWritesBothFansAndEnablesCustom(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
 	seedReadingsSentinel(t, f)
 
-	points := make([]api.FanCurvePoint, fanCurvePoints)
+	points := make([]api.FanCurvePoint, fakeCurvePoints)
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 50 + i*20}
 	}
-	if err := SetBothFanCurves(points); err != nil {
-		t.Fatalf("SetBothFanCurves() = %v, want nil", err)
+	if err := SetFanCurves(points); err != nil {
+		t.Fatalf("SetFanCurves() = %v, want nil", err)
 	}
 
-	for _, fan := range fanNames {
+	for _, fan := range fakeFanChannels {
 		for i, p := range points {
-			gotTemp := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_auto_point"+itoa(i+1)+"_temp")
-			gotPWM := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_auto_point"+itoa(i+1)+"_pwm")
+			gotTemp := f.readInt(t, f.hwmon+"/pwm"+itoa(fan)+"_auto_point"+itoa(i+1)+"_temp")
+			gotPWM := f.readInt(t, f.hwmon+"/pwm"+itoa(fan)+"_auto_point"+itoa(i+1)+"_pwm")
 			if gotTemp != p.Temp || gotPWM != p.PWM {
-				t.Errorf("fan%d point %d = %d:%d, want %d:%d", fan.index, i+1, gotTemp, gotPWM, p.Temp, p.PWM)
+				t.Errorf("fan%d point %d = %d:%d, want %d:%d", fan, i+1, gotTemp, gotPWM, p.Temp, p.PWM)
 			}
 		}
 		// Custom mode must be enabled on the curve device...
-		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 1 {
-			t.Errorf("curve device fan%d pwm_enable = %d, want 1 (custom)", fan.index, got)
+		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan)+"_enable"); got != 1 {
+			t.Errorf("curve device fan%d pwm_enable = %d, want 1 (custom)", fan, got)
 		}
 		// ...and the base "asus" device must be left untouched. Its
 		// pwm1_enable_store rejects mode 1 on the Z13 (fan_type SPEC83) and, where
 		// it is accepted, clears custom_fan_curves[*].enabled for every fan —
 		// undoing the curve that was just enabled. See issue #15.
-		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != readingsSentinel {
-			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan.index, got, readingsSentinel)
+		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan)+"_enable"); got != readingsSentinel {
+			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan, got, readingsSentinel)
 		}
 	}
 }
@@ -74,24 +74,25 @@ const readingsSentinel = 9
 // seedReadingsSentinel marks both readings-device pwm_enable files.
 func seedReadingsSentinel(t *testing.T, f *fakeSysfs) {
 	t.Helper()
-	for _, fan := range fanNames {
-		f.writeFile(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable", itoa(readingsSentinel))
+	for _, fan := range fakeFanChannels {
+		f.writeFile(t, f.hwmonRead+"/pwm"+itoa(fan)+"_enable", itoa(readingsSentinel))
 	}
 }
 
-func TestSetBothFanCurvesRejectsWrongPointCount(t *testing.T) {
-	newFakeSysfs(t)
-	err := SetBothFanCurves([]api.FanCurvePoint{{Temp: 30, PWM: 100}})
-	if err == nil {
-		t.Fatal("SetBothFanCurves() with 1 point = nil, want an error")
+func TestSetFanCurvesRejectsWrongPointCount(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.seedFanCurveFiles(t, 40, 100)
+	err := SetFanCurves([]api.FanCurvePoint{{Temp: 30, PWM: 100}})
+	if err == nil || !strings.Contains(err.Error(), "exactly 8 points") {
+		t.Fatalf("SetFanCurves() with 1 point = %v, want the kernel's count named", err)
 	}
 }
 
-func TestSetBothFanCurvesErrorsWhenHwmonMissing(t *testing.T) {
+func TestSetFanCurvesErrorsWhenHwmonMissing(t *testing.T) {
 	swap(t, &sysHwmonDir, t.TempDir())
-	points := make([]api.FanCurvePoint, fanCurvePoints)
-	if err := SetBothFanCurves(points); err == nil {
-		t.Error("SetBothFanCurves() = nil, want an error when the hwmon device is absent")
+	points := make([]api.FanCurvePoint, fakeCurvePoints)
+	if err := SetFanCurves(points); err == nil {
+		t.Error("SetFanCurves() = nil, want an error when the hwmon device is absent")
 	}
 }
 
@@ -107,18 +108,18 @@ func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	if err := ResetAllFanCurves(); err != nil {
 		t.Fatalf("ResetAllFanCurves() = %v, want nil", err)
 	}
-	for _, fan := range fanNames {
-		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable"); got != 2 {
-			t.Errorf("curve device fan%d pwm_enable = %d, want 2 (auto)", fan.index, got)
+	for _, fan := range fakeFanChannels {
+		if got := f.readInt(t, f.hwmon+"/pwm"+itoa(fan)+"_enable"); got != 2 {
+			t.Errorf("curve device fan%d pwm_enable = %d, want 2 (auto)", fan, got)
 		}
-		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan.index)+"_enable"); got != readingsSentinel {
-			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan.index, got, readingsSentinel)
+		if got := f.readInt(t, f.hwmonRead+"/pwm"+itoa(fan)+"_enable"); got != readingsSentinel {
+			t.Errorf("readings device fan%d pwm_enable = %d, want %d (untouched)", fan, got, readingsSentinel)
 		}
 	}
 }
 
 // TestResetAllFanCurvesFailsWhenReleaseDoesNotStick is the mirror of
-// TestSetBothFanCurvesFailsWhenCurveDoesNotStick. A release the driver silently
+// TestSetFanCurvesFailsWhenCurveDoesNotStick. A release the driver silently
 // ignores used to be indistinguishable from success, which on the sleep path is
 // the difference between a quiet suspend and a machine that runs its fans all
 // night — firmware auto is what lets the EC stop them through s2idle.
@@ -150,14 +151,14 @@ func TestResetAllFanCurvesFailsWhenReleaseDoesNotStick(t *testing.T) {
 func TestVerifyFanModeReleased(t *testing.T) {
 	cases := []struct {
 		name    string
-		modes   [fanCount]int
+		modes   []int
 		wantErr bool
 	}{
-		{name: "both auto", modes: [fanCount]int{2, 2}},
-		{name: "forced full speed is not a curve", modes: [fanCount]int{0, 0}},
-		{name: "unreadable is not a failure", modes: [fanCount]int{-1, -1}},
-		{name: "still custom on fan1", modes: [fanCount]int{1, 2}, wantErr: true},
-		{name: "still custom on fan2", modes: [fanCount]int{2, 1}, wantErr: true},
+		{name: "both auto", modes: []int{2, 2}},
+		{name: "forced full speed is not a curve", modes: []int{0, 0}},
+		{name: "unreadable is not a failure", modes: []int{-1, -1}},
+		{name: "still custom on fan1", modes: []int{1, 2}, wantErr: true},
+		{name: "still custom on fan2", modes: []int{2, 1}, wantErr: true},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -165,12 +166,12 @@ func TestVerifyFanModeReleased(t *testing.T) {
 			f.seedFanCurveFiles(t, 40, 100)
 			for i, m := range tt.modes {
 				if m == -1 {
-					if err := os.Remove(f.hwmon + "/pwm" + itoa(fanNames[i].index) + "_enable"); err != nil {
-						t.Fatalf("removing pwm%d_enable: %v", fanNames[i].index, err)
+					if err := os.Remove(f.hwmon + "/pwm" + itoa(fakeFanChannels[i]) + "_enable"); err != nil {
+						t.Fatalf("removing pwm%d_enable: %v", fakeFanChannels[i], err)
 					}
 					continue
 				}
-				f.writeFile(t, f.hwmon+"/pwm"+itoa(fanNames[i].index)+"_enable", itoa(m)+"\n")
+				f.writeFile(t, f.hwmon+"/pwm"+itoa(fakeFanChannels[i])+"_enable", itoa(m)+"\n")
 			}
 			err := verifyFanModeReleased()
 			if (err != nil) != tt.wantErr {
@@ -201,11 +202,11 @@ func TestSetFanModeLeavesReadingsDeviceAlone(t *testing.T) {
 	}
 }
 
-// TestSetBothFanCurvesFailsWhenCurveDoesNotStick is the regression test for
+// TestSetFanCurvesFailsWhenCurveDoesNotStick is the regression test for
 // issue #15. The kernel accepts the pwm_enable write and then leaves the mode at
 // auto — which is what a concurrent platform_profile write produces — and the
 // caller must find out rather than being told the curve was applied.
-func TestSetBothFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
+func TestSetFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100) // seeds pwm_enable = 2 (auto)
 
@@ -213,13 +214,13 @@ func TestSetBothFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
 	fanWriteInt = func(string, int) error { return nil } // accepted, no effect
 	t.Cleanup(func() { fanWriteInt = orig })
 
-	points := make([]api.FanCurvePoint, fanCurvePoints)
+	points := make([]api.FanCurvePoint, fakeCurvePoints)
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 50 + i*20}
 	}
-	err := SetBothFanCurves(points)
+	err := SetFanCurves(points)
 	if err == nil {
-		t.Fatal("SetBothFanCurves() = nil, want an error when the kernel does not honour the curve")
+		t.Fatal("SetFanCurves() = nil, want an error when the kernel does not honour the curve")
 	}
 	if !strings.Contains(err.Error(), "pwm1_enable") {
 		t.Errorf("error %q does not name the attribute that proved it", err)
@@ -232,25 +233,25 @@ func TestSetBothFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
 func TestVerifyFanCurveActive(t *testing.T) {
 	cases := []struct {
 		name    string
-		modes   [fanCount]string // "" means do not create the file
+		modes   []string // "" means do not create the file
 		wantErr bool
 	}{
-		{"both custom", [fanCount]string{"1", "1"}, false},
-		{"fan1 dropped to auto", [fanCount]string{"2", "1"}, true},
-		{"fan2 dropped to auto", [fanCount]string{"1", "2"}, true},
-		{"full speed is not custom", [fanCount]string{"0", "1"}, true},
+		{"both custom", []string{"1", "1"}, false},
+		{"fan1 dropped to auto", []string{"2", "1"}, true},
+		{"fan2 dropped to auto", []string{"1", "2"}, true},
+		{"full speed is not custom", []string{"0", "1"}, true},
 		// Unverifiable is not the same as failed: a SKU exposing only the CPU
 		// curve must keep working, floor and all.
-		{"fan2 missing", [fanCount]string{"1", ""}, false},
+		{"fan2 missing", []string{"1", ""}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeSysfs(t)
-			for i, fan := range fanNames {
+			for i, fan := range fakeFanChannels {
 				if tc.modes[i] == "" {
 					continue
 				}
-				f.writeFile(t, f.hwmon+"/pwm"+itoa(fan.index)+"_enable", tc.modes[i])
+				f.writeFile(t, f.hwmon+"/pwm"+itoa(fan)+"_enable", tc.modes[i])
 			}
 			err := VerifyFanCurveActive()
 			if (err != nil) != tc.wantErr {
@@ -294,20 +295,20 @@ func TestSetFanModeFullSpeedErrorsWithoutReadingsDevice(t *testing.T) {
 	}
 }
 
-func TestReadBothFanCurvesRoundTrip(t *testing.T) {
+func TestReadFanCurvesRoundTrip(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
 
-	points := make([]api.FanCurvePoint, fanCurvePoints)
+	points := make([]api.FanCurvePoint, fakeCurvePoints)
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 60 + i*10}
 	}
-	if err := SetBothFanCurves(points); err != nil {
-		t.Fatalf("SetBothFanCurves() = %v", err)
+	if err := SetFanCurves(points); err != nil {
+		t.Fatalf("SetFanCurves() = %v", err)
 	}
-	curves, err := ReadBothFanCurves()
+	curves, err := ReadFanCurves()
 	if err != nil {
-		t.Fatalf("ReadBothFanCurves() = %v, want nil", err)
+		t.Fatalf("ReadFanCurves() = %v, want nil", err)
 	}
 	for fi := range curves {
 		for i, p := range curves[fi] {
@@ -318,37 +319,37 @@ func TestReadBothFanCurvesRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReadBothFanRPMAndModes(t *testing.T) {
+func TestReadFanRPMsAndModes(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
 
-	rpms, err := ReadBothFanRPM()
+	rpms, err := ReadFanRPMs()
 	if err != nil {
-		t.Fatalf("ReadBothFanRPM() = %v, want nil", err)
+		t.Fatalf("ReadFanRPMs() = %v, want nil", err)
 	}
 	if rpms[0] != 3001 || rpms[1] != 3002 {
-		t.Errorf("ReadBothFanRPM() = %v, want [3001 3002]", rpms)
+		t.Errorf("ReadFanRPMs() = %v, want [3001 3002]", rpms)
 	}
 
-	modes, err := ReadBothFanModes()
+	modes, err := ReadFanCurveModes()
 	if err != nil {
-		t.Fatalf("ReadBothFanModes() = %v, want nil", err)
+		t.Fatalf("ReadFanCurveModes() = %v, want nil", err)
 	}
 	if modes[0] != 2 || modes[1] != 2 {
-		t.Errorf("ReadBothFanModes() = %v, want [2 2]", modes)
+		t.Errorf("ReadFanCurveModes() = %v, want [2 2]", modes)
 	}
 }
 
 func TestFanReadersErrorWhenDeviceMissing(t *testing.T) {
 	swap(t, &sysHwmonDir, t.TempDir())
-	if _, err := ReadBothFanRPM(); err == nil {
-		t.Error("ReadBothFanRPM() = nil, want an error")
+	if _, err := ReadFanRPMs(); err == nil {
+		t.Error("ReadFanRPMs() = nil, want an error")
 	}
-	if _, err := ReadBothFanModes(); err == nil {
-		t.Error("ReadBothFanModes() = nil, want an error")
+	if _, err := ReadFanCurveModes(); err == nil {
+		t.Error("ReadFanCurveModes() = nil, want an error")
 	}
-	if _, err := ReadBothFanCurves(); err == nil {
-		t.Error("ReadBothFanCurves() = nil, want an error")
+	if _, err := ReadFanCurves(); err == nil {
+		t.Error("ReadFanCurves() = nil, want an error")
 	}
 }
 

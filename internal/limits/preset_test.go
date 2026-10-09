@@ -10,7 +10,7 @@ import (
 )
 
 func eightPoints(pwm int) []api.FanCurvePoint {
-	pts := make([]api.FanCurvePoint, CurvePoints)
+	pts := make([]api.FanCurvePoint, testPoints)
 	for i := range pts {
 		pts[i] = api.FanCurvePoint{Temp: 30 + i*10, PWM: pwm}
 	}
@@ -44,7 +44,7 @@ func TestSanitizedPresetsDropsCurvesTheDaemonWouldRefuse(t *testing.T) {
 	sameTemp[3].Temp = sameTemp[2].Temp
 
 	tooHigh := eightPoints(100)
-	tooHigh[7].PWM = PWMMax + 1
+	tooHigh[7].PWM = HwmonPWMMax + 1
 
 	for _, tc := range []struct {
 		name  string

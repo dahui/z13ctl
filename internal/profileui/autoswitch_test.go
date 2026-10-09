@@ -75,6 +75,24 @@ func TestPowerLabel(t *testing.T) {
 	}
 }
 
+func TestFanRPMText(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		s    *api.State
+		want string
+	}{
+		{"nil", nil, ""},
+		{"every fan", &api.State{RPM: []int{2100, 2350}, FanRPM: 2100}, "2100 / 2350 RPM"},
+		{"stopped fans are readings", &api.State{RPM: []int{0, 0}}, "0 / 0 RPM"},
+		{"older daemon: fan 1 alone", &api.State{FanRPM: 1900}, "1900 RPM"},
+		{"nothing reported", &api.State{}, ""},
+	} {
+		if got := profileui.FanRPMText(tt.s); got != tt.want {
+			t.Errorf("%s: FanRPMText = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestSourceLabel(t *testing.T) {
 	for _, tt := range []struct {
 		name string

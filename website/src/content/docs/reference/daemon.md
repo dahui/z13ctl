@@ -137,6 +137,7 @@ render controls against, instead of hardcoding one device's numbers:
 {"ok":true,"device":{
   "id":"asus-rog-flow-z13-2025","model":"GZ302",
   "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255,
+          "labels":["Fan 1","Fan 2"],
           "presets":[{"name":"quiet","label":"Quiet","description":"Fans stopped until 60°C, ...",
                       "curve":[{"temp":35,"pwm":0},{"temp":50,"pwm":0}, "..."]}, "..."]},
   "power":{"tdp_min":28,"tdp_max_safe":75,"tdp_max_forced":80,
@@ -175,7 +176,12 @@ sources (the GZ302EA's agree). A `tdp` request below a burst limit's minimum is
 raised to it, and one above its maximum refused. While the embedded controller
 is not answering after a resume, the daemon serves the last ranges it read
 rather than reading the kernel, since on asus-armoury each read is a live ACPI
-call. `fans.temp_min`/`temp_max` are the curve editor's
+call. `fans.points` is how many points a curve holds — the kernel's count
+where the daemon can read it — and `fans.pwm_max` the speed ceiling; size a
+curve editor from both, since a curve of any other length is refused.
+`fans.labels` names each fan in the order `get-state`'s `rpm` lists them, so
+its length is the number of fans (absent from an older daemon: label by
+position). `fans.temp_min`/`temp_max` are the curve editor's
 display axis, not validation limits; `power.floor_curve` is the fan floor
 enforced while the sustained TDP exceeds `tdp_max_safe` (draw it under the
 user's curve); `toggles[].values` lists the legal values where the firmware

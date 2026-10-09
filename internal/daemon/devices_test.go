@@ -47,6 +47,9 @@ var testDev = func() *device.Device {
 			// And the toggle list: the driver describes toggles from the
 			// kernel's attribute metadata when asus-armoury is loaded.
 			d.Toggles = deviceFileToggles{Toggles: d.Toggles, specs: declaredToggles(c)}
+			// And the fan shape: the driver lays hwmon's point count and fan
+			// labels over the device data.
+			d.Fans = deviceFileFans{FanController: d.Fans, shape: c.Fans.Shape()}
 			return d
 		}
 	}
@@ -91,6 +94,15 @@ var testEnv driver.PowerEnvelope = func() driver.PowerEnvelope {
 	}
 	panic("Z13 device file not found in embedded device data")
 }()
+
+// deviceFileFans reports the device file's fan shape in place of the driver's
+// hwmon-resolved one.
+type deviceFileFans struct {
+	driver.FanController
+	shape driver.FanShape
+}
+
+func (f deviceFileFans) Shape() driver.FanShape { return f.shape }
 
 // deviceFileToggles reports the device file's toggle entries in place of the
 // driver's kernel-described list.
