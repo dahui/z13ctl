@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -462,3 +463,174 @@ func TestECWaitFitsInsideSuspendCeiling(t *testing.T) {
 			"the watcher would wake up inside a resume", worst, budget)
 	}
 }
+
+// blockingWait is a waitEC that never sees the EC answer: it returns only when
+// its context is cancelled, as the real wait does mid-settle.
+func blockingWait(started chan<- struct{}) func(context.Context, bool) (ecStatus, bool) {
+	return func(ctx context.Context, _ bool) (ecStatus, bool) {
+		if started != nil {
+			started <- struct{}{}
+		}
+		<-ctx.Done()
+		return ecWedged, false
+	}
+}
+
+// A sleep edge during the EC wait must abandon the restore, not let it write the
+// curve and PPT into the freeze (issue #24).
+func TestSleepCycleSkipsARestoreStillWaitingForTheEC(t *testing.T) {
+	t.Parallel()
+	restored := make(chan ecStatus, 1)
+	c := &sleepCycle{
+		waitEC:  blockingWait(nil),
+		restore: func(s ecStatus) { restored <- s },
+	}
+	c.resumed(t.Context(), true)
+	if !c.settle() {
+		t.Error("settle did not report the restore as skipped")
+	}
+	select {
+	case <-restored:
+		t.Error("a restore cancelled during the EC wait still ran")
+	default:
+	}
+	if c.settle() {
+		t.Error("a second settle with nothing pending reported a skip")
+	}
+}
+
+// A restore already writing must finish before the sleep edge releases, so the
+// release is the last write before the suspend.
+func TestSleepCycleWaitsForARestoreInProgress(t *testing.T) {
+	t.Parallel()
+	inRestore := make(chan struct{})
+	finish := make(chan struct{})
+	var finished atomic.Bool
+	c := &sleepCycle{
+		waitEC: func(context.Context, bool) (ecStatus, bool) { return ecReady, true },
+		restore: func(ecStatus) {
+			close(inRestore)
+			<-finish
+			finished.Store(true)
+		},
+	}
+	c.resumed(t.Context(), true)
+	<-inRestore
+
+	settled := make(chan bool)
+	go func() { settled <- c.settle() }()
+	select {
+	case <-settled:
+		t.Fatal("settle returned while the restore was still writing; the release would race it")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(finish)
+	if skipped := <-settled; skipped {
+		t.Error("a restore that ran was reported as skipped")
+	}
+	if !finished.Load() {
+		t.Error("settle returned before the restore finished")
+	}
+}
+
+// Two resume signals with no sleep between them must not leave two restores
+// running against each other: the first is cancelled and joined before the
+// second starts.
+func TestSleepCycleSecondResumeSettlesTheFirst(t *testing.T) {
+	t.Parallel()
+	ctxs := make(chan context.Context, 2)
+	var restores atomic.Int32
+	c := &sleepCycle{
+		waitEC: func(ctx context.Context, _ bool) (ecStatus, bool) {
+			ctxs <- ctx
+			<-ctx.Done()
+			return ecWedged, false
+		},
+		restore: func(ecStatus) { restores.Add(1) },
+	}
+	c.resumed(t.Context(), true)
+	first := <-ctxs
+	c.resumed(t.Context(), true)
+	if first.Err() == nil {
+		t.Error("the second resume left the first worker waiting")
+	}
+	second := <-ctxs
+	if second.Err() != nil {
+		t.Error("the second worker started already cancelled")
+	}
+	c.settle()
+	if n := restores.Load(); n != 0 {
+		t.Errorf("restores = %d, want 0: both waits were cancelled", n)
+	}
+}
+
+func TestSleepCycleStopsWithItsContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	started := make(chan struct{}, 1)
+	c := &sleepCycle{waitEC: blockingWait(started), restore: func(ecStatus) {}}
+	c.resumed(ctx, false)
+	<-started
+	cancel()
+	done := make(chan struct{})
+	go func() { c.settle(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("settle hung after the daemon's context was cancelled")
+	}
+}
+
+func TestReleaseHoldStaysInsideLogindsBudget(t *testing.T) {
+	t.Parallel()
+	const settle = 3 * time.Second
+	tests := []struct {
+		name                 string
+		settle, budget, used time.Duration
+		want                 time.Duration
+	}{
+		{"default budget, quick release", settle, 5 * time.Second, 100 * time.Millisecond, settle},
+		{"budget cuts the hold short", settle, 3 * time.Second, 500 * time.Millisecond, 2 * time.Second},
+		{"budget already spent", settle, 2 * time.Second, 1900 * time.Millisecond, 0},
+		{"a generous budget does not lengthen it", settle, time.Minute, 0, settle},
+		{"a device with no settle holds nothing", 0, 5 * time.Second, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := releaseHold(tt.settle, tt.budget, tt.used); got != tt.want {
+				t.Errorf("releaseHold(%v, %v, %v) = %v, want %v", tt.settle, tt.budget, tt.used, got, tt.want)
+			}
+		})
+	}
+}
+
+// The hold's duration is device data; the daemon must read it from the device
+// it assembled, and a device without fans holds nothing.
+func TestReleaseSettleComesFromTheDevice(t *testing.T) {
+	t.Parallel()
+	if got := (&Daemon{hw: testDev}).releaseSettle(); got != 3*time.Second {
+		t.Errorf("releaseSettle on the Z13 = %v, want the device file's 3s", got)
+	}
+	// A value no device file carries, so a hard-coded duration cannot pass.
+	odd := &device.Device{Fans: shapedFans{shape: driver.FanShape{SleepReleaseSettle: 1500 * time.Millisecond}}}
+	if got := (&Daemon{hw: odd}).releaseSettle(); got != 1500*time.Millisecond {
+		t.Errorf("releaseSettle = %v, want the fan shape's 1.5s", got)
+	}
+	if got := (&Daemon{hw: &device.Device{}}).releaseSettle(); got != 0 {
+		t.Errorf("releaseSettle with no fans = %v, want 0", got)
+	}
+	if got := (&Daemon{}).releaseSettle(); got != 0 {
+		t.Errorf("releaseSettle with no device = %v, want 0", got)
+	}
+}
+
+// shapedFans is a fan controller that answers only Shape; anything else panics
+// on the nil embedded interface, which is the point: releaseSettle must not
+// touch fan hardware.
+type shapedFans struct {
+	driver.FanController
+	shape driver.FanShape
+}
+
+func (f shapedFans) Shape() driver.FanShape { return f.shape }

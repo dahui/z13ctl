@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
@@ -99,6 +100,14 @@ func TestZ13StockTableNamesAreReserved(t *testing.T) {
 // bottom, monotonic on both axes, and parseable by the same validator user
 // curves go through — a floor the parser rejects could be written but never
 // round-trip through state.
+// The hold is what stops the Z13's sleep/wake cycling (issue #24); losing it from
+// the file, or from Shape, silently brings the cycling back.
+func TestZ13CarriesTheSleepReleaseSettle(t *testing.T) {
+	if got := z13Config(t).Fans.Shape().SleepReleaseSettle; got != 3*time.Second {
+		t.Errorf("SleepReleaseSettle = %v, want the measured 3s", got)
+	}
+}
+
 func TestZ13FloorCurveIsWellFormed(t *testing.T) {
 	c := z13Config(t)
 	curve := c.Power.Envelope().FloorCurve
@@ -291,6 +300,12 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 		{"undervolt bounds above zero", func(c *Config) {
 			c.Undervolt = &UndervoltConfig{Method: "m", Min: -10, Max: 5}
 		}, "min <= max <= 0"},
+		{"negative sleep release settle", func(c *Config) {
+			c.Fans = &FansConfig{Method: "m", Points: 8, TempMin: 30, TempMax: 100, SleepReleaseSettleMs: -1}
+		}, "sleep_release_settle_ms"},
+		{"sleep release settle past logind's budget", func(c *Config) {
+			c.Fans = &FansConfig{Method: "m", Points: 8, TempMin: 30, TempMax: 100, SleepReleaseSettleMs: 5000}
+		}, "under 5000"},
 		{"battery block offering nothing", func(c *Config) {
 			no := false
 			c.Battery = &BatteryConfig{Method: "m", ChargeLimit: &no}

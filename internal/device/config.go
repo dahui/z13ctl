@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/driver"
@@ -61,6 +62,11 @@ type FansConfig struct {
 	TempMin int    `toml:"temp_min"` // curve editor axis, Celsius
 	TempMax int    `toml:"temp_max"`
 
+	// SleepReleaseSettleMs holds a suspend this long after the daemon's pre-sleep
+	// fan release; see driver.FanShape.SleepReleaseSettle. 0, the default, is no
+	// hold: only a machine where the early wake was measured carries one.
+	SleepReleaseSettleMs int `toml:"sleep_release_settle_ms"`
+
 	Presets []FanPresetConfig `toml:"presets"`
 }
 
@@ -80,7 +86,8 @@ type FanPresetConfig struct {
 
 // Shape returns the driver.FanShape this config describes.
 func (c FansConfig) Shape() driver.FanShape {
-	s := driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255}
+	s := driver.FanShape{Points: c.Points, TempMin: c.TempMin, TempMax: c.TempMax, PWMMax: 255,
+		SleepReleaseSettle: time.Duration(c.SleepReleaseSettleMs) * time.Millisecond}
 	for _, p := range c.Presets {
 		preset := api.FanPreset{Name: p.Name, Label: p.Label, Description: p.Description}
 		for _, pt := range p.Curve {
@@ -316,6 +323,12 @@ func (c Config) Validate() error {
 		// temperatures — the same bound the GUI's Sanitized enforces.
 		if c.Fans.TempMax-c.Fans.TempMin < c.Fans.Points-1 {
 			fail("fans temperature range %d–%d is too narrow for %d points", c.Fans.TempMin, c.Fans.TempMax, c.Fans.Points)
+		}
+		// The hold runs inside logind's delay budget, 5 s by default; the daemon
+		// cuts it short to fit anyway, but a value at or past the budget would
+		// never be what the file says.
+		if c.Fans.SleepReleaseSettleMs < 0 || c.Fans.SleepReleaseSettleMs >= 5000 {
+			fail("fans.sleep_release_settle_ms %d must be 0 or more and under 5000", c.Fans.SleepReleaseSettleMs)
 		}
 		seen := make(map[string]bool, len(c.Fans.Presets))
 		for i, p := range c.Fans.Presets {

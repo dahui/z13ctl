@@ -652,6 +652,10 @@ On `PrepareForSleep(true)` the daemon therefore:
    requires. **If that write fails, the fans are not released.** A loud
    suspend is the right trade against an unfloored high limit.
 3. Releases both fans to firmware auto.
+4. Waits 3 seconds before letting the suspend go ahead, when it released
+   anything. A suspend that follows the release more closely is often woken
+   again by the embedded controller within a couple of seconds. The wait is
+   cut short if logind's `InhibitDelayMaxSec` leaves less room.
 
 Steps 2 and 3 only happen when the daemon owns the current thermal settings —
 that is, when a custom profile is active. A curve set by another tool
@@ -670,23 +674,54 @@ If logind refuses the inhibitor the daemon carries on without it; the writes
 are then racing the freeze, which is how it behaved before v1.3.1.
 
 :::note[If your machine will not stay asleep]
-The release writes to `ppt_*` and `pwm_enable` in the window before the
-suspend, so it is a reasonable first suspect — but on the one machine where
-this was investigated it was **not** the cause: suspend aborted identically
-with the daemon stopped entirely. Rule voltaire in or out with a control run
-before going further:
+Releasing the fans makes the firmware re-apply its thermal policy, and a
+suspend that starts straight after that is often woken again by the embedded
+controller within a couple of seconds. With the lid closed, the machine is then
+suspended again, the daemon has meanwhile put your curve back, and the next
+release wakes it again. The daemon therefore waits 3 seconds after the release
+before letting the suspend go ahead (less if logind allows less), which stopped
+the early wakes in testing. It logs what woke the machine after every resume:
 
 ```sh
+journalctl --user -u voltaire -b | grep -E "entering sleep|held the suspend|handing the suspend|wake report"
+```
+
+`slept` is how long the suspend lasted and `hw_sleep` how much of that the
+hardware really spent asleep. A wake from the embedded controller often shows
+`woken_by="not counted"` with `acpi_events` naming its GPE, so a few seconds of
+`slept` and almost no `hw_sleep` is the signature. `woken_by` names the wakeup
+sources the kernel counted for that suspend. On the Z13, `PNP0C09:00` is the
+embedded controller, `AC0` or `ACPI0003:00` the charger, `PNP0C0A:00` the
+battery, `PNP0C0D:00` the lid, `PNP0C0C:00` the power button,
+`i2c-ELAN9008:00` the touchscreen, and a USB path such as `3-4` a USB device,
+usually the keyboard cover. Where the kernel's name is opaque, the device it
+belongs to follows in brackets. The `handing the suspend` line before it says
+whether voltaire wrote the fans or power limits just before the suspend
+(`wrote_fans_or_ppt`).
+
+To rule voltaire in or out, compare three runs, each with the lid closed for a
+couple of minutes:
+
+```sh
+# 1. voltaire not running at all: the control
 systemctl --user stop voltaire.service voltaire.socket
-systemctl suspend        # still wakes immediately? not voltaire
+
+# 2. the daemon running on a firmware profile: no fan or power writes around sleep
+voltaire profile --set balanced
+
+# 3. your custom profile, with the pre-sleep fan release turned off
+systemctl --user edit voltaire.service
+#   [Service]
+#   ExecStart=
+#   ExecStart=voltaire daemon --no-sleep-release
+systemctl --user restart voltaire.service
 ```
 
 A suspend that aborts before the kernel logs `Freezing user space processes`
 means a wakeup event was already pending. `cat /sys/power/pm_wakeup_irq` names
-the interrupt, and `sudo cat /sys/kernel/debug/wakeup_sources` lists every
-source with a nonzero `wakeup_count` column — the devices that may have
-aborted a suspend. On the Z13 the touchscreen and the detachable cover are
-both wakeup-enabled and are the usual answers.
+the interrupt, and `echo 1 | sudo tee /sys/power/pm_debug_messages` makes the
+kernel log each wakeup as it happens. On the Z13 the touchscreen and the
+detachable cover are both wakeup-enabled and are the usual answers.
 :::
 
 ### On resume — volatile settings are reapplied
@@ -714,6 +749,13 @@ seconds of the release, in the window before userspace freezes. It resumes
 defending the curve on the resume signal, or after about two minutes of awake
 time if that signal never arrives.
 
+Before restoring anything, the daemon waits a few seconds for the embedded
+controller to answer, since a write into it while it is still coming up can
+hard-lock the machine. If the machine is put back to sleep during that wait —
+the lid closed again, or a machine that woke with its lid shut being suspended
+again — the restore is abandoned rather than run into the freeze, so a brief
+wake writes nothing to the fans or power limits on either side of it.
+
 This all happens transparently with no user intervention. You can verify it
 worked by checking the daemon logs after a resume:
 
@@ -722,8 +764,9 @@ journalctl --user -u voltaire --since "5 minutes ago"
 ```
 
 Expect, in order: `system entering sleep`, `sleep: released fans to firmware
-auto`, `system resumed from sleep, restoring volatile state`, and
-`resume: restoring custom profile`.
+auto`, `sleep: held the suspend after the fan release`, `sleep: handing the
+suspend to logind`, `system resumed from sleep`, `resume: wake report`,
+`restoring volatile state`, and `resume: restoring custom profile`.
 
 ## Keyboard reattach recovery
 

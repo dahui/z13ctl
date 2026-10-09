@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 )
@@ -50,6 +51,12 @@ type FanShape struct {
 	// Points points inside the PWMMax ceiling — so the curves and the shape they
 	// are checked against are one value rather than two that can drift.
 	Presets []api.FanPreset
+
+	// SleepReleaseSettle is how long the daemon holds a suspend after its
+	// pre-sleep fan release. On the Z13 a suspend that starts within a moment of
+	// the release is woken by the EC a second or two later (issue #24). Device
+	// data, measured per machine; zero means no hold.
+	SleepReleaseSettle time.Duration
 }
 
 // FanController drives a device's fan-curve hardware.

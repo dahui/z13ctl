@@ -273,6 +273,14 @@ fan curve, a custom TDP (safe range, e.g. 40 W), and `./voltaire undervolt --set
       reapply. The machine **stays** asleep until woken — a suspend that
       aborts within seconds is a wakeup-source problem; read
       `/sys/power/pm_wakeup_irq` before blaming the hook.
+- [ ] The journal shows `sleep: held the suspend after the fan release held=3s`
+      before `handing the suspend to logind`, and the `resume: wake report`
+      after it shows a full-length `slept` with most of it in `hw_sleep`. A
+      `slept` of 1–2.5 s with `hw_sleep=200ms` is the issue #24 early wake.
+      `sudo rtcwake -m no -s 20 && systemctl suspend` makes the suspend length
+      known.
+- [ ] Suspend again within a second of a resume: the journal shows `restore
+      skipped`, then `wrote_fans_or_ppt=false` and no hold for that suspend.
 - [ ] High-TDP variant: `./voltaire tdp --set 80 --force`, suspend, resume — the
       journal shows power lowered *before* the fan release on the way down,
       and the floor curve re-applied with the limit on the way back.

@@ -23,6 +23,14 @@ points   = 8
 temp_min = 35
 temp_max = 105
 
+# A suspend that starts straight after the daemon's pre-sleep fan release
+# (pwm_enable=2) is often woken by the EC 1–2.5 s into s2idle — SCI and IRQ 1
+# together, then "Wakeup after ACPI Notify sync" — and a lid-closed machine then
+# cycles through sleep and wake (issue #24). RTC-timed 20 s suspends, 2026-10-09:
+# 7 of 15 woke early with no hold, 4 of 6 with 300 ms, 0 of 7 with 3 s, and 0 of
+# 10 with no release at all.
+sleep_release_settle_ms = 3000
+
 # Named starting points, offered only when the user picks one — never applied by
 # a profile switch. That coupling is what the z13ctl-plus fork shipped and then
 # deleted: its Quiet profile auto-applied a quiet curve, and any curve with a

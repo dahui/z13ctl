@@ -69,6 +69,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 	// PrepareForSleep(true) is already too late to delay anything.
 	inhibitor := takeSleepInhibitor(conn)
 	defer releaseSleepInhibitor(&inhibitor)
+	inhibitBudget := inhibitDelayMax(conn)
 
 	// Whether a battery was registered going into the suspend. It is what lets the
 	// resume wait read a battery that has vanished outright as a wedged EC rather
@@ -79,6 +80,31 @@ func (d *Daemon) watchResume(ctx context.Context) {
 	hadBattery := d.probeEC() != ecAbsent
 
 	slog.Info("resume watcher started (listening for PrepareForSleep)")
+
+	cycle := &sleepCycle{
+		waitEC: d.waitForEC,
+		restore: func(status ecStatus) {
+			// Deliberately not skipped: restoreVolatileState is what clears the
+			// suspending flag, and skipping it wholesale would stand the
+			// reconcile watcher down until its staleness ceiling expired. It also
+			// restores lighting, which goes over hidraw and never touches the EC.
+			// Only the profile apply at the end has to be held back.
+			if status == ecWedged {
+				slog.Error("EC unresponsive after resume; restoring lighting only and leaving the "+
+					"profile to the reconcile watcher, to keep WMI writes off a stalled ACPI mutex",
+					"waited", ecProbeTimeout)
+			}
+			slog.Info("restoring volatile state")
+			d.restoreVolatileState(status)
+		},
+	}
+	// Joined on the way out so a restore cannot outlive Run's cleanup, which
+	// closes the HID device it writes to.
+	defer cycle.settle()
+
+	// What the kernel had counted when the last suspend was handed to logind;
+	// zero until the first one. See wakeup.go.
+	var beforeSleep wakeSnapshot
 
 	for {
 		select {
@@ -101,6 +127,12 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			if sleeping {
 				slog.Info("system entering sleep")
+				started := time.Now()
+				// A restore still waiting for the EC is abandoned rather than
+				// left to run into the freeze. See sleepCycle.
+				if cycle.settle() {
+					slog.Info("resume: suspending again before the EC settled; restore skipped")
+				}
 				hadBattery = d.probeEC() != ecAbsent
 				// A (true) with no intervening (false) — a retried suspend, an
 				// aborted one, or a lost resume signal — leaves us holding nothing.
@@ -124,11 +156,33 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				}
 				d.mu.Unlock()
 
+				wrote := false
 				if d.sleepRelease {
-					d.releaseVolatileState()
+					wrote = d.releaseVolatileState()
 				} else {
 					slog.Info("sleep: fan release disabled (--no-sleep-release); the custom curve stays in force")
 				}
+
+				// A suspend that follows a fan release too closely is woken
+				// again by the EC within a couple of seconds. See releaseHold.
+				if wrote {
+					hold := releaseHold(d.releaseSettle(), inhibitBudget, time.Since(started))
+					before := sciCount()
+					select {
+					case <-ctx.Done():
+					case <-time.After(hold):
+					}
+					slog.Info("sleep: held the suspend after the fan release", "held", hold,
+						"ec_events", sub(sciCount(), before))
+				}
+
+				// Taken last, so a wakeup counted from here on happened after
+				// everything voltaire did. How long that took and whether it
+				// wrote the EC are what tell an EC answering our own writes
+				// apart from a wake voltaire had no part in.
+				beforeSleep = snapshotWakeups()
+				slog.Info("sleep: handing the suspend to logind",
+					"pre_sleep_work", time.Since(started).Round(time.Millisecond), "wrote_fans_or_ppt", wrote)
 
 				// logind suspends as soon as the last delay lock closes, so this
 				// must happen here rather than on the way out of the loop — the
@@ -137,10 +191,16 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				continue
 			}
 			slog.Info("system resumed from sleep")
-			// Re-taken here rather than after the restore: waitForEC below can
-			// block for seconds, and logind must not be free to run an unheld
-			// suspend cycle in that window — that is the same gap
-			// takeSleepInhibitor exists to close.
+			if !beforeSleep.At.IsZero() {
+				after := snapshotWakeups()
+				diffWakeups(beforeSleep, after, readWakeExtras(after.Failed > beforeSleep.Failed)).log()
+				beforeSleep = wakeSnapshot{}
+			}
+			// Re-taken here rather than after the restore: the EC wait and restore
+			// below run for seconds, and logind must not be free to run an unheld
+			// suspend cycle in that window — that is the same gap takeSleepInhibitor
+			// exists to close. The loop stays free to take the sleep edge meanwhile,
+			// so holding the lock delays a re-suspend only by the release itself.
 			//
 			// Release before re-taking. The sleep branch normally leaves this at -1,
 			// but nothing guarantees the two edges alternate — a (false) with no
@@ -149,24 +209,71 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			releaseSleepInhibitor(&inhibitor)
 			inhibitor = takeSleepInhibitor(conn)
 
-			status, ok := d.waitForEC(ctx, hadBattery)
-			if !ok {
-				continue
-			}
-			// Deliberately not a `continue`: restoreVolatileState is what clears
-			// the suspending flag, and skipping it wholesale would stand the
-			// reconcile watcher down until its staleness ceiling expired. It also
-			// restores lighting, which goes over hidraw and never touches the EC.
-			// Only the profile apply at the end has to be held back.
-			if status == ecWedged {
-				slog.Error("EC unresponsive after resume; restoring lighting only and leaving the "+
-					"profile to the reconcile watcher, to keep WMI writes off a stalled ACPI mutex",
-					"waited", ecProbeTimeout)
-			}
-			slog.Info("restoring volatile state")
-			d.restoreVolatileState(status)
+			cycle.resumed(ctx, hadBattery)
 		}
 	}
+}
+
+// sleepCycle runs the post-resume EC wait and restore off the signal loop, so a
+// PrepareForSleep(true) arriving during it is handled at once (issue #24).
+//
+// The loop used to run them inline: 3 s of settle, up to 20 s more of probing,
+// then the restore — all while holding the delay lock it re-took on resume. A
+// suspend requested in that window (the lid closed again, or logind re-suspending
+// a machine that woke with its lid shut) sat unread in the channel. logind waits
+// InhibitDelayMaxSec, 5 s by default, for a lock and then suspends anyway, so the
+// restore's pwm_enable=1 and PPT writes could land at the freeze — leaving the
+// custom curve driving the fans through s2idle, which is the very thing the
+// pre-sleep release exists to prevent — and the stale sleep signal was handled
+// only after the next wake. Now the sleep edge cancels a restore that has not
+// started writing and waits for one that has, so the release that follows
+// always runs last. A wake that is followed by an immediate re-suspend then
+// writes nothing to the EC at all: the fans were released before the previous
+// suspend and nothing put the curve back.
+//
+// The suspending flag stays set across a skipped restore, exactly as it is
+// between any two sleep signals; the next restore clears it, and the reconcile
+// watcher's tick-counted ceiling covers a resume signal that never comes.
+//
+// It is used only from the watchResume goroutine and needs no lock of its own.
+type sleepCycle struct {
+	waitEC  func(ctx context.Context, hadBattery bool) (ecStatus, bool)
+	restore func(ecStatus)
+
+	cancel context.CancelFunc
+	done   chan bool // receives whether the restore ran
+}
+
+// resumed starts the wait-and-restore for one resume, first settling any
+// earlier one still pending — two resume signals with no sleep between them.
+func (c *sleepCycle) resumed(ctx context.Context, hadBattery bool) {
+	c.settle()
+	wctx, cancel := context.WithCancel(ctx)
+	done := make(chan bool, 1)
+	c.cancel, c.done = cancel, done
+	go func() {
+		status, ok := c.waitEC(wctx, hadBattery)
+		if !ok {
+			done <- false
+			return
+		}
+		// Not cancellable once started: the restore takes hwMu, and a sleep
+		// edge waiting in settle then releases whatever it wrote.
+		c.restore(status)
+		done <- true
+	}()
+}
+
+// settle cancels a pending restore and waits for it to finish. It reports
+// whether a restore was skipped, as opposed to having run or there being none.
+func (c *sleepCycle) settle() (skipped bool) {
+	if c.done == nil {
+		return false
+	}
+	c.cancel()
+	ran := <-c.done
+	c.cancel, c.done = nil, nil
+	return !ran
 }
 
 // sleepObs is what the sleep hook observes before touching anything.
@@ -257,7 +364,10 @@ func sleepTick(obs sleepObs, env driver.PowerEnvelope) sleepAction {
 // should keep reporting while the machine is asleep. No saveAndNotify either — a
 // state-changed event for a transition that reverses itself on resume would only
 // make clients redraw twice.
-func (d *Daemon) releaseVolatileState() {
+//
+// It reports whether it wrote fan or PPT hardware, which is what decides the
+// post-release hold (releaseHold) and goes in the sleep log.
+func (d *Daemon) releaseVolatileState() (wrote bool) {
 	// hwMu before d.mu, always — this writes the same attributes the socket
 	// handlers and the reconcile watcher do.
 	d.hwMu.Lock()
@@ -297,7 +407,7 @@ func (d *Daemon) releaseVolatileState() {
 	act := sleepTick(obs, d.env())
 	if act.none() {
 		slog.Debug("sleep: nothing to release", "owned", obs.Owned, "fan_mode", obs.CurveMode)
-		return
+		return false
 	}
 
 	// Armed only now, and only because something is about to be written. Arming it
@@ -317,7 +427,7 @@ func (d *Daemon) releaseVolatileState() {
 			// sustained limit above the safe max with the fans on firmware auto.
 			slog.Warn("sleep: not releasing the fans — could not lower the sustained limit first",
 				"profile", obs.Firmware, "pl1", obs.PL1, "err", err)
-			return
+			return true
 		}
 	}
 
@@ -325,9 +435,10 @@ func (d *Daemon) releaseVolatileState() {
 	// nil: the machine is going to sleep, and the resume runs applyCustomHW anyway.
 	if err := d.hw.ReleaseFans(nil); err != nil {
 		slog.Warn("sleep: failed to release fans to firmware auto", "err", err)
-		return
+		return true
 	}
 	slog.Info("sleep: released fans to firmware auto", "reason", act.Reason)
+	return true
 }
 
 // lowerLimitForRelease brings the sustained limit down far enough that releasing
@@ -369,6 +480,62 @@ func (d *Daemon) lowerLimitForRelease(firmware string) error {
 	slog.Info("sleep: clamped the sustained limit so the fans could be released",
 		"pl1", maxSafe, "profile", firmware)
 	return nil
+}
+
+// inhibitMargin is left unused of logind's delay budget, so the inhibitor is
+// closed before logind gives up on it and suspends regardless.
+const inhibitMargin = 500 * time.Millisecond
+
+// defaultInhibitDelay is logind's InhibitDelayMaxSec default, assumed when the
+// property cannot be read.
+const defaultInhibitDelay = 5 * time.Second
+
+// releaseHold is how long to hold the suspend after the pre-sleep fan release
+// (issue #24). Every pwm_enable=2 write makes the firmware re-apply its thermal
+// policy, and on the Z13 a suspend that starts within a moment of it is often
+// woken by the EC: 1–2.5 s into s2idle the EC's SCI and IRQ 1 fire together and
+// the kernel logs "Wakeup after ACPI Notify sync", after about 0.2 s of hardware
+// sleep. On a lid-closed machine logind suspends it again, the resume has put
+// the curve back by then, and the next release wakes it again — the sleep/wake
+// cycling in #24. The release's own burst of EC events is over within about
+// 230 ms while awake, and waiting that out did not help (4 of 6 still woke
+// early); a 3 s gap did (0 of 7). The settle is device data —
+// fans.sleep_release_settle_ms, where the measurements are recorded — and the
+// hold is paid only on a suspend that released something.
+//
+// It is cut short so that the pre-sleep work already done plus the hold stays
+// inside logind's delay budget: logind suspends once the budget runs out whether
+// or not the lock is closed, and a hold that ran past it would leave the
+// snapshot and the log line racing the freeze. Pure, so the arithmetic is tested.
+func releaseHold(settle, budget, used time.Duration) time.Duration {
+	hold := min(settle, budget-inhibitMargin-used)
+	return max(hold, 0)
+}
+
+// inhibitDelayMax reads logind's InhibitDelayMaxUSec, the longest it waits for
+// a delay lock. Distributions and users do lower it, so the hold must not
+// assume the 5 s default.
+func inhibitDelayMax(conn *dbus.Conn) time.Duration {
+	v, err := conn.Object("org.freedesktop.login1", "/org/freedesktop/login1").
+		GetProperty("org.freedesktop.login1.Manager.InhibitDelayMaxUSec")
+	if err != nil {
+		slog.Debug("could not read logind's InhibitDelayMaxUSec; assuming the default", "err", err)
+		return defaultInhibitDelay
+	}
+	us, ok := v.Value().(uint64)
+	if !ok {
+		return defaultInhibitDelay
+	}
+	return time.Duration(us) * time.Microsecond
+}
+
+// releaseSettle is the device's post-release hold, zero for a device with no
+// fan control or no measurement.
+func (d *Daemon) releaseSettle() time.Duration {
+	if d.hw == nil || d.hw.Fans == nil {
+		return 0
+	}
+	return d.hw.Fans.Shape().SleepReleaseSettle
 }
 
 // takeSleepInhibitor holds a logind delay lock so the daemon's pre-sleep writes
