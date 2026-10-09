@@ -18,7 +18,7 @@ on Linux.
   long-term battery health
 - **Fan curves** — set custom 8-point fan curves via the asus-wmi hwmon interface
   (both fans cool the same APU and share one curve)
-- **TDP control** — set CPU/GPU power limits (5–93W) via asus-nb-wmi PPT attributes,
+- **TDP control** — set CPU/GPU power limits (28–80W sustained on the GZ302EA) via the kernel's asus-armoury attributes,
   with an automatic fan floor (50% PWM, rising to 100% at 80 °C) above 75W sustained
 - **CPU undervolting** — reduce voltage via AMD Curve Optimizer for lower
   temperatures and power draw without reducing performance (requires `ryzen_smu`

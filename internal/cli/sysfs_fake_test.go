@@ -64,6 +64,13 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 		}
 	}
 
+	// The five asus-nb-wmi PPT attributes, holding the kernel's initial 5 W
+	// cache. There is no asus-armoury PPT tree unless a test asks for one with
+	// withArmouryPPT, so the legacy interface is the one in use by default.
+	for _, l := range pptLimits {
+		f.writeFile(t, f.ppt+"/"+l.legacy, itoa(TDPMin))
+	}
+
 	f.writeFile(t, f.hwmon+"/name", hwmonNameCurves)
 	f.writeFile(t, f.hwmonRead+"/name", hwmonNameReadings)
 	f.writeFile(t, f.hwmonTemp+"/name", "k10temp")
@@ -131,12 +138,46 @@ func (f *fakeSysfs) firmwareProfileReset(t *testing.T) {
 	if !ok {
 		return
 	}
-	for name, v := range map[string]int{
-		"ppt_pl1_spl": row.PL1SPL, "ppt_pl2_sppt": row.PL2SPPT, "ppt_fppt": row.FPPT,
-		"ppt_apu_sppt": row.APUSPPT, "ppt_platform_sppt": row.PlatformSPPT,
-	} {
-		f.writeFile(t, f.ppt+"/"+name, itoa(v))
+	// Both interfaces' files stand for "the limit in force" here, which the
+	// real caches do not track; the fake models the firmware, not the caches.
+	for _, l := range pptLimits {
+		v := *l.field(&row)
+		f.writeFile(t, f.ppt+"/"+l.legacy, itoa(v))
+		if cur := f.firmware + "/" + l.armoury + "/current_value"; fileExists(cur) {
+			f.writeFile(t, cur, itoa(v))
+		}
 	}
+}
+
+// armouryFakeBounds are the GZ302EA's asus-armoury PPT bounds on AC:
+// min, default, max.
+var armouryFakeBounds = map[string][3]int{
+	"ppt_pl1_spl":  {28, 60, 80},
+	"ppt_pl2_sppt": {32, 75, 92},
+	"ppt_pl3_fppt": {45, 86, 93},
+}
+
+// withArmouryPPT adds asus-armoury's three PPT attributes to the fake, each
+// current_value at its default as the driver seeds it, so asus-armoury becomes
+// the interface in use. The asus-nb-wmi files stay, as they do on a real 7.x
+// kernel built with the deprecated attributes.
+func (f *fakeSysfs) withArmouryPPT(t *testing.T) {
+	t.Helper()
+	for attr, b := range armouryFakeBounds {
+		dir := f.firmware + "/" + attr
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.writeFile(t, dir+"/min_value", itoa(b[0]))
+		f.writeFile(t, dir+"/default_value", itoa(b[1]))
+		f.writeFile(t, dir+"/max_value", itoa(b[2]))
+		f.writeFile(t, dir+"/current_value", itoa(b[1]))
+	}
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // swap points a path var at v and restores it when the test ends.

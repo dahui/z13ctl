@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -72,6 +73,11 @@ type Daemon struct {
 	// would make the same writes two seconds later — so every watcher that
 	// writes fan or PPT hardware consults it.
 	ecWedged bool
+
+	// profileWritten is set by watchProfileWrites whenever the kernel reports a
+	// platform_profile write — same-value writes included — and consumed by the
+	// next reconcile tick. Atomic because the watcher sets it without d.mu.
+	profileWritten atomic.Bool
 
 	subMu       sync.Mutex
 	subscribers []subscriber // long-lived connections subscribed to events
@@ -161,6 +167,10 @@ func Run(ctx context.Context, opts Options) error {
 	// State-driven, so it is a no-op on a machine that never uses a custom
 	// profile; register it unconditionally.
 	go d.watchReconcile(ctx)
+
+	// Tells the reconcile watcher about platform_profile writes that leave no
+	// other trace: a same-value write still resets the power limits (issue #22).
+	go d.watchProfileWrites(ctx)
 
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)

@@ -209,6 +209,10 @@ func cloneState(s api.State) api.State {
 		c.Autoswitch = &as
 	}
 	c.TDP = cloneTDP(s.TDP)
+	if s.TDPLimits != nil {
+		l := *s.TDPLimits
+		c.TDPLimits = &l
+	}
 	c.Undervolt = cloneUndervolt(s.Undervolt)
 	c.FanCurve = cloneFanCurve(s.FanCurve)
 	return c

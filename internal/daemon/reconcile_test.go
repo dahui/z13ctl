@@ -8,9 +8,12 @@ package daemon
 // the apply path would write the developer's actual fan hardware.
 
 import (
+	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dahui/z13ctl/api"
 	"github.com/dahui/z13ctl/internal/cli"
@@ -658,6 +661,34 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			wantCurve: true,
 		},
 		{
+			// The remaining #22 case: PPD re-writes the *same* profile on a charger
+			// transition, on a curveless custom profile. platform_profile reads the
+			// same and there is no curve to find dropped; only the kernel's
+			// notification says the limit was reset.
+			name:    "same-value write reported by the kernel",
+			lastHW:  "balanced",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
+			wantTDP: true,
+		},
+		{
+			// The notification alone is enough even on the first tick.
+			name:    "reported write on the first tick",
+			lastHW:  "",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
+			wantTDP: true,
+		},
+		{
+			name:   "reported write but the profile sets no TDP",
+			lastHW: "balanced",
+			obs:    reconcileObs{Custom: true, CurveMode: 2, PL1: 52, ProfileHW: "balanced", ProfileWritten: true},
+		},
+		{
+			// Our own profile writes notify too; they land on firmware profiles.
+			name:   "reported write on a firmware profile",
+			lastHW: "balanced",
+			obs:    reconcileObs{WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", ProfileWritten: true},
+		},
+		{
 			// The daemon's first observation has nothing to compare against.
 			name:   "first tick is not a change",
 			lastHW: "",
@@ -696,5 +727,37 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 				t.Errorf("lastHW = %q, want %q latched for the next tick", st.lastHW, tt.obs.ProfileHW)
 			}
 		})
+	}
+}
+
+// TestWatchProfileWritesIgnoresAPlainFile: the watcher waits for POLLPRI, which
+// only sysfs_notify raises. A regular file never raises it, so the watcher must
+// neither report a write nor spin, and must return once ctx ends. (The real
+// notification cannot be produced outside sysfs; it is verified on hardware.)
+func TestWatchProfileWritesIgnoresAPlainFile(t *testing.T) {
+	path := t.TempDir() + "/platform_profile"
+	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := profileNotifyPath
+	profileNotifyPath = path
+	t.Cleanup(func() { profileNotifyPath = orig })
+
+	d := &Daemon{}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { d.watchProfileWrites(ctx); close(done) }()
+
+	if err := os.WriteFile(path, []byte("balanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchProfileWrites did not return after ctx ended")
+	}
+	if d.profileWritten.Load() {
+		t.Error("a plain file write was reported as a platform_profile write")
 	}
 }

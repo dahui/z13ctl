@@ -26,6 +26,7 @@ func sampleState() api.State {
 		Profile:   "custom",
 		TDP:       &api.TDPState{PL1SPL: 15, PL2SPPT: 20, FPPT: 25, APUSPPT: 20, PlatformSPPT: 20},
 		Undervolt: &api.UndervoltState{CPUCO: -20, Active: true},
+		TDPLimits: &api.TDPLimits{Backend: "asus-armoury", PL1: api.TDPRange{Min: 28, Max: 80}, SafeMax: 75},
 		FanCurve: &api.FanCurveState{
 			Mode:   1,
 			Points: []api.FanCurvePoint{{Temp: 40, PWM: 50}, {Temp: 50, PWM: 80}},
@@ -58,6 +59,7 @@ func TestCloneStateSharesNoMutableMemory(t *testing.T) {
 	c.Devices["keyboard"] = api.LightingState{Mode: "rainbow"}
 	c.Devices["new"] = api.LightingState{}
 	c.TDP.PL1SPL = 99
+	c.TDPLimits.PL1.Max = 99
 	c.Undervolt.Active = false
 	c.FanCurve.Points[0].PWM = 255
 
@@ -69,6 +71,9 @@ func TestCloneStateSharesNoMutableMemory(t *testing.T) {
 	}
 	if orig.TDP.PL1SPL != 15 {
 		t.Errorf("original TDP.PL1SPL = %d, want 15 — the pointer is shared", orig.TDP.PL1SPL)
+	}
+	if orig.TDPLimits.PL1.Max != 80 {
+		t.Errorf("original TDPLimits.PL1.Max = %d, want 80 — the pointer is shared", orig.TDPLimits.PL1.Max)
 	}
 	if !orig.Undervolt.Active {
 		t.Error("original Undervolt.Active was cleared — the pointer is shared")

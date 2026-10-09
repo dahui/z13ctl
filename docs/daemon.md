@@ -350,17 +350,39 @@ needs to be done by hand.
 
 On `get-state` requests the daemon also populates `temperature` (APU die
 temperature in °C), `fan_rpm` (fan speed in RPM), `on_ac` (whether the charger
-is plugged in), and `undervolt_available` (whether the `ryzen_smu` kernel module
-is present) from live sysfs reads. These are not persisted — they are real-time
-sensor values.
+is plugged in), `undervolt_available` (whether the `ryzen_smu` kernel module
+is present), and `tdp_limits` from live sysfs reads. These are not persisted —
+they are real-time values.
+
+`tdp_limits` is the range the kernel accepts for each power limit, so a client
+can bound its controls rather than discover the range from an error:
+
+```json
+"tdp_limits": {
+  "backend": "asus-armoury",
+  "pl1": {"min": 28, "max": 80},
+  "pl2": {"min": 32, "max": 92},
+  "pl3": {"min": 45, "max": 93},
+  "safe_max": 75
+}
+```
+
+`backend` is `asus-armoury`, or `asus-nb-wmi` on kernels that do not expose the
+limits through asus-armoury (which reports 5–93 W for each). PL1 above
+`safe_max` needs `"force": true` on the `tdp` request and brings the high-TDP
+fan floor with it. The ranges can differ on battery, so read them from the
+latest `get-state` rather than caching them. The field is absent when no power
+limit interface exists. A `tdp` request with PL2 or PL3 below its minimum is
+raised to it; one with PL1 outside its range is refused.
 
 On startup the daemon reads this file, resolves what the current power source
 calls for if autoswitch is configured, and restores all saved settings before
 accepting any connections. If the active profile is a custom one, its fan curve,
 TDP, and undervolt are re-applied to the hardware. If it is a firmware profile,
-that profile's measured PPT values are written instead — the kernel's `ppt_*`
-attributes come up holding a stale 5 W default after boot, and nothing else
-restores them.
+the limits are handed back to the firmware: that profile's stock values are
+written, then the fans are released to firmware auto, which makes the firmware
+re-apply the profile's own limits. (The release is skipped when a fan curve set
+by another tool is in force.)
 
 !!! warning "Downgrading loses named profiles"
     A daemon from before this release reads only the top-level fields and drops

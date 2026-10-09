@@ -414,9 +414,10 @@ z13ctl fancurve --reset
 
 ## tdp
 
-Get, set, or reset TDP (Thermal Design Power) limits via the asus-nb-wmi PPT
-(Package Power Tracking) sysfs attributes. Root or group access required; see
-[setup](#setup).
+Get, set, or reset TDP (Thermal Design Power) limits — the PPT (Package Power
+Tracking) limits — through the kernel's asus-armoury firmware-attributes, or the
+older asus-nb-wmi PPT attributes on kernels that do not expose them there. Root
+or group access required; see [setup](#setup).
 
 ```
 z13ctl tdp [flags]
@@ -424,24 +425,44 @@ z13ctl tdp [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print current PPT values |
+| `--get` | Print current PPT values and the range the kernel accepts for each |
 | `--set <watts>` | Set all PPT limits to the specified wattage |
 | `--reset` | Switch to balanced profile, reset fan curves to auto and the undervolt to stock, and restore balanced's stock PPT |
 | `--pl1 <watts>` | Override PL1/SPL independently |
 | `--pl2 <watts>` | Override PL2/sPPT independently |
 | `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above 75W (up to 93W). Burst limits (PL2/PL3) are allowed up to 93W without `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
+| `--force` | Allow sustained TDP (PL1) above 75W, up to the kernel's maximum. Burst limits (PL2/PL3) need no `--force`. When PL1 exceeds 75W, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
-**PPT attributes:**
+**Power limits:**
 
-| Attribute | Limit | Description |
-|-----------|-------|-------------|
-| `ppt_pl1_spl` | PL1 — Sustained | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
-| `ppt_pl2_sppt` | PL2 — Short-term boost | Power the APU can draw for several seconds before throttling to PL1. |
-| `ppt_fppt` | PL3 — Fast boost | Maximum instantaneous power for millisecond-scale spikes. |
-| `ppt_apu_sppt` | APU short-term | APU-specific short-term limit; automatically mirrors PL2. |
-| `ppt_platform_sppt` | Platform short-term | Platform-level short-term limit; automatically mirrors PL2. |
+| Limit | asus-armoury attribute | asus-nb-wmi attribute | Description |
+|-------|------------------------|-----------------------|-------------|
+| PL1 — Sustained | `ppt_pl1_spl` | `ppt_pl1_spl` | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
+| PL2 — Short-term boost | `ppt_pl2_sppt` | `ppt_pl2_sppt` | Power the APU can draw for several seconds before throttling to PL1. |
+| PL3 — Fast boost | `ppt_pl3_fppt` | `ppt_fppt` | Maximum instantaneous power for millisecond-scale spikes. |
+| APU short-term | — | `ppt_apu_sppt` | APU-specific short-term limit; mirrors PL2. Not exposed by asus-armoury on the GZ302EA. |
+| Platform short-term | — | `ppt_platform_sppt` | Platform-level short-term limit; mirrors PL2. As APU short-term. |
+
+**Which interface, and its ranges.** asus-armoury is used whenever the kernel
+exposes its PPT attributes (mainline 7.x carries the GZ302EA's); the asus-nb-wmi
+ones are deprecated — reading them logs a kernel notice, and distributions can
+build them out entirely — and are used only as a fallback. The accepted range
+comes from the kernel, and `--get` prints it:
+
+| Limit | asus-armoury (GZ302EA) | asus-nb-wmi |
+|-------|------------------------|-------------|
+| PL1 | 28–80W | 5–93W |
+| PL2 | 32–92W | 5–93W |
+| PL3 | 45–93W | 5–93W |
+
+A PL2 or PL3 below its minimum is raised to it, and `--set` says so: on
+asus-armoury `--set 30` writes 30/32/45W. The raised PL2 is what the machine
+then sustains — under load it held 32W for four minutes rather than settling to
+30W — so 32W is the practical floor on asus-armoury. A PL1 outside its range is
+refused. A custom profile saved with
+values outside the range (for example 15W, from an older z13ctl) still applies,
+at the nearest value the kernel accepts; the saved profile is not changed.
 
 With `--set`, all three limits default to the same value. Use `--pl1`, `--pl2`,
 and `--pl3` to set them independently — a stepped configuration like
@@ -449,22 +470,25 @@ and `--pl3` to set them independently — a stepped configuration like
 instantaneous peaks to 65W.
 
 Setting a custom TDP switches to the `custom` profile. Switching back to a stock
-profile writes that profile's measured stock PPT values to hardware — the
-firmware does *not* re-apply them on a `platform_profile` change, so z13ctl
-restores them explicitly. The saved custom values are kept, so `custom` stays
-re-selectable.
+profile hands the limits back to the firmware: z13ctl writes that profile's
+stock values (which brings a high custom limit down first) and then releases the
+fans to firmware auto, which makes the firmware re-apply the profile's own
+limits. The saved custom values are kept, so `custom` stays re-selectable.
 
 !!! note "PPT readback values"
-    The values shown by `--get` are the kernel driver's cached values. After a
-    fresh boot they hold a stale 5W default until something writes them; z13ctl
-    substitutes the measured per-profile table in that case. Use `ryzenadj -i`
-    if you need ground-truth PPT readings.
+    The values shown by `--get` are the kernel driver's cached values — what was
+    last written, not what is in force. asus-armoury's cache starts at its
+    default (60/75/86W on AC, 45/52/71W on battery, kept separately for each
+    power source) and asus-nb-wmi's at 5W; until something writes them on a
+    stock profile, z13ctl reports that profile's stock values instead. Use
+    `ryzenadj -i` if you need ground-truth PPT readings.
 
 **Safety:**
 
-- Default range: 5–75W for the sustained limit (PL1); `--force` extends it to
-  5–93W. Burst limits (PL2/PL3) may go to 93W without `--force`, since short
-  bursts are thermally safe.
+- The sustained limit (PL1) is capped at 75W unless `--force` is given, which
+  extends it to the kernel's maximum (80W on asus-armoury, 93W on asus-nb-wmi).
+  Burst limits (PL2/PL3) may go to the kernel's maximum without `--force`, since
+  short bursts are thermally safe.
 - When the **sustained** limit exceeds 75W, both fans are held to a minimum of
   127 PWM (50%) before the TDP values are written. If that fan write fails — or
   the kernel accepts it and then drops the curve — the TDP is not applied at all.
@@ -653,7 +677,7 @@ not require the daemon to be running.
 Install udev rules and a boot service granting a group read/write access to
 the ASUS HID devices, performance profile, battery charge limit, firmware
 attributes (boot sound, panel overdrive), hwmon fan curve attributes,
-asus-nb-wmi PPT power limit attributes for TDP control, and ryzen_smu sysfs
+asus-armoury PPT power limit attributes (and asus-nb-wmi's, as the fallback) for TDP control, and ryzen_smu sysfs
 files for undervolting (if the module is loaded).
 
 ```

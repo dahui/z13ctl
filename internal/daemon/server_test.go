@@ -35,10 +35,16 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 		{"non-numeric pl2", request{Cmd: "tdp", Set: "40", PL2: "x"}, "invalid pl2"},
 		{"non-numeric pl3", request{Cmd: "tdp", Set: "40", PL3: "x"}, "invalid pl3"},
 		{"pl1 below minimum", request{Cmd: "tdp", Set: "1"}, "out of range"},
-		{"pl1 above safe max without force", request{Cmd: "tdp", Set: "80"}, "use force flag"},
+		{"pl1 above safe max without force", request{Cmd: "tdp", Set: "80"}, "--force"},
 		{"pl1 above hardware max even with force", request{Cmd: "tdp", Set: "200", Force: true}, "out of range"},
 		{"pl2 above hardware max", request{Cmd: "tdp", Set: "40", PL2: "200"}, "out of range"},
-		{"pl3 below minimum", request{Cmd: "tdp", Set: "40", PL3: "1"}, "out of range"},
+		{"pl3 above hardware max", request{Cmd: "tdp", Set: "40", PL3: "200"}, "out of range"},
+		// No "PL2/PL3 below minimum" case: those are now raised to the kernel's
+		// minimum rather than refused, so such a request passes validation and
+		// would write the machine's real power limits. Raising is covered in
+		// internal/cli/ppt_test.go. Every case here must be refused on both
+		// interfaces' ranges (asus-armoury 28–80 for PL1, asus-nb-wmi 5–93),
+		// since which one the developer's machine has decides the bounds.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -57,8 +63,9 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 // TestHandleTDPForceBoundaryRejections pins the asymmetry between sustained and
 // burst limits: PL1 needs the force flag above TDPMaxSafe.
 //
-// Only rejection cases belong here. handleTDP writes straight to the real
-// /sys/devices/platform/asus-nb-wmi/ppt_* nodes once validation passes, and
+// Only rejection cases belong here, refused on either PPT interface's range.
+// handleTDP writes straight to the real PPT attributes (asus-armoury, or
+// asus-nb-wmi on older kernels) once validation passes, and
 // internal/cli's path vars are unexported, so a case that gets past validation
 // would change the developer's actual power limits as a test side effect.
 // Accepted-input behaviour is covered hermetically in internal/cli/tdp_test.go.

@@ -10,14 +10,20 @@ import (
 	"github.com/dahui/z13ctl/api"
 )
 
-// usePPTTempDir redirects PPT sysfs access to a temp directory for the duration
-// of the test and returns its path.
+// usePPTTempDir redirects PPT sysfs access to a temp directory holding the five
+// asus-nb-wmi attributes, with no asus-armoury tree, for the duration of the test
+// and returns its path. Both roots are swapped: redirecting only the asus-nb-wmi
+// one let tests find the real armoury attributes (see TestMain).
 func usePPTTempDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	orig := pptBasePath
-	pptBasePath = dir
-	t.Cleanup(func() { pptBasePath = orig })
+	for _, l := range pptLimits {
+		if err := os.WriteFile(dir+"/"+l.legacy, []byte("0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	swap(t, &pptBasePath, dir)
+	swap(t, &sysFirmwareAttrDir, t.TempDir())
 	return dir
 }
 
@@ -67,9 +73,9 @@ func TestSetTDPStateWritesEveryAttribute(t *testing.T) {
 		t.Errorf("wrote %d files, want %d", len(entries), len(want))
 	}
 	for attr, wantWatts := range want {
-		got, err := ReadPPT(attr)
+		got, err := readIntFile(dir + "/" + attr)
 		if err != nil {
-			t.Errorf("ReadPPT(%s) = %v, want nil", attr, err)
+			t.Errorf("reading %s = %v, want nil", attr, err)
 			continue
 		}
 		if got != wantWatts {

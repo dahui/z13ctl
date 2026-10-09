@@ -225,6 +225,11 @@ func (d *Daemon) dispatch(req request) response {
 		if tdp, err := cli.ReadEffectivePPT(d.effectiveProfile()); err == nil {
 			s.TDP = &tdp
 		}
+		// What the kernel accepts, so a client can bound its sliders. Set on
+		// this response only; it is never stored in state.
+		if lim, err := cli.PPTLimits(); err == nil {
+			s.TDPLimits = &lim
+		}
 		// Whether undervolt is available: the probe's answer once something has
 		// probed, module presence until then. Never the probe itself — its first
 		// run is a CO reset, and a GUI poll is no reason to write the mailbox.
@@ -769,21 +774,15 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	// PL1 (sustained) requires force flag above 75W. PL2/PL3 (burst) allowed up to hardware max.
-	pl1Max := cli.TDPMaxSafe
-	if req.Force {
-		pl1Max = cli.TDPMaxForced
+	// The same check the CLI runs, against the kernel's own limits: PL1 above
+	// the safe maximum needs force, PL1 outside the kernel's range is refused,
+	// and PL2/PL3 below their minimum are raised to it (cli.ResolveTDP).
+	tdp, notes, err := cli.ResolveTDP(watts, pl1, pl2, pl3, req.Force)
+	if err != nil {
+		return response{OK: false, Error: err.Error()}
 	}
-	if pl1 < cli.TDPMin || pl1 > pl1Max {
-		if pl1 > cli.TDPMaxSafe && !req.Force {
-			return response{OK: false, Error: fmt.Sprintf("PL1 %dW exceeds safe sustained max (%dW); use force flag", pl1, cli.TDPMaxSafe)}
-		}
-		return response{OK: false, Error: fmt.Sprintf("PL1 %dW out of range %d–%d", pl1, cli.TDPMin, pl1Max)}
-	}
-	for _, v := range []int{pl2, pl3} {
-		if v < cli.TDPMin || v > cli.TDPMaxForced {
-			return response{OK: false, Error: fmt.Sprintf("TDP %dW out of range %d–%d", v, cli.TDPMin, cli.TDPMaxForced)}
-		}
+	for _, n := range notes {
+		slog.Info("tdp: " + n)
 	}
 
 	d.hwMu.Lock()
@@ -796,8 +795,6 @@ func (d *Daemon) handleTDP(req request) response {
 		return response{OK: false, Error: "tdp: " + err.Error()}
 	}
 	d.mu.Unlock()
-
-	tdp := cli.TDPStateFor(watts, pl1, pl2, pl3)
 
 	// A profile that is not running must still be storable only in a state that
 	// is safe to activate: a high sustained limit alongside a curve that dips

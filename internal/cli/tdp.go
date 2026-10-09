@@ -1,22 +1,25 @@
 package cli
 
-// tdp.go — PPT sysfs path discovery and I/O helpers for ASUS TDP control.
-// Uses the asus-nb-wmi platform device attributes (NOT firmware-attributes,
-// which have empty calibration data on the 2025 Z13).
+// tdp.go — TDP safety constants, the stock profile table, and the fan-floor
+// rules for high sustained limits. Which kernel interface the limits are read
+// from and written to is ppt.go's business.
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/dahui/z13ctl/api"
 )
 
 // TDP safety limits in watts, derived from G-Helper's model config for the
-// 2025 ROG Flow Z13 (GZ302E) and Armoury Crate custom mode limits.
+// 2025 ROG Flow Z13 (GZ302E) and Armoury Crate custom mode limits. TDPMin and
+// TDPMaxForced are the asus-nb-wmi fallback's range only: asus-armoury reports
+// its own per-limit bounds (PL1 28–80 W on the GZ302EA), and those win
+// whenever it is present — see PPTLimits. TDPMaxSafe is ours, not the kernel's,
+// and applies on both.
 const (
-	TDPMin       = 5  // absolute minimum
-	TDPMaxSafe   = 75 // max in Armoury Crate custom mode
-	TDPMaxForced = 93 // absolute max for GZ302E (G-Helper)
+	TDPMin       = 5  // asus-nb-wmi minimum; also its initial (stale) cache value
+	TDPMaxSafe   = 75 // max in Armoury Crate custom mode; above it, force + fan floor
+	TDPMaxForced = 93 // asus-nb-wmi absolute max for GZ302E (G-Helper)
 	TDPDefault   = 50 // G-Helper default for Z13
 )
 
@@ -39,96 +42,36 @@ var StockProfilePPT = map[string]api.TDPState{
 	"performance": {PL1SPL: 70, PL2SPPT: 86, FPPT: 86, APUSPPT: 70, PlatformSPPT: 70},
 }
 
-// ReadEffectivePPT returns the current PPT values. If sysfs returns the stale
-// kernel cache (PL1 == 5) and the active profile is a known stock profile,
-// the measured per-profile defaults are returned instead. This fallback still
-// matters after a fresh boot, before any z13ctl profile switch has written real
-// values to the attributes.
+// ReadEffectivePPT returns the current PPT values. If the readback is the
+// kernel's untouched initial cache (PPTCacheStale: 5 W on asus-nb-wmi, the
+// default_value on asus-armoury) and the active profile is a known stock
+// profile, that profile's row is returned instead, as the active interface
+// would hold it. This fallback still matters after a fresh boot, before any
+// z13ctl profile switch has written real values.
 //
 // profile must be the *effective* profile, which for daemon callers is the
 // daemon's own state ("custom" when a custom TDP is active) — NOT the raw
 // platform_profile value. platform_profile is never "custom" (it is a virtual
 // profile that is deliberately not written to sysfs), so passing it would make a
-// legitimate 5W custom TDP indistinguishable from the stale cache and report the
-// stock table instead. Any profile name not in StockProfilePPT disables the
-// fallback, which is the desired behaviour for "custom".
+// legitimate custom TDP that happens to equal the initial cache indistinguishable
+// from it and report the stock table instead. Any profile name not in
+// StockProfilePPT disables the fallback, which is the desired behaviour for
+// "custom".
 func ReadEffectivePPT(profile string) (api.TDPState, error) {
-	s, err := ReadAllPPT()
+	b, err := activePPT()
+	if err != nil {
+		return api.TDPState{}, err
+	}
+	s, err := b.read()
 	if err != nil {
 		return s, err
 	}
-	if s.PL1SPL == TDPMin {
+	if b.stale(s) {
 		if stock, ok := StockProfilePPT[profile]; ok {
-			return stock, nil
+			return b.clamp(stock), nil
 		}
 	}
 	return s, nil
-}
-
-// FindPPTBasePath returns the sysfs path to the asus-nb-wmi platform device.
-func FindPPTBasePath() string {
-	if _, err := os.Stat(pptBasePath); err == nil {
-		return pptBasePath
-	}
-	return pptBasePath // return default even if missing, callers handle errors
-}
-
-// FindPPTPath returns the full sysfs path for a specific PPT attribute.
-func FindPPTPath(attr string) string {
-	return FindPPTBasePath() + "/" + attr
-}
-
-// ReadPPT reads a single PPT value (watts) from sysfs.
-func ReadPPT(attr string) (int, error) {
-	return readIntFile(FindPPTPath(attr))
-}
-
-// ReadAllPPT reads all 5 PPT values and returns a TDPState.
-func ReadAllPPT() (api.TDPState, error) {
-	var s api.TDPState
-	var err error
-	if s.PL1SPL, err = ReadPPT("ppt_pl1_spl"); err != nil {
-		return s, fmt.Errorf("reading ppt_pl1_spl: %w", err)
-	}
-	if s.PL2SPPT, err = ReadPPT("ppt_pl2_sppt"); err != nil {
-		return s, fmt.Errorf("reading ppt_pl2_sppt: %w", err)
-	}
-	if s.FPPT, err = ReadPPT("ppt_fppt"); err != nil {
-		return s, fmt.Errorf("reading ppt_fppt: %w", err)
-	}
-	if s.APUSPPT, err = ReadPPT("ppt_apu_sppt"); err != nil {
-		return s, fmt.Errorf("reading ppt_apu_sppt: %w", err)
-	}
-	if s.PlatformSPPT, err = ReadPPT("ppt_platform_sppt"); err != nil {
-		return s, fmt.Errorf("reading ppt_platform_sppt: %w", err)
-	}
-	return s, nil
-}
-
-// WritePPT writes a single PPT value (watts) to sysfs.
-func WritePPT(attr string, watts int) error {
-	return writeIntFile(FindPPTPath(attr), watts)
-}
-
-// SetTDPState writes every PPT attribute verbatim from s, with no mirroring or
-// derivation. Use this when the exact five values matter — notably when
-// restoring StockProfilePPT, whose measured APU/Platform sPPT do not equal PL2.
-func SetTDPState(s api.TDPState) error {
-	for _, w := range []struct {
-		attr  string
-		watts int
-	}{
-		{"ppt_pl1_spl", s.PL1SPL},
-		{"ppt_pl2_sppt", s.PL2SPPT},
-		{"ppt_fppt", s.FPPT},
-		{"ppt_apu_sppt", s.APUSPPT},
-		{"ppt_platform_sppt", s.PlatformSPPT},
-	} {
-		if err := WritePPT(w.attr, w.watts); err != nil {
-			return fmt.Errorf("writing %s: %w", w.attr, err)
-		}
-	}
-	return nil
 }
 
 // TDPStateFor resolves a unified watts value plus optional per-limit overrides

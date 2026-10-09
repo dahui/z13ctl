@@ -214,22 +214,23 @@ func runFanCurveReset() error {
 // platform profile's own limits (issue #22), so without this a `tdp --set` made
 // earlier would be silently undone by `fancurve --reset`.
 //
-// With no daemon there is no profile state, and the ppt_* cache — whatever was
+// With no daemon there is no profile state, and the PPT cache — whatever was
 // last written — is the only record. It counts as a custom limit only when it is
-// neither the kernel's stale 5W boot cache nor the active firmware profile's
-// stock row: re-writing either would replace the firmware's limits with ours. A
-// deliberate 5W custom limit is indistinguishable from the stale cache here and
-// is not kept; the daemon, which knows the profile, has no such blind spot.
+// neither the kernel's untouched initial cache (cli.PPTCacheStale) nor the
+// active firmware profile's stock row as the interface holds it: re-writing
+// either would replace the firmware's limits with ours. A deliberate custom
+// limit equal to the initial cache is indistinguishable from it here and is not
+// kept; the daemon, which knows the profile, has no such blind spot.
 func customLimitInForce() *api.TDPState {
 	cur, err := cli.ReadAllPPT()
-	if err != nil || cur.PL1SPL == cli.TDPMin || cur.PL1SPL > cli.TDPMaxSafe {
+	if err != nil || cli.PPTCacheStale(cur) || cur.PL1SPL > cli.TDPMaxSafe {
 		return nil
 	}
 	profile := ""
 	if data, err := os.ReadFile(cli.FindProfilePath()); err == nil {
 		profile = strings.TrimSpace(string(data))
 	}
-	if stock, ok := cli.StockProfilePPT[profile]; ok && stock == cur {
+	if stock, ok := cli.StockProfilePPT[profile]; ok && cli.EffectiveTDP(stock) == cur {
 		return nil
 	}
 	return &cur

@@ -25,6 +25,7 @@ type State struct {
 	Autoswitch         *AutoswitchState         `json:"autoswitch,omitempty"`
 	FanCurve           *FanCurveState           `json:"fan_curve,omitempty"`   // projection; see the type doc
 	TDP                *TDPState                `json:"tdp,omitempty"`         // projection; see the type doc
+	TDPLimits          *TDPLimits               `json:"tdp_limits,omitempty"`  // get-state only; what the kernel accepts
 	Undervolt          *UndervoltState          `json:"undervolt,omitempty"`   // projection; see the type doc
 	UndervoltAvailable bool                     `json:"undervolt_available"`   // true if ryzen_smu is loaded
 	OnAC               bool                     `json:"on_ac"`                 // true when running on mains power
@@ -158,10 +159,38 @@ type UndervoltState struct {
 }
 
 // TDPState captures all PPT (Package Power Tracking) values in watts.
+//
+// APUSPPT and PlatformSPPT read as 0 when the kernel interface in use does not
+// expose them: asus-armoury has neither on the GZ302EA. When setting a TDP they
+// follow PL2.
 type TDPState struct {
 	PL1SPL       int `json:"pl1_spl"`       // Sustained Power Limit
 	PL2SPPT      int `json:"pl2_sppt"`      // Short Boost
 	FPPT         int `json:"fppt"`          // Fast Boost
 	APUSPPT      int `json:"apu_sppt"`      // APU Short PPT
 	PlatformSPPT int `json:"platform_sppt"` // Platform Short PPT
+}
+
+// TDPLimits describes the power limits the running kernel accepts, so a client
+// can bound its controls instead of discovering the range from an error. It is
+// reported by get-state and never stored.
+//
+// The ranges come from the kernel at the time of the request: asus-armoury
+// reports per-limit bounds (on the GZ302EA, PL1 28–80, PL2 32–92, PL3 45–93 W)
+// and may report different ones on battery; the deprecated asus-nb-wmi
+// interface has none of its own, so the daemon reports 5–93 W for it. A PL2 or
+// PL3 below its minimum is raised to it when set; a PL1 outside its range is
+// refused.
+type TDPLimits struct {
+	Backend string   `json:"backend"`  // "asus-armoury" or "asus-nb-wmi"
+	PL1     TDPRange `json:"pl1"`      // sustained
+	PL2     TDPRange `json:"pl2"`      // short boost
+	PL3     TDPRange `json:"pl3"`      // fast boost
+	SafeMax int      `json:"safe_max"` // highest PL1 accepted without force; above it the fan floor applies
+}
+
+// TDPRange is an inclusive range in watts.
+type TDPRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
 }

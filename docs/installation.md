@@ -218,14 +218,16 @@ guide to set your first lighting effect, fan curve, and performance profile.
    `MODE=0660` / `GROUP=users` on the ASUS HID and input device nodes; uses
    `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute,
    hwmon fan curve attributes (`asus_custom_fan_curve` + `asus` pwm_enable),
-   and asus-nb-wmi PPT power limit attributes when the drivers load.
+   and the PPT power limit attributes (asus-armoury's, and asus-nb-wmi's as the
+   fallback) when the drivers load.
 2. Reloads udev and applies permissions immediately to all currently present
    files — including `ryzen_smu` sysfs files for undervolting (if the module
    is loaded).
 3. Writes `/etc/systemd/system/z13ctl-perms.service` and enables it — a
    `Type=oneshot` service that runs `chgrp` + `chmod g+w` at boot on
    `BAT*/charge_control_end_threshold`, the asus-armoury firmware attributes
-   (`boot_sound`, `panel_overdrive`), the asus-nb-wmi `ppt_*` power limits, and
+   (`boot_sound`, `panel_overdrive`, and the `ppt_*` power limits), the
+   asus-nb-wmi `ppt_*` power limits, and
    the `ryzen_smu_drv` files.
 4. Starts the service immediately so battery limit, TDP, and undervolt are
    accessible right away.

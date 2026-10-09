@@ -81,6 +81,10 @@ type reconcileObs struct {
 	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
 	PL1        int                 // effective sustained limit in watts; -1 if unreadable
 	ProfileHW  string              // platform_profile; a change means the firmware reset the power limits
+	// ProfileWritten: the kernel reported a platform_profile write since the last
+	// tick, same-value writes included (watchProfileWrites). Like a change in
+	// ProfileHW it means the firmware reset the power limits.
+	ProfileWritten bool
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
@@ -214,18 +218,18 @@ func reconcileTick(prev reconcileState, obs reconcileObs) (reconcileState, recon
 		}
 	}
 
-	// PPT is defended against third parties (asusctl, ryzenadj), not against
-	// the kernel: a platform_profile write does not reset the ppt_* values.
 	// A platform_profile write — power-profiles-daemon on an AC transition, Fn+F5,
 	// asusctl, anyone — makes the firmware re-apply that profile's own power
 	// limits, and the ppt_* attributes go on showing ours, so the drift check
-	// below cannot see it (issue #22). Two traces of such a write are observable:
-	// platform_profile itself changing, and a custom curve found dropped, since the
-	// same write clears custom_fan_curves[*].enabled. Either one means the saved
-	// TDP has to be re-written even though the cache still matches it. A same-value
-	// write on a profile with no curve leaves neither trace and stays invisible;
-	// nothing in sysfs records it.
-	policyWritten := act.Curve != nil ||
+	// below cannot see it (issue #22). Three traces of such a write are
+	// observable: the kernel's own notification (ProfileWritten), platform_profile
+	// itself changing, and a custom curve found dropped, since the same write
+	// clears custom_fan_curves[*].enabled. Any one means the saved TDP has to be
+	// re-written even though the cache still matches it. The notification is the
+	// only one a same-value write on a curveless profile leaves — which is what
+	// power-profiles-daemon does on a charger transition that keeps the profile —
+	// and the other two remain for a kernel or path where it does not arrive.
+	policyWritten := act.Curve != nil || obs.ProfileWritten ||
 		(prev.lastHW != "" && obs.ProfileHW != "" && obs.ProfileHW != prev.lastHW)
 
 	switch {
@@ -358,7 +362,14 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		if fc := active.FanCurve; fc != nil && fc.Mode == 1 && len(fc.Points) == 8 {
 			obs.WantCurve = fc.Points
 		}
-		obs.WantTDP = active.TDP
+		if t := active.TDP; t != nil {
+			// As written, not as stored: the drift check compares this with a
+			// readback, and a profile saved under asus-nb-wmi's 5 W floor reads
+			// back at asus-armoury's 28 W minimum. Comparing the raw value would
+			// see drift on every tick and re-write the limit every two seconds.
+			eff := cli.EffectiveTDP(*t)
+			obs.WantTDP = &eff
+		}
 		// A plain state read, so it costs nothing on the common path; the SMU is
 		// only consulted if the tick actually asks for a re-apply.
 		if uv := active.Undervolt; uv != nil && uv.CPUCO != 0 {
@@ -376,6 +387,10 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		obs.PL1 = tdp.PL1SPL
 	}
 	obs.ProfileHW = readProfileFromSysfs()
+	// Consumed here, after every early return above: a write seen while the
+	// watcher stood down (suspend, wedged EC) is followed by a full re-apply on
+	// resume or recovery anyway.
+	obs.ProfileWritten = d.profileWritten.Swap(false)
 
 	st, act := reconcileTick(prev, obs)
 

@@ -7,7 +7,7 @@
 #   - Armoury Crate button input device for daemon button watcher
 #   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
-#   - asus-nb-wmi PPT power limit attributes for TDP control
+#   - asus-armoury PPT power limit attributes for TDP control (asus-nb-wmi ppt_* as fallback)
 #
 # Keep this in sync with buildRulesContent() in cmd/setup.go, which generates the
 # equivalent rules for "z13ctl setup"; cmd/setup_test.go asserts they do not drift.
@@ -22,6 +22,11 @@ ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/
 ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp users /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value", RUN+="/usr/bin/chmod g+w /sys/class/firmware-attributes/asus-armoury/attributes/panel_overdrive/current_value"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", RUN+="/bin/sh -c 'chgrp users /sys%p/pwm*; chmod g+w /sys%p/pwm*'"
 ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f in /sys%p/pwm*_enable; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
+# asus-armoury's PPT limits are the interface z13ctl writes power limits through
+# when the kernel exposes them (7.x on the GZ302EA); the asus-nb-wmi grant below is
+# the fallback for kernels that do not. Like ppt_* there, these may appear after
+# the ADD event, so z13ctl-perms.service is the reliable path.
+ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e \"$$f\" ] || continue; chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 # ppt_* are usually created after this add event (later in asus_nb_wmi probe()), so
 # z13ctl-perms.service is what applies this grant at boot; this rule covers the files
 # that already exist. A missing file is skipped rather than ending the script non-zero,
