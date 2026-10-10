@@ -24,35 +24,52 @@ type hidDescriptor struct {
 	value [4096]byte
 }
 
-// FindDevice opens the appropriate hidraw device(s).
+// sysHidrawDir is the hidraw class directory; a var so tests can point it at
+// a fake tree.
+var sysHidrawDir = "/sys/class/hidraw"
+
+func ueventGlob() string { return sysHidrawDir + "/hidraw*/device/uevent" }
+
+// FindDevice opens the appropriate hidraw device(s) among known.
 // override may be:
 //   - "" — open all matching devices (default)
-//   - "keyboard" or "lightbar" — open only that named device
+//   - a Known name — open only that device
 //   - a /dev/hidrawN path — open that specific device
-func FindDevice(override string) (*Device, error) {
-	if override == "keyboard" || override == "lightbar" {
-		return findByName(override)
+func FindDevice(override string, known []Known) (*Device, error) {
+	for _, k := range known {
+		if override == k.Name {
+			return findByName(override, known)
+		}
 	}
 	if override != "" {
 		f, err := os.OpenFile(override, os.O_RDWR, 0)
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", override, err)
 		}
-		name := nameFromPath(override)
+		name := nameFromPath(override, known)
 		return &Device{nodes: []hidrawNode{{path: override, name: name, f: f}}}, nil
 	}
-	return findAll()
+	return findAll(known)
 }
 
-func findAll() (*Device, error) {
-	entries, err := filepath.Glob("/sys/class/hidraw/hidraw*/device/uevent")
+// knownNames lists the known names for an error message.
+func knownNames(known []Known) string {
+	names := make([]string, len(known))
+	for i, k := range known {
+		names[i] = k.Name
+	}
+	return strings.Join(names, " / ")
+}
+
+func findAll(known []Known) (*Device, error) {
+	entries, err := filepath.Glob(ueventGlob())
 	if err != nil {
 		return nil, fmt.Errorf("glob hidraw: %w", err)
 	}
 
 	var nodes []hidrawNode
 	for _, ueventPath := range entries {
-		name := deviceNameFromUevent(ueventPath)
+		name := deviceNameFromUevent(ueventPath, known)
 		if name == "" {
 			continue
 		}
@@ -61,7 +78,7 @@ func findAll() (*Device, error) {
 		if err != nil {
 			continue
 		}
-		if hasAuraReport(f) {
+		if hasAuraReport(ueventPath, f) {
 			nodes = append(nodes, hidrawNode{path: devPath, name: name, f: f})
 		} else {
 			_ = f.Close() //nolint:errcheck // best-effort cleanup
@@ -70,18 +87,19 @@ func findAll() (*Device, error) {
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
-			"no ASUS Aura devices found (keyboard / lightbar); try sudo or add a udev rule:\n" +
+			"no ASUS Aura devices found (%s); try sudo or add a udev rule:\n"+
 				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+			knownNames(known),
 		)
 	}
 	return &Device{nodes: nodes}, nil
 }
 
-func findByName(want string) (*Device, error) {
-	entries, _ := filepath.Glob("/sys/class/hidraw/hidraw*/device/uevent")
+func findByName(want string, known []Known) (*Device, error) {
+	entries, _ := filepath.Glob(ueventGlob())
 	nameFound := false // true if any node matched the name, even without Aura
 	for _, ueventPath := range entries {
-		name := deviceNameFromUevent(ueventPath)
+		name := deviceNameFromUevent(ueventPath, known)
 		if name != want {
 			continue
 		}
@@ -91,7 +109,7 @@ func findByName(want string) (*Device, error) {
 		if err != nil {
 			continue
 		}
-		if !hasAuraReport(f) {
+		if !hasAuraReport(ueventPath, f) {
 			_ = f.Close() //nolint:errcheck // best-effort cleanup
 			continue      // skip nodes without the Aura report, same as findAll
 		}
@@ -111,12 +129,13 @@ func findByName(want string) (*Device, error) {
 	)
 }
 
-// ListDevices returns info on all candidate Aura hidraw nodes.
-func ListDevices() []DeviceInfo {
-	entries, _ := filepath.Glob("/sys/class/hidraw/hidraw*/device/uevent")
+// ListDevices returns info on all candidate Aura hidraw nodes. The report
+// check reads sysfs, so a node this user cannot open is still described.
+func ListDevices(known []Known) []DeviceInfo {
+	entries, _ := filepath.Glob(ueventGlob())
 	var results []DeviceInfo
 	for _, ueventPath := range entries {
-		name := deviceNameFromUevent(ueventPath)
+		name := deviceNameFromUevent(ueventPath, known)
 		if name == "" {
 			continue
 		}
@@ -125,8 +144,9 @@ func ListDevices() []DeviceInfo {
 		f, err := os.OpenFile(devPath, os.O_RDWR, 0)
 		if err != nil {
 			info.OpenErr = err.Error()
+			info.HasAura = hasAuraReport(ueventPath, nil)
 		} else {
-			info.HasAura = hasAuraReport(f)
+			info.HasAura = hasAuraReport(ueventPath, f)
 			_ = f.Close() //nolint:errcheck // best-effort cleanup
 		}
 		results = append(results, info)
@@ -134,29 +154,29 @@ func ListDevices() []DeviceInfo {
 	return results
 }
 
-// HasDevice reports whether a known Aura device with the given friendly name
-// ("keyboard" or "lightbar") is currently present in sysfs. It checks presence
-// only — it does not open the device or verify the Aura report descriptor.
-func HasDevice(name string) bool {
-	return hasDeviceGlob("/sys/class/hidraw/hidraw*/device/uevent", name)
+// HasDevice reports whether the known device with the given name is
+// currently present in sysfs. It checks presence only — it does not open the
+// device or verify the Aura report descriptor.
+func HasDevice(name string, known []Known) bool {
+	return hasDeviceGlob(ueventGlob(), name, known)
 }
 
 // hasDeviceGlob reports whether any uevent file matched by glob identifies the
 // device named name. Split out from HasDevice so tests can point glob at a
 // temporary sysfs-shaped tree.
-func hasDeviceGlob(glob, name string) bool {
+func hasDeviceGlob(glob, name string, known []Known) bool {
 	entries, _ := filepath.Glob(glob)
 	for _, ueventPath := range entries {
-		if deviceNameFromUevent(ueventPath) == name {
+		if deviceNameFromUevent(ueventPath, known) == name {
 			return true
 		}
 	}
 	return false
 }
 
-// deviceNameFromUevent returns the friendly name for the device at ueventPath,
+// deviceNameFromUevent returns the known name for the device at ueventPath,
 // or "" if it doesn't match any known device.
-func deviceNameFromUevent(ueventPath string) string {
+func deviceNameFromUevent(ueventPath string, known []Known) string {
 	f, err := os.Open(ueventPath)
 	if err != nil {
 		return ""
@@ -166,31 +186,39 @@ func deviceNameFromUevent(ueventPath string) string {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		for _, spec := range knownDevices {
-			if line == spec.hidID {
-				return spec.name
+		for _, k := range known {
+			if line == k.hidID() {
+				return k.Name
 			}
 		}
 	}
 	return ""
 }
 
-// nameFromPath looks up the friendly name for a /dev/hidrawN path via sysfs.
-func nameFromPath(devPath string) string {
+// nameFromPath looks up the known name for a /dev/hidrawN path via sysfs.
+func nameFromPath(devPath string, known []Known) string {
 	base := filepath.Base(devPath)
-	ueventPath := "/sys/class/hidraw/" + base + "/device/uevent"
-	return deviceNameFromUevent(ueventPath)
+	return deviceNameFromUevent(sysHidrawDir+"/"+base+"/device/uevent", known)
 }
 
-// ueventToDevPath converts a sysfs uevent path to its /dev/hidrawN counterpart.
+// ueventToDevPath converts a sysfs uevent path (…/hidrawN/device/uevent) to
+// its /dev/hidrawN counterpart.
 func ueventToDevPath(ueventPath string) string {
-	parts := strings.Split(ueventPath, "/")
-	return "/dev/" + parts[4]
+	return "/dev/" + filepath.Base(filepath.Dir(filepath.Dir(ueventPath)))
 }
 
-// hasAuraReport reads the HID report descriptor and scans for Report ID 0x5d.
-// In HID short-form encoding: Report ID item = 0x85 followed by the ID byte.
-func hasAuraReport(f *os.File) bool {
+// hasAuraReport reports whether the node's HID report descriptor carries
+// Report ID 0x5d (short-form encoding: Report ID item 0x85, then the ID byte).
+// It reads the descriptor from sysfs (report_descriptor beside the uevent),
+// which needs no open node; the HIDIOCGRDESC ioctl on f is the fallback for a
+// kernel or sandbox where that file cannot be read. f may be nil.
+func hasAuraReport(ueventPath string, f *os.File) bool {
+	if data, err := os.ReadFile(filepath.Dir(ueventPath) + "/report_descriptor"); err == nil && len(data) > 0 {
+		return descriptorHasAuraReport(data, uint32(len(data)))
+	}
+	if f == nil {
+		return false
+	}
 	var desc hidDescriptor
 
 	if _, _, errno := syscall.Syscall(

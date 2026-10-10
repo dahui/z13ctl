@@ -150,13 +150,45 @@ func TestHandleProfileCustomWithoutSavedSettings(t *testing.T) {
 	}
 }
 
+// The lighting rejections drive the real Z13 assembly: its lighting driver is
+// unopened in tests, and every case here is refused from its capabilities
+// before the driver is asked to write.
 func TestHandleBrightnessRejectsOutOfRange(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: testDev}
 	for _, level := range []int{-1, 4, 99} {
 		resp := d.handleBrightness(request{Cmd: "brightness", Brightness: level})
-		if resp.OK || !strings.Contains(resp.Error, "out of range") {
-			t.Errorf("brightness %d = %+v, want a range rejection", level, resp)
+		if resp.OK || !strings.Contains(resp.Error, "out of range 0–3") {
+			t.Errorf("brightness %d = %+v, want a rejection naming the device's 0–3", level, resp)
 		}
+	}
+	// No lighting at all says so, rather than claiming a range.
+	if resp := (&Daemon{}).handleBrightness(request{Brightness: 2}); resp.OK || resp.Error != "no HID device available" {
+		t.Errorf("no lighting = %+v", resp)
+	}
+}
+
+func TestHandleApplyRejections(t *testing.T) {
+	d := &Daemon{hw: testDev}
+	good := request{Cmd: "apply", Mode: "static", Speed: "normal", Color: "FF0000", Color2: "000000", Brightness: 3}
+	for _, tt := range []struct {
+		name string
+		mut  func(*request)
+		want string
+	}{
+		{"mode the device does not offer", func(r *request) { r.Mode = "disco" }, `mode: unknown mode "disco" (valid: static breathe cycle rainbow strobe)`},
+		{"unknown speed", func(r *request) { r.Speed = "ludicrous" }, `speed: unknown speed "ludicrous"`},
+		{"bad colour", func(r *request) { r.Color = "nothex" }, "color: "},
+		{"brightness above the scale", func(r *request) { r.Brightness = 4 }, "out of range 0–3"},
+		{"zone the device does not have", func(r *request) { r.Device = "logo" }, `"logo" is not a lighting zone (zones: keyboard, lightbar)`},
+	} {
+		req := good
+		tt.mut(&req)
+		if resp := d.handleApply(req); resp.OK || !strings.Contains(resp.Error, tt.want) {
+			t.Errorf("%s: %+v, want an error containing %q", tt.name, resp, tt.want)
+		}
+	}
+	if resp := d.handleOff(request{Cmd: "off", Device: "logo"}); resp.OK || !strings.Contains(resp.Error, "not a lighting zone") {
+		t.Errorf("off on an unknown zone = %+v", resp)
 	}
 }
 

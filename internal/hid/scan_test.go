@@ -8,6 +8,12 @@ import (
 	"github.com/dahui/voltaire/v2/internal/hid"
 )
 
+// z13 is the device file's zone table, as the lighting driver passes it.
+var z13 = []hid.Known{
+	{Name: "keyboard", Vendor: 0x0b05, Product: 0x1a30},
+	{Name: "lightbar", Vendor: 0x0b05, Product: 0x18c6},
+}
+
 func TestUeventToDevPath(t *testing.T) {
 	t.Parallel()
 
@@ -52,7 +58,7 @@ func TestDeviceNameFromUevent_Known(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := hid.DeviceNameFromUevent(path)
+			got := hid.DeviceNameFromUevent(path, z13)
 			if got != tt.want {
 				t.Errorf("DeviceNameFromUevent = %q, want %q", got, tt.want)
 			}
@@ -70,7 +76,7 @@ func TestDeviceNameFromUevent_Unknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := hid.DeviceNameFromUevent(path)
+	got := hid.DeviceNameFromUevent(path, z13)
 	if got != "" {
 		t.Errorf("DeviceNameFromUevent = %q, want \"\"", got)
 	}
@@ -78,7 +84,7 @@ func TestDeviceNameFromUevent_Unknown(t *testing.T) {
 
 func TestDeviceNameFromUevent_Missing(t *testing.T) {
 	t.Parallel()
-	got := hid.DeviceNameFromUevent("/nonexistent/path/uevent")
+	got := hid.DeviceNameFromUevent("/nonexistent/path/uevent", z13)
 	if got != "" {
 		t.Errorf("DeviceNameFromUevent(missing) = %q, want \"\"", got)
 	}
@@ -118,7 +124,7 @@ func TestHasDeviceGlob(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := hid.HasDeviceGlob(glob, tt.name); got != tt.want {
+			if got := hid.HasDeviceGlob(glob, tt.name, z13); got != tt.want {
 				t.Errorf("HasDeviceGlob(_, %q) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
@@ -133,10 +139,10 @@ func TestHasDeviceGlob_KeyboardAbsent(t *testing.T) {
 	writeUevent(t, dir, "hidraw9", "HID_ID=0003:00000B05:000018C6") // lightbar
 	glob := filepath.Join(dir, "hidraw*", "device", "uevent")
 
-	if hid.HasDeviceGlob(glob, "keyboard") {
+	if hid.HasDeviceGlob(glob, "keyboard", z13) {
 		t.Error("HasDeviceGlob keyboard = true, want false when keyboard is detached")
 	}
-	if !hid.HasDeviceGlob(glob, "lightbar") {
+	if !hid.HasDeviceGlob(glob, "lightbar", z13) {
 		t.Error("HasDeviceGlob lightbar = false, want true")
 	}
 }
@@ -144,7 +150,7 @@ func TestHasDeviceGlob_KeyboardAbsent(t *testing.T) {
 func TestHasDeviceGlob_NoMatches(t *testing.T) {
 	t.Parallel()
 	glob := filepath.Join(t.TempDir(), "hidraw*", "device", "uevent")
-	if hid.HasDeviceGlob(glob, "keyboard") {
+	if hid.HasDeviceGlob(glob, "keyboard", z13) {
 		t.Error("HasDeviceGlob on empty tree = true, want false")
 	}
 }
@@ -182,5 +188,47 @@ func TestDescriptorHasAuraReport(t *testing.T) {
 				t.Errorf("DescriptorHasAuraReport(size=%d) = %v, want %v", tt.size, got, tt.want)
 			}
 		})
+	}
+}
+
+// The report check reads report_descriptor from sysfs, so a node this user
+// cannot open is still judged — and nothing is opened to judge it.
+func TestHasAuraReportReadsSysfs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeUevent(t, dir, "hidraw0", "HID_ID=0003:00000B05:00001A30")
+	writeUevent(t, dir, "hidraw1", "HID_ID=0003:00000B05:00001A30")
+	desc := func(node string, b []byte) {
+		if err := os.WriteFile(filepath.Join(dir, node, "device", "report_descriptor"), b, 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	desc("hidraw0", []byte{0x06, 0x31, 0xff, 0x85, 0x5d, 0x09, 0x01})
+	desc("hidraw1", []byte{0x05, 0x01, 0x85, 0x01})
+
+	if !hid.HasAuraReport(filepath.Join(dir, "hidraw0", "device", "uevent"), nil) {
+		t.Error("descriptor with report 0x5d read as no Aura report")
+	}
+	if hid.HasAuraReport(filepath.Join(dir, "hidraw1", "device", "uevent"), nil) {
+		t.Error("descriptor without report 0x5d read as Aura")
+	}
+	if hid.HasAuraReport(filepath.Join(dir, "hidraw9", "device", "uevent"), nil) {
+		t.Error("no descriptor and no open node read as Aura")
+	}
+}
+
+// A device the zone table does not name is not this machine's lighting,
+// whatever its vendor.
+func TestDeviceNamesComeFromTheZoneTable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeUevent(t, dir, "hidraw4", "HID_ID=0003:00000B05:00001ABE")
+	path := filepath.Join(dir, "hidraw4", "device", "uevent")
+	if got := hid.DeviceNameFromUevent(path, z13); got != "" {
+		t.Errorf("unlisted ASUS device named %q", got)
+	}
+	ally := []hid.Known{{Name: "joysticks", Vendor: 0x0b05, Product: 0x1abe}}
+	if got := hid.DeviceNameFromUevent(path, ally); got != "joysticks" {
+		t.Errorf("listed device named %q, want joysticks", got)
 	}
 }

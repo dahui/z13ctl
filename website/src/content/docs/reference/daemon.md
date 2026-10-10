@@ -147,7 +147,10 @@ render controls against, instead of hardcoding one device's numbers:
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
   "profiles":{"names":["quiet","balanced","performance"],"default":"balanced",
               "entries":[{"name":"quiet","label":"Quiet"}, "..."]},
-  "lighting":{"zones":["keyboard","lightbar"]},
+  "lighting":{"zones":["keyboard","lightbar"],"labels":["Keyboard","Lightbar"],
+              "modes":[{"name":"static","label":"Static","color":true},
+                       {"name":"breathe","label":"Breathe","color":true,"color2":true,"speed":true}, "..."],
+              "speeds":["slow","normal","fast"],"brightness_max":3},
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
   "undervolt":{"min":-40,"max":0},
@@ -272,8 +275,12 @@ mirrored from PL2, and they are not part of the comparison.
 | Turn off | `{"cmd":"off","device":""}` | `ok` |
 | Brightness only | `{"cmd":"brightness","brightness":2,"device":""}` | `ok` |
 
-`device` accepts `"keyboard"`, `"lightbar"`, a `/dev/hidrawN` path, or `""`
-for all zones. `brightness` is 0–3.
+`device` accepts a zone name from `device-get`'s `lighting.zones`
+(`"keyboard"`, `"lightbar"` on the Z13), a `/dev/hidrawN` path, or `""` for all
+zones. `mode` and `speed` must be ones `lighting.modes` and `lighting.speeds`
+list, and `brightness` runs from 0 to `lighting.brightness_max` (3 on the Z13).
+Each mode in `lighting.modes` says which inputs it uses — `color`, `color2`,
+`speed` — so a client shows only those controls.
 
 ### System settings
 

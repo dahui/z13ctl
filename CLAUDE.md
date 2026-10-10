@@ -53,8 +53,10 @@ cmd/                         Cobra subcommands
   autoswitch_test.go         flag-combination rejections; profile-name parity; --profile guards
 internal/
   aura/                      Aura HID protocol implementation
-    aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff
-    modes.go                 Mode and Speed constants + ModeFromString/SpeedFromString
+    aura.go                  Writer interface + Init/SetPower/SetBrightness/SetMode/Apply/TurnOff;
+                             MaxBrightness; Apply takes the zone bytes (device data)
+    modes.go                 Mode and Speed constants, the Modes table (which inputs each mode's
+                             packet carries) and SpeedNames, ModeFromString/SpeedFromString
   cli/                       pure presentation remainder — NOT hardware access.
                              M1 moved everything that touches sysfs out of here;
                              see "Where the hardware code lives" below.
@@ -109,8 +111,10 @@ internal/
     client.go                Redirect comment only — client functions live in api/
   hid/
     doc.go                   package doc file only
-    device.go                Device type, Write, SetFeature, Paths, Descriptions, Close
-    scan.go                  FindDevice, ListDevices, sysfs discovery, hasAuraReport, descriptorHasAuraReport
+    device.go                Device type, Known (zone name + USB vendor:product, passed in by
+                             the caller — the device file's zone table), Write, SetFeature, Close
+    scan.go                  FindDevice, ListDevices, HasDevice (all take []Known), sysfs
+                             discovery, hasAuraReport (sysfs report_descriptor, ioctl fallback)
     export_test.go           test-only exports: NewTestDevice, NewTestDeviceAnon,
                              UeventToDevPath, DeviceNameFromUevent, HasDeviceGlob,
                              DescriptorHasAuraReport
@@ -305,8 +309,25 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
 - `aura.Writer` interface (not `*hid.Device`) — decouples aura from hid, enables
   mock-based testing without hardware.
 - `hid.Device` holds `[]hidrawNode`; writes go to all nodes simultaneously.
-- Zone 0 = keyboard (`0b05:1a30`), Zone 1 = lightbar (`0b05:18c6`). Both are always
-  addressed; each physical device silently ignores the other zone's packets.
+- Zone 0 = keyboard (`0b05:1a30`), Zone 1 = lightbar (`0b05:18c6`) — device data
+  now (`[[lighting.zones]]`), not a table in `internal/hid`. Every zone byte is
+  sent to every node written to; each physical device silently ignores the other
+  zone's packets.
+- **Lighting is described by the driver, and every layer reads that
+  description** (`driver.Lighting.Caps()`; 2026-10-09). The zone table (name,
+  label, USB id, zone byte) is the device file's; the modes with the inputs each
+  takes (`aura.Modes`), the speeds, and the 0–3 brightness scale
+  (`aura.MaxBrightness`) are the protocol's, with the device file free to list a
+  subset of modes and speeds. Daemon validation (`lightingRequestError`, which
+  also refuses an unknown zone), the CLI's parsing, help and confirmation text,
+  `device-get` (`lighting.labels/modes/speeds/brightness_max`) and the GUI's
+  tabs, cards, effect buttons, speed row and slider all come from it, so no
+  layer restates a mode list or a 0–3. `kbd_backlight`'s `max_brightness` is
+  read only as a cross-check (a warning on disagreement). The CLI's no-daemon
+  lighting path goes through the assembled driver like the daemon's, not
+  through raw `hid`/`aura` calls. The init and power quirks stay in `aura` with
+  no flag: only the Z13's variant is known, so a flag would have no second
+  branch to test.
 - `profile.go` and `batterylimit.go` use path discovery via `/sys/class/*/` rather
   than hardcoded paths, so udev-chmoded device inodes are used (not the ACPI alias).
 - `setup.go` uses a two-part permission strategy: udev rules for boot persistence
@@ -1757,16 +1778,20 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   loses power when detached; on reattach the firmware does not restore the
   previous RGB effect. The daemon opens the HID device once at startup and holds
   `d.dev`, so after a detach/reattach cycle the keyboard appears as a *new* hidraw
-  node that the stale `d.dev` never references. `watchHotplug()` polls
-  `hid.HasDevice("keyboard")` (sysfs-only presence check, no device open) every 2s;
-  on an absent → present transition it calls `reopenAndRestore()`, which re-runs
+  node that the stale `d.dev` never references. `watchHotplug()` polls the
+  driver's `PresentZones()` (sysfs-only presence check, no device open) every 2s;
+  when a zone appears that was not latched it calls `reopenAndRestore()`, which re-runs
   `hid.FindDevice("")` under `d.mu`, swaps in the new device (closing the old one),
   and re-applies saved lighting via the existing `applyLightingState()` (honoring
   per-device overrides). If the reopen fails — e.g. udev has not yet chmod'd the new
   hidraw node — the watcher does not latch the present state and retries on the next
   tick. No action is taken on detach (the keyboard powers off in hardware). Run()'s
   device-close defer closes whatever `d.dev` currently is, since hotplug may have
-  replaced it.
+  replaced it. **No zone is declared detachable** (2026-10-09): the watcher latches
+  the *set* of present zones and reopens when it gains one, so the keyboard
+  returning triggers it, and a declared zone whose hardware never appears (a SKU
+  without it) cannot block it — a single "all present" bool would have hung on
+  exactly that zone.
 - **The GUI is an ordinary socket client, and the merge did not change that.**
   `voltaire-gui` reaches the daemon only through `api/` — the same public module
   a Decky plugin or a third-party tool uses — so nothing in `internal/daemon`

@@ -116,9 +116,26 @@ default = "balanced"
 # Aura HID: keyboard 0b05:1a30 (detachable — powers off when removed),
 # lightbar 0b05:18c6. Both zones are always addressed; each device ignores the
 # other zone's packets.
+# Aura over hidraw (report 0x5d). Each zone is the HID device that carries it
+# and the protocol's zone byte for it; every zone byte is sent to every node,
+# and each device answers only its own (g-helper addresses them the same way).
+# The keyboard is the detachable cover — when it is off, its zone is absent
+# and the daemon reopens the device when it returns. Modes and speeds are the
+# whole protocol set, so neither list is given.
 [lighting]
 method = "aura-hid"
-zones  = ["keyboard", "lightbar"]
+
+[[lighting.zones]]
+name  = "keyboard"
+label = "Keyboard"
+usb   = "0b05:1a30" # GZ302EA-Keyboard
+zone  = 0
+
+[[lighting.zones]]
+name  = "lightbar"
+label = "Lightbar"
+usb   = "0b05:18c6" # N-KEY Device
+zone  = 1
 
 # asus-armoury firmware-attributes (mainline since Linux 6.19).
 [toggles]

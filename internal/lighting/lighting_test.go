@@ -86,7 +86,7 @@ func TestControlsForKnownModes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			if got := ControlsFor(tt.mode); got != tt.want {
+			if got := fallback.ControlsFor(tt.mode); got != tt.want {
 				t.Errorf("ControlsFor(%q) = %+v, want %+v", tt.mode, got, tt.want)
 			}
 		})
@@ -96,12 +96,12 @@ func TestControlsForKnownModes(t *testing.T) {
 // Hiding every control for a mode this build does not recognise would make it look
 // broken; a newer daemon's mode should still be operable.
 func TestControlsForUnknownModeShowsEverything(t *testing.T) {
-	got := ControlsFor("future-effect")
+	got := fallback.ControlsFor("future-effect")
 	want := Controls{Color1: true, Color2: true, Speed: true, Brightness: true}
 	if got != want {
 		t.Errorf("ControlsFor(unknown) = %+v, want %+v", got, want)
 	}
-	if ControlsFor("") != want {
+	if fallback.ControlsFor("") != want {
 		t.Errorf("ControlsFor(empty) should also show everything")
 	}
 }
@@ -109,45 +109,78 @@ func TestControlsForUnknownModeShowsEverything(t *testing.T) {
 // Off must hide everything: leaving a colour swatch or the brightness slider live
 // while lighting is disabled invites edits that cannot take effect.
 func TestOffHidesEveryControl(t *testing.T) {
-	if got := ControlsFor(ModeOff); got != (Controls{}) {
+	if got := fallback.ControlsFor(ModeOff); got != (Controls{}) {
 		t.Errorf("ControlsFor(off) = %+v, want all false", got)
 	}
 }
 
-// Every mode that animates needs a speed control and vice versa — the table is
-// hand-maintained, so tie the two together.
+// The fallback is what the drawer shows with no daemon; it must say what the
+// Z13's daemon would. Every mode that animates needs a speed control and vice
+// versa.
 func TestAnimatedModesHaveSpeed(t *testing.T) {
 	animated := map[string]bool{"breathe": true, "cycle": true, "rainbow": true, "strobe": true}
-	for mode, c := range modeControls {
-		if animated[mode] != c.Speed {
-			t.Errorf("mode %q: animated=%v but Speed=%v", mode, animated[mode], c.Speed)
-		}
-	}
-}
-
-// Anything other than off should keep brightness available, or the user loses the
-// only control that always applies.
-func TestEveryVisibleModeKeepsBrightness(t *testing.T) {
-	for mode, c := range modeControls {
-		if mode == ModeOff {
-			continue
-		}
-		if !c.Brightness {
-			t.Errorf("mode %q has no brightness control", mode)
+	for _, m := range fallback.Modes {
+		if animated[m.Name] != m.Speed {
+			t.Errorf("mode %q: animated=%v but Speed=%v", m.Name, animated[m.Name], m.Speed)
 		}
 	}
 }
 
 func TestKnownMode(t *testing.T) {
 	for _, mode := range []string{"static", "breathe", "cycle", "rainbow", "strobe", ModeOff} {
-		if !KnownMode(mode) {
+		if !fallback.KnownMode(mode) {
 			t.Errorf("KnownMode(%q) = false, want true", mode)
 		}
 	}
 	for _, mode := range []string{"", "future-effect", "STATIC"} {
-		if KnownMode(mode) {
+		if fallback.KnownMode(mode) {
 			t.Errorf("KnownMode(%q) = true, want false", mode)
 		}
+	}
+}
+
+// The controls come from the document: a device that describes a mode as
+// taking two colours gets two swatches, whatever this build thinks the name
+// means, and its own zones, speeds and scale.
+func TestCapsFromTheDocument(t *testing.T) {
+	doc := &api.DeviceInfo{Lighting: &api.LightingInfo{
+		Zones:  []string{"logo", "rear"},
+		Labels: []string{"Logo", ""},
+		Modes: []api.LightingMode{
+			{Name: "static", Label: "Solid", Color: true, Color2: true},
+			{Name: "comet", Label: "Comet", Speed: true},
+		},
+		Speeds:        []string{"normal"},
+		BrightnessMax: 10,
+	}}
+	c := CapsFrom(doc)
+	if len(c.Zones) != 2 || c.Zones[0] != (Zone{"logo", "Logo"}) || c.Zones[1] != (Zone{"rear", "Rear"}) {
+		t.Errorf("zones = %+v", c.Zones)
+	}
+	if got := c.ControlsFor("static"); !got.Color2 {
+		t.Errorf("static on this device takes two colours; got %+v", got)
+	}
+	if got := c.ModeNames(); len(got) != 3 || got[1] != "comet" || got[2] != ModeOff {
+		t.Errorf("ModeNames = %v", got)
+	}
+	if c.Label("static") != "Solid" || c.BrightnessName(7) != "7" || c.BrightnessName(0) != "Off" {
+		t.Errorf("labels: %q %q", c.Label("static"), c.BrightnessName(7))
+	}
+	if fallback.BrightnessName(2) != "Medium" {
+		t.Errorf("four-level names lost")
+	}
+
+	// A daemon older than the fields: zones only. The rest is the fallback.
+	old := CapsFrom(&api.DeviceInfo{Lighting: &api.LightingInfo{Zones: []string{"keyboard", "lightbar"}}})
+	if len(old.Modes) != 5 || old.BrightnessMax != 3 || old.Zones[1].Label != "Lightbar" {
+		t.Errorf("older daemon caps = %+v", old)
+	}
+	// No daemon: the fallback. A device with no lighting: nothing.
+	if got := CapsFrom(nil); len(got.Zones) != 2 {
+		t.Errorf("no document = %+v, want the fallback", got)
+	}
+	if got := CapsFrom(&api.DeviceInfo{}); len(got.Zones) != 0 || len(got.Modes) != 0 {
+		t.Errorf("no lighting section = %+v, want nothing", got)
 	}
 }
 

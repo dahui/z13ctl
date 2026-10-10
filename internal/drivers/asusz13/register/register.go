@@ -63,7 +63,15 @@ func init() {
 	// is what registers them, since a registration is a per-binary statement of
 	// which hardware this build drives.
 	device.RegisterLighting("aura-hid", func(c device.LightingConfig) (driver.Lighting, error) {
-		return aurahid.New(c.Zones), nil
+		cfg := aurahid.Config{Modes: c.Modes, Speeds: c.Speeds}
+		for _, z := range c.Zones {
+			v, p, err := z.USBIDs()
+			if err != nil {
+				return nil, err
+			}
+			cfg.Zones = append(cfg.Zones, aurahid.Zone{Name: z.Name, Label: z.Label, Vendor: v, Product: p, Byte: uint8(z.Zone)})
+		}
+		return aurahid.New(cfg)
 	})
 	device.RegisterButtons("evdev-key", func(c device.ButtonConfig) (driver.Buttons, error) {
 		return evdevkey.New(c.Device, c.Keycode, c.Kind), nil

@@ -25,11 +25,10 @@ type Writer interface {
 // auraID is the HID Report ID for all Aura output reports (0x5d).
 const auraID = 0x5d
 
-// z13Zones are the zone bytes for the 2025 ROG Flow Z13, in the order g-helper
-// addresses them. Zone 0 is the keyboard backlight; zone 1 is the edge lightbar.
-// Each zone requires its own 0xB3 SetMode packet — there is no "all zones" shortcut
-// in the protocol; zone=0 in the packet means keyboard only.
-var z13Zones = []uint8{0, 1}
+// MaxBrightness is the protocol's top brightness level: SetBrightness takes
+// 0 (off) through 3. A protocol fact, not a device one — every Aura device
+// takes the same four levels — so it lives here and the driver reports it.
+const MaxBrightness = 3
 
 // Init sends the ASUS Aura initialization sequence.
 // The Z13-specific Dynamic Lighting Init packet (0xC0 0x03 0x01) is always sent
@@ -84,8 +83,8 @@ func SetPower(d Writer, on bool) error {
 //
 // Source: Aura.cs DirectBrightness() / ApplyBrightness() — line 340
 func SetBrightness(d Writer, level uint8) error {
-	if level > 3 {
-		level = 3
+	if level > MaxBrightness {
+		level = MaxBrightness
 	}
 	return d.Write([]byte{auraID, 0xBA, 0xC5, 0xC4, level})
 }
@@ -139,12 +138,14 @@ func commit(d Writer) error {
 	return nil
 }
 
-// Apply performs the full setup: Init, power on, brightness, then set mode.
-// Both Z13 zones are always addressed (keyboard=0, lightbar=1); each physical
-// device only responds to the zone it owns and ignores the other.
-// Use hid.FindDevice with "keyboard" or "lightbar" to target a single device.
+// Apply performs the full setup: Init, power on, brightness, then set mode on
+// each zone byte in zones. Each zone needs its own 0xB3 SetMode packet — there
+// is no "all zones" shortcut in the protocol — and the zone bytes are device
+// data (the Z13's keyboard is 0, its lightbar 1). Every zone is sent to every
+// node written to: each physical device answers only the zone it owns and
+// ignores the others, which is how g-helper addresses them too.
 // This is the primary entry point for setting lighting state.
-func Apply(d Writer, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
+func Apply(d Writer, zones []uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
 	if err := Init(d); err != nil {
 		return err
 	}
@@ -154,7 +155,7 @@ func Apply(d Writer, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightne
 	if err := SetBrightness(d, brightness); err != nil {
 		return err
 	}
-	for _, z := range z13Zones {
+	for _, z := range zones {
 		if err := SetMode(d, z, mode, r, g, b, r2, g2, b2, speed); err != nil {
 			return err
 		}

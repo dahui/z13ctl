@@ -7,49 +7,6 @@ import (
 	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
-func TestParseBrightness(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input   string
-		want    uint8
-		wantErr bool
-	}{
-		{input: "off", want: 0},
-		{input: "OFF", want: 0},
-		{input: "0", want: 0},
-		{input: "low", want: 1},
-		{input: "LOW", want: 1},
-		{input: "1", want: 1},
-		{input: "medium", want: 2},
-		{input: "med", want: 2},
-		{input: "MEDIUM", want: 2},
-		{input: "2", want: 2},
-		{input: "high", want: 3},
-		{input: "HIGH", want: 3},
-		{input: "3", want: 3},
-		// invalid
-		{input: "", wantErr: true},
-		{input: "4", wantErr: true},
-		{input: "full", wantErr: true},
-		{input: "bright", wantErr: true},
-		{input: "-1", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			t.Parallel()
-			got, err := cli.ParseBrightness(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ParseBrightness(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			}
-			if !tt.wantErr && got != tt.want {
-				t.Errorf("ParseBrightness(%q) = %d, want %d", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseColor(t *testing.T) {
 	t.Parallel()
 

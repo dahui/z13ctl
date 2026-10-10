@@ -76,6 +76,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type FanInfo](<#FanInfo>)
 - [type FanPreset](<#FanPreset>)
 - [type LightingInfo](<#LightingInfo>)
+- [type LightingMode](<#LightingMode>)
 - [type LightingState](<#LightingState>)
 - [type PowerInfo](<#PowerInfo>)
 - [type PowerRange](<#PowerRange>)
@@ -2022,11 +2023,37 @@ type FanPreset struct {
 <a name="LightingInfo"></a>
 ## type LightingInfo
 
-LightingInfo lists the addressable lighting zone names.
+LightingInfo describes the device's lighting: its zones, the effects it offers and the inputs each takes, the speeds, and the brightness scale. Build lighting controls from it rather than from a list of your own — the fields beyond Zones are absent from a daemon older than them, and a client then falls back to what it knew before.
 
 ```go
 type LightingInfo struct {
-    Zones []string `json:"zones"`
+    // Zones are the zone names the apply/off/brightness commands' device field
+    // takes; Labels, in the same order, are what to show for them.
+    Zones  []string `json:"zones"`
+    Labels []string `json:"labels,omitempty"`
+
+    // Modes are the effects, in the order to offer them, each saying which
+    // inputs it uses so a client shows only those controls.
+    Modes []LightingMode `json:"modes,omitempty"`
+    // Speeds are the speed names, slowest first.
+    Speeds []string `json:"speeds,omitempty"`
+    // BrightnessMax is the top brightness level; levels run from 0 (off).
+    BrightnessMax int `json:"brightness_max,omitempty"`
+}
+```
+
+<a name="LightingMode"></a>
+## type LightingMode
+
+LightingMode is one effect: its wire name, a label, and the inputs it takes — the primary colour, the second colour, and an animation speed.
+
+```go
+type LightingMode struct {
+    Name   string `json:"name"`
+    Label  string `json:"label"`
+    Color  bool   `json:"color,omitempty"`
+    Color2 bool   `json:"color2,omitempty"`
+    Speed  bool   `json:"speed,omitempty"`
 }
 ```
 

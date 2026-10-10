@@ -196,14 +196,20 @@ type PowerLimiter interface {
 
 // Lighting drives a device's RGB zones.
 //
-// Reopen and Present exist for hot-pluggable lighting hardware: the Z13's
+// Reopen and PresentZones exist for hot-pluggable lighting hardware: the Z13's
 // detachable keyboard powers off when removed and reappears as a new hidraw
-// node, so the hotplug watcher polls Present and calls Reopen on an
-// absent-to-present transition. Devices without detachable lighting return
-// true and nil respectively.
+// node, so the hotplug watcher polls PresentZones and calls Reopen when a zone
+// appears that was not present before. Devices without detachable lighting
+// return every zone and nil respectively.
 type Lighting interface {
 	// Zones returns the addressable zone names ("keyboard", "lightbar").
 	Zones() []string
+
+	// Caps is what the lighting accepts: its zones with labels, the effects
+	// with the inputs each one uses, the speeds, and the brightness ceiling.
+	// Every validation and every client control is built from it, so no
+	// layer above the driver restates a mode list or a 0–3 range.
+	Caps() LightingCaps
 
 	// Apply writes a lighting state to one zone; an empty zone means all.
 	Apply(zone string, ls api.LightingState) error
@@ -217,13 +223,64 @@ type Lighting interface {
 	// level powers it up, matching the Aura brightness-off semantics.
 	SetBrightness(zone string, level int) error
 
-	// Present reports whether the lighting hardware is currently attached.
-	// Sysfs-only: it must not open the device.
-	Present() bool
+	// PresentZones returns the zones whose hardware is currently attached, in
+	// Zones order. Sysfs-only: it must not open the device.
+	PresentZones() []string
 
 	// Reopen re-discovers and reopens the underlying device, replacing any
 	// stale handle. Called under the daemon's device lock.
 	Reopen() error
+}
+
+// LightingCaps describes a device's lighting; see Lighting.Caps.
+type LightingCaps struct {
+	Zones         []LightingZone
+	Modes         []LightingMode
+	Speeds        []string // slowest first
+	BrightnessMax int      // levels are 0 (off) to BrightnessMax
+}
+
+// LightingZone is one addressable zone: its wire name and a display label.
+type LightingZone struct {
+	Name, Label string
+}
+
+// LightingMode is one effect and the inputs it takes. Color is the primary
+// colour, Color2 the second, Speed the animation speed; a client shows only
+// the controls a mode uses.
+type LightingMode struct {
+	Name, Label          string
+	Color, Color2, Speed bool
+}
+
+// Mode returns the named mode and whether the device offers it.
+func (c LightingCaps) Mode(name string) (LightingMode, bool) {
+	for _, m := range c.Modes {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return LightingMode{}, false
+}
+
+// HasZone reports whether name is one of the device's zones.
+func (c LightingCaps) HasZone(name string) bool {
+	for _, z := range c.Zones {
+		if z.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSpeed reports whether name is one of the device's speeds.
+func (c LightingCaps) HasSpeed(name string) bool {
+	for _, s := range c.Speeds {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ProfileController reads and writes the platform performance profile.

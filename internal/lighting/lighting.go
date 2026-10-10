@@ -9,7 +9,12 @@
 // cannot be unit tested. These are decisions about daemon state, not widgets.
 package lighting
 
-import "github.com/dahui/voltaire/api/v2"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/dahui/voltaire/api/v2"
+)
 
 // Defaults used when daemon state is unavailable — before the first sync, or when
 // the daemon is not running.
@@ -18,7 +23,7 @@ const (
 	DefaultColor2     = "000000"
 	DefaultMode       = "static"
 	DefaultSpeed      = "normal"
-	DefaultBrightness = 3
+	DefaultBrightness = 3 // clamped to the device's scale by the caller
 
 	// ModeOff is the drawer's pseudo-mode for "lighting disabled". The daemon
 	// represents this as Enabled=false, and the drawer needs a selectable button
@@ -42,32 +47,142 @@ type Controls struct {
 	Brightness bool
 }
 
-// modeControls is the per-mode table. Unknown modes are handled by ControlsFor.
-var modeControls = map[string]Controls{
-	"static":  {Color1: true, Brightness: true},
-	"breathe": {Color1: true, Color2: true, Speed: true, Brightness: true},
-	"cycle":   {Speed: true, Brightness: true},
-	"rainbow": {Speed: true, Brightness: true},
-	"strobe":  {Color1: true, Speed: true, Brightness: true},
-	ModeOff:   {},
+// Zone is one lighting zone: the name the daemon takes and the label to show.
+type Zone struct {
+	Name, Label string
 }
 
-// ControlsFor returns the controls a mode needs.
+// Caps is the device's lighting as the drawer needs it: zones, effects with
+// the inputs each takes, speeds, and the brightness scale. CapsFrom builds it
+// from the device document; nothing in the GUI restates a mode list.
+type Caps struct {
+	Zones         []Zone
+	Modes         []api.LightingMode
+	Speeds        []string
+	BrightnessMax int
+}
+
+// fallback is what the drawer offered before the daemon described its
+// lighting — the Z13's Aura set. It is what CapsFrom answers with no document
+// (no daemon), the keep-everything posture limits.FromDevice takes, and what
+// fills the fields a daemon older than them leaves out.
+var fallback = Caps{
+	Zones: []Zone{{"keyboard", "Keyboard"}, {"lightbar", "Lightbar"}},
+	Modes: []api.LightingMode{
+		{Name: "static", Label: "Static", Color: true},
+		{Name: "breathe", Label: "Breathe", Color: true, Color2: true, Speed: true},
+		{Name: "cycle", Label: "Cycle", Speed: true},
+		{Name: "rainbow", Label: "Rainbow", Speed: true},
+		{Name: "strobe", Label: "Strobe", Color: true, Speed: true},
+	},
+	Speeds:        []string{"slow", "normal", "fast"},
+	BrightnessMax: 3,
+}
+
+// CapsFrom reads the device document's lighting section. A nil document means
+// the daemon did not answer, so the fallback stands; a document with no
+// lighting section means the device has none, so the answer is empty. Fields
+// an older daemon does not send are filled from the fallback one by one.
+func CapsFrom(doc *api.DeviceInfo) Caps {
+	if doc == nil {
+		return fallback
+	}
+	li := doc.Lighting
+	if li == nil {
+		return Caps{}
+	}
+	c := Caps{Modes: li.Modes, Speeds: li.Speeds, BrightnessMax: li.BrightnessMax}
+	for i, name := range li.Zones {
+		label := ""
+		if i < len(li.Labels) {
+			label = li.Labels[i]
+		}
+		if label == "" {
+			label = titleCase(name)
+		}
+		c.Zones = append(c.Zones, Zone{Name: name, Label: label})
+	}
+	if len(c.Modes) == 0 {
+		c.Modes = fallback.Modes
+	}
+	if len(c.Speeds) == 0 {
+		c.Speeds = fallback.Speeds
+	}
+	if c.BrightnessMax <= 0 {
+		c.BrightnessMax = fallback.BrightnessMax
+	}
+	return c
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// ModeNames is the effect buttons to build, in order: the device's modes,
+// then the drawer's ModeOff.
+func (c Caps) ModeNames() []string {
+	out := make([]string, 0, len(c.Modes)+1)
+	for _, m := range c.Modes {
+		out = append(out, m.Name)
+	}
+	return append(out, ModeOff)
+}
+
+// Label is the button text for a mode name.
+func (c Caps) Label(mode string) string {
+	for _, m := range c.Modes {
+		if m.Name == mode && m.Label != "" {
+			return m.Label
+		}
+	}
+	return titleCase(mode)
+}
+
+// ControlsFor returns the controls a mode needs, from what the device says
+// that mode takes.
 //
 // An unrecognised mode shows everything. A newer daemon may know modes this build
 // does not, and revealing all the controls lets the user still operate them;
 // hiding them would make the mode look broken.
-func ControlsFor(mode string) Controls {
-	if c, ok := modeControls[mode]; ok {
-		return c
+func (c Caps) ControlsFor(mode string) Controls {
+	if mode == ModeOff {
+		return Controls{}
+	}
+	for _, m := range c.Modes {
+		if m.Name == mode {
+			return Controls{Color1: m.Color, Color2: m.Color2, Speed: m.Speed, Brightness: true}
+		}
 	}
 	return Controls{Color1: true, Color2: true, Speed: true, Brightness: true}
 }
 
-// KnownMode reports whether mode is one this build has a control layout for.
-func KnownMode(mode string) bool {
-	_, ok := modeControls[mode]
-	return ok
+// KnownMode reports whether mode is one the device offers (or the drawer's off).
+func (c Caps) KnownMode(mode string) bool {
+	if mode == ModeOff {
+		return true
+	}
+	for _, m := range c.Modes {
+		if m.Name == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// BrightnessName is the window's label for a level: Off/Low/Medium/High on a
+// four-level scale, where the names are what the CLI and the Aura levels
+// always meant, and the number otherwise — a fifth name would be invented.
+func (c Caps) BrightnessName(level int) string {
+	if level == 0 {
+		return "Off"
+	}
+	if c.BrightnessMax == 3 {
+		return [...]string{"Off", "Low", "Medium", "High"}[min(max(level, 0), 3)]
+	}
+	return strconv.Itoa(level)
 }
 
 // ResolveMode returns the mode button the drawer should select for a lighting

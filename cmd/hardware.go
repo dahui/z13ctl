@@ -30,9 +30,10 @@ import (
 const cliFallbackDeviceID = "asus-rog-flow-z13-2025"
 
 var (
-	hwOnce sync.Once
-	hwDev  *device.Device
-	hwErr  error
+	hwOnce   sync.Once
+	hwDev    *device.Device
+	hwConfig device.Config // the device data hwDev was assembled from
+	hwErr    error
 )
 
 // hardware returns this machine's assembled device, assembling it on first
@@ -63,6 +64,7 @@ func hardware() (*device.Device, error) {
 				return
 			}
 		}
+		hwConfig = c
 		hwDev, hwErr = device.Assemble(c)
 	})
 	return hwDev, hwErr

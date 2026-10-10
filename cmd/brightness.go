@@ -5,12 +5,10 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/cli"
-	"github.com/dahui/voltaire/v2/internal/hid"
+	"github.com/dahui/voltaire/v2/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -20,7 +18,7 @@ var brightnessCmd = &cobra.Command{
 	Short: "Set brightness without changing the current lighting effect",
 	Long: `Set the brightness level without altering the current lighting mode or color.
 
-Levels:
+Levels are positions on the device's scale, or a number from 0 to its maximum:
   off     — all lighting disabled (power off)
   low     — minimum brightness
   medium  — mid brightness
@@ -30,41 +28,28 @@ Levels:
 		if len(args) == 0 {
 			return cmd.Help()
 		}
-		level, err := cli.ParseBrightness(args[0])
+		caps := lightingCaps()
+		if err := checkLightingZone(caps, deviceFlag); err != nil {
+			return err
+		}
+		level, err := parseLightingBrightness(args[0], caps.BrightnessMax)
 		if err != nil {
 			return err
 		}
 
 		if dryRunFlag {
-			cli.DryRunBrightness(level)
+			cli.DryRunBrightness(uint8(level))
 			return nil
 		}
 
-		handled, err := api.SendBrightness(deviceFlag, int(level))
-		if handled {
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Brightness set to %s\n", args[0])
-			return nil
+		handled, err := api.SendBrightness(deviceFlag, level)
+		if !handled {
+			err = withLighting(func(l driver.Lighting) error { return l.SetBrightness(deviceFlag, level) })
 		}
-
-		dev, err := hid.FindDevice(deviceFlag)
 		if err != nil {
 			return err
 		}
-		defer dev.Close()
-
-		if err := aura.Init(dev); err != nil {
-			return err
-		}
-		if err := aura.SetPower(dev, level > 0); err != nil {
-			return err
-		}
-		if err := aura.SetBrightness(dev, level); err != nil {
-			return err
-		}
-		fmt.Printf("Brightness set to %s (%s)\n", args[0], strings.Join(dev.Descriptions(), ", "))
+		fmt.Printf("Brightness set to %s\n", args[0])
 		return nil
 	},
 }

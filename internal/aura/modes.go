@@ -26,6 +26,39 @@ const (
 	SpeedFast   Speed = 0xf5
 )
 
+// ModeInfo is what the protocol says about one mode: its wire name and which
+// inputs its packet carries. Color is the primary colour, Color2 the second
+// (Breathe alone sets the dual-colour flag), Speed the animation speed byte —
+// a mode that does not animate ignores it.
+type ModeInfo struct {
+	Name                 string
+	Mode                 Mode
+	Color, Color2, Speed bool
+}
+
+// Modes is every mode this protocol implementation can send, in the order to
+// offer them. A device's data may list a subset.
+var Modes = []ModeInfo{
+	{Name: "static", Mode: ModeStatic, Color: true},
+	{Name: "breathe", Mode: ModeBreathe, Color: true, Color2: true, Speed: true},
+	{Name: "cycle", Mode: ModeCycle, Speed: true},
+	{Name: "rainbow", Mode: ModeRainbow, Speed: true},
+	{Name: "strobe", Mode: ModeStrobe, Color: true, Speed: true},
+}
+
+// SpeedNames is every speed name SpeedFromString accepts, slowest first.
+var SpeedNames = []string{"slow", "normal", "fast"}
+
+// LookupMode returns the protocol's description of a mode name.
+func LookupMode(name string) (ModeInfo, bool) {
+	for _, m := range Modes {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return ModeInfo{}, false
+}
+
 // ModeFromString parses a user-supplied mode name.
 func ModeFromString(s string) (Mode, error) {
 	switch s {

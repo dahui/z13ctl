@@ -96,7 +96,7 @@ via asus-armoury firmware-attributes.`,
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target device: keyboard, lightbar, or a hidraw path (default: all)")
+	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target lighting zone (keyboard or lightbar on the Z13) or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
 	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the Armoury Crate button watcher (daemon only)")
 	rootCmd.PersistentFlags().BoolVar(&noSleepReleaseFlag, "no-sleep-release", false,

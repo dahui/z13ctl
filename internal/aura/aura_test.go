@@ -179,7 +179,7 @@ func TestApply(t *testing.T) {
 	t.Parallel()
 	m := &mockWriter{}
 
-	err := aura.Apply(m, aura.ModeStatic, 0x00, 0xFF, 0x00, 0, 0, 0, aura.SpeedNormal, 2)
+	err := aura.Apply(m, []uint8{0, 1}, aura.ModeStatic, 0x00, 0xFF, 0x00, 0, 0, 0, aura.SpeedNormal, 2)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

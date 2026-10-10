@@ -439,7 +439,8 @@ func (fakeLighting) Zones() []string                       { return nil }
 func (fakeLighting) Apply(string, api.LightingState) error { return nil }
 func (fakeLighting) Off(string) error                      { return nil }
 func (fakeLighting) SetBrightness(string, int) error       { return nil }
-func (fakeLighting) Present() bool                         { return true }
+func (fakeLighting) PresentZones() []string                { return nil }
+func (fakeLighting) Caps() driver.LightingCaps             { return driver.LightingCaps{} }
 func (fakeLighting) Reopen() error                         { return nil }
 
 type fakeToggles struct{}

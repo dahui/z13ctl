@@ -8,6 +8,10 @@ package aurahid
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
@@ -22,19 +26,99 @@ var (
 	hidHas  = hid.HasDevice
 )
 
+// kbdBacklightMax is the LED class's own ceiling for the keyboard backlight,
+// read only to cross-check the protocol's; a var so tests can redirect it.
+var kbdBacklightMax = "/sys/class/leds/asus::kbd_backlight/max_brightness"
+
+// Zone is one lighting zone: its wire name and label, the HID device that
+// carries it, and the protocol's zone byte.
+type Zone struct {
+	Name, Label     string
+	Vendor, Product uint16
+	Byte            uint8
+}
+
+// Config is the device data the driver is built from. Modes and Speeds are
+// optional subsets of the protocol's, in order; empty means all of it.
+type Config struct {
+	Zones  []Zone
+	Modes  []string
+	Speeds []string
+}
+
 // Lighting drives Aura RGB zones over hidraw. The zero value is unopened;
 // Reopen acquires the device.
 type Lighting struct {
-	zones []string
-	dev   *hid.Device // nil until Reopen succeeds
+	zones     []Zone
+	known     []hid.Known
+	zoneBytes []uint8
+	caps      driver.LightingCaps
+	dev       *hid.Device // nil until Reopen succeeds
 }
 
-// New returns an unopened lighting driver for the given zones. Pure: the HID
-// device is opened by the first Reopen, so assembly touches no hardware.
-func New(zones []string) *Lighting {
-	z := make([]string, len(zones))
-	copy(z, zones)
-	return &Lighting{zones: z}
+// New returns an unopened lighting driver for c. Pure apart from a static
+// LED-class read: the HID device is opened by the first Reopen, so assembly
+// touches no hardware. A mode or speed the protocol cannot send is an error —
+// the device data is wrong, and offering it would fail at every apply.
+func New(c Config) (*Lighting, error) {
+	l := &Lighting{zones: append([]Zone(nil), c.Zones...)}
+	for _, z := range c.Zones {
+		l.known = append(l.known, hid.Known{Name: z.Name, Vendor: z.Vendor, Product: z.Product})
+		l.zoneBytes = append(l.zoneBytes, z.Byte)
+		l.caps.Zones = append(l.caps.Zones, driver.LightingZone{Name: z.Name, Label: z.Label})
+	}
+	modes := c.Modes
+	if len(modes) == 0 {
+		for _, m := range aura.Modes {
+			modes = append(modes, m.Name)
+		}
+	}
+	for _, name := range modes {
+		m, ok := aura.LookupMode(name)
+		if !ok {
+			return nil, fmt.Errorf("lighting mode %q is not one the Aura protocol can send", name)
+		}
+		l.caps.Modes = append(l.caps.Modes, driver.LightingMode{
+			Name: m.Name, Label: titleCase(m.Name), Color: m.Color, Color2: m.Color2, Speed: m.Speed})
+	}
+	speeds := c.Speeds
+	if len(speeds) == 0 {
+		speeds = aura.SpeedNames
+	}
+	for _, name := range speeds {
+		if _, err := aura.SpeedFromString(name); err != nil {
+			return nil, fmt.Errorf("lighting speed: %w", err)
+		}
+	}
+	l.caps.Speeds = append([]string(nil), speeds...)
+	l.caps.BrightnessMax = aura.MaxBrightness
+	// The protocol decides the levels; the kernel's LED class is a second
+	// opinion worth a warning when it disagrees, since one of them is then
+	// describing hardware the other is not.
+	if data, err := os.ReadFile(kbdBacklightMax); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && n != aura.MaxBrightness {
+			slog.Warn("keyboard backlight max_brightness differs from the Aura protocol's levels",
+				"kernel", n, "protocol", aura.MaxBrightness)
+		}
+	}
+	return l, nil
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// Caps is the zones, modes, speeds and brightness ceiling, from the device
+// data and the protocol.
+func (l *Lighting) Caps() driver.LightingCaps {
+	c := l.caps
+	c.Zones = append([]driver.LightingZone(nil), l.caps.Zones...)
+	c.Modes = append([]driver.LightingMode(nil), l.caps.Modes...)
+	c.Speeds = append([]string(nil), l.caps.Speeds...)
+	return c
 }
 
 // skippableError marks a condition callers treat as "nothing to write here"
@@ -62,15 +146,26 @@ func (l *Lighting) view(zone string) (*hid.Device, error) {
 // Zones returns the addressable zone names from device data.
 func (l *Lighting) Zones() []string {
 	out := make([]string, len(l.zones))
-	copy(out, l.zones)
+	for i, z := range l.zones {
+		out[i] = z.Name
+	}
 	return out
 }
 
-// Present reports whether the detachable keyboard's hidraw node exists in
-// sysfs, without opening anything. The keyboard is the hot-pluggable part of
-// the Z13's lighting — the lightbar is fixed — so its presence is what the
-// hotplug watcher polls for.
-func (l *Lighting) Present() bool { return hid.HasDevice("keyboard") }
+// PresentZones returns the zones whose hidraw node exists in sysfs, in
+// declaration order, without opening anything. The hotplug watcher reopens
+// when a zone appears that was not there before — the Z13's keyboard cover
+// returning — so no zone has to be declared removable, and a zone whose
+// hardware never appears (a SKU without it) simply never triggers anything.
+func (l *Lighting) PresentZones() []string {
+	var out []string
+	for _, z := range l.zones {
+		if hidHas(z.Name, l.known) {
+			out = append(out, z.Name)
+		}
+	}
+	return out
+}
 
 // Reopen re-discovers and reopens the Aura HID device, replacing (and
 // closing) any stale handle. Called under the daemon's device lock.
@@ -89,17 +184,17 @@ func (l *Lighting) Present() bool { return hid.HasDevice("keyboard") }
 // is fine — that is a detached cover, and the watcher calls again when it
 // returns.
 func (l *Lighting) Reopen() error {
-	dev, err := hidFind("")
+	dev, err := hidFind("", l.known)
 	if err != nil {
 		return err
 	}
-	for _, zone := range l.zones {
-		if !hidHas(zone) {
+	for _, z := range l.zones {
+		if !hidHas(z.Name, l.known) {
 			continue
 		}
-		if _, err := dev.FilteredView(zone); err != nil {
+		if _, err := dev.FilteredView(z.Name); err != nil {
 			dev.Close()
-			return fmt.Errorf("zone %s is present but its hidraw node did not open (udev permissions not applied yet?): %w", zone, err)
+			return fmt.Errorf("zone %s is present but its hidraw node did not open (udev permissions not applied yet?): %w", z.Name, err)
 		}
 	}
 	if l.dev != nil {
@@ -130,13 +225,22 @@ func (l *Lighting) Apply(zone string, ls api.LightingState) error {
 	if !ls.Enabled {
 		return aura.TurnOff(target)
 	}
+	if _, ok := l.caps.Mode(ls.Mode); !ok {
+		return fmt.Errorf("unknown mode %q (valid: %s)", ls.Mode, strings.Join(l.modeNames(), " "))
+	}
 	mode, err := aura.ModeFromString(ls.Mode)
 	if err != nil {
 		return err
 	}
+	if !l.caps.HasSpeed(ls.Speed) {
+		return fmt.Errorf("unknown speed %q (valid: %s)", ls.Speed, strings.Join(l.caps.Speeds, " "))
+	}
 	speed, err := aura.SpeedFromString(ls.Speed)
 	if err != nil {
 		return err
+	}
+	if ls.Brightness < 0 || ls.Brightness > l.caps.BrightnessMax {
+		return fmt.Errorf("brightness %d out of range 0–%d", ls.Brightness, l.caps.BrightnessMax)
 	}
 	r, g, b, err := aura.ParseColor(ls.Color)
 	if err != nil {
@@ -146,7 +250,7 @@ func (l *Lighting) Apply(zone string, ls api.LightingState) error {
 	if err != nil {
 		return err
 	}
-	if err := aura.Apply(target, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness)); err != nil {
+	if err := aura.Apply(target, l.zoneBytes, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness)); err != nil {
 		return errors.New("apply: " + err.Error())
 	}
 	return nil
@@ -169,6 +273,9 @@ func (l *Lighting) Off(zone string) error {
 // up. The step labels on the errors are the ones the socket protocol has
 // always carried for this operation.
 func (l *Lighting) SetBrightness(zone string, level int) error {
+	if level < 0 || level > l.caps.BrightnessMax {
+		return fmt.Errorf("brightness %d out of range 0–%d", level, l.caps.BrightnessMax)
+	}
 	target, err := l.view(zone)
 	if err != nil {
 		return err
@@ -184,3 +291,15 @@ func (l *Lighting) SetBrightness(zone string, level int) error {
 	}
 	return nil
 }
+
+func (l *Lighting) modeNames() []string {
+	out := make([]string, len(l.caps.Modes))
+	for i, m := range l.caps.Modes {
+		out[i] = m.Name
+	}
+	return out
+}
+
+// Known returns the zone table as hid's known-device list, for callers that
+// enumerate hidraw nodes themselves (the CLI's list command).
+func (l *Lighting) Known() []hid.Known { return append([]hid.Known(nil), l.known...) }

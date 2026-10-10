@@ -20,11 +20,28 @@ import (
 	"github.com/dahui/voltaire/v2/internal/hid"
 )
 
+// z13 is the Z13 device file's zone table.
+var z13 = Config{Zones: []Zone{
+	{Name: "keyboard", Label: "Keyboard", Vendor: 0x0b05, Product: 0x1a30, Byte: 0},
+	{Name: "lightbar", Label: "Lightbar", Vendor: 0x0b05, Product: 0x18c6, Byte: 1},
+}}
+
+func newZ13(t *testing.T) *Lighting {
+	t.Helper()
+	l, err := New(z13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
 func TestUnopenedDriverReportsSkippableNoDevice(t *testing.T) {
-	l := New([]string{"keyboard", "lightbar"})
+	l := newZ13(t)
 
 	ops := map[string]func() error{
-		"Apply":         func() error { return l.Apply("keyboard", api.LightingState{Enabled: true}) },
+		"Apply": func() error {
+			return l.Apply("keyboard", api.LightingState{Enabled: true, Mode: "static", Speed: "normal", Brightness: 3})
+		},
 		"Off":           func() error { return l.Off("") },
 		"SetBrightness": func() error { return l.SetBrightness("", 2) },
 	}
@@ -43,7 +60,7 @@ func TestUnopenedDriverReportsSkippableNoDevice(t *testing.T) {
 }
 
 func TestZonesReturnsACopy(t *testing.T) {
-	l := New([]string{"keyboard", "lightbar"})
+	l := newZ13(t)
 	z := l.Zones()
 	z[0] = "mutated"
 	if got := l.Zones(); got[0] != "keyboard" {
@@ -52,7 +69,11 @@ func TestZonesReturnsACopy(t *testing.T) {
 }
 
 func TestCloseOnUnopenedDriverIsANoOp(t *testing.T) {
-	if err := New(nil).Close(); err != nil {
+	l, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
 		t.Errorf("Close() on an unopened driver = %v, want nil", err)
 	}
 }
@@ -75,12 +96,12 @@ func TestReopenGuardsPresentZones(t *testing.T) {
 	}
 	origFind, origHas := hidFind, hidHas
 	t.Cleanup(func() { hidFind, hidHas = origFind, origHas })
-	hidFind = func(string) (*hid.Device, error) { return hid.FindDevice(tmp) }
+	hidFind = func(string, []hid.Known) (*hid.Device, error) { return hid.FindDevice(tmp, nil) }
 
-	l := New([]string{"keyboard", "lightbar"})
+	l := newZ13(t)
 	t.Cleanup(func() { _ = l.Close() })
 
-	hidHas = func(string) bool { return true } // both zones present in sysfs
+	hidHas = func(string, []hid.Known) bool { return true } // both zones present in sysfs
 	err := l.Reopen()
 	if err == nil {
 		t.Fatal("Reopen() = nil while a present zone is missing from the opened set")
@@ -94,7 +115,7 @@ func TestReopenGuardsPresentZones(t *testing.T) {
 
 	// The same opened set with every zone absent from sysfs is a detached
 	// cover, not a failure: there is nothing to verify against.
-	hidHas = func(string) bool { return false }
+	hidHas = func(string, []hid.Known) bool { return false }
 	if err := l.Reopen(); err != nil {
 		t.Fatalf("Reopen() with all zones detached = %v, want nil", err)
 	}
@@ -107,10 +128,57 @@ func TestReopenPropagatesDiscoveryError(t *testing.T) {
 	origFind := hidFind
 	t.Cleanup(func() { hidFind = origFind })
 	boom := errors.New("no ASUS Aura devices found")
-	hidFind = func(string) (*hid.Device, error) { return nil, boom }
+	hidFind = func(string, []hid.Known) (*hid.Device, error) { return nil, boom }
 
-	l := New([]string{"keyboard"})
+	l := newZ13(t)
 	if err := l.Reopen(); !errors.Is(err, boom) {
 		t.Errorf("Reopen() = %v, want the discovery error", err)
+	}
+}
+
+// The capabilities are the device data's zones and the protocol's modes,
+// speeds and levels — and a mode the data names that the protocol cannot send
+// is refused at construction rather than failing at every apply.
+func TestCaps(t *testing.T) {
+	c := newZ13(t).Caps()
+	if len(c.Zones) != 2 || c.Zones[1] != (driver.LightingZone{Name: "lightbar", Label: "Lightbar"}) {
+		t.Errorf("zones = %+v", c.Zones)
+	}
+	if b, ok := c.Mode("breathe"); !ok || !b.Color || !b.Color2 || !b.Speed || b.Label != "Breathe" {
+		t.Errorf("breathe = %+v, %v; want both colours and a speed", b, ok)
+	}
+	if st, _ := c.Mode("static"); st.Speed || st.Color2 || !st.Color {
+		t.Errorf("static = %+v; want one colour and no speed", st)
+	}
+	if cy, _ := c.Mode("cycle"); cy.Color || !cy.Speed {
+		t.Errorf("cycle = %+v; want no colour and a speed", cy)
+	}
+	if c.BrightnessMax != 3 || len(c.Speeds) != 3 || len(c.Modes) != 5 {
+		t.Errorf("caps = %+v", c)
+	}
+
+	sub, err := New(Config{Zones: z13.Zones, Modes: []string{"static", "rainbow"}, Speeds: []string{"normal"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sub.Caps(); len(got.Modes) != 2 || got.Modes[1].Name != "rainbow" || len(got.Speeds) != 1 {
+		t.Errorf("subset caps = %+v", got)
+	}
+	if _, err := New(Config{Modes: []string{"disco"}}); err == nil {
+		t.Error("a mode the protocol cannot send was accepted")
+	}
+	if _, err := New(Config{Speeds: []string{"ludicrous"}}); err == nil {
+		t.Error("a speed the protocol cannot send was accepted")
+	}
+}
+
+// PresentZones reports each zone on its own, so a zone that never appears
+// cannot hide the keyboard returning.
+func TestPresentZones(t *testing.T) {
+	origHas := hidHas
+	t.Cleanup(func() { hidHas = origHas })
+	hidHas = func(name string, _ []hid.Known) bool { return name == "lightbar" }
+	if got := newZ13(t).PresentZones(); len(got) != 1 || got[0] != "lightbar" {
+		t.Errorf("PresentZones = %v, want [lightbar]", got)
 	}
 }

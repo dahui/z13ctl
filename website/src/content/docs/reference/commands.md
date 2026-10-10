@@ -18,7 +18,7 @@ These flags apply to every command.
 
 | Flag | Description |
 |------|-------------|
-| `--device <name\|path>` | Target a single device: `keyboard`, `lightbar`, or a `/dev/hidrawN` path. Without this flag all matching devices are targeted. |
+| `--device <name\|path>` | Target one lighting zone (`keyboard` or `lightbar` on the Z13) or a `/dev/hidrawN` path. Without this flag all zones are targeted. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
 | `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching voltaire at all. |
 | `--no-sleep-release` | Keep a custom fan curve in force through sleep instead of handing the fans back to the firmware (daemon only). See [sleep/resume recovery](/voltaire/reference/daemon/#on-sleep--the-fans-are-handed-back-to-the-firmware). |

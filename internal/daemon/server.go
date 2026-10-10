@@ -359,24 +359,44 @@ func (d *Daemon) handleBatteryLimitGet() response {
 	return response{OK: true, Value: strconv.Itoa(limit)}
 }
 
-func (d *Daemon) handleApply(req request) response {
-	// The lighting driver parses these again inside Apply; validating here
-	// first keeps the wire protocol's field-specific error prefixes, which the
-	// driver's single return cannot distinguish.
-	if _, err := aura.ModeFromString(req.Mode); err != nil {
-		return response{OK: false, Error: "mode: " + err.Error()}
+// lightingRequestError checks a lighting request's zone and brightness against
+// the driver's capabilities. The driver checks them again; validating here keeps
+// the wire protocol's field-specific errors, which its single return cannot
+// distinguish, and refuses before d.mu is taken.
+func (d *Daemon) lightingRequestError(req request) string {
+	if d.hw == nil || d.hw.Lighting == nil {
+		return "no HID device available"
 	}
-	if _, err := aura.SpeedFromString(req.Speed); err != nil {
-		return response{OK: false, Error: "speed: " + err.Error()}
+	c := d.hw.Lighting.Caps()
+	if req.Device != "" && !strings.HasPrefix(req.Device, "/") && !c.HasZone(req.Device) {
+		return fmt.Sprintf("device: %q is not a lighting zone (zones: %s)", req.Device, strings.Join(d.hw.Lighting.Zones(), ", "))
+	}
+	if req.Brightness < 0 || req.Brightness > c.BrightnessMax {
+		return fmt.Sprintf("brightness %d out of range 0–%d", req.Brightness, c.BrightnessMax)
+	}
+	return ""
+}
+
+func (d *Daemon) handleApply(req request) response {
+	if msg := d.lightingRequestError(req); msg != "" {
+		return response{OK: false, Error: msg}
+	}
+	c := d.hw.Lighting.Caps()
+	if _, ok := c.Mode(req.Mode); !ok {
+		names := make([]string, len(c.Modes))
+		for i, m := range c.Modes {
+			names[i] = m.Name
+		}
+		return response{OK: false, Error: fmt.Sprintf("mode: unknown mode %q (valid: %s)", req.Mode, strings.Join(names, " "))}
+	}
+	if !c.HasSpeed(req.Speed) {
+		return response{OK: false, Error: fmt.Sprintf("speed: unknown speed %q (valid: %s)", req.Speed, strings.Join(c.Speeds, " "))}
 	}
 	if _, _, _, err := aura.ParseColor(req.Color); err != nil {
 		return response{OK: false, Error: "color: " + err.Error()}
 	}
 	if _, _, _, err := aura.ParseColor(req.Color2); err != nil {
 		return response{OK: false, Error: "color2: " + err.Error()}
-	}
-	if req.Brightness < 0 || req.Brightness > 3 {
-		return response{OK: false, Error: fmt.Sprintf("brightness %d out of range 0–3", req.Brightness)}
 	}
 
 	d.mu.Lock()
@@ -422,6 +442,9 @@ func (d *Daemon) handleApply(req request) response {
 }
 
 func (d *Daemon) handleOff(req request) response {
+	if msg := d.lightingRequestError(req); msg != "" {
+		return response{OK: false, Error: msg}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -455,8 +478,8 @@ func (d *Daemon) handleOff(req request) response {
 }
 
 func (d *Daemon) handleBrightness(req request) response {
-	if req.Brightness < 0 || req.Brightness > 3 {
-		return response{OK: false, Error: fmt.Sprintf("brightness %d out of range 0–3", req.Brightness)}
+	if msg := d.lightingRequestError(req); msg != "" {
+		return response{OK: false, Error: msg}
 	}
 
 	d.mu.Lock()

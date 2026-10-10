@@ -107,3 +107,24 @@ func TestModeByteValues(t *testing.T) {
 		}
 	}
 }
+
+// The mode table is what every client builds its controls from, so it must
+// agree with the parser and with what SetMode puts on the wire: each name
+// parses to its byte, and Color2 is exactly the mode SetMode sets the
+// dual-colour flag for.
+func TestModeTableMatchesTheProtocol(t *testing.T) {
+	for _, m := range aura.Modes {
+		got, err := aura.ModeFromString(m.Name)
+		if err != nil || got != m.Mode {
+			t.Errorf("%s: ModeFromString = %v, %v; want %v", m.Name, got, err, m.Mode)
+		}
+		if m.Color2 != (m.Mode == aura.ModeBreathe) {
+			t.Errorf("%s: Color2 = %v, but only breathe sets the dual-colour flag", m.Name, m.Color2)
+		}
+	}
+	for _, s := range aura.SpeedNames {
+		if _, err := aura.SpeedFromString(s); err != nil {
+			t.Errorf("speed %q does not parse: %v", s, err)
+		}
+	}
+}

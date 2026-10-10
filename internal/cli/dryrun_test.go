@@ -182,7 +182,7 @@ func TestDryRunBrightness_NonZero(t *testing.T) {
 
 func TestDryRunApply_Static(t *testing.T) {
 	out := captureStdout(t, func() {
-		cli.DryRunApply(0xFF, 0x00, 0x00, 0, 0, 0, aura.ModeStatic, aura.SpeedNormal, 3)
+		cli.DryRunApply([]uint8{0, 1}, 0xFF, 0x00, 0x00, 0, 0, 0, aura.ModeStatic, aura.SpeedNormal, 3)
 	})
 
 	for _, want := range []string{
@@ -204,7 +204,7 @@ func TestDryRunApply_Static(t *testing.T) {
 func TestDryRunApply_Breathe(t *testing.T) {
 	// Breathe with non-zero primary color → randFlag = 0x01
 	out := captureStdout(t, func() {
-		cli.DryRunApply(0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, aura.ModeBreathe, aura.SpeedSlow, 2)
+		cli.DryRunApply([]uint8{0, 1}, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, aura.ModeBreathe, aura.SpeedSlow, 2)
 	})
 
 	if !strings.Contains(out, "DRY RUN") {
@@ -379,7 +379,7 @@ func TestDryRunUndervoltZeroIsNotANoOp(t *testing.T) {
 func TestDryRunApply_ZeroColor_RandomFlag(t *testing.T) {
 	// Zero primary color → randFlag = 0xFF (random color mode)
 	out := captureStdout(t, func() {
-		cli.DryRunApply(0, 0, 0, 0, 0, 0, aura.ModeCycle, aura.SpeedFast, 1)
+		cli.DryRunApply([]uint8{0, 1}, 0, 0, 0, 0, 0, 0, aura.ModeCycle, aura.SpeedFast, 1)
 	})
 
 	if !strings.Contains(out, "DRY RUN") {

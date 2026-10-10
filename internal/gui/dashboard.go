@@ -48,12 +48,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/colorconv"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
+	"github.com/dahui/voltaire/v2/internal/lighting"
 	"github.com/dahui/voltaire/v2/internal/mainwin"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/dahui/voltaire/v2/internal/telemetryplot"
@@ -391,16 +393,6 @@ func (d *dashboardView) syncBoost() {
 	d.boostSw.SetActive(*st.CPUBoost)
 }
 
-// lightingZones is the zone cards this page builds, in display order. The
-// heading is the whole labelling: a card named LIGHTBAR holding Effect, two
-// colours, Speed and Brightness needs no further explanation, and a "LIGHTING"
-// heading over the pair would be a level of nesting to say what both already
-// say.
-var lightingZones = []struct{ zone, title string }{
-	{"keyboard", "KEYBOARD"},
-	{"lightbar", "LIGHTBAR"},
-}
-
 // buildLightingRow builds one RGB card per lighting zone, side by side.
 //
 // The drawer has one block and a pair of zone tabs because 320px fits one set
@@ -412,18 +404,22 @@ var lightingZones = []struct{ zone, title string }{
 func (d *dashboardView) buildLightingRow() *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationHorizontal, 12)
 	row.SetHomogeneous(true)
-	for _, z := range lightingZones {
+	// One card per zone the device has, in its order. The heading is the
+	// whole labelling: a card named LIGHTBAR holding Effect, two colours, Speed
+	// and Brightness needs no further explanation, and a "LIGHTING" heading
+	// over the pair would be a level of nesting to say what both already say.
+	for _, z := range lighting.CapsFrom(d.w.device).Zones {
 		l := d.w.newLightingSection(lightingConfig{
 			// Namespaced per zone as well as per surface: the swatch provider is
 			// registered display-wide, so any two blocks sharing a selector
 			// repaint each other's squares.
-			swatchPrefix: "dash-" + z.zone + "-",
-			zone:         z.zone,
+			swatchPrefix: "dash-" + z.Name + "-",
+			zone:         z.Name,
 			desktop:      true,
 		})
 		d.lightings = append(d.lightings, l)
 
-		card := sectionCard(z.title, l.blocks()...)
+		card := sectionCard(strings.ToUpper(z.Label), l.blocks()...)
 		// Top-aligned so the shorter card does not stretch: an effect of "off"
 		// hides that zone's colours, speed and brightness, which is the honest
 		// rendering and makes the two cards genuinely different heights.

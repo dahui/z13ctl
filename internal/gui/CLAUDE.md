@@ -1338,7 +1338,10 @@ title changed to match while the ID stayed `dashboard`.
     the number you want to read is the one that will not hold still.
   - **Brightness** names its four levels (Off/Low/Medium/High). 0–3 is what the
     hardware takes; "2" is not a brightness anyone asked for, and 0 is *off*,
-    which a bare number never says.
+    which a bare number never says. The scale is the device's
+    (`lighting.Caps.BrightnessMax`); on any other number of levels the readout
+    is the number, since a fifth name would be invented. Zones, effects and
+    speeds likewise come from `lighting.CapsFrom(w.device)`.
   - **Effect**: one row of six rather than 3×2. A line of options is read at a
     glance; a 3×2 block reads as a keypad. `modeColumns()` is the one number,
     and `appendFocus` takes it too — see below.

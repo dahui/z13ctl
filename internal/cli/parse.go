@@ -23,23 +23,6 @@ func ParseColor(s string) (r, g, b uint8, err error) {
 	return aura.ParseColor(s)
 }
 
-// ParseBrightness parses a brightness level name or number into a 0–3 uint8.
-// Accepted names: off (0), low (1), medium (2), high (3).
-// Numeric strings "0"–"3" are also accepted.
-func ParseBrightness(s string) (uint8, error) {
-	switch strings.ToLower(s) {
-	case "off", "0":
-		return 0, nil
-	case "low", "1":
-		return 1, nil
-	case "medium", "med", "2":
-		return 2, nil
-	case "high", "3":
-		return 3, nil
-	}
-	return 0, fmt.Errorf("brightness must be off/low/medium/high (or 0–3), got %q", s)
-}
-
 // ParseFanCurve parses a comma-separated curve string of temp:speed pairs
 // against the device's fan-curve shape: the shape's Points is the required
 // point count and its PWMMax the speed ceiling. Temperatures are Celsius and

@@ -9,7 +9,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/cli"
-	"github.com/dahui/voltaire/v2/internal/hid"
+	"github.com/dahui/voltaire/v2/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -39,7 +39,11 @@ var applyCmd = &cobra.Command{
 			return cmd.Help()
 		}
 
-		brightness, err := cli.ParseBrightness(brightnessFlag)
+		caps := lightingCaps()
+		if err := checkLightingZone(caps, deviceFlag); err != nil {
+			return err
+		}
+		brightness, err := parseLightingBrightness(brightnessFlag, caps.BrightnessMax)
 		if err != nil {
 			return fmt.Errorf("--brightness: %w", err)
 		}
@@ -53,78 +57,62 @@ var applyCmd = &cobra.Command{
 			cli.PrintColorList()
 			return fmt.Errorf("--color2: %w", err)
 		}
-		mode, err := aura.ModeFromString(modeFlag)
-		if err != nil {
-			return fmt.Errorf("--mode: %w", err)
+		modeInfo, ok := caps.Mode(modeFlag)
+		if !ok {
+			return fmt.Errorf("--mode: unknown mode %q (valid: %s)", modeFlag, modeNamesText(caps))
 		}
-		speed, err := aura.SpeedFromString(speedFlag)
-		if err != nil {
-			return fmt.Errorf("--speed: %w", err)
+		if !caps.HasSpeed(speedFlag) {
+			return fmt.Errorf("--speed: unknown speed %q (valid: %s)", speedFlag, strings.Join(caps.Speeds, "|"))
 		}
 
 		if dryRunFlag {
-			cli.DryRunApply(r, g, b, r2, g2, b2, mode, speed, brightness)
+			mode, merr := aura.ModeFromString(modeFlag)
+			if merr != nil {
+				return fmt.Errorf("--mode: %w", merr)
+			}
+			speed, serr := aura.SpeedFromString(speedFlag)
+			if serr != nil {
+				return fmt.Errorf("--speed: %w", serr)
+			}
+			cli.DryRunApply(lightingZoneBytes(), r, g, b, r2, g2, b2, mode, speed, uint8(brightness))
 			return nil
 		}
 
 		color := fmt.Sprintf("%02X%02X%02X", r, g, b)
 		color2 := fmt.Sprintf("%02X%02X%02X", r2, g2, b2)
-		handled, err := api.SendApply(deviceFlag, color, color2, modeFlag, speedFlag, int(brightness))
-		if handled {
-			if err != nil {
-				return err
-			}
-			var parts []string
-			if deviceFlag != "" {
-				parts = append(parts, "Applied: "+deviceFlag)
-			} else {
-				parts = append(parts, "Applied:")
-			}
-			parts = append(parts, "mode="+modeFlag)
-			if mode != aura.ModeCycle && mode != aura.ModeRainbow {
-				parts = append(parts, "color="+cli.ColorDisplay(colorFlag))
-			}
-			if mode == aura.ModeBreathe {
-				parts = append(parts, "color2="+cli.ColorDisplay(color2Flag))
-			}
-			if mode != aura.ModeStatic {
-				parts = append(parts, "speed="+speedFlag)
-			}
-			parts = append(parts, "brightness="+brightnessFlag)
-			fmt.Println(strings.Join(parts, " "))
-			return nil
+		handled, err := api.SendApply(deviceFlag, color, color2, modeFlag, speedFlag, brightness)
+		if !handled {
+			ls := api.LightingState{Enabled: true, Mode: modeFlag, Color: color, Color2: color2,
+				Speed: speedFlag, Brightness: brightness}
+			err = withLighting(func(l driver.Lighting) error { return l.Apply(deviceFlag, ls) })
 		}
-
-		dev, err := hid.FindDevice(deviceFlag)
 		if err != nil {
 			return err
 		}
-		defer dev.Close()
-
-		if err := aura.Apply(dev, mode, r, g, b, r2, g2, b2, speed, brightness); err != nil {
-			return err
-		}
-
-		parts := []string{
-			"Applied: " + strings.Join(dev.Descriptions(), ", "),
-			"mode=" + modeFlag,
-		}
-		// cycle and rainbow pick colors automatically; color is not meaningful.
-		if mode != aura.ModeCycle && mode != aura.ModeRainbow {
-			parts = append(parts, "color="+cli.ColorDisplay(colorFlag))
-		}
-		// color2 is only used by breathe (dual-color).
-		if mode == aura.ModeBreathe {
-			parts = append(parts, "color2="+cli.ColorDisplay(color2Flag))
-		}
-		// speed is not meaningful for static.
-		if mode != aura.ModeStatic {
-			parts = append(parts, "speed="+speedFlag)
-		}
-		parts = append(parts, "brightness="+brightnessFlag)
-		fmt.Println(strings.Join(parts, " "))
+		fmt.Println(appliedText(deviceFlag, modeInfo))
 		return nil
 	},
+}
+
+// appliedText is apply's confirmation, naming only the inputs the mode uses —
+// the mode's own description, not a list of modes that ignore colour.
+func appliedText(zone string, m driver.LightingMode) string {
+	parts := []string{"Applied:"}
+	if zone != "" {
+		parts[0] = "Applied: " + zone
+	}
+	parts = append(parts, "mode="+m.Name)
+	if m.Color {
+		parts = append(parts, "color="+cli.ColorDisplay(colorFlag))
+	}
+	if m.Color2 {
+		parts = append(parts, "color2="+cli.ColorDisplay(color2Flag))
+	}
+	if m.Speed {
+		parts = append(parts, "speed="+speedFlag)
+	}
+	parts = append(parts, "brightness="+brightnessFlag)
+	return strings.Join(parts, " ")
 }
 
 func init() {
@@ -133,11 +121,11 @@ func init() {
 	applyCmd.Flags().StringVar(&color2Flag, "color2", "000000",
 		"Secondary color for breathe mode: hex (RRGGBB) or name. Use --list-colors for all names.")
 	applyCmd.Flags().StringVar(&modeFlag, "mode", "static",
-		"Lighting mode: static|breathe|cycle|rainbow|strobe")
+		"Lighting mode, one the device offers (static, breathe, cycle, rainbow, strobe on the Z13)")
 	applyCmd.Flags().StringVar(&speedFlag, "speed", "normal",
-		"Animation speed: slow|normal|fast. Ignored by static.")
+		"Animation speed: slow|normal|fast. Ignored by modes that do not animate.")
 	applyCmd.Flags().StringVar(&brightnessFlag, "brightness", "high",
-		"Brightness level: off|low|medium|high")
+		"Brightness: off|low|medium|high, or a number up to the device's maximum")
 	applyCmd.Flags().BoolVar(&listColorsFlag, "list-colors", false,
 		"List all supported color names with swatches")
 	rootCmd.AddCommand(applyCmd)

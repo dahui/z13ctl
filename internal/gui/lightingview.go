@@ -43,7 +43,6 @@ package gui
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -55,15 +54,6 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
-
-// modeOrder defines the display order for lighting mode buttons.
-var modeOrder = []string{
-	"static", "breathe", "cycle",
-	"rainbow", "strobe", "off",
-}
-
-// speeds lists the available lighting animation speeds.
-var speeds = []string{"slow", "normal", "fast"}
 
 // lightingConfig is everything that differs between the two instances.
 type lightingConfig struct {
@@ -92,13 +82,19 @@ type lightingView struct {
 	w   *Window
 	cfg lightingConfig
 
-	// tab is the zone being edited: "keyboard" or "lightbar". It is also the
-	// device name sent to the daemon.
+	// caps is the device's lighting — zones, effects and the inputs each
+	// takes, speeds, the brightness scale — from the device document
+	// (lighting.CapsFrom), so nothing here restates a mode list.
+	caps lighting.Caps
+	// modes is the effect buttons in order: the device's, then off.
+	modes []string
+
+	// tab is the zone being edited, and the device name sent to the daemon.
 	tab string
 
-	tabKB, tabLB *gtk.CheckButton
-	modeButtons  map[string]*gtk.Button
-	speedBtns    map[string]*gtk.Button
+	tabs        []*gtk.CheckButton // one per zone; nil on a zone-fixed block
+	modeButtons map[string]*gtk.Button
+	speedBtns   map[string]*gtk.Button
 
 	// The six blocks, in display order. They are fields rather than only a
 	// return value because the two surfaces arrange them differently: the
@@ -154,12 +150,17 @@ func (l *lightingView) blocks() []gtk.Widgetter {
 // are arranged — stacked down the drawer's scrolling column, or dealt into the
 // dashboard card's three columns.
 func (w *Window) newLightingSection(cfg lightingConfig) *lightingView {
+	caps := lighting.CapsFrom(w.device)
 	l := &lightingView{
 		w:           w,
 		cfg:         cfg,
-		tab:         "keyboard",
+		caps:        caps,
+		modes:       caps.ModeNames(),
 		modeButtons: make(map[string]*gtk.Button),
 		speedBtns:   make(map[string]*gtk.Button),
+	}
+	if len(caps.Zones) > 0 {
+		l.tab = caps.Zones[0].Name
 	}
 	if cfg.zone != "" {
 		l.tab = cfg.zone
@@ -172,9 +173,10 @@ func (w *Window) newLightingSection(cfg lightingConfig) *lightingView {
 	gtk.StyleContextAddProviderForDisplay(
 		gdk.DisplayGetDefault(), l.swatchProv, gtk.STYLE_PROVIDER_PRIORITY_USER+10)
 
-	// No selector on a block that is already one zone: the card heading says
-	// which, and a one-of-two control with only one legal answer is furniture.
-	if cfg.zone == "" {
+	// No selector on a block that is already one zone, or on a device with
+	// only one: the card heading says which, and a choice with only one legal
+	// answer is furniture.
+	if cfg.zone == "" && len(caps.Zones) > 1 {
 		l.zoneRow = l.buildTabRow()
 	}
 	l.modeBox = l.buildModeSection()
@@ -203,7 +205,7 @@ func (w *Window) newLightingSection(cfg lightingConfig) *lightingView {
 // 50px per thumb.
 func (l *lightingView) modeColumns() int {
 	if l.cfg.desktop {
-		return len(modeOrder)
+		return len(l.modes)
 	}
 	return 3
 }
@@ -213,46 +215,38 @@ func (l *lightingView) swatchID(n int) string {
 	return fmt.Sprintf("%scolor%d-swatch", l.cfg.swatchPrefix, n)
 }
 
-// buildTabRow creates the Keyboard / Lightbar zone selector — filled tab
-// buttons in the drawer, and in the window the pair of radio buttons GTK
-// renders them as once the desktop stylesheet strips the fill, which is the
-// right desktop control for one-of-two anyway.
+// buildTabRow creates the zone selector, one tab per zone the device has
+// (Keyboard / Lightbar on the Z13) — filled tab buttons in the drawer, and in
+// the window the radio buttons GTK renders them as once the desktop
+// stylesheet strips the fill, which is the right desktop control for
+// one-of-few anyway.
 func (l *lightingView) buildTabRow() *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationHorizontal, 4)
 
-	kb := gtk.NewCheckButtonWithLabel("Keyboard")
-	kb.SetActive(true)
-	lb := gtk.NewCheckButtonWithLabel("Lightbar")
-	lb.SetGroup(kb)
-
-	kb.AddCSSClass("tab-btn")
-	lb.AddCSSClass("tab-btn")
-	kb.SetHExpand(true)
-	lb.SetHExpand(true)
-
-	kb.ConnectToggled(func() {
-		if kb.Active() {
-			l.tab = "keyboard"
-			l.sync()
+	var first *gtk.CheckButton
+	for _, z := range l.caps.Zones {
+		name := z.Name
+		btn := gtk.NewCheckButtonWithLabel(z.Label)
+		if first == nil {
+			first = btn
+			btn.SetActive(true)
+		} else {
+			btn.SetGroup(first)
 		}
-	})
-	lb.ConnectToggled(func() {
-		if lb.Active() {
-			l.tab = "lightbar"
-			l.sync()
+		btn.AddCSSClass("tab-btn")
+		btn.SetHExpand(true)
+		btn.ConnectToggled(func() {
+			if btn.Active() {
+				l.tab = name
+				l.sync()
+			}
+		})
+		if l.w.gamescope {
+			addTouchActivate(btn, func() { btn.SetActive(true) })
 		}
-	})
-
-	l.tabKB = kb
-	l.tabLB = lb
-
-	if l.w.gamescope {
-		addTouchActivate(kb, func() { kb.SetActive(true) })
-		addTouchActivate(lb, func() { lb.SetActive(true) })
+		l.tabs = append(l.tabs, btn)
+		row.Append(btn)
 	}
-
-	row.Append(kb)
-	row.Append(lb)
 	if l.cfg.desktop {
 		return formRow("Zone", row)
 	}
@@ -274,9 +268,9 @@ func (l *lightingView) buildModeSection() *gtk.Box {
 	grid.SetColumnHomogeneous(true)
 
 	cols := l.modeColumns()
-	for i, m := range modeOrder {
+	for i, m := range l.modes {
 		mode := m
-		btn := gtk.NewButtonWithLabel(strings.Title(mode)) //nolint:staticcheck // strings.Title is fine for ASCII-only mode/speed/profile labels
+		btn := gtk.NewButtonWithLabel(l.caps.Label(mode))
 		btn.ConnectClicked(func() {
 			setActiveButton(l.modeButtons, mode)
 			l.syncModeVis()
@@ -295,10 +289,10 @@ func (l *lightingView) buildModeSection() *gtk.Box {
 
 // buildSpeedBox creates the slow/normal/fast button row.
 func (l *lightingView) buildSpeedBox() *gtk.Box {
-	group := l.w.buildButtonGroup(gtk.OrientationHorizontal, speeds, l.speedBtns, func(_ string) {
+	group := l.w.buildButtonGroup(gtk.OrientationHorizontal, l.caps.Speeds, l.speedBtns, func(_ string) {
 		l.sendApply()
 	})
-	setActiveButton(l.speedBtns, "normal")
+	setActiveButton(l.speedBtns, l.defaultSpeed())
 	if l.cfg.desktop {
 		return formRow("Speed", group)
 	}
@@ -308,12 +302,31 @@ func (l *lightingView) buildSpeedBox() *gtk.Box {
 	return box
 }
 
-// buildBrightnessBox creates the brightness scale (0–3).
+// defaultSpeed is the speed to select before state says otherwise: the
+// default when the device offers it, else its first.
+func (l *lightingView) defaultSpeed() string {
+	for _, sp := range l.caps.Speeds {
+		if sp == lighting.DefaultSpeed {
+			return sp
+		}
+	}
+	if len(l.caps.Speeds) > 0 {
+		return l.caps.Speeds[0]
+	}
+	return lighting.DefaultSpeed
+}
+
+// defaultBrightness is lighting.DefaultBrightness on this device's scale.
+func (l *lightingView) defaultBrightness() int {
+	return min(lighting.DefaultBrightness, l.caps.BrightnessMax)
+}
+
+// buildBrightnessBox creates the brightness scale, 0 to the device's maximum.
 func (l *lightingView) buildBrightnessBox() *gtk.Box {
-	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, 3, 1)
+	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, float64(max(l.caps.BrightnessMax, 1)), 1)
 	sc.SetDigits(0)
 	sc.SetDrawValue(!l.cfg.desktop)
-	sc.SetValue(3)
+	sc.SetValue(float64(l.caps.BrightnessMax))
 	sc.SetFocusable(false)
 	l.w.wheelScrollsView(sc)
 	sc.ConnectValueChanged(func() {
@@ -323,9 +336,10 @@ func (l *lightingView) buildBrightnessBox() *gtk.Box {
 	l.brightScale = sc
 
 	if l.cfg.desktop {
-		// Named rather than numbered. 0–3 is what the hardware takes and what
-		// the drawer's slider shows, but "2" is not a brightness anyone asked
-		// for — and 0 is *off*, which a bare number never says.
+		// Named rather than numbered where the scale has names (the Aura
+		// four levels). The level is what the hardware takes and what the
+		// drawer's slider shows, but "2" is not a brightness anyone asked for
+		// — and 0 is *off*, which a bare number never says.
 		l.brightValue = formValueLabel("")
 		l.syncBrightnessLabel()
 		return formRow("Brightness", formSlider(sc, l.brightValue))
@@ -337,26 +351,19 @@ func (l *lightingView) buildBrightnessBox() *gtk.Box {
 	return box
 }
 
-// brightnessNames are the window's labels for the four hardware levels.
-var brightnessNames = []string{"Off", "Low", "Medium", "High"}
-
 // syncBrightnessLabel keeps the named readout on the slider. A no-op in the
 // drawer, which has no such label.
 func (l *lightingView) syncBrightnessLabel() {
 	if l.brightValue == nil || l.brightScale == nil {
 		return
 	}
-	i := int(l.brightScale.Value())
-	if i < 0 || i >= len(brightnessNames) {
-		return
-	}
-	l.brightValue.SetLabel(brightnessNames[i])
+	l.brightValue.SetLabel(l.caps.BrightnessName(int(l.brightScale.Value())))
 }
 
 // syncModeVis shows/hides colour and speed sections based on the active mode.
 // Safe to call at any time, including during a sync.
 func (l *lightingView) syncModeVis() {
-	c := lighting.ControlsFor(activeButton(l.modeButtons, lighting.DefaultMode))
+	c := l.caps.ControlsFor(activeButton(l.modeButtons, lighting.DefaultMode))
 	if l.color1Box != nil {
 		l.color1Box.SetVisible(c.Color1)
 	}
@@ -390,7 +397,7 @@ func (l *lightingView) sync() {
 	l.updateSwatches()
 	setActiveButton(l.speedBtns, lighting.ResolveSpeed(ls))
 	if l.brightScale != nil {
-		l.brightScale.SetValue(float64(lighting.ResolveBrightness(ls)))
+		l.brightScale.SetValue(float64(min(lighting.ResolveBrightness(ls), l.caps.BrightnessMax)))
 		l.syncBrightnessLabel()
 	}
 	l.syncModeVis()
@@ -479,9 +486,9 @@ func (l *lightingView) sendApply() {
 	}
 
 	mode := activeButton(l.modeButtons, lighting.DefaultMode)
-	speed := activeButton(l.speedBtns, lighting.DefaultSpeed)
+	speed := activeButton(l.speedBtns, l.defaultSpeed())
 
-	brightness := lighting.DefaultBrightness
+	brightness := l.defaultBrightness()
 	if l.brightScale != nil {
 		brightness = int(l.brightScale.Value())
 	}
@@ -530,11 +537,10 @@ func (w *Window) focusLightingSection(b *focusgrid.Builder, items *[]focusItem) 
 // appendFocus appends this instance's focus items.
 func (l *lightingView) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	// Device tabs — horizontal row. Absent on a zone-fixed block.
-	if l.tabKB != nil && l.tabLB != nil {
+	if len(l.tabs) > 0 {
 		b.Section(l.section("tabs"))
-		tabs := []*gtk.CheckButton{l.tabKB, l.tabLB}
-		for i, tc := range b.Line(len(tabs)) {
-			btn := tabs[i]
+		for i, tc := range b.Line(len(l.tabs)) {
+			btn := l.tabs[i]
 			*items = append(*items, focusItem{
 				widget: btn, row: tc.Row, col: tc.Col, section: tc.Section,
 				onActivate: func() { btn.SetActive(true) },
@@ -545,8 +551,8 @@ func (l *lightingView) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	// Mode buttons — a grid three wide. Grid owns how many rows that is, so
 	// adding a seventh mode no longer collides with the section below.
 	b.Section(l.section("mode"))
-	for i, mc := range b.Grid(len(modeOrder), l.modeColumns()) {
-		btn := l.modeButtons[modeOrder[i]]
+	for i, mc := range b.Grid(len(l.modes), l.modeColumns()) {
+		btn := l.modeButtons[l.modes[i]]
 		*items = append(*items, focusItem{
 			widget: btn, row: mc.Row, col: mc.Col, section: mc.Section,
 			onActivate: func() { btn.Activate() },
@@ -580,8 +586,8 @@ func (l *lightingView) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 
 	// Speed buttons — horizontal row.
 	b.Section(l.section("speed"))
-	for i, sc := range b.Line(len(speeds)) {
-		btn := l.speedBtns[speeds[i]]
+	for i, sc := range b.Line(len(l.caps.Speeds)) {
+		btn := l.speedBtns[l.caps.Speeds[i]]
 		*items = append(*items, focusItem{
 			widget: btn, row: sc.Row, col: sc.Col, section: sc.Section,
 			isVisible:  boxVisible(l.speedBox),

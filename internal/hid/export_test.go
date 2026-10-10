@@ -25,3 +25,13 @@ var HasDeviceGlob = hasDeviceGlob
 
 // DescriptorHasAuraReport is the test-only export of descriptorHasAuraReport.
 var DescriptorHasAuraReport = descriptorHasAuraReport
+
+// SetSysHidrawDir points discovery at a fake tree for the test's duration.
+func SetSysHidrawDir(dir string) (restore func()) {
+	orig := sysHidrawDir
+	sysHidrawDir = dir
+	return func() { sysHidrawDir = orig }
+}
+
+// HasAuraReport is the test-only export of hasAuraReport.
+var HasAuraReport = hasAuraReport

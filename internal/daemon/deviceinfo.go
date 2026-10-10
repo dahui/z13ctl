@@ -92,7 +92,15 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		info.Profiles = &api.ProfileInfo{Names: names, Default: hw.Profiles.Default(), Entries: entries}
 	}
 	if hw.Lighting != nil {
-		info.Lighting = &api.LightingInfo{Zones: hw.Lighting.Zones()}
+		c := hw.Lighting.Caps()
+		info.Lighting = &api.LightingInfo{Zones: hw.Lighting.Zones(), Speeds: c.Speeds, BrightnessMax: c.BrightnessMax}
+		for _, z := range c.Zones {
+			info.Lighting.Labels = append(info.Lighting.Labels, z.Label)
+		}
+		for _, m := range c.Modes {
+			info.Lighting.Modes = append(info.Lighting.Modes, api.LightingMode{
+				Name: m.Name, Label: m.Label, Color: m.Color, Color2: m.Color2, Speed: m.Speed})
+		}
 	}
 	if hw.Toggles != nil {
 		for _, t := range hw.Toggles.List() {

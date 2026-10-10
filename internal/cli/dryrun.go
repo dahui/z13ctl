@@ -44,9 +44,10 @@ func printInitPackets() {
 	printPacket("Init 4 (Z13)", []byte{auraReportID, 0xC0, 0x03, 0x01})
 }
 
-// DryRunApply prints the packet sequence for an apply operation.
-// All values must be pre-parsed by the caller.
-func DryRunApply(r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, brightness uint8) {
+// DryRunApply prints the packet sequence for an apply operation, one SetMode
+// per zone byte in zones (the device data's). All values must be pre-parsed by
+// the caller.
+func DryRunApply(zones []uint8, r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, brightness uint8) {
 	var randFlag byte
 	if r == 0 && g == 0 && b == 0 {
 		randFlag = 0xFF
@@ -58,7 +59,7 @@ func DryRunApply(r, g, b, r2, g2, b2 uint8, mode aura.Mode, speed aura.Speed, br
 	printInitPackets()
 	printPacket("Power ON", []byte{auraReportID, 0xBD, 0x01, 0xFF, 0x1F, 0xFF, 0xFF, 0xFF})
 	printPacket("Brightness", []byte{auraReportID, 0xBA, 0xC5, 0xC4, brightness})
-	for _, z := range []uint8{0, 1} { // z13Zones: keyboard=0, lightbar=1
+	for _, z := range zones {
 		label := fmt.Sprintf("SetMode z%d (0xb3)", z)
 		printPacket(label, []byte{
 			auraReportID, 0xB3, z, byte(mode),

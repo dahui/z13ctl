@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -186,10 +187,49 @@ type ProfilesConfig struct {
 	Labels  map[string]string `toml:"labels"`
 }
 
-// LightingConfig selects the lighting driver.
+// LightingConfig selects the lighting driver and describes its zones.
+//
+// Modes and Speeds are optional subsets of what the driver's protocol can
+// send, in the order to offer them; empty means all of it. Which inputs each
+// mode takes is the protocol's to say, not the device's, so it is not here.
 type LightingConfig struct {
-	Method string   `toml:"method"`
-	Zones  []string `toml:"zones"`
+	Method string               `toml:"method"`
+	Zones  []LightingZoneConfig `toml:"zones"`
+	Modes  []string             `toml:"modes"`
+	Speeds []string             `toml:"speeds"`
+}
+
+// LightingZoneConfig is one zone, as [[lighting.zones]]: its wire name, the
+// label to show, the USB vendor:product of the HID device that carries it, and
+// the protocol's zone byte for it.
+type LightingZoneConfig struct {
+	Name  string `toml:"name"`
+	Label string `toml:"label"`
+	USB   string `toml:"usb"`  // "0b05:1a30"
+	Zone  int    `toml:"zone"` // the protocol's zone byte
+}
+
+// USBIDs parses the zone's "vvvv:pppp" USB identifier.
+func (z LightingZoneConfig) USBIDs() (vendor, product uint16, err error) {
+	v, p, ok := strings.Cut(z.USB, ":")
+	if !ok || len(v) != 4 || len(p) != 4 {
+		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", z.USB)
+	}
+	vn, err1 := strconv.ParseUint(v, 16, 16)
+	pn, err2 := strconv.ParseUint(p, 16, 16)
+	if err1 != nil || err2 != nil {
+		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", z.USB)
+	}
+	return uint16(vn), uint16(pn), nil
+}
+
+// ZoneNames returns the zones' wire names in declaration order.
+func (c LightingConfig) ZoneNames() []string {
+	out := make([]string, len(c.Zones))
+	for i, z := range c.Zones {
+		out[i] = z.Name
+	}
+	return out
 }
 
 // ToggleEntry is one firmware toggle the device offers.
@@ -524,6 +564,24 @@ func (c Config) Validate() error {
 		}
 		if len(c.Lighting.Zones) == 0 {
 			fail("lighting.zones must name at least one zone")
+		}
+		seen := map[string]bool{}
+		for i, z := range c.Lighting.Zones {
+			switch {
+			case z.Name == "" || z.Label == "":
+				fail("lighting.zones[%d] needs both name and label", i)
+			case strings.HasPrefix(z.Name, "/"):
+				fail("lighting.zones[%d] name %q must not start with '/' (that is a hidraw path)", i, z.Name)
+			case seen[z.Name]:
+				fail("lighting.zones[%d]: duplicate name %q", i, z.Name)
+			}
+			seen[z.Name] = true
+			if _, _, err := z.USBIDs(); err != nil {
+				fail("lighting.zones[%d] (%s): %v", i, z.Name, err)
+			}
+			if z.Zone < 0 || z.Zone > 255 {
+				fail("lighting.zones[%d] (%s) zone byte %d outside 0–255", i, z.Name, z.Zone)
+			}
 		}
 	}
 	if c.Toggles != nil {

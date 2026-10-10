@@ -19,28 +19,24 @@ const (
 	ReportSize = 64
 )
 
-// deviceSpec maps a HID_ID uevent value to a human-readable device name.
-type deviceSpec struct {
-	hidID string
-	name  string
+// Known names one Aura-carrying HID device: the zone name it serves and its
+// USB vendor:product. The list is device data (the device file's lighting
+// zones), passed in by the caller — this package knows the protocol's report
+// and the hidraw ABI, not which machine it is running on.
+type Known struct {
+	Name            string
+	Vendor, Product uint16
 }
 
-// knownDevices lists all ASUS HID devices that carry Aura (report 0x5d).
-// On the 2025 ROG Flow Z13:
-//
-//	0x18c6 = N-KEY Device     → lightbar
-//	0x1a30 = GZ302EA-Keyboard → keyboard
-//
-// g-helper's AsusHid.Write() broadcasts to ALL matching devices; we do the same.
-var knownDevices = []deviceSpec{
-	{"HID_ID=0003:00000B05:000018C6", "lightbar"},
-	{"HID_ID=0003:00000B05:00001A30", "keyboard"},
+// hidID is the uevent HID_ID line this device's hidraw nodes carry (USB bus).
+func (k Known) hidID() string {
+	return fmt.Sprintf("HID_ID=0003:%08X:%08X", k.Vendor, k.Product)
 }
 
 // hidrawNode is one open hidraw file.
 type hidrawNode struct {
 	path string
-	name string // "keyboard", "lightbar", or "" if unknown
+	name string // the Known name it matched, or "" if unknown
 	f    *os.File
 }
 
@@ -53,7 +49,7 @@ type Device struct {
 // DeviceInfo describes a discovered hidraw node, for display purposes.
 type DeviceInfo struct {
 	Path    string // e.g. /dev/hidraw0
-	Name    string // "keyboard", "lightbar", or "" if unrecognised
+	Name    string // the Known name it matched, or "" if unrecognised
 	HasAura bool   // true if the HID descriptor contains Report ID 0x5d
 	OpenErr string // non-empty if the device could not be opened
 }
