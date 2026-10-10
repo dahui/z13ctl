@@ -728,7 +728,11 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   far above the floor anyway. Burst limits alone do not trigger it.
   `SetAllFansFullSpeed` (`pwm_enable=0`) is an earlier strategy that nothing
   calls any more; the docs, the dry-run output, and this file all described it
-  for far longer than the code did. APU sPPT and Platform sPPT always follow PL2.
+  for far longer than the code did. It would not have worked as described
+  either: measured 2026-10-09, base-device `pwm1_enable=0` takes fan 1 to 8900
+  RPM and leaves fan 2 stopped. A 255-everywhere curve on the curve device
+  drives both (8600–8900 RPM, the Z13's `fans.rpm_max = 8900`, after ~40 s of EC
+  ramp at ~250 RPM/s). APU sPPT and Platform sPPT always follow PL2.
 - **The high-TDP fan floor is a *per-point minimum against the whole
   `HighTDPFanCurve`*, not against its `HighTDPMinPWM` bottom, and not a replacement
   curve.** `cli.FanCurveForTDP` is the single place that rule lives: above
@@ -2683,7 +2687,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `cpuinfo_max_freq` and the GPU's top `pp_dpm_sclk`; the built-in 0–4 GHz cut
   through this CPU's 5.19 GHz boost), temperature from `telemetry.temp_limit_c`
   (the ACPI passive trip, 100 °C here), power from the live `tdp_max_forced`,
-  fans from `fans.rpm_max` (unset on the Z13: unmeasured), memory from the
+  fans from `fans.rpm_max` (8900 on the Z13, measured; 9000 axis), memory from the
   samples' own capacity. The placeholders take the same hints so the first data
   does not jump the axis, and a device with no fans gets no Fan placeholder.
   `Plot.Shape()` is the rebuild key: chart widgets are torn down only when the

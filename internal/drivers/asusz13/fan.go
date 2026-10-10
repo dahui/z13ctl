@@ -434,10 +434,12 @@ func verifyFanModeReleased() error {
 	return nil
 }
 
-// SetAllFansFullSpeed forces every fan to maximum speed.
-// Only the base "asus" hwmon device supports pwm_enable=0, and only pwm1_enable
-// is functional — pwm2_enable returns EIO on writes. Writing pwm1_enable=0
-// is sufficient to force both physical fans to full speed.
+// SetAllFansFullSpeed writes pwm1_enable=0 on the base "asus" hwmon device —
+// the only device that accepts mode 0; pwm2_enable there returns EIO on
+// writes. Despite the name it does **not** force every fan: measured on the
+// GZ302EA (2026-10-09), fan 1 went to 8900 RPM within three seconds while fan 2
+// stayed at 0 for the full 30 s. A curve of 255 at every point with
+// pwm_enable=1 on the curve device is what drives both to full speed.
 //
 // Nothing calls this. High-TDP cooling uses the envelope's floor curve (a 50%
 // PWM floor with pwm_enable=1) via the safety engine's ApplyTDPSafely; full

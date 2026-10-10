@@ -137,7 +137,7 @@ render controls against, instead of hardcoding one device's numbers:
 {"ok":true,"device":{
   "id":"asus-rog-flow-z13-2025","model":"GZ302",
   "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255,
-          "labels":["Fan 1","Fan 2"],
+          "labels":["Fan 1","Fan 2"],"rpm_max":8900,
           "presets":[{"name":"quiet","label":"Quiet","description":"Fans stopped until 60°C, ...",
                       "curve":[{"temp":35,"pwm":0},{"temp":50,"pwm":0}, "..."]}, "..."]},
   "power":{"tdp_min":28,"tdp_max_safe":75,"tdp_max_forced":80,

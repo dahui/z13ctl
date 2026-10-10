@@ -36,6 +36,12 @@ sleep_release_settle_ms = 3000
 # the labels would describe hardware the machine does not have.
 labels = ["Fan 1", "Fan 2"]
 
+# Top speed, measured (2026-10-09): every curve point at 255 on both channels
+# with pwm_enable=1 plateaus at 8600–8900 RPM on both fans after ~40 s of EC
+# ramp; pwm1_enable=0 on the base device reached the same 8900 on fan 1. hwmon
+# publishes no fan*_max, so this is the dashboard's fan axis hint only.
+rpm_max = 8900
+
 # Named starting points, offered only when the user picks one — never applied by
 # a profile switch. That coupling is what the z13ctl-plus fork shipped and then
 # deleted: its Quiet profile auto-applied a quiet curve, and any curve with a
