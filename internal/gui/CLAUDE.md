@@ -943,14 +943,12 @@ in the focus dump (n=40) because the trigger occupies the slot the button did,
 and `view=custom` (n=23) is the single removed grid — the same one-line diff the
 dashboard removal produced. It is also what makes quickbar customization
 tractable: a drawer whose sections are all quick controls is a list you can
-reorder, where one containing a whole editor is not. What it left behind is
-`viewHost.back`: `drawerHost` was its only producer and `make lint` deleted it,
-so every `host.back != nil` branch here and in `dashboardView`/`settingsView`,
-plus `customView.hosted()` (which *is* `host.back == nil`, and is now constant
-true), are unreachable rather than wrong. `viewhost.go` says so at the point of
-use. Removing them means deleting the drawer-shaped layout inside the window's
-own editor — its own pass, with its own verification, not a side effect of
-moving a view.
+reorder, where one containing a whole editor is not. What it left behind was
+`viewHost.back`, with no producer once `drawerHost` went, and with it every
+`host.back != nil` branch here and in `dashboardView`/`settingsView` plus
+`customView.hosted()`. Those were deleted in their own pass (2026-10-09), focus
+dump byte-identical; the entries below that describe the drawer/hosted split
+are history now — the editor has only the hosted layout.
 
 **The gamescope path is unverified**: there is no Gaming Mode session on the
 development machine, so it compiles and is structured correctly but has not been
@@ -1018,27 +1016,24 @@ is achieved is load-bearing:
   and the wheel-over-slider capture all scrolled a hidden surface while the
   window was up. `mainWindow.activeScroll()` keys off the stack's visible
   child, the same shape as the drawer's.
-- **The Profiles tab's sections are cards in two columns on the hosted
-  surface only.** `newCustomView` builds each section into the container
-  `newSection(col)` returns: a fresh `.section-card` in the named column when
-  `c.hosted()` (host.back == nil — both the desktop toplevel and the
-  gamescope page), or the shared flat column — separators, rhythm and all,
-  byte-for-byte the historical layout — in the drawer, where `col` is
-  ignored. The columns are homogeneous halves (letting the wider side win
+- **The Profiles tab's sections are cards in two columns.** `newCustomView`
+  builds each section into the container `newSection(col)` returns: a fresh
+  `.section-card` in the named column. (Until 2026-10-09 a `c.hosted()`
+  branch also kept the drawer's flat column; the drawer no longer has an
+  editor and the branch is gone.) The columns are homogeneous halves (letting the wider side win
   would reflow the page every time Advanced toggles), because a single
   centred column was tried first and read as "the drawer again, only wider"
   (Jeff, 2026-08-13). **Grouping is by domain**: the PROFILE card holds the
   selector plus every profile operation — Activate / + New / Save As /
-  *Delete*, one symmetric row (`symmetricRow`: homogeneous equal-width
-  buttons filling the card; natural-width start-aligned buttons were tried
+  *Delete*, one symmetric row (homogeneous equal-width buttons filling the card; natural-width start-aligned buttons were tried
   and read as ragged), the two-tap arm and sensitivity guards carrying
   Delete's danger — the POWER card is headed "POWER", not the drawer's
   "TDP", because it also holds the undervolt, and the FAN CURVE card holds
   the editor. Each card ends in its own *reset*, right-aligned at natural
   width — a secondary action, deliberately not a full-width primary.
 - **The window has exactly one save: the commit bar (`customcommit.go`).**
-  The drawer's per-domain saves (Save TDP / Save Fans / Save Both / Save UV)
-  are not built on the hosted surface at all — beside Activate and Save As
+  The drawer's old per-domain saves (Save TDP / Save Fans / Save Both / Save
+  UV) were never built on the window — and are deleted now — because beside Activate and Save As
   they read as "save the settings, then save them again in the profile", a
   second step that does not exist, since the daemon has no working slot and
   a send *is* the save into the profile (Jeff, 2026-08-14). Instead a bar
@@ -1046,7 +1041,7 @@ is achieved is load-bearing:
   Advanced open) carries one accent button plus an "Unsaved: …" indicator.
   Mechanics: every sync ends by recapturing a widget **baseline**
   (`syncCommitBar`), dirty = differs from it, and the button sends only the
-  dirty domains in `saveCustomBoth`'s established order (TDP, fans, UV).
+  dirty domains in the order the old Save Both used (TDP, fans, UV).
   Three rules are load-bearing. (1) **TDP dirtiness is judged in the active
   mode only** — basic slider vs `baseBasic`, or the PL trio vs `baseAdv` —
   so toggling Advanced with no value moved is not an edit, and edits made in
@@ -1106,16 +1101,15 @@ is achieved is load-bearing:
 - **The hosted instance's widgets take desktop shapes, not just desktop
   sizes** (same review: "the design is still very much a touch focused
   design"). Slider values sit beside/above their slider on a form row
-  (`buildTdpScale`/`buildUvScale` branch on `c.hosted()`, and `c.uvText`
-  drops the name from the value because the header row already shows it —
-  the drawer's stacked label keeps it); the Advanced checkbutton is a plain
+  (`buildTdpScale`/`buildUvScale`, and `uvText` drops the name from the
+  value because the header row already shows it); the Advanced checkbutton is a plain
   checkbox (theme-default strips the fill **and sets `border: none`, which
   no voltaire sheet needs but Breeze-gtk does** — the GTK theme's
   checkbutton border shows through the moment the fill goes transparent).
-  The hosted TELEMETRY section is not built at all: the dashboard is one tab
-  away with the same numbers plus history, and the curve editor already
-  draws live temperature as its dashed marker — `syncTelemetry` nil-guards
-  the labels, so the drawer keeps its section untouched. The window's
+  The editor has no TELEMETRY section: the dashboard is one tab away with
+  the same numbers plus history, and the curve editor already draws live
+  temperature as its dashed marker. (The drawer's copy and `syncTelemetry`
+  were deleted with the rest of its layout, 2026-10-09.) The window's
   default size was raised twice alongside this (900×640 → 1000×700 →
   1200×800, `internal/mainwin`) as the layout earned the room.
 - **Never `SetVExpand(true)` on anything inside a FlowBox tile.** GTK4

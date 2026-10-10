@@ -88,7 +88,6 @@ type dashboardView struct {
 
 	root     *gtk.Box
 	scroll   *gtk.ScrolledWindow
-	backBtn  *gtk.Button
 	grid     *gtk.FlowBox
 	emptyLbl *gtk.Label
 
@@ -153,26 +152,6 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 	d := &dashboardView{w: w, host: host, span: time.Minute}
 
 	d.root = gtk.NewBox(gtk.OrientationVertical, 0)
-
-	// The header is the drawer's chrome. The full window has a tab bar naming
-	// the page and no view to go "back" to, so it asks for neither.
-	if host.back != nil {
-		d.backBtn = gtk.NewButton()
-		d.backBtn.SetIconName("go-previous-symbolic")
-		d.backBtn.AddCSSClass("view-back-btn")
-		d.backBtn.ConnectClicked(host.back)
-
-		header := gtk.NewBox(gtk.OrientationHorizontal, 8)
-		header.SetMarginTop(10)
-		header.SetMarginBottom(6)
-		header.SetMarginStart(14)
-		header.Append(d.backBtn)
-		title := gtk.NewLabel("Telemetry")
-		title.SetHAlign(gtk.AlignStart)
-		title.AddCSSClass("drawer-title")
-		header.Append(title)
-		d.root.Append(header)
-	}
 
 	inner := gtk.NewBox(gtk.OrientationVertical, 0)
 	inner.SetMarginStart(14)
@@ -240,13 +219,6 @@ func newDashboardView(w *Window, host viewHost) *dashboardView {
 // is the same one either way, so a machine with no lighting has no RGB card
 // here and no RGB section there.
 func (d *dashboardView) buildControls() *gtk.Box {
-	// The drawer has no dashboard view any more, but the gate is on the host
-	// rather than on that fact: this whole region is laid out for a window's
-	// width, and the answer should not depend on remembering that.
-	if d.host.back != nil {
-		return nil
-	}
-
 	w := d.w
 	has := func(caps ...controls.Capability) bool {
 		return controls.SupportsAll(w.device, caps)
@@ -735,7 +707,7 @@ func (d *dashboardView) installGroups(shape string, groups []telemetryplot.Group
 	// The battery header's owner is the get-state poll, so a rebuilt card
 	// repopulates from the stored text rather than blanking for a tick.
 	d.syncBatteryHeader()
-	// The focus list names the span buttons and the back button only — charts
+	// The focus list names the span buttons and the rail only — charts
 	// are not navigable — so a shape change cannot invalidate it.
 }
 
@@ -979,8 +951,8 @@ func rgbOr(hex, fallback string) (r, g, b float64) {
 	return 1, 1, 1
 }
 
-// buildFocusList builds the gamepad grid: the back button, the span selector,
-// then the rail's controls. The charts are not navigable — there is nothing to
+// buildFocusList builds the gamepad grid: the span selector, then the rail's
+// controls. The charts are not navigable — there is nothing to
 // activate on one — and no rail block changes shape, so this list is fixed and
 // never rebuilt.
 //
@@ -990,14 +962,6 @@ func rgbOr(hex, fallback string) (r, g, b float64) {
 func (d *dashboardView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
-
-	if d.backBtn != nil {
-		c := b.Section("nav").One()
-		items = append(items, focusItem{
-			widget: d.backBtn, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: d.host.back,
-		})
-	}
 
 	b.Section("span")
 	for i, coord := range b.Line(len(d.spanBtns)) {

@@ -86,7 +86,11 @@ func (c *customView) buildProfileSelector() *gtk.Box {
 	w.setHint(c.saveAsBtn, "Copy the active profile's settings under a new name")
 	c.saveAsBtn.ConnectClicked(func() { c.showNameEntry(nameModeSaveAs) })
 	actions.Append(c.saveAsBtn)
-	c.symmetricRow(actions)
+	// Every button the same width, filling the card — the dialog
+	// button-group shape, matching the full-width fields above it.
+	// (Natural-width start-aligned buttons were tried first and read as
+	// ragged.)
+	actions.SetHomogeneous(true)
 	// Kept on the struct so the window can add Delete to this row — a
 	// profile operation belongs with the profile operations.
 	c.profileActions = actions

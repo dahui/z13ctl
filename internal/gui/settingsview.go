@@ -55,7 +55,6 @@ type settingsView struct {
 
 	root      *gtk.Box
 	scroll    *gtk.ScrolledWindow
-	backBtn   *gtk.Button
 	card      *gtk.Box
 	emptyLbl  *gtk.Label
 	rebootLbl *gtk.Label
@@ -100,26 +99,6 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	s := &settingsView{w: w, host: host}
 
 	s.root = gtk.NewBox(gtk.OrientationVertical, 0)
-
-	// The drawer's chrome. The full window has a tab bar naming the page and
-	// nothing to go back to, so it asks for neither — as every hosted view does.
-	if host.back != nil {
-		s.backBtn = gtk.NewButton()
-		s.backBtn.SetIconName("go-previous-symbolic")
-		s.backBtn.AddCSSClass("view-back-btn")
-		s.backBtn.ConnectClicked(host.back)
-
-		header := gtk.NewBox(gtk.OrientationHorizontal, 8)
-		header.SetMarginTop(10)
-		header.SetMarginBottom(6)
-		header.SetMarginStart(14)
-		header.Append(s.backBtn)
-		title := gtk.NewLabel("Settings")
-		title.SetHAlign(gtk.AlignStart)
-		title.AddCSSClass("drawer-title")
-		header.Append(title)
-		s.root.Append(header)
-	}
 
 	inner := gtk.NewBox(gtk.OrientationVertical, 0)
 	inner.SetMarginStart(14)
@@ -374,19 +353,11 @@ func (s *settingsView) sync() {
 	}
 }
 
-// buildFocusList builds the gamepad grid: the back button where there is one,
-// then one line per switch.
+// buildFocusList builds the gamepad grid in page order: the button
+// preference, the quickbar editor, then one line per switch.
 func (s *settingsView) buildFocusList() {
 	var items []focusItem
 	b := focusgrid.NewBuilder(focusgrid.Vertical)
-
-	if s.backBtn != nil {
-		c := b.Section("nav").One()
-		items = append(items, focusItem{
-			widget: s.backBtn, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: s.host.back,
-		})
-	}
 
 	// One Line, not a One() each: the two buttons sit side by side, so D-pad
 	// right has to reach the second. A coordinate that disagrees with what is on
@@ -423,9 +394,9 @@ func (s *settingsView) buildFocusList() {
 }
 
 // settingsViews returns every settings page that has been built. There is only
-// ever the window's today — the drawer keeps its two bottom-bar switches
-// instead — but the helper matches customViews so that a second instance is an
-// addition here and not a new sync path.
+// ever the window's — the drawer has no settings page — but the helper matches
+// customViews so that a second instance is an addition here and not a new sync
+// path.
 func (w *Window) settingsViews() []*settingsView {
 	if w.mainWin != nil && w.mainWin.settings != nil {
 		return []*settingsView{w.mainWin.settings}

@@ -184,13 +184,12 @@ func (w *Window) startTelemetryPolling() {
 				// Header telemetry (visible on all views).
 				w.updateHeader()
 
-				// Custom view telemetry, on whichever surface is showing
-				// one. Asked through the view's own host rather than the
-				// drawer's stack, so the full window's instance is served by
-				// the same poll instead of needing a second.
+				// The profile editor's chart and fan-floor gate, which read
+				// w.state. Asked through the view's own host rather than the
+				// drawer's stack, so it ticks only while its page is showing.
 				for _, c := range w.customViews() {
 					if c.host.current() {
-						c.pollTick(state)
+						c.pollTick()
 					}
 				}
 

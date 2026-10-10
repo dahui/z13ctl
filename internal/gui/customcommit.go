@@ -5,24 +5,20 @@ package gui
 
 // customcommit.go — the full window's one-commit model for the Profiles page.
 //
-// The drawer commits per domain (Save TDP / Save Fans / Save UV): three
-// buttons, because a 320px touch column shows one domain at a time and each
-// needs its commit within thumb's reach. On the desktop surface, sitting
-// beside Activate and Save As, those read as "save the settings, then save
-// the profile" — a second step that does not exist, since the daemon has no
+// The drawer's old editor committed per domain (Save TDP / Save Fans / Save
+// UV): three buttons, because a 320px touch column shows one domain at a time.
+// Beside Activate and Save As those read as "save the settings, then save the
+// profile" — a second step that does not exist, since the daemon has no
 // working slot and a send *is* the save into the profile (Jeff, 2026-08-14).
-// The window therefore has exactly one commit button, in a bar fixed under
-// the scroll area, and this file is its mechanics: a baseline of every
-// editable widget captured at the end of each sync, dirty = differs from
-// that baseline, and one click that sends only the dirty domains. Everything
-// is nil-guarded on commitBtn, which the drawer never builds, so the drawer
-// path is untouched by construction.
+// The page therefore has exactly one commit button, in a bar fixed under the
+// scroll area, and this file is its mechanics: a baseline of every editable
+// widget captured at the end of each sync, dirty = differs from that
+// baseline, and one click that sends only the dirty domains.
 //
 // TDP dirtiness is judged in the *active mode only*: toggling the Advanced
 // checkbox swaps which widgets a commit would read, but a toggle with no
 // value moved must not read as an edit — and moving PL2 in advanced mode
-// then returning to basic means basic semantics, exactly as clicking the
-// drawer's Save TDP in basic mode always has.
+// then returning to basic means basic semantics.
 //
 // The label rules (Apply vs Save, the unsaved summary) live in
 // internal/profileui, where make test reaches them.
@@ -86,9 +82,6 @@ func (c *customView) buildCommitBar() *gtk.Box {
 // recaptures the widget baseline. Called at the end of sync, when every
 // widget shows the target's own values — which is the definition of "clean".
 func (c *customView) syncCommitBar(plan profileui.EditPlan) {
-	if c.commitBtn == nil {
-		return
-	}
 	c.commitBtn.SetLabel(profileui.CommitLabel(plan.Live))
 	c.baseBasic = int(c.tdpBasicScale.Value())
 	c.baseAdv = [3]int{
@@ -131,9 +124,10 @@ func (c *customView) commitDirty() (tdp, fans, uv bool) {
 }
 
 // refreshCommitDirty re-evaluates the commit button after a widget edit. It
-// is wired into every value-changed handler, so it must no-op in the drawer
-// (no commit button) and during sync, whose programmatic SetValue calls fire
-// those same handlers before the baseline is recaptured.
+// is wired into every value-changed handler, so it must no-op while the view
+// is still being built (the commit bar comes last) and during sync, whose
+// programmatic SetValue calls fire those same handlers before the baseline is
+// recaptured.
 func (c *customView) refreshCommitDirty() {
 	if c.commitBtn == nil || !c.baseCaptured || c.w.syncing {
 		return
@@ -151,9 +145,8 @@ func (c *customView) applyCommitDirty() {
 }
 
 // commitChanges commits every dirty domain to the plan's target in one
-// operation: TDP first, then the fan curve, then the undervolt — the order
-// saveCustomBoth established, because a rejected TDP is usually why a fan
-// write failed too. Each dirty domain is attempted even when an earlier one
+// operation: TDP first, then the fan curve, then the undervolt, because a
+// rejected TDP is usually why a fan write failed too. Each dirty domain is attempted even when an earlier one
 // failed; the first error by that priority is reported. The refreshState at
 // the end re-syncs the widgets from daemon state, which recaptures the
 // baseline and disarms the button.

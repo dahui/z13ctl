@@ -409,8 +409,8 @@ func (c *customView) newFanCurveEditor() *fanCurveEditor {
 	drag.ConnectDragEnd(func(_, _ float64) {
 		fc.dragging = -1
 		fc.area.QueueDraw()
-		// The completed drag is the curve's edit boundary for the window's
-		// commit button (customcommit.go); a no-op in the drawer.
+		// The completed drag is the curve's edit boundary for the page's
+		// commit button (customcommit.go).
 		c.refreshCommitDirty()
 		// A drag off a preset's points must clear its highlight, or the row
 		// keeps claiming a curve the user has since changed.

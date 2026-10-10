@@ -2898,13 +2898,13 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   gesture depends on the user's own button preference, so it cannot be a GTK
   literal: naming it "double press" is right for the default and wrong for
   anyone who swapped them.
-  **The knock-on is that `viewHost.back` no longer has a producer.**
-  `drawerHost` was its only one and `make lint` deleted it; every `host.back !=
-  nil` branch in `dashboardView`, `settingsView` and `customView`, and
-  `customView.hosted()` — which *is* `host.back == nil` — are therefore
-  unreachable rather than wrong. `viewhost.go` says so at the point of use.
-  Removing them is a deletion of the drawer-shaped layout inside the window's
-  own editor and wants its own pass; it is not a side effect of moving a view.
+  **The knock-on was that `viewHost.back` lost its producer**, leaving every
+  `host.back != nil` branch and `customView.hosted()` unreachable. They were
+  removed in a pass of their own (2026-10-09): the field, the three views'
+  back headers, the profile editor's drawer layout (flat column, per-domain
+  Save buttons and their four handlers, TELEMETRY readout, drawer focus
+  list). The focus dump was byte-identical on all six lines and a Profiles
+  screenshot pixel-identical before and after.
 - **The profile selector expands in the flow of the view; it is not a
   `GtkDropDown`.** It reads as a dropdown — one row collapsed, `▾`/`▴`, the
   current target highlighted — but a real dropdown's popup is a separate
@@ -3365,9 +3365,8 @@ diff whenever a main release touches `api/`.
    and card are deliberately not built (every read is an SMU message; see the
    pm_table entry). Revisit with M5, where the OXP reads the same table:
    `.claude/plans/pm-table-telemetry.md`.
-4. **`viewHost.back` dead branches** — every `host.back != nil` branch and
-   `customView.hosted()` (constant true) since the drawer's editor was removed;
-   its own pass with a focus-dump diff, not a side effect of other work.
+4. ~~`viewHost.back` dead branches~~ — removed 2026-10-09; focus dump
+   byte-identical.
 5. **`handleUndervoltReset` test with a fake undervolter** — now drivable (it no
    longer opens with the probe); not yet written.
 6. **`make docs-api` emits wrong source links.** gomarkdoc reads the git remote

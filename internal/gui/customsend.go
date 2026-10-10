@@ -117,74 +117,6 @@ func probeStoredTarget(plan profileui.EditPlan) error {
 	return nil
 }
 
-// saveCustomTdp commits only the TDP values.
-func (c *customView) saveCustomTdp() {
-	w := c.w
-	req := c.readTdpRequest() // widget reads stay on the GTK thread
-	plan := c.editPlan()      // resolved on the GTK thread; the goroutine gets a value
-	go func() {
-		if err := probeStoredTarget(plan); err != nil {
-			w.reportError("Save TDP", err)
-			return
-		}
-		if err := req.send(plan); err != nil {
-			w.reportError("Save TDP", err)
-			return
-		}
-		w.clearErrorAsync()
-		slog.Info("custom TDP saved", "profile", plan.Target, "live", plan.Live)
-		w.refreshState()
-	}()
-}
-
-// saveCustomFanCurve commits only the fan curve.
-func (c *customView) saveCustomFanCurve() {
-	w := c.w
-	curve := c.readFanCurve() // widget read stays on the GTK thread
-	plan := c.editPlan()
-	go func() {
-		if err := probeStoredTarget(plan); err != nil {
-			w.reportError("Save fan curve", err)
-			return
-		}
-		if err := sendFanCurve(plan, curve); err != nil {
-			w.reportError("Save fan curve", err)
-			return
-		}
-		w.clearErrorAsync()
-		slog.Info("custom fan curve saved", "profile", plan.Target, "live", plan.Live)
-		w.refreshState()
-	}()
-}
-
-// saveCustomBoth commits both TDP and fan curve.
-func (c *customView) saveCustomBoth() {
-	w := c.w
-	req := c.readTdpRequest() // widget reads stay on the GTK thread
-	curve := c.readFanCurve()
-	plan := c.editPlan()
-	go func() {
-		if err := probeStoredTarget(plan); err != nil {
-			w.reportError("Save profile", err)
-			return
-		}
-		tdpErr := req.send(plan)
-		fanErr := sendFanCurve(plan, curve)
-		switch {
-		case tdpErr != nil:
-			// TDP first: a rejected TDP is usually why the fan write failed too
-			// (the daemon refuses a curve below the floor curve while PL1 is high).
-			w.reportError("Save TDP", tdpErr)
-		case fanErr != nil:
-			w.reportError("Save fan curve", fanErr)
-		default:
-			w.clearErrorAsync()
-			slog.Info("custom profile saved (TDP + fans)", "profile", plan.Target, "live", plan.Live)
-		}
-		w.refreshState()
-	}()
-}
-
 // resetTdp resets TDP: to firmware defaults for a live target, or removes the
 // stored TDP from a target that is not running.
 func (c *customView) resetTdp() {
@@ -258,26 +190,6 @@ func (c *customView) resetAllTuning() {
 		}
 		w.clearErrorAsync()
 		slog.Info("tuning reset", "profile", plan.Target, "live", plan.Live)
-		w.refreshState()
-	}()
-}
-
-// saveUndervolt commits the current Curve Optimizer offset.
-func (c *customView) saveUndervolt() {
-	w := c.w
-	cpu := fmt.Sprintf("%d", int(c.uvCpuScale.Value())) // GTK thread
-	plan := c.editPlan()
-	go func() {
-		if err := probeStoredTarget(plan); err != nil {
-			w.reportError("Save undervolt", err)
-			return
-		}
-		if err := apiresult.Err(api.SendUndervoltSetFor(plan.WireProfile(), cpu)); err != nil {
-			w.reportError("Save undervolt", err)
-			return
-		}
-		w.clearErrorAsync()
-		slog.Info("undervolt saved", "cpu", cpu, "profile", plan.Target, "live", plan.Live)
 		w.refreshState()
 	}()
 }
