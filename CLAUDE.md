@@ -3340,6 +3340,10 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 v1.3.2 has a counterpart here, the last being the #24 sleep-wake fix. Fixes land
 on main first and are ported in one commit per release; `git log v1.4.2..main`
 on main is the list still to port.
+Audited commit by commit on 2026-10-09: every fix on main since the branch point
+has its counterpart here. The only gap was wording from main's 1.4.0 docs commit
+(`b0066d9`): README, the site index and the api guide's power-limit ranges, now
+ported. Main has nothing after v1.4.2.
 
 Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
@@ -3414,7 +3418,8 @@ diff whenever a main release touches `api/`.
    `.claude/plans/voltaire-aur-playbook.md`.
 9. **M5** (plugin tier + OXP device, carrying the three M2 items above) and
    **M6** (Ally + generic AMD TOMLs).
-10. **Ports from main**: `git log v1.4.2..main` on main.
+10. **Ports from main**: none outstanding (audited 2026-10-09); after any
+    new main release, `git log v1.4.2..main`.
 
 ### The daemon — COMPLETE
 

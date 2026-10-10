@@ -116,6 +116,29 @@ answers `ok`. Call `SendProfileList` first: an older daemon answers
 `unknown command`, and that is the only reliable signal.
 :::
 
+**Power limit ranges.** Bound TDP controls with the range the daemon reports
+rather than a hard-coded one. `SendDeviceGet` returns the device document,
+whose `Power` section carries PL1's range (`TDPMin`–`TDPMaxForced`, with
+`TDPMaxSafe` the highest value accepted without force), `PL2`/`PL3` ranges and
+the `Interface` in use — on asus-armoury these are the kernel's, PL1 28–80,
+PL2 32–92 and PL3 45–93 W on the GZ302EA. A PL2 or PL3 below its minimum is
+raised to it; a PL1 outside its range is refused. The kernel's ranges can
+change with the power source, so lay `State.TDPLimits` from each `get-state`
+over the document; it is nil when no power-limit interface is known, or while
+the embedded controller is not answering — keep the last ranges then. On
+asus-armoury `State.TDP` reports `APUSPPT` and `PlatformSPPT` as 0, because
+that interface does not expose them.
+
+```go
+_, dev, _ := api.SendDeviceGet()
+if dev != nil && dev.Power != nil {
+    slider.SetRange(dev.Power.TDPMin, dev.Power.TDPMaxForced) // above TDPMaxSafe needs force
+}
+if l := state.TDPLimits; l != nil {
+    slider.SetRange(l.PL1.Min, l.PL1.Max) // the live answer wins
+}
+```
+
 ## Socket path
 
 ```go
@@ -179,6 +202,7 @@ if handled && err == nil {
     fmt.Println("battery limit:", state.Battery)
     fmt.Println("fan curve:", state.FanCurve)
     fmt.Println("tdp:", state.TDP)
+    fmt.Println("power limit ranges:", state.TDPLimits)
     fmt.Println("undervolt:", state.Undervolt)
     fmt.Println("undervolt available:", state.UndervoltAvailable)
     fmt.Println("CPU temp:", state.Temperature, "°C")

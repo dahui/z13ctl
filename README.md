@@ -17,8 +17,9 @@ battery limit, boot sound, panel overdrive, fan curves, TDP) use the standard
 asus-wmi and asus-armoury sysfs interfaces. CPU undervolting uses the
 `ryzen_smu` kernel module for AMD Curve Optimizer control. A background daemon
 persists state across reboots, restores volatile settings after sleep/resume,
-re-applies keyboard lighting when the detachable keyboard is reattached, and
-watches the Armoury Crate button.
+puts custom fan curves and power limits back when a power profile change
+discards them, re-applies keyboard lighting when the detachable keyboard is
+reattached, and watches the Armoury Crate button.
 
 > [!TIP]
 > **New to Linux? Install voltaire-gui.** Most users (especially newcomers!)
@@ -75,7 +76,7 @@ voltaire batterylimit --set 80
 # and it re-applies yours automatically.
 voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
-# Set TDP to 50W
+# Set TDP to 50W (run the daemon to keep it through power profile changes)
 voltaire tdp --set 50
 
 # Undervolt CPU by -20 (Curve Optimizer, requires ryzen_smu)

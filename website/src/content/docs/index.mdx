@@ -57,8 +57,8 @@ other firmware toggle the device data describes.
 All features work without root after a one-time `setup` step, and all persist
 across reboots when the daemon is running. The daemon re-applies keyboard
 lighting when the detachable keyboard is reattached, and puts your fan curve
-back when the kernel discards it — which it does on every system power profile
-change (see [Daemon](/voltaire/reference/daemon/#custom-fan-curve-reconciliation)).
+and power limits back when the kernel or firmware discards them — which happens
+on every system power profile change (see [Daemon](/voltaire/reference/daemon/#custom-fan-curve-reconciliation)).
 
 :::tip[New to Linux? Use the GUI]
 Most users — especially those newer to Linux — should install
