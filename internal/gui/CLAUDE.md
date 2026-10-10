@@ -83,6 +83,9 @@ internal/gui/
                                 are fields so each surface arranges them itself
   settingsview.go               The Settings page: firmware-toggle rows from the device
                                 document (rules in internal/settingsui)
+  quickbar.go                   The drawer's section loop and in-place rebuild, its opt-in
+                                CPU boost / refresh-rate sections, and the Settings tab's
+                                QUICKBAR editor card (rules in internal/controls/editor.go)
   viewhost.go                   viewHost — the two things a view must be told about the
                                 surface it was built into (how to leave, am I on screen)
   customview.go                 Custom profile view: the customView struct, TDP + undervolt

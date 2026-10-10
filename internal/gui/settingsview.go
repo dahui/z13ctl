@@ -40,6 +40,7 @@ package gui
 
 import (
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
+	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/settingsui"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -67,6 +68,17 @@ type settingsView struct {
 	pressBtns map[buttonpref.Surface]*gtk.Button
 	pressDesc *gtk.Label
 	pressLbl  *gtk.Label
+
+	// The QUICKBAR card (quickbar.go): the editor's rows in order, the widgets
+	// per control ID, and whether gui.toml has locked the layout. qbSyncing
+	// guards the switches against their own programmatic SetActive.
+	qbList    *gtk.Box
+	qbRows    []controls.EditorRow
+	qbWidgets map[string]*quickbarRow
+	qbReset   *gtk.Button
+	qbNote    *gtk.Label
+	qbLocked  bool
+	qbSyncing bool
 }
 
 // settingsRow is one toggle: its label and prose, and the switch that writes it.
@@ -116,6 +128,7 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	inner.SetMarginBottom(8)
 
 	inner.Append(s.buildAppCard())
+	inner.Append(s.buildQuickbarCard())
 
 	s.card = gtk.NewBox(gtk.OrientationVertical, 6)
 	s.card.AddCSSClass("section-card")
@@ -391,6 +404,8 @@ func (s *settingsView) buildFocusList() {
 			onActivate: func() { btn.Activate() },
 		})
 	}
+
+	s.appendQuickbarFocus(b, &items)
 
 	b.Section("toggles")
 	for _, row := range s.rows {

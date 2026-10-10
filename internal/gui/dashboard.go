@@ -297,7 +297,7 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	// its own, which reads as a column against POWER's rather than the single
 	// stranded row it was before that block joined it. It used to sit below
 	// LIGHTING for that reason, and LIGHTING has left this row.
-	if dsp, row := w.newDisplaySection(); dsp != nil {
+	if dsp, row := w.newDisplaySection(false); dsp != nil {
 		d.dsp = dsp
 		right.Append(sectionCard("DISPLAY", row))
 	}
@@ -371,6 +371,7 @@ func (d *dashboardView) buildBoostRow() *gtk.Box {
 // Window-level walker on the pattern syncBattery and syncLightingSection set,
 // so a second surface growing one is an addition rather than a new sync path.
 func (w *Window) syncCPUBoost() {
+	w.syncBoostSwitch(w.boostSw) // the drawer's, when the layout includes it
 	if m := w.mainWin; m != nil && m.dashboard != nil {
 		m.dashboard.syncBoost()
 	}
@@ -380,18 +381,7 @@ func (w *Window) syncCPUBoost() {
 // could not be read, which is insensitive rather than off — and an insensitive
 // widget is one the gamepad grid skips, so a controller cannot land on a
 // control that would fail.
-func (d *dashboardView) syncBoost() {
-	if d.boostSw == nil {
-		return
-	}
-	st := d.w.state
-	if st == nil || st.CPUBoost == nil {
-		d.boostSw.SetSensitive(false)
-		return
-	}
-	d.boostSw.SetSensitive(true)
-	d.boostSw.SetActive(*st.CPUBoost)
-}
+func (d *dashboardView) syncBoost() { d.w.syncBoostSwitch(d.boostSw) }
 
 // buildLightingRow builds one RGB card per lighting zone, side by side.
 //

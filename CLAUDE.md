@@ -2115,6 +2115,41 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   A nil document means the daemon did not answer, not that the machine has no
   capabilities, so everything is kept — the same posture `limits.FromDevice`
   takes, and for the same reason.
+- **Quickbar customization is a Settings card, saved to config.toml, with
+  gui.toml as a hand-written override** (Jeff, 2026-10-09; plan in
+  `.claude/plans/quickbar-customization.md`). The QUICKBAR card lists every
+  control the machine supports with a show switch and ▲/▼ — plain buttons,
+  so mouse, touch and pad behave alike and there is no "holding a row" state.
+  Two controls exist only for it, **off by default**: `cpu-boost` and
+  `refresh-rate` (the drawer gets the live rate alone; the per-source rates
+  are configuration and stay in the window). `Control.Default` is what keeps
+  a default drawer byte-identical — verified, `main` n=40 unchanged. The
+  rules are pure in `internal/controls/editor.go`: `EditorRows` places a
+  hidden control after its nearest default-order predecessor (so switching CPU
+  boost on lands it with the power controls, not under RGB), `MoveRow`, and
+  `SavedList`, which saves **nil when the result is the defaults** (or a later
+  build's new default would never reach someone who once opened the editor)
+  and keeps IDs this machine has no row for. The refresh rate is the one
+  capability the document cannot answer, so `Resolve` takes **session
+  capabilities** (`CapRefreshRate`), never satisfied by a nil document.
+  Storage: config.toml's `quickbar_controls`, a string in
+  `controls.FormatList`'s encoding (`""` no choice, `"none"` empty) because
+  `theme.AppConfig` must stay comparable for its preserve-every-field test. A
+  gui.toml `controls` list wins (`controls.Effective`) and the card goes
+  read-only with a note naming the file. **The drawer rebuilds in place**
+  (`rebuildDrawer`): sections cleared, the drawer's section fields nil'd (every
+  walker was already nil-safe, and the window gates on the document, not on
+  them), re-resolved, synced from the state in hand, focus list rebuilt —
+  which also replaced `adoptDevice`'s "restart voltaire-gui" for a changed
+  capability set. Hints registered while building sections are recorded and
+  dropped with them, the one exception to "hint entries are never removed".
+  `focusWidget` keeps the pad on the arrow that moved (`coreglib.BaseObject`
+  pointers — `gtk.Widget.Native()` is the GtkNative ancestor, shared by every
+  widget in a surface). Verified on hardware with a throwaway timer build (no
+  Wayland pointer automation): each change saved, rebuilt and re-synced the
+  drawer. Known wrinkle: a hidden row's editor position is not stored, so
+  moving a row past a hidden one changes nothing in the drawer and the hidden
+  row's slot is recomputed on the next start.
 - **The drawer's edge is `panelgeom.Edge`, and every anchor and margin write
   goes through one accessor.** `gui.toml`'s `[quickbar] edge` moves the drawer
   between the left and right screen edges; all three backends take it, and the
@@ -3276,7 +3311,7 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Remaining:** quickbar customization and the gamescope hardware pass — see Open work below. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the gamescope hardware pass — see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -3303,9 +3338,9 @@ diff whenever a main release touches `api/`.
 
 ### Open work (as of 2026-10-09, in rough priority order)
 
-1. **Quickbar customization** — the last M4 feature, on the existing
-   `internal/controls` + `gui.toml` machinery: needs a `gui.toml` writer and a
-   reorder affordance that works on a controller.
+1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
+   `.claude/plans/quickbar-customization.md`). M4 is complete but for the
+   gamescope pass.
 2. **Gamescope Gaming Mode hardware pass** — never run; the full window hosted
    in the overlay surface, the popup layer, and now the preset row and Reset All
    are all unverified there. Standing pre-release risk; also in

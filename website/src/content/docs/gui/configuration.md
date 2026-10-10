@@ -31,9 +31,22 @@ exist, so it can never overwrite settings you have saved since.
 
 ## Choosing which sections appear
 
-`~/.config/voltaire/gui.toml` controls which sections the drawer shows and in
-what order. It does not exist by default, and without it you get the standard
-layout.
+The easy way is the full window's **Settings** tab: its **Quickbar** card lists
+every section this machine supports, each with a switch to show or hide it and
+▲/▼ to move it. Changes apply straight away — the drawer rebuilds itself the
+next time it opens — and **Reset to default** puts the standard layout back.
+The buttons work the same with a mouse, touch or a controller.
+
+Two sections are off by default and only appear if you add them there:
+**CPU boost** and **Refresh rate** (the live rate only; the per-power-source
+rates stay on the Dashboard). The standard drawer is laid out to fit without
+scrolling, so each one you add costs a little of that.
+
+The card saves to `~/.config/voltaire/config.toml`. You can also write the
+layout by hand in `~/.config/voltaire/gui.toml`, which does not exist by
+default. A `controls` list there **takes precedence**: the Settings card then
+shows that layout without letting you change it, and says so, so a file you
+wrote is never overwritten.
 
 ```toml
 [quickbar]
@@ -52,6 +65,8 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 | `autoswitch` | The AC/battery autoswitch row and its two targets |
 | `battery` | The charge-limit slider |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
+| `cpu-boost` | The CPU boost switch (off by default) |
+| `refresh-rate` | The screen's refresh rate, where the desktop can report one (off by default) |
 
 The list is both the contents *and* the order, so moving an entry moves the
 section. Leaving one out hides it. The `TDP AND POWER` and `RGB` headings follow
@@ -70,10 +85,10 @@ Some notes on the edges:
   it. A typo is not silently ignored.
 - `controls = []` really does mean an empty drawer. Delete the key (or the file)
   to get the defaults back.
-- The bottom bar — the theme button and the firmware toggles — is fixed and not
-  part of the list.
-- Changes take effect the next time voltaire-gui starts:
-  `systemctl --user restart voltaire-gui`.
+- The bottom bar — the theme button — is fixed and not part of the list.
+- Edits to `gui.toml` take effect the next time voltaire-gui starts:
+  `systemctl --user restart voltaire-gui`. Changes made in Settings apply at
+  once.
 
 ## Theme priority
 

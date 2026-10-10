@@ -88,10 +88,14 @@ func (w *Window) adoptDevice(doc *api.DeviceInfo) {
 			"built", have, "reported", now)
 	}
 
-	resolved, _ := controls.Resolve(guiConfig(), doc)
+	// A different capability set changes which drawer sections exist, and the
+	// drawer can rebuild them in place (quickbar.go).
+	layout, _ := w.layoutConfig()
+	resolved, _ := controls.Resolve(layout, doc, w.sessionCaps()...)
 	if have, now := controls.IDsOf(w.controls), controls.IDsOf(resolved); !slices.Equal(have, now) {
-		slog.Warn("the daemon now reports different capabilities; restart voltaire-gui to rebuild the drawer",
+		slog.Info("the daemon now reports different capabilities; rebuilding the drawer",
 			"built", have, "reported", now)
+		w.rebuildDrawer()
 	}
 }
 

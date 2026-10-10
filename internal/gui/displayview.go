@@ -41,6 +41,11 @@ type displaySection struct {
 	dd    *dropdown
 	note  *gtk.Label
 
+	// title is the label's text before a multi-screen suffix: a form row's
+	// "Refresh rate" in the window, a section heading's "REFRESH RATE" in the
+	// drawer.
+	title string
+
 	// sw turns the rate switching on, and targets holds the two rows it governs
 	// — shown only while it is on, exactly as the profile autoswitch block's
 	// are. The rows store; they never apply. The Refresh rate row above is how
@@ -77,13 +82,19 @@ type displaySection struct {
 // A nil return is how the capability is absent — the same shape as a device
 // document's nil section. A control that could only ever fail is worse than no
 // control: it says the machine offers something it does not.
-func (w *Window) newDisplaySection() (*displaySection, *gtk.Box) {
+//
+// compact is the drawer's shape, which a user opts into from the quickbar
+// editor: a heading and the live rate alone. The switch and the per-source
+// rates are configuration — set once, in the window — not something reached
+// for in a hurry, so they are not built there; syncPrefs, setSensitive and
+// appendFocus all tolerate their absence.
+func (w *Window) newDisplaySection(compact bool) (*displaySection, *gtk.Box) {
 	if !display.Available() {
 		slog.Debug("no display backend; the refresh-rate control is not built")
 		return nil, nil
 	}
 
-	d := &displaySection{w: w}
+	d := &displaySection{w: w, title: "Refresh rate"}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
 
@@ -106,6 +117,17 @@ func (w *Window) newDisplaySection() (*displaySection, *gtk.Box) {
 	w.setHint(d.dd.btn, "Refresh rate for this screen")
 	d.dd.setLabel("—")
 	row.Append(d.dd.btn)
+
+	if compact {
+		d.title = "REFRESH RATE"
+		d.label = sectionLabel(d.title)
+		box.Append(d.label)
+		box.Append(row)
+		d.note = blockNote()
+		box.Append(d.note)
+		d.setSensitive(false)
+		return d, box
+	}
 
 	// The row's own name label is kept so applyQuery can add the output name to
 	// it on a multi-screen machine. formRow builds it, so it is fished back out
@@ -285,7 +307,7 @@ func (d *displaySection) applyQuery(outs []display.Output, err error) {
 	// is not carrying a connector name nobody needs — and the uncommon one
 	// never leaves the user guessing which screen a click will change.
 	if d.label != nil {
-		title := "Refresh rate"
+		title := d.title
 		if display.EnabledCount(outs) > 1 {
 			title += " (" + out.Name + ")"
 		}

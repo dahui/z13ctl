@@ -148,6 +148,7 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	SaveAppConfig(AppConfig{
 		Theme: "nord", Accent: "sapphire", ButtonPress: "window",
 		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
+		QuickbarControls: "battery,lighting",
 	})
 
 	UpdateAppConfig(func(cfg *AppConfig) { cfg.Accent = "lavender" })
@@ -159,6 +160,7 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	want := AppConfig{
 		Theme: "nord", Accent: "lavender", ButtonPress: "window",
 		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
+		QuickbarControls: "battery,lighting",
 	}
 	// Compared whole rather than field by field: every previous field here was
 	// added by hand, and a new one that nobody remembers to assert is exactly

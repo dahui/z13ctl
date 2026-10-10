@@ -62,9 +62,20 @@ func TestDefaultOrderIsTheShippedLayout(t *testing.T) {
 	if len(complaints) != 0 {
 		t.Errorf("default config produced complaints: %v", complaints)
 	}
-	if !equal(controls.IDs(), want) {
-		t.Errorf("IDs() = %v, want %v — All and IDs must agree", controls.IDs(), want)
+	if got := ids(controls.Defaults()); !equal(got, want) {
+		t.Errorf("Defaults() = %v, want %v", got, want)
 	}
+	// The opt-in controls must not reach a default drawer even where the
+	// machine supports them: that is what keeps it byte-identical.
+	got, _ = controls.Resolve(controls.Config{}, withBoost(z13()), controls.CapRefreshRate)
+	if !equal(ids(got), want) {
+		t.Errorf("default resolve with every capability = %v, want %v", ids(got), want)
+	}
+}
+
+func withBoost(d *api.DeviceInfo) *api.DeviceInfo {
+	d.CPU = &api.CPUInfo{Boost: true}
+	return d
 }
 
 // TestLayoutReproducesTheShippedChrome pins the panel's visual structure, not
@@ -153,7 +164,7 @@ func TestNilDocumentKeepsEverything(t *testing.T) {
 	// blanking its controls as well would turn "daemon is starting" into an
 	// empty panel.
 	got, _ := controls.Resolve(controls.Config{}, nil)
-	if len(got) != len(controls.All()) {
+	if len(got) != len(controls.Defaults()) {
 		t.Errorf("nil document resolved to %v, want everything", ids(got))
 	}
 }
@@ -322,7 +333,7 @@ func TestLoad(t *testing.T) {
 		// what the caller falls back to: a typo in an optional file must never
 		// be what stops the drawer opening.
 		got, _ := controls.Resolve(cfg, z13())
-		if len(got) != len(controls.All()) {
+		if len(got) != len(controls.Defaults()) {
 			t.Errorf("fallback resolve = %v, want the defaults", ids(got))
 		}
 	})

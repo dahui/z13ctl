@@ -9,10 +9,8 @@ package gui
 // a popup (colorpopup.go).
 
 import (
-	"log/slog"
 	"strings"
 
-	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
@@ -96,6 +94,16 @@ func (w *Window) controlBuilders() map[string]controlBuilder {
 			build: w.buildLightingSection,
 			focus: w.focusLightingSection,
 		},
+		// The two opt-in controls (quickbar.go): off unless the user adds them
+		// in Settings, so a default drawer never builds them.
+		"cpu-boost": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildBoostSection()) },
+			focus: w.focusBoostSection,
+		},
+		"refresh-rate": {
+			build: w.buildDisplaySection,
+			focus: w.focusDisplaySection,
+		},
 	}
 }
 
@@ -130,35 +138,8 @@ func (w *Window) buildContent() gtk.Widgetter {
 	inner.SetMarginStart(12)
 	inner.SetMarginEnd(12)
 
-	// The sections, their group headings and the separators between them all
-	// come from the resolved control list rather than from a literal sequence
-	// of Appends. With no gui.toml this produces exactly the sequence that used
-	// to be written out here — controls.TestLayoutReproducesTheShippedChrome
-	// pins that — and a user who reorders or hides a section gets the headings
-	// following their choice instead of stranded above the wrong content.
-	builders := w.controlBuilders()
-	for _, row := range controls.Layout(w.controls) {
-		if row.Separator {
-			inner.Append(separator())
-		}
-		if row.Heading != "" {
-			inner.Append(groupLabel(row.Heading))
-		}
-		cb, ok := builders[row.Control.ID]
-		if !ok {
-			// The registry names a control this build has no builder for. It
-			// cannot happen from a config file (Resolve drops unknown IDs), so
-			// it means the two lists have drifted — log rather than panic, and
-			// leave the rest of the drawer usable.
-			slog.Warn("no builder for control; skipping", "id", row.Control.ID)
-			continue
-		}
-		cb.build(inner)
-	}
-
-	// Set initial visibility based on default mode (static). Safe when the
-	// lighting section was not built: every widget it touches is nil-guarded.
-	w.syncModeVis()
+	w.drawerInner = inner
+	w.appendSections(inner)
 
 	scroll := newDrawerScroll(inner)
 	w.mainScroll = scroll

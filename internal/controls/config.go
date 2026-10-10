@@ -45,6 +45,51 @@ type QuickbarConfig struct {
 	Edge     string    `toml:"edge"`
 }
 
+// FormatList encodes a saved controls list for config.toml, the file the UI
+// writes: nil is "" (no choice made), an empty list is "none" (the user hid
+// everything — a choice, and a different one), anything else the IDs joined
+// by commas. No control ID is "none" or contains a comma.
+func FormatList(l *[]string) string {
+	switch {
+	case l == nil:
+		return ""
+	case len(*l) == 0:
+		return "none"
+	}
+	return strings.Join(*l, ",")
+}
+
+// ParseList is FormatList's inverse.
+func ParseList(s string) *[]string {
+	s = strings.TrimSpace(s)
+	switch s {
+	case "":
+		return nil
+	case "none":
+		return &[]string{}
+	}
+	var out []string
+	for _, id := range strings.Split(s, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return &out
+}
+
+// Effective picks the list the drawer builds from and says where it came
+// from. A controls list in gui.toml, which a person wrote by hand, wins over
+// the one the Settings editor saved to config.toml; locked reports that, so
+// the editor can show the layout without offering to overwrite it.
+func Effective(guiFile Config, saved string) (cfg Config, locked bool) {
+	cfg = guiFile
+	if cfg.Quickbar.Controls != nil {
+		return cfg, true
+	}
+	cfg.Quickbar.Controls = ParseList(saved)
+	return cfg, false
+}
+
 // Load reads gui.toml from dir. A missing file is not an error — it is the
 // overwhelmingly common case, and it means the defaults.
 //
@@ -70,9 +115,12 @@ func Load(dir string) (Config, error) {
 // Resolve returns the controls the drawer should build, in order, together with
 // any complaints about the config worth logging.
 //
+// session lists the capabilities only the client can know (see
+// CapRefreshRate).
+//
 // The rules, in the order they apply:
 //
-//   - No controls list: every known control in default order.
+//   - No controls list: the default controls (Control.Default), in order.
 //   - A controls list: exactly those, in that order. An ID that is not a known
 //     control is dropped with a complaint naming it and listing what is valid —
 //     a silent drop turns a typo into a missing section with no explanation.
@@ -86,8 +134,8 @@ func Load(dir string) (Config, error) {
 //
 // Complaints are returned rather than logged so that the pure function stays
 // pure and the caller decides where they go.
-func Resolve(cfg Config, info *api.DeviceInfo) (resolved []Control, complaints []string) {
-	wanted := All()
+func Resolve(cfg Config, info *api.DeviceInfo, session ...Capability) (resolved []Control, complaints []string) {
+	wanted := Defaults()
 	if cfg.Quickbar.Controls != nil {
 		wanted = nil
 		seen := make(map[string]bool)
@@ -113,7 +161,7 @@ func Resolve(cfg Config, info *api.DeviceInfo) (resolved []Control, complaints [
 	}
 
 	for _, c := range wanted {
-		if Supports(info, c) {
+		if Supports(info, c, session...) {
 			resolved = append(resolved, c)
 		}
 	}

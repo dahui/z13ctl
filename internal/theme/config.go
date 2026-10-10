@@ -43,6 +43,13 @@ type AppConfig struct {
 	RefreshAutoswitch string
 	RefreshAC         string
 	RefreshBattery    string
+
+	// QuickbarControls is the drawer layout the Settings editor saved, in
+	// internal/controls' encoding (controls.FormatList/ParseList): "" is no
+	// choice made. A string rather than a slice so this struct stays
+	// comparable, which TestUpdateAppConfigPreservesEveryOtherField relies on.
+	// A controls list in the hand-edited gui.toml takes precedence over it.
+	QuickbarControls string
 }
 
 // LoadAppConfig reads ~/.config/voltaire/config.toml.
@@ -83,6 +90,8 @@ func LoadAppConfig() AppConfig {
 			cfg.RefreshAC = v
 		case "refresh_battery":
 			cfg.RefreshBattery = v
+		case "quickbar_controls":
+			cfg.QuickbarControls = v
 		}
 	}
 	return cfg
@@ -110,6 +119,9 @@ func SaveAppConfig(cfg AppConfig) {
 	}
 	if cfg.RefreshBattery != "" {
 		content += "refresh_battery = \"" + cfg.RefreshBattery + "\"\n"
+	}
+	if cfg.QuickbarControls != "" {
+		content += "quickbar_controls = \"" + cfg.QuickbarControls + "\"\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o644); err != nil {
 		slog.Warn("failed to write config", "err", err)

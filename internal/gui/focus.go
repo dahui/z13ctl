@@ -16,6 +16,7 @@ package gui
 import (
 	"context"
 	"fmt"
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"log/slog"
 	"strings"
 
@@ -208,6 +209,39 @@ func (w *Window) setFocusIdx(idx int) {
 			"row", w.focusItems[idx].row, "col", w.focusItems[idx].col,
 			"section", w.focusItems[idx].section)
 	}
+}
+
+// focusWidget moves the gamepad focus onto widget in the current list, after
+// the list was rebuilt around it (a quickbar row that moved). When widget
+// cannot take focus — ▲ on a row that has just reached the top — it falls to
+// another visible item on the same row, else the first visible item. No-op
+// without a controller in use.
+func (w *Window) focusWidget(widget gtk.Widgetter) {
+	if !w.gamepadActive || widget == nil {
+		return
+	}
+	// The GObject pointer, not gtk.Widget.Native — that one returns the
+	// widget's GtkNative ancestor, which every widget in a surface shares.
+	target := coreglib.BaseObject(widget).Native()
+	row := -1
+	for i := range w.focusItems {
+		if coreglib.BaseObject(w.focusItems[i].widget).Native() != target {
+			continue
+		}
+		if w.focusItems[i].visible() {
+			w.setFocusIdx(i)
+			return
+		}
+		row = w.focusItems[i].row
+		break
+	}
+	for i := range w.focusItems {
+		if w.focusItems[i].row == row && w.focusItems[i].visible() {
+			w.setFocusIdx(i)
+			return
+		}
+	}
+	w.focusFirstVisible()
 }
 
 // showGamepadFocus enables the gamepad focus indicator.

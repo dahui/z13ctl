@@ -77,12 +77,20 @@ const (
 	// section exists": [cpu] can declare a control this build does not have,
 	// so the question is whether *boost* specifically is offered.
 	CapCPUBoost Capability = "cpu-boost"
+
+	// CapRefreshRate is the one capability the device document cannot answer:
+	// a video mode is the compositor's, so whether this session can read and
+	// set one (internal/display.Available) is known only to the client. The
+	// caller passes it in as a session capability; the document never
+	// satisfies it, and neither does a nil document.
+	CapRefreshRate Capability = "refresh-rate"
 )
 
 // The group headings the drawer prints, exactly as they are shown.
 const (
-	GroupPower = "TDP AND POWER"
-	GroupRGB   = "RGB"
+	GroupPower   = "TDP AND POWER"
+	GroupDisplay = "DISPLAY"
+	GroupRGB     = "RGB"
 )
 
 // Control describes one section of the drawer.
@@ -113,6 +121,12 @@ type Control struct {
 	// without it, so autoswitch could never fire). Written as one field it
 	// would have had to name the less important of the two.
 	Requires []Capability
+
+	// Default is whether the control is in the drawer when the user has not
+	// chosen. The four that shipped before customization are; the controls
+	// added for it are not, so a user with no saved layout keeps exactly the
+	// drawer they had — and the main view keeps fitting without a scrollbar.
+	Default bool
 }
 
 // defaultOrder is the drawer's scrolling sections in the order buildContent
@@ -123,13 +137,22 @@ type Control struct {
 // scrolling content would have to move it between two containers; "the things
 // you can reorder" and "the things that scroll" are the same set, and saying so
 // is simpler than supporting a move nobody wants.
+//
+// The opt-in controls sit where they belong among them — CPU boost with the
+// power controls, the refresh rate in a group of its own before RGB — because
+// this order is also where the customization editor offers a hidden control,
+// and so where it lands when the user switches it on.
 var defaultOrder = []Control{
 	{ID: "profile", Label: "Performance profile", Group: GroupPower,
-		Requires: []Capability{CapProfiles}},
+		Requires: []Capability{CapProfiles}, Default: true},
 	{ID: "autoswitch", Label: "AC/battery autoswitch", Group: GroupPower,
-		Requires: []Capability{CapProfiles, CapBattery}},
+		Requires: []Capability{CapProfiles, CapBattery}, Default: true},
 	{ID: "battery", Label: "Charge limit", Group: GroupPower,
-		Requires: []Capability{CapBattery}},
+		Requires: []Capability{CapBattery}, Default: true},
+	{ID: "cpu-boost", Label: "CPU boost", Group: GroupPower,
+		Requires: []Capability{CapCPUBoost}},
+	{ID: "refresh-rate", Label: "Refresh rate", Group: GroupDisplay,
+		Requires: []Capability{CapRefreshRate}},
 	// The whole RGB block — zone tabs, effect modes, both colours, speed and
 	// brightness — is one control, because its parts are not independently
 	// meaningful: which of them are visible is already decided by the selected
@@ -137,7 +160,7 @@ var defaultOrder = []Control{
 	// that logic rather than configuring anything. Hiding RGB entirely is the
 	// choice people actually want.
 	{ID: "lighting", Label: "RGB lighting", Group: GroupRGB,
-		Requires: []Capability{CapLighting}},
+		Requires: []Capability{CapLighting}, Default: true},
 }
 
 // Row is one control together with the chrome the drawer prints before it.
@@ -187,6 +210,17 @@ func All() []Control {
 	return out
 }
 
+// Defaults returns the controls a user who has not chosen gets, in order.
+func Defaults() []Control {
+	var out []Control
+	for _, c := range All() {
+		if c.Default {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Lookup returns the control with the given ID.
 func Lookup(id string) (Control, bool) {
 	for _, c := range All() {
@@ -219,8 +253,32 @@ func IDsOf(cs []Control) []string {
 // must not also blank its own controls. Everything is supported until the
 // document says otherwise, which is the posture limits.FromDevice already
 // takes for the same reason.
-func Supports(info *api.DeviceInfo, c Control) bool {
-	return SupportsAll(info, c.Requires)
+func Supports(info *api.DeviceInfo, c Control, session ...Capability) bool {
+	return SupportsHere(info, session, c.Requires)
+}
+
+// SupportsHere is SupportsAll with session capabilities — those only the
+// client can know (CapRefreshRate). A session capability is satisfied by
+// being listed in session and by nothing else; every other capability is
+// answered by the document exactly as SupportsAll answers it.
+func SupportsHere(info *api.DeviceInfo, session, want []Capability) bool {
+	var fromDoc []Capability
+	for _, c := range want {
+		if c != CapRefreshRate {
+			fromDoc = append(fromDoc, c)
+			continue
+		}
+		found := false
+		for _, s := range session {
+			if s == c {
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return SupportsAll(info, fromDoc)
 }
 
 // SupportsAll reports whether info has every capability in want. It is the

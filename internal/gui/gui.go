@@ -113,10 +113,33 @@ type Window struct {
 	edge panelgeom.Edge
 
 	// controls is which sections this drawer builds and in what order,
-	// resolved once at startup from gui.toml and the device document. Both
-	// buildContent and buildMainFocusList walk it, which is what keeps the
-	// visual order and the gamepad order the same list rather than two.
+	// resolved from the layout (gui.toml, else the Settings editor's saved
+	// list, else the defaults) and the device document. Both buildContent and
+	// buildMainFocusList walk it, which is what keeps the visual order and the
+	// gamepad order the same list rather than two. rebuildDrawer re-resolves
+	// it when the layout or the document changes.
 	controls []controls.Control
+
+	// guiFile is gui.toml as read at startup. Its controls list, when present,
+	// is the layout and locks the Settings editor (quickbar.go).
+	guiFile controls.Config
+
+	// hasDisplay is whether a refresh rate can be read in this session — the
+	// one capability the device document cannot answer.
+	hasDisplay bool
+
+	// drawerInner is the drawer main view's scrolling box, kept so
+	// rebuildDrawer can replace its sections in place. drawerHints are the hint
+	// entries registered while building them (collectHints is set meanwhile),
+	// dropped with the widgets so a recycled pointer never shows stale text.
+	drawerInner  *gtk.Box
+	drawerHints  []uintptr
+	collectHints bool
+
+	// The opt-in drawer sections (quickbar.go): nil unless the user's layout
+	// includes them.
+	boostSw *gtk.Switch
+	display *displaySection
 
 	// device is the capability document, kept for the readers that need more
 	// than the bounds limits.FromDevice narrows it to — the dashboard asks it
@@ -295,8 +318,8 @@ func guiConfig() controls.Config {
 // the user's list if they have one, filtered by what the device can actually
 // do. A nil document means the daemon did not answer, which is not evidence
 // that the machine lacks capabilities, so nothing is filtered out there.
-func resolveControls(cfg controls.Config, info *api.DeviceInfo) []controls.Control {
-	resolved, complaints := controls.Resolve(cfg, info)
+func resolveControls(cfg controls.Config, info *api.DeviceInfo, session ...controls.Capability) []controls.Control {
+	resolved, complaints := controls.Resolve(cfg, info, session...)
 	for _, c := range complaints {
 		slog.Warn(c)
 	}
@@ -337,17 +360,21 @@ func resolveButtonPress() buttonpref.Surface {
 func New(app *gtk.Application) *Window {
 	// One document, two readers: the widgets' bounds and the control list.
 	doc := deviceDocument()
-	cfg := guiConfig()
+	guiFile := guiConfig()
 	w := &Window{
 		device:       doc,
 		limits:       deviceLimits(doc),
-		controls:     resolveControls(cfg, doc),
-		edge:         resolveEdge(cfg),
+		guiFile:      guiFile,
+		hasDisplay:   hasDisplayBackend(),
+		edge:         resolveEdge(guiFile),
 		press:        resolveButtonPress(),
 		refreshPrefs: resolveRefreshPrefs(),
 		colors:       theme.DefaultColors,
 		gamescope:    os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 	}
+
+	layout, _ := w.layoutConfig()
+	w.controls = resolveControls(layout, doc, w.sessionCaps()...)
 
 	w.win = gtk.NewApplicationWindow(app)
 	w.win.AddCSSClass("z13-drawer-window")
@@ -671,6 +698,11 @@ func (w *Window) show() {
 	}
 	w.backend.Show()
 	w.startTelemetryPolling()
+	// The drawer's refresh rate, when the layout includes it: re-read on show
+	// for the reason the dashboard re-reads on page show — it shells out.
+	if w.display != nil {
+		w.display.sync()
+	}
 }
 
 // hide delegates to the display backend. Resets to main view so the drawer

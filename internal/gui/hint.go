@@ -19,8 +19,11 @@ package gui
 // widgets, so a focus-triggered hint can never fire on them; those live in
 // .block-note labels (see blockNote).
 //
-// Entries in w.hints are never removed. Every hinted widget is built once and
-// lives for the process lifetime; the popup layer's transient option buttons
+// Entries in w.hints are never removed, with one exception: the drawer's
+// sections, which rebuildDrawer discards when the quickbar layout changes, and
+// whose entries it drops with them (recordHint). Every other hinted widget is
+// built once and lives for the process lifetime; the popup layer's transient
+// option buttons
 // deliberately carry no hints. If a transient widget were ever hinted, its
 // map entry would outlive it and a recycled pointer could show the wrong
 // text — keep hints on permanent widgets only.
@@ -42,6 +45,7 @@ func (w *Window) setHint(widget gtk.Widgetter, text string) {
 		w.hints = make(map[uintptr]string)
 	}
 	w.hints[coreglib.BaseObject(widget).Native()] = text
+	w.recordHint(widget)
 
 	motion := gtk.NewEventControllerMotion()
 	motion.ConnectEnter(func(_, _ float64) {
