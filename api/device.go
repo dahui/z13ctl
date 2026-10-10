@@ -28,8 +28,13 @@ type DeviceInfo struct {
 	Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
 	// Presence-only capability: the daemon watches a hardware button and emits
-	// the events a client can subscribe to. There is nothing to parameterize.
+	// the events a client can subscribe to.
 	Buttons bool `json:"buttons,omitempty"`
+
+	// ButtonLabel is what that button is called on this machine, written to
+	// sit mid-sentence ("Armoury Crate button"). Absent when the device names
+	// none; a client then says "hardware button".
+	ButtonLabel string `json:"button_label,omitempty"`
 }
 
 // FanInfo is the device's fan-curve shape: how many points a curve holds and
@@ -268,7 +273,8 @@ type BatteryInfo struct {
 // dashboard knows which graphs to draw before it has asked for a single
 // sample.
 //
-// PowerDraw names the package-power source ("rapl", "pm-table") and is empty
+// PowerDraw names the package-power source ("rapl" today; "pm-table" is
+// reserved for the planned SMU power-table reader) and is empty
 // when the device reads none — in which case Sample's package power is always
 // zero and the graph should be hidden rather than drawn flat. GPU ("amdgpu"),
 // CPUStats ("procfs"), NPU ("amdxdna") and Net ("procfs") name the expanded

@@ -24,7 +24,8 @@ var bootsoundCmd = &cobra.Command{
 	Long: `Get or set the boot POST sound via the Linux asus-armoury firmware-attributes
 sysfs interface.
 
-Values:
+Values are the ones the firmware lists for the attribute (--list on the
+feature command shows them); for this switch:
   0 — disabled (silent boot)
   1 — enabled (audible POST beep)`,
 	Args: cobra.NoArgs,

@@ -44,7 +44,7 @@ tabs and B closes it.
 | **Mode** | Lighting effect: static, breathe, cycle, rainbow, strobe, or off |
 | **Color 1 / Color 2** | Pick from 8 presets or open the custom color picker |
 | **Speed** | Animation speed for modes that support it: slow, normal, fast |
-| **Brightness** | Lighting brightness: 0–3 |
+| **Brightness** | Lighting brightness, on the device's scale (0–3 on the Z13) |
 
 Changes take effect immediately and are sent to the voltaire daemon. Settings
 persist across reboots while the daemon is running.
@@ -67,9 +67,9 @@ view. See [Theming](/voltaire/gui/theming/) for details.
 The full window's **Dashboard** tab is the page to leave open. It reads in
 three bands, each under its own heading: **Telemetry** — what the machine is
 doing — then **System** — what it is set to — then **RGB** — what it looks
-like. The daemon samples the machine once a second and keeps the
-last five minutes, so the charts are drawn from readings taken whether or not
-anything was open.
+like. The daemon samples the machine once a second and keeps as much history
+as the device declares (an hour on the GZ302EA), so the charts are drawn from
+readings taken whether or not anything was open.
 
 There is one card per *kind* of quantity the machine actually measures — on
 the Z13 that is eight:

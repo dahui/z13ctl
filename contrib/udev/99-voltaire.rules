@@ -1,10 +1,10 @@
-# 99-voltaire.rules — ASUS ROG Flow Z13 device access
+# 99-voltaire.rules — voltaire device access
 #
 # Grants members of the users group read/write access to:
-#   - ASUS HID devices used for keyboard and lightbar RGB control
-#   - asus-wmi platform-profile attribute for performance profile control
-#   - asus-nb-wmi battery charge_control_end_threshold for battery limit control
-#   - Armoury Crate button input device for daemon button watcher
+#   - the HID devices of every lighting zone the device files declare (RGB control)
+#   - platform-profile attributes for performance profile control
+#   - the battery charge_control_end_threshold for battery limit control
+#   - the hardware buttons' input devices for the daemon button watcher
 #   - asus-armoury firmware-attributes (boot_sound, panel_overdrive)
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
 #   - asus-armoury PPT power limit attributes for TDP control (asus-nb-wmi ppt_* as fallback)

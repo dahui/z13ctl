@@ -25,7 +25,8 @@ var paneloverdriveCmd = &cobra.Command{
 	Long: `Get or set the display panel refresh overdrive via the Linux asus-armoury
 firmware-attributes sysfs interface.
 
-Values:
+Values are the ones the firmware lists for the attribute (--list on the
+feature command shows them); for this switch:
   0 — disabled
   1 — enabled`,
 	Args: cobra.NoArgs,

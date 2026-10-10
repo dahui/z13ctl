@@ -268,7 +268,7 @@ func TestDeviceGetWireKeys(t *testing.T) {
 		`"battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true}`,
 		`"telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs","history_seconds":3600}`,
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
-		`"buttons":true`,
+		`"buttons":true,"button_label":"Armoury Crate button"`,
 		`"lighting":{"zones":["keyboard","lightbar"],"labels":["Keyboard","Lightbar"],"modes":[{"name":"static","label":"Static","color":true},{"name":"breathe","label":"Breathe","color":true,"color2":true,"speed":true},`,
 		`"speeds":["slow","normal","fast"],"brightness_max":3}`,
 		`"pwm_max":255,"labels":["Fan 1","Fan 2"],"rpm_max":8900`,

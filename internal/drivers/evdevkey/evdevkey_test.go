@@ -422,3 +422,33 @@ func TestWatchForwardsPressThroughWatcher(t *testing.T) {
 		t.Fatal("Watch did not return after cancellation")
 	}
 }
+
+// The Z13's "Asus WMI hotkeys" key bitmap, read from the machine (2026-10-09).
+const z13KeyBitmap = "400000000000000 10000000c0000 400400000 800000000000 0 0 181606f00900c00 380027801701000 e000000000000 0"
+
+func TestBitmapHas(t *testing.T) {
+	for _, tt := range []struct {
+		bitmap string
+		bit    int
+		want   bool
+	}{
+		{z13KeyBitmap, testKeycode, true}, // KEY_PROG3, the Armoury Crate key
+		{z13KeyBitmap, 148, true},         // KEY_PROG1: this node reports it too
+		{z13KeyBitmap, 1, false},          // KEY_ESC
+		{z13KeyBitmap, 0, false},
+		{"1", 0, true},
+		{"1 0", 64, true},
+		{"1", 64, false}, // beyond the bitmap
+	} {
+		got, err := bitmapHas(tt.bitmap, tt.bit)
+		if err != nil || got != tt.want {
+			t.Errorf("bitmapHas(%q, %d) = %v, %v; want %v", tt.bitmap, tt.bit, got, err, tt.want)
+		}
+	}
+	if _, err := bitmapHas("", 1); err == nil {
+		t.Error("empty bitmap: want an error")
+	}
+	if _, err := bitmapHas("zz", 1); err == nil {
+		t.Error("non-hex word: want an error")
+	}
+}

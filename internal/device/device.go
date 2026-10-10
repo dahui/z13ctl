@@ -50,6 +50,11 @@ type Device struct {
 	CPUBoost  driver.CPUBoost
 	Telemetry driver.Telemetry
 	Buttons   driver.Buttons
+
+	// ButtonLabel is the hardware button's name from device data (button.label),
+	// "" when the device gives none. Data, not a driver: nothing reads hardware
+	// to learn it.
+	ButtonLabel string
 }
 
 // ReleaseFans hands the fans back to firmware auto and leaves keep in force. It
@@ -257,6 +262,7 @@ func Assemble(c Config) (*Device, error) {
 		if d.Buttons, err = f(*c.Button); err != nil {
 			return nil, fmt.Errorf("buttons (%s): %w", c.Button.Method, err)
 		}
+		d.ButtonLabel = c.Button.Label
 	}
 	return d, nil
 }

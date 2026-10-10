@@ -387,6 +387,10 @@ type ButtonConfig struct {
 	Device  string `toml:"device"`  // input device name to find by sysfs
 	Keycode int    `toml:"keycode"` // key code to watch for
 	Kind    string `toml:"kind"`    // driver.ButtonEvent.Kind delivered per press
+	// Label is what the button is called on this machine, as it would appear
+	// mid-sentence ("Armoury Crate button"). Optional; clients fall back to a
+	// generic name.
+	Label string `toml:"label"`
 }
 
 // Validate reports everything wrong with a config at once, so a device data PR

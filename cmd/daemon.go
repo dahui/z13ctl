@@ -3,7 +3,7 @@ package cmd
 // daemon.go — "daemon" subcommand: run the voltaire long-running device daemon.
 //
 // The daemon holds HID devices open, restores lighting state on startup,
-// watches the Armoury Crate button, and serves a Unix socket for CLI and GUI
+// watches the hardware button, and serves a Unix socket for CLI and GUI
 // clients. Designed to run as a systemd user service (z13ctl.socket +
 // z13ctl.service); can also be launched directly for development.
 
@@ -24,8 +24,9 @@ var daemonCmd = &cobra.Command{
 	Short: "Run the voltaire device daemon",
 	Long: `Run the voltaire daemon as a long-running process.
 
-The daemon opens and holds the ASUS HID devices, restores the last-applied
-lighting state on startup, watches the Armoury Crate button, and serves a
+The daemon opens and holds the lighting HID devices, restores the last-applied
+lighting state on startup, watches the hardware button (the Armoury Crate
+button on the Z13), and serves a
 Unix socket at $XDG_RUNTIME_DIR/voltaire/voltaire.sock (plus the pre-rename
 $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock, kept through 2.x for older clients).
 
@@ -33,7 +34,7 @@ CLI commands (apply, off, brightness, profile, batterylimit, bootsound,
 paneloverdrive) will automatically use the socket if the daemon is running,
 falling back to direct hardware access when it is not.
 
-Use --no-button to disable the Armoury Crate button watcher, allowing other
+Use --no-button to disable the hardware button watcher, allowing other
 tools to exclusively grab the button device.
 
 Use --no-sleep-release to keep a custom fan curve in force through sleep. The

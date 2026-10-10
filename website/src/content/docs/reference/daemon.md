@@ -157,8 +157,12 @@ render controls against, instead of hardcoding one device's numbers:
   "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
   "telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs",
                "history_seconds":3600,"clock_max_mhz":5187,"temp_limit_c":100},
-  "buttons":true}}
+  "buttons":true,"button_label":"Armoury Crate button"}}
 ```
+
+`buttons` says the daemon watches a hardware button (and emits the button
+events); `button_label` is what that button is called on this machine, written
+to sit mid-sentence, and is absent when the device names none.
 
 Capability discovery is **by absence**: a section that is missing means the
 device does not have that capability — never an error — and a client hides the
@@ -237,7 +241,8 @@ range for the threshold (a daemon older than the fields omits them; assume
 capacity (it is not clamped to 100 — a freshly calibrated pack reads slightly
 above design). `telemetry.history_seconds` is the largest history window worth
 requesting, and `telemetry.power_draw` names the package-power source
-(`"rapl"`, `"pm-table"`) — **absent when the device reads none**, in which case
+(`"rapl"`; `"pm-table"` is reserved for a planned SMU power-table reader) —
+**absent when the device reads none**, in which case
 package power is always zero and the graph should be hidden rather than drawn
 flat. The Z13 declares `"rapl"`. Its `energy_uj` counter is root-only under the
 Platypus side-channel mitigation, so `voltaire setup` grants the group **read**
@@ -441,7 +446,7 @@ Each streamed event is a full response object with an `event` field:
 
 | Event | Emitted when |
 |---|---|
-| `gui-toggle` | the Armoury Crate button is pressed |
+| `gui-toggle` | the hardware button is pressed (the Armoury Crate button on the Z13; `device-get` names it as `button_label`) |
 | `gui-open-full` | the button is pressed twice in quick succession — sent **in addition to** the second `gui-toggle` |
 | `power-source` | the machine moves between mains and battery power |
 | `state-changed` | the active profile, its settings, the saved profiles, the autoswitch configuration, or a firmware toggle change |
@@ -697,7 +702,7 @@ On `PrepareForSleep(true)` the daemon therefore:
    releasing the fans would otherwise drop a thermal floor that limit
    requires. **If that write fails, the fans are not released.** A loud
    suspend is the right trade against an unfloored high limit.
-3. Releases both fans to firmware auto.
+3. Releases the fans to firmware auto.
 4. Waits 3 seconds before letting the suspend go ahead, when it released
    anything. A suspend that follows the release more closely is often woken
    again by the embedded controller within a couple of seconds. The wait is

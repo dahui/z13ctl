@@ -1891,8 +1891,13 @@ type DeviceInfo struct {
     Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
     // Presence-only capability: the daemon watches a hardware button and emits
-    // the events a client can subscribe to. There is nothing to parameterize.
+    // the events a client can subscribe to.
     Buttons bool `json:"buttons,omitempty"`
+
+    // ButtonLabel is what that button is called on this machine, written to
+    // sit mid-sentence ("Armoury Crate button"). Absent when the device names
+    // none; a client then says "hardware button".
+    ButtonLabel string `json:"button_label,omitempty"`
 }
 ```
 
@@ -2439,7 +2444,7 @@ type TDPState struct {
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
-PowerDraw names the package\-power source \("rapl", "pm\-table"\) and is empty when the device reads none — in which case Sample's package power is always zero and the graph should be hidden rather than drawn flat. GPU \("amdgpu"\), CPUStats \("procfs"\), NPU \("amdxdna"\) and Net \("procfs"\) name the expanded sources on the same terms: a name for provenance, absence meaning the matching sample fields are never filled and their graphs should not exist. HistorySeconds is the largest window a telemetry\-history request can usefully ask for; zero means the daemon keeps no history for this device and only live readings are available.
+PowerDraw names the package\-power source \("rapl" today; "pm\-table" is reserved for the planned SMU power\-table reader\) and is empty when the device reads none — in which case Sample's package power is always zero and the graph should be hidden rather than drawn flat. GPU \("amdgpu"\), CPUStats \("procfs"\), NPU \("amdxdna"\) and Net \("procfs"\) name the expanded sources on the same terms: a name for provenance, absence meaning the matching sample fields are never filled and their graphs should not exist. HistorySeconds is the largest window a telemetry\-history request can usefully ask for; zero means the daemon keeps no history for this device and only live readings are available.
 
 ```go
 type TelemetryInfo struct {

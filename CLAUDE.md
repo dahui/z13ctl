@@ -197,7 +197,7 @@ internal/
     gamepad/                 evdev gamepad reader → normalized Actions (visible-only dispatch)
       hidblocker/            BPF LSM blocker keeping games from seeing the pad while open
     fonts/                   embedded Inter + fontconfig registration (see NOTICE)
-  buttonpref/                which surface the Armoury Crate button opens: one value
+  buttonpref/                which surface the hardware button opens: one value
                              (what a *single* press raises), its parse and its labels
   theme/                     theme definitions, config persistence, CSS generation — pure Go
     migrate.go               ~/.config/z13gui → ~/.config/voltaire first-run copy shim
@@ -426,6 +426,23 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   skipped and a custom curve stays in force through suspend. Both flags reach the
   daemon through `daemon.Options` rather than positional bools — `Run(ctx, true,
   false)` said nothing about which flag was which, and a third would be worse.
+- **`voltaire setup` grants what the device files name, across *all* of them**
+  (2026-10-09): lighting zones' USB ids and button input-device names come
+  from every embedded device file (`deviceSetupTargets`, deduped and sorted),
+  hwmon names from the fan driver (`asusz13.FanHwmonNames`), toggles from the
+  allowlist. Not the matched file: the packaged rules and perms unit are one
+  file shipped to every machine and `cmd/setup_test.go` compares them with the
+  generated output wherever it runs, so the output cannot depend on the
+  machine. A grant for absent hardware matches nothing.
+  `TestEveryDeviceFileTargetIsGranted` makes a new device file's zone or button
+  fail CI until the packaged rules carry it.
+- **The hardware button's name is device data** (`button.label` →
+  `Device.ButtonLabel` → device-get `button_label`); `buttonpref` takes it and
+  falls back to "hardware button", so no surface names the Armoury Crate button
+  on a machine that has none. evdevkey checks the device's static
+  `capabilities/key` bitmap for the keycode once per watch and only warns: the
+  Z13's node reports KEY_PROG1 as well as KEY_PROG3, so the bitmap says what a
+  node *can* send, not which key is the button.
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -1900,7 +1917,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   fails the guard. **Existing installs need `sudo voltaire setup` again**, or
   the switch is there and every write is EACCES.
   Measured on this machine: boost off drops `scaling_max_freq` from 5187500 to
-  3000000 across all 33 policies, and one write to the global file moves every
+  3000000 across all 32 policies, and one write to the global file moves every
   one of them.
 - **The powercap grant is the only read-only one, and that is not an
   accident.** Every other target `voltaire setup` touches is `chmod g+w`

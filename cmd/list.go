@@ -16,7 +16,7 @@ var listCmd = &cobra.Command{
 	Run: func(_ *cobra.Command, _ []string) {
 		devices := hid.ListDevices(lightingKnown())
 		if len(devices) == 0 {
-			fmt.Println("No matching ASUS devices found.")
+			fmt.Println("No lighting devices found.")
 			return
 		}
 		for _, d := range devices {

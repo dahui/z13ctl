@@ -27,6 +27,10 @@ func FanPWMIndices() []int {
 	return curveModeChannels(dir)
 }
 
+// FanHwmonNames returns the hwmon device names the fan driver finds its curve
+// and its readings by, for the grants voltaire setup writes.
+func FanHwmonNames() (curves, readings string) { return hwmonNameCurves, hwmonNameReadings }
+
 // EncodeCOValue returns the SMU argument a Curve Optimizer offset encodes to,
 // so a dry run can print the exact payload SetCurveOptimizer would send.
 func EncodeCOValue(offset int) uint32 { return encodeCOValue(offset) }

@@ -252,7 +252,7 @@ func (p *profileSection) sync() {
 	note := ""
 	if !canPick {
 		note = profileui.NoCustomProfilesNote(
-			buttonpref.OpenGesture(p.w.press, buttonpref.Window))
+			buttonpref.OpenGesture(p.w.press, buttonpref.Window, p.w.buttonLabel()))
 	}
 	setBlockNote(p.customNote, note)
 }

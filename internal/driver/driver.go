@@ -729,7 +729,8 @@ type Sample struct {
 // TelemetryInfo describes a telemetry source without reading it, so the device
 // document can say what a dashboard may draw before any sample exists.
 //
-// PowerDraw names the package-power source — "rapl", "pm-table" — and is empty
+// PowerDraw names the package-power source — "rapl"; "pm-table" is reserved
+// for the planned SMU power-table reader — and is empty
 // when the device has none. It is deliberately a name rather than a bool: a
 // client showing provenance ("package power via RAPL") needs it, and a device
 // that gains a second source later adds a name rather than a field. Leaving it

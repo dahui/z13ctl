@@ -171,7 +171,7 @@ charge_limit_max = 100
 
 # cpufreq's global boost switch (/sys/devices/system/cpu/cpufreq/boost). Writing
 # it moves every policy at once: measured here, 0 drops scaling_max_freq from
-# 5187500 to 3000000 across all 33 policies and 1 restores it. udev cannot see
+# 5187500 to 3000000 across all 32 policies and 1 restores it. udev cannot see
 # the path — it is a plain kobject, not a device — so the group-write grant comes
 # from voltaire-perms.service rather than a rule.
 [cpu]
@@ -220,3 +220,4 @@ method  = "evdev-key"
 device  = "Asus WMI hotkeys"
 keycode = 202
 kind    = "armoury-crate"
+label   = "Armoury Crate button"

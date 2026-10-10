@@ -43,6 +43,15 @@ func (w *Window) firmware() profileui.Firmware {
 	return profileui.FirmwareFrom(w.device)
 }
 
+// buttonLabel is the hardware button's name from the current document, "" when
+// the device gives none (buttonpref then says "hardware button").
+func (w *Window) buttonLabel() string {
+	if w.device == nil {
+		return ""
+	}
+	return w.device.ButtonLabel
+}
+
 // adoptStateLimits lays a fetched state's live power-limit ranges over the
 // current limits. Main thread only; call it before syncing widgets from the
 // same state, so values land inside the ranges they will be shown in.
@@ -69,6 +78,9 @@ func (w *Window) adoptDevice(doc *api.DeviceInfo) {
 	prev := w.device
 	w.device = doc
 	w.applyLimits(next)
+	for _, s := range w.settingsViews() {
+		s.syncPress() // the button's name is in the document
+	}
 
 	// The firmware profile buttons are built once from the document too.
 	if have, now := profileui.FirmwareFrom(prev).Names(), profileui.FirmwareFrom(doc).Names(); !slices.Equal(have, now) {

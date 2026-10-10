@@ -16,8 +16,11 @@ package evdevkey
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +55,7 @@ type Buttons struct {
 	deviceName string // sysfs device name to find ("Asus WMI hotkeys")
 	keycode    evdev.EvCode
 	kind       string // ButtonEvent.Kind delivered for each press
+	checked    bool   // checkKey has run; Watch is the only goroutine touching it
 }
 
 // New returns a watcher for the named input device and keycode. Pure: the
@@ -117,6 +121,10 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 		// Shared, not exclusive — see the package comment. If some other
 		// process holds an EVIOCGRAB on this node the kernel routes events only
 		// to it, and this loop will sit idle with no error to report.
+		if !b.checked {
+			b.checked = true
+			b.checkKey(filepath.Base(path))
+		}
 		slog.Info("watching hardware button (shared, non-exclusive)", "path", path, "kind", b.kind)
 		if err := b.runLoop(ctx, dev, ch); err != nil {
 			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
@@ -165,4 +173,46 @@ func (b *Buttons) runLoop(ctx context.Context, dev eventDevice, ch chan<- driver
 			}
 		}
 	}
+}
+
+// checkKey warns when the device does not report the configured keycode in its
+// static key capabilities — the device data names a key this node can never
+// send, so the watcher would wait forever for a press. It reads a sysfs bitmap,
+// never the device, and only warns: the watch goes on regardless, since an
+// unreadable bitmap says nothing either way.
+func (b *Buttons) checkKey(event string) {
+	data, err := os.ReadFile(inputClassDir + "/" + event + "/device/capabilities/key")
+	if err != nil {
+		slog.Debug("button key capabilities unreadable", "event", event, "err", err)
+		return
+	}
+	has, err := bitmapHas(strings.TrimSpace(string(data)), int(b.keycode))
+	if err != nil {
+		slog.Debug("button key capabilities unparseable", "event", event, "err", err)
+		return
+	}
+	if !has {
+		slog.Warn("button device does not report the configured key; presses will not be seen",
+			"name", b.deviceName, "event", event, "keycode", int(b.keycode))
+	}
+}
+
+// bitmapHas reports whether bit is set in a sysfs input capability bitmap:
+// space-separated hex words, most significant first, each one kernel long
+// (64 bits here) wide — the format of capabilities/key.
+func bitmapHas(bitmap string, bit int) (bool, error) {
+	words := strings.Fields(bitmap)
+	if len(words) == 0 || bit < 0 {
+		return false, fmt.Errorf("empty bitmap")
+	}
+	const wordBits = 64
+	i := len(words) - 1 - bit/wordBits // the last word holds bits 0–63
+	if i < 0 {
+		return false, nil
+	}
+	w, err := strconv.ParseUint(words[i], 16, 64)
+	if err != nil {
+		return false, err
+	}
+	return w&(1<<uint(bit%wordBits)) != 0, nil
 }

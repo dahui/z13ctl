@@ -80,8 +80,8 @@ voltaire batterylimit --set 100
 
 ## Fan curves
 
-Both physical fans cool the same APU, so the same curve is always applied to
-both fans simultaneously.
+One curve is applied to every fan. On the Z13 both fans cool the same APU, and
+a curve has 8 points.
 
 The kernel discards custom fan curves whenever the system power profile
 changes — which GNOME power modes and `power-profiles-daemon` do on every
@@ -93,13 +93,13 @@ change.
 # Check current fan curves
 voltaire fancurve --get
 
-# Set a custom fan curve using PWM values (8 temp:speed pairs, both fans)
+# Set a custom fan curve using PWM values (8 temp:speed pairs on the Z13)
 voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
 
 # Or use percentages (0–100%)
 voltaire fancurve --set "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
 
-# Reset both fans to firmware auto mode
+# Reset the fans to firmware auto mode
 voltaire fancurve --reset
 ```
 

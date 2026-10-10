@@ -1,7 +1,8 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
-// Package buttonpref is which surface the Armoury Crate button opens.
+// Package buttonpref is which surface the hardware button opens (the Armoury
+// Crate button on the Z13).
 //
 // The daemon reports every press as gui-toggle and adds gui-open-full when it
 // sees a second press inside the double-press window (internal/daemon/button.go).
@@ -83,14 +84,33 @@ func Options() []Surface { return []Surface{Quickbar, Window} }
 // the same reason api.ToggleInfo.Description is device data: the page that
 // renders it should not be the place a behaviour is described, or the
 // description and the behaviour drift apart in separate files.
+//
+// The button's name is device data (button.label, served as device-get's
+// button_label), so the functions that say it take it; "" falls back to
+// FallbackName.
 const (
-	RowLabel = "Armoury Crate button"
+	// FallbackName is the button's name when the device gives none.
+	FallbackName = "hardware button"
 
 	// RowDescription says only what the setting is *for*. What each choice
 	// does is Summary's job, because that sentence has to name the current
 	// selection to be worth reading at all.
 	RowDescription = "Which surface a single press of the hardware button opens."
 )
+
+// Name is the button's name for use mid-sentence: label, or FallbackName.
+func Name(label string) string {
+	if label == "" {
+		return FallbackName
+	}
+	return label
+}
+
+// RowLabel is the settings row's title: the button's name, capitalized.
+func RowLabel(label string) string {
+	n := Name(label)
+	return strings.ToUpper(n[:1]) + n[1:]
+}
 
 // Summary describes the arrangement a choice produces, naming both gestures.
 //
@@ -111,9 +131,9 @@ func Summary(single Surface) string {
 // discovers on their own, and it is the *other* gesture once the preference is
 // reversed. Naming it as "double press" in a GTK literal would be right for the
 // default and wrong for anyone who swapped them.
-func OpenGesture(single, want Surface) string {
+func OpenGesture(single, want Surface, label string) string {
 	if single == want {
-		return "Press the Armoury Crate button"
+		return "Press the " + Name(label)
 	}
-	return "Press the Armoury Crate button twice"
+	return "Press the " + Name(label) + " twice"
 }

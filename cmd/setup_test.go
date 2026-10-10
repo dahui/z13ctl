@@ -51,6 +51,40 @@ var sysfsGrants = []struct {
 	{name: "powercap energy counter", match: "energy_uj", rules: true, service: true},
 }
 
+// TestEveryDeviceFileTargetIsGranted: the HID ids and button devices come from
+// the device files, so a device file that adds a zone or a button must reach
+// both the generated rules and the packaged copy. sysfsGrants above pins the
+// Z13's by name; this covers whatever the device files say next.
+func TestEveryDeviceFileTargetIsGranted(t *testing.T) {
+	t.Parallel()
+
+	targets, err := deviceSetupTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets.hid) == 0 || len(targets.buttons) == 0 {
+		t.Fatalf("no targets from the device files: %+v", targets)
+	}
+	var want []string
+	for _, id := range targets.hid {
+		v, p, _ := strings.Cut(id, ":")
+		want = append(want, `ATTRS{idVendor}=="`+v+`", ATTRS{idProduct}=="`+p+`"`)
+	}
+	for _, name := range targets.buttons {
+		want = append(want, `ATTRS{name}=="`+name+`"`)
+	}
+	for name, content := range map[string]string{
+		"buildRulesContent": buildRulesContent("users"),
+		packagedRulesPath:   readPackaged(t, packagedRulesPath),
+	} {
+		for _, w := range want {
+			if !strings.Contains(content, w) {
+				t.Errorf("%s does not grant %s", name, w)
+			}
+		}
+	}
+}
+
 func readPackaged(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

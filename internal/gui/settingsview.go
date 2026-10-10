@@ -66,6 +66,7 @@ type settingsView struct {
 	// selection.
 	pressBtns map[buttonpref.Surface]*gtk.Button
 	pressDesc *gtk.Label
+	pressLbl  *gtk.Label
 }
 
 // settingsRow is one toggle: its label and prose, and the switch that writes it.
@@ -183,7 +184,8 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 
 	text := gtk.NewBox(gtk.OrientationVertical, 2)
 	text.SetHExpand(true)
-	label := gtk.NewLabel(buttonpref.RowLabel)
+	label := gtk.NewLabel(buttonpref.RowLabel(s.w.buttonLabel()))
+	s.pressLbl = label
 	label.SetHAlign(gtk.AlignStart)
 	label.AddCSSClass("setting-name")
 	text.Append(label)
@@ -245,6 +247,9 @@ func (s *settingsView) syncPress() {
 	}
 	if s.pressDesc != nil {
 		s.pressDesc.SetLabel(buttonpref.Summary(s.w.press))
+	}
+	if s.pressLbl != nil {
+		s.pressLbl.SetLabel(buttonpref.RowLabel(s.w.buttonLabel()))
 	}
 }
 

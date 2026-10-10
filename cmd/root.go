@@ -85,12 +85,14 @@ var (
 var rootCmd = &cobra.Command{
 	Use:     "voltaire",
 	Version: version.Version,
-	Short:   "System control for the ASUS ROG Flow Z13",
-	Long: `voltaire — system control for the 2025 ASUS ROG Flow Z13
+	Short:   "System control for supported laptops (the 2025 ASUS ROG Flow Z13 today)",
+	Long: `voltaire — system control for supported laptops
 
-Controls keyboard and lightbar RGB via Linux hidraw, performance profile and
-battery charge limit via asus-wmi sysfs, and boot sound and panel overdrive
-via asus-armoury firmware-attributes.`,
+Controls RGB lighting, performance profiles, fan curves, power limits, battery
+charge limit, firmware toggles and Curve Optimizer through the kernel's own
+interfaces. What a machine offers, and every range and name, comes from its
+device file and from what the kernel reports; the supported device today is the
+2025 ASUS ROG Flow Z13.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -98,7 +100,7 @@ via asus-armoury firmware-attributes.`,
 func init() {
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target lighting zone (keyboard or lightbar on the Z13) or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
-	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the Armoury Crate button watcher (daemon only)")
+	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the hardware button watcher (daemon only)")
 	rootCmd.PersistentFlags().BoolVar(&noSleepReleaseFlag, "no-sleep-release", false,
 		"Keep the custom fan curve through sleep instead of handing the fans back to the firmware (daemon only)")
 }

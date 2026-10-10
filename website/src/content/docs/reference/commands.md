@@ -20,7 +20,7 @@ These flags apply to every command.
 |------|-------------|
 | `--device <name\|path>` | Target one lighting zone (`keyboard` or `lightbar` on the Z13) or a `/dev/hidrawN` path. Without this flag all zones are targeted. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
-| `--no-button` | Disable the Armoury Crate button watcher (daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching voltaire at all. |
+| `--no-button` | Disable the hardware button watcher (the Armoury Crate button on the Z13; daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching voltaire at all. |
 | `--no-sleep-release` | Keep a custom fan curve in force through sleep instead of handing the fans back to the firmware (daemon only). See [sleep/resume recovery](/voltaire/reference/daemon/#on-sleep--the-fans-are-handed-back-to-the-firmware). |
 
 ## apply
@@ -404,8 +404,9 @@ voltaire feature --set panel_overdrive=0
 ## fancurve
 
 Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
-Both physical fans cool the same APU, so the same curve is always applied to
-both fans simultaneously. Root or group access required; see [setup](#setup).
+One curve is applied to every fan the kernel lists — on the Z13 both fans cool
+the same APU, so that is the right model there. Root or group access required;
+see [setup](#setup).
 
 ```
 voltaire fancurve [flags]
@@ -414,10 +415,10 @@ voltaire fancurve [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print the current fan curve, mode, RPM, and CPU temperature |
-| `--set <curve>` | Set a custom 8-point fan curve (applied to both fans) |
+| `--set <curve>` | Set a custom fan curve, one point per curve point the device has (8 on the Z13), applied to every fan |
 | `--preset <name>` | Apply a named preset curve (see `--list-presets`) |
 | `--list-presets` | List the preset curves this device offers |
-| `--reset` | Reset both fans to firmware auto mode |
+| `--reset` | Reset every fan to firmware auto mode |
 | `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
 
 The **mode** in `--get` output is the one to read. `custom` means the kernel
@@ -431,7 +432,9 @@ $ voltaire fancurve --get
 Fans: 1200 / 1250 RPM, mode: auto, CPU: 48°C     # <- it is not; see the warning below
 ```
 
-**Curve format:** 8 comma-separated `temp:speed` pairs. Speed can be a PWM
+**Curve format:** comma-separated `temp:speed` pairs, as many as the device's
+curve holds — the kernel's count, served as `fans.points` by `device-get`
+(8 on the Z13). Speed can be a PWM
 value (0–255) or a percentage with a `%` suffix (0–100%). Both formats can be
 mixed in the same curve.
 
@@ -442,7 +445,7 @@ mixed in the same curve.
 
 **Validation rules:**
 
-- Exactly 8 points required
+- Exactly the device's point count (8 on the Z13)
 - Temperatures must be monotonically increasing (0–120 °C)
 - Speed values must be non-decreasing (0–255 PWM or 0–100%)
 

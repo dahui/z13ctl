@@ -52,7 +52,7 @@ var (
 
 	// sysCPUBoostPath is cpufreq's global boost switch. Writing it moves every
 	// policy at once — measured on the Z13: 0 drops scaling_max_freq from
-	// 5187500 to 3000000 on all 33 policies, 1 restores it — which is why this
+	// 5187500 to 3000000 on all 32 policies, 1 restores it — which is why this
 	// is the one file rather than a walk over policy*/boost. It is what
 	// `cpupower frequency-set --boost` writes.
 	sysCPUBoostPath = "/sys/devices/system/cpu/cpufreq/boost"

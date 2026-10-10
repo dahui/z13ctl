@@ -147,6 +147,9 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		}
 	}
 	info.Buttons = hw.Buttons != nil
+	if info.Buttons {
+		info.ButtonLabel = hw.ButtonLabel
+	}
 	return info
 }
 

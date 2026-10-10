@@ -126,7 +126,7 @@ func TestOpenGesture(t *testing.T) {
 		{buttonpref.Window, buttonpref.Window, false},
 	}
 	for _, tc := range cases {
-		got := buttonpref.OpenGesture(tc.single, tc.want)
+		got := buttonpref.OpenGesture(tc.single, tc.want, "Armoury Crate button")
 		if twice := strings.HasSuffix(got, "twice"); twice != tc.twice {
 			t.Errorf("OpenGesture(%q, %q) = %q, want twice=%v", tc.single, tc.want, got, tc.twice)
 		}
@@ -134,5 +134,21 @@ func TestOpenGesture(t *testing.T) {
 			t.Errorf("OpenGesture(%q, %q) = %q, want a sentence-initial phrase",
 				tc.single, tc.want, got)
 		}
+	}
+}
+
+// The name is the device's when it gives one, and a generic one otherwise —
+// never another machine's button.
+func TestButtonName(t *testing.T) {
+	t.Parallel()
+
+	if got := buttonpref.RowLabel("Armoury Crate button"); got != "Armoury Crate button" {
+		t.Errorf("RowLabel(declared) = %q", got)
+	}
+	if got := buttonpref.RowLabel(""); got != "Hardware button" {
+		t.Errorf("RowLabel(\"\") = %q, want Hardware button", got)
+	}
+	if got := buttonpref.OpenGesture(buttonpref.Quickbar, buttonpref.Window, ""); got != "Press the hardware button twice" {
+		t.Errorf("OpenGesture with no label = %q", got)
 	}
 }

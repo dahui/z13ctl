@@ -153,7 +153,7 @@ handled, err          := api.SendProfileSet("performance")
 handled, err := api.SendBootSoundSet(0)
 handled, err := api.SendPanelOverdriveSet(1)
 
-// Fan curves (applied to both fans simultaneously)
+// Fan curves (one curve, applied to every fan)
 handled, value, err := api.SendFanCurveGet()
 handled, err         := api.SendFanCurveSet("48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102")
 handled, err         := api.SendFanCurveReset()
