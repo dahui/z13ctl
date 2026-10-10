@@ -3341,7 +3341,8 @@ diff whenever a main release touches `api/`.
 1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
    `.claude/plans/quickbar-customization.md`). M4 is complete but for the
    gamescope pass.
-2. **Gamescope Gaming Mode hardware pass** — never run; the full window hosted
+2. **Gamescope Gaming Mode hardware pass** — deferred to one dedicated session
+   (Jeff, 2026-10-09); now also covers the quickbar editor on a controller. Never run; the full window hosted
    in the overlay surface, the popup layer, and now the preset row and Reset All
    are all unverified there. Standing pre-release risk; also in
    `dev/smoke-z13.md`.

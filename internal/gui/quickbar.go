@@ -271,6 +271,9 @@ func (s *settingsView) buildQuickbarCard() *gtk.Box {
 	resetRow := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	resetRow.AddCSSClass("btn-group")
 	resetRow.SetHAlign(gtk.AlignEnd)
+	// Set apart from the rows: it acts on the whole list, not on the last row
+	// it would otherwise sit against (Jeff, 2026-10-09).
+	resetRow.SetMarginTop(14)
 	resetRow.Append(s.qbReset)
 	card.Append(resetRow)
 
