@@ -1,0 +1,14 @@
+{
+ "captured": "2026-10-09, GZ302EA, ryzen_smu 0.1.7 (amkillam), BIOS PPT via asus-armoury",
+ "condition": "tdp-50",
+ "load": "yes x32; 60 s settle, then a 15 s RAPL window, then the read",
+ "read": "fresh",
+ "written_w": {
+  "pl1": 50,
+  "pl2": 50,
+  "pl3": 50
+ },
+ "platform_profile": "balanced",
+ "rapl_package_w": 49.98,
+ "tctl_c": 81
+}

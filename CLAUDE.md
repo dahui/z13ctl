@@ -155,7 +155,10 @@ internal/
       tdp.go                 PPT interface choice (asus-armoury, else asus-nb-wmi) and I/O: ReadAllPPT,
                              SetTDPState (clamps into armoury's range), PlanTDPWrites; the envelope overlay
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
-      undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues
+      undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues;
+                             the per-CPU command table (coPlatforms, from ryzenadj)
+      pmtable.go             pure pm_table parser (per-version layout); nothing reads the table —
+                             fixtures under load in testdata/
       paths.go               sysfs roots as vars (injectable by tests); see Testing
       sysfs_fake_test.go     fake sysfs tree + fakeSMU mailbox + ppdRunner stub
       fan_sysfs_test.go / smu_test.go / tdp_test.go / power_test.go / undervolt_test.go
@@ -1134,6 +1137,18 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   the slow rail. A pm_table read is an SMU transaction through the same mailbox
   as the Curve Optimizer and must be serialised with it — that driver shares one
   argument buffer across mailboxes.
+  **Every read is an SMU message** (ryzen_smu `smu_read_pm_table`: a read more
+  than 1 ms after the last sends `TransferTableSmu2Dram` over RSMU), so 2.0 ships
+  **the parser only, with no sampler** (Jeff, 2026-10-09):
+  `asusz13/pmtable.go`, per-version layout, unknown version and short buffer
+  refused, implausible fields dropped alone. The fixtures in `testdata/` were
+  captured under `yes` ×32 on armoury: indices 1/3/5 are the readings (all
+  within 0.1 W of RAPL), index 4 — the slow limit — is the sustained limit in
+  force (RAPL settles on it; 30/32/45 written reads 32, armoury's floor), and
+  at 50/50/50 all three limits read 50. The **first read returns the previous
+  transfer's table** (stale against RAPL and the next read), so any future
+  sampler discards it. The negative control (swapping two indices) fails
+  `TestPMTableAgreesWithRAPL`.
 - **`tdp_limits` exists on get-state for z13ctl 1.4 clients; `device-get` is
   where 2.0 serves the same ranges.** z13ctl 1.4.0 (main, `api/v1.3.0`) added
   `State.TDPLimits` — backend, PL1/PL2/PL3 ranges and `safe_max` — so clients
@@ -3346,9 +3361,10 @@ diff whenever a main release touches `api/`.
    in the overlay surface, the popup layer, and now the preset row and Reset All
    are all unverified there. Standing pre-release risk; also in
    `dev/smoke-z13.md`.
-3. **pm_table telemetry** (§6b parser, §6c wiring/dashboard card) — unblocked,
-   not started: `.claude/plans/pm-table-telemetry.md`. Its fixtures were lost
-   and must be recaptured under load.
+3. **pm_table telemetry** — parser and fixtures done 2026-10-09; the sampler
+   and card are deliberately not built (every read is an SMU message; see the
+   pm_table entry). Revisit with M5, where the OXP reads the same table:
+   `.claude/plans/pm-table-telemetry.md`.
 4. **`viewHost.back` dead branches** — every `host.back != nil` branch and
    `customView.hosted()` (constant true) since the drawer's editor was removed;
    its own pass with a focus-dump diff, not a side effect of other work.
