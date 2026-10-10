@@ -1289,7 +1289,8 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 	// Committing here deleted the saved offset the user expects to recall with
 	// "profile --set custom".
 	if target.implicit() {
-		slog.Info("undervolt-reset: cleared the offset in hardware; no custom profile was active, so none was changed")
+		// The hardware half, cleared or skipped, was logged by the switch above.
+		slog.Info("undervolt-reset: no custom profile was active, so none was changed")
 		return response{OK: true}
 	}
 

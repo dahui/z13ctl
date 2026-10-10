@@ -965,7 +965,12 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `internal/daemon/undervolt_gate_test.go` is the guard. It is source-shaped, so
   it strips comments before matching — every one of these call sites *mentions*
   `uvAvailable` in prose — and its negative control was run: reverting any single
-  site to `uvAvailable()` fails it.
+  site to `uvAvailable()` fails it. `undervolt_reset_test.go` checks the same
+  rule by behaviour, counting the probes and resets `handleUndervoltReset`
+  sends across seven cases (nothing applied ⇒ zero, a stored target while
+  another profile's offset is live ⇒ zero). Both negative controls were run:
+  gating the reset on `uvAvailable()` and opening the handler with the probe
+  each fail it.
 - **`tuning-reset` exists because the *ordering* is the feature, not the
   convenience.** Clearing the fan curve, power limits and Curve Optimizer offset
   by hand means three commands, and each of them has to lower power before
@@ -1271,9 +1276,9 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   short way silently turned `fancurve --reset --profile gaming` into a no-op;
   `TestResetProfileTargetStillClearsStoredSettings` is the guard, and it can drive
   the real handlers because a non-live target reads the profile's own stored TDP
-  instead of hardware. `handleUndervoltReset` no longer opens with the probe
-  (it uses `uvAvailable`), so it could now be driven the same way with a fake
-  undervolter; it is not yet.
+  instead of hardware. `handleUndervoltReset` is driven separately, live paths
+  included, by `undervolt_reset_test.go`: it reaches no hardware but the
+  Undervolter, so a `device.Device` holding only a recording fake is hermetic.
 - **`reconcileCurveFor` may return nil, and the caller must honour that rather
   than substituting the tick's own `act.Curve`.** `reconcileOnce` writes the TDP
   first and then recomputes the curve against the limit that write established;
@@ -3367,8 +3372,8 @@ diff whenever a main release touches `api/`.
    `.claude/plans/pm-table-telemetry.md`.
 4. ~~`viewHost.back` dead branches~~ — removed 2026-10-09; focus dump
    byte-identical.
-5. **`handleUndervoltReset` test with a fake undervolter** — now drivable (it no
-   longer opens with the probe); not yet written.
+5. ~~`handleUndervoltReset` test with a fake undervolter~~ — landed
+   2026-10-09 (`undervolt_reset_test.go`).
 6. **`make docs-api` emits wrong source links.** gomarkdoc reads the git remote
    and default branch, so links point at `github.com/dahui/z13ctl/blob/main/api/…`
    — main's old api, wrong line numbers. Until the target passes repository
