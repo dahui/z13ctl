@@ -2,6 +2,7 @@ package asusz13
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,93 @@ func TestSMUResponseError_NonOK(t *testing.T) {
 		if err := smuResponseError(c); err == nil {
 			t.Errorf("smuResponseError(0x%X) = nil, want error", c)
 		}
+	}
+}
+
+// The command is the CPU's: ryzenadj's set_coall sends 0x55 to Renoir,
+// Lucienne and Cezanne and 0x4C from Rembrandt on. Checked against the table
+// transcribed from ryzenadj 0.19.0, through the cpuinfo the driver reads.
+func TestCurveOptimizerCommandFollowsTheCPU(t *testing.T) {
+	for _, tt := range []struct {
+		vendor        string
+		family, model int
+		want          string // "" = refused
+	}{
+		{"AuthenticAMD", 0x1A, 112, "MP1 cmd 0x4C (Strix Halo)"},
+		{"AuthenticAMD", 0x19, 116, "MP1 cmd 0x4C (Phoenix)"},
+		{"AuthenticAMD", 0x19, 80, "MP1 cmd 0x55 (Cezanne)"},
+		{"AuthenticAMD", 0x17, 96, "MP1 cmd 0x55 (Renoir)"},
+		{"AuthenticAMD", 0x19, 97, ""},  // Dragon Range: PSMU, not transcribed
+		{"AuthenticAMD", 0x17, 17, ""},  // Raven: ryzenadj has no CO command
+		{"AuthenticAMD", 0x1A, 999, ""}, // a model nobody has listed yet
+		{"GenuineIntel", 6, 154, ""},
+	} {
+		f := newFakeSysfs(t)
+		f.withCPU(t, tt.vendor, tt.family, tt.model)
+		got, err := CurveOptimizerCommand()
+		if got != tt.want || (err == nil) != (tt.want != "") {
+			t.Errorf("%s 0x%X/%d: CurveOptimizerCommand() = %q, %v; want %q", tt.vendor, tt.family, tt.model, got, err, tt.want)
+		}
+	}
+}
+
+func TestCurveOptimizerSendsTheCPUsCommand(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	f.withCPU(t, "AuthenticAMD", 0x19, 80) // Cezanne
+	fake := &fakeSMU{response: SMUReturnOK}
+	fake.install(t)
+
+	if err := SetCurveOptimizer(-10); err != nil {
+		t.Fatalf("SetCurveOptimizer(-10) = %v", err)
+	}
+	// The probe and the write, both with Cezanne's command and nothing else.
+	if got := fake.cmds[MailboxMP1]; len(got) != 2 || got[0] != 0x55 || got[1] != 0x55 {
+		t.Errorf("MP1 commands = %#v, want [0x55 0x55]", got)
+	}
+	if len(fake.cmds) != 1 {
+		t.Errorf("commands went to %v, want only %s", fake.cmds, MailboxMP1)
+	}
+}
+
+// The safety property: on a CPU the table does not list, nothing reaches the
+// mailbox — not the write, not the reset, and not the probe, whose CO-zero is a
+// write too. Availability reports false without needing to find out by writing.
+func TestUnknownCPUNeverWritesTheMailbox(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	f.withCPU(t, "AuthenticAMD", 0x1A, 999)
+	fake := &fakeSMU{response: SMUReturnOK}
+	fake.install(t)
+
+	if SMUUndervoltAvailable() {
+		t.Error("SMUUndervoltAvailable() = true on an unknown CPU")
+	}
+	if SMUProbeUndervolt() {
+		t.Error("SMUProbeUndervolt() = true on an unknown CPU")
+	}
+	err := SetCurveOptimizer(-10)
+	if err == nil || !strings.Contains(err.Error(), "model 999") {
+		t.Errorf("SetCurveOptimizer() = %v, want a refusal naming the CPU", err)
+	}
+	if err := ResetCurveOptimizer(); err == nil {
+		t.Error("ResetCurveOptimizer() = nil on an unknown CPU")
+	}
+	if fake.writes != 0 {
+		t.Errorf("mailbox writes = %d, want 0", fake.writes)
+	}
+}
+
+func TestReadCPUModelTakesTheFirstProcessor(t *testing.T) {
+	f := newFakeSysfs(t)
+	f.writeFile(t, procCPUInfoPath, "processor\t: 0\nvendor_id\t: AuthenticAMD\ncpu family\t: 26\nmodel\t\t: 112\n\n"+
+		"processor\t: 1\nvendor_id\t: AuthenticAMD\ncpu family\t: 25\nmodel\t\t: 80\n\n")
+	vendor, m, err := readCPUModel()
+	if err != nil || vendor != "AuthenticAMD" || m != (cpuModel{26, 112}) {
+		t.Errorf("readCPUModel() = %q, %+v, %v; want AuthenticAMD {26 112}", vendor, m, err)
+	}
+	f.writeFile(t, procCPUInfoPath, "processor\t: 0\nvendor_id\t: AuthenticAMD\n")
+	if _, _, err := readCPUModel(); err == nil {
+		t.Error("readCPUModel() without family/model = nil error")
 	}
 }

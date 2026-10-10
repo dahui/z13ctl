@@ -116,9 +116,10 @@ var (
 )
 
 // SMUProbeUndervolt reports whether the installed ryzen_smu module supports
-// Curve Optimizer on this platform, by sending a CO command with an offset of
-// 0. Returns false if the module is missing or the command errors (e.g. the
-// leogx9r fork, which does not support Strix Halo). Cached after the first call.
+// Curve Optimizer on this platform, by sending this CPU's CO command with an
+// offset of 0. Returns false if the module is missing, the CPU has no known CO
+// command (refused before any write), or the command errors (e.g. the leogx9r
+// fork, which does not support Strix Halo). Cached after the first call.
 //
 // The probe is NOT read-only. A CO offset of 0 is exactly what
 // ResetCurveOptimizer writes, so probing clears any undervolt currently applied.
@@ -136,18 +137,20 @@ func SMUProbeUndervolt() bool {
 		return false
 	}
 	smuProbeOnce.Do(func() {
-		encoded := encodeCOValue(0)
-		args := [6]uint32{encoded}
-		resp, _, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, args)
-		smuProbeOK = err == nil && resp == SMUReturnOK
+		// An unknown CPU is refused here, before the mailbox: the probe is a
+		// write, and a guessed command is the speculative write by another name.
+		if _, err := coPlatformFor(); err != nil {
+			smuProbeResult.Store(2)
+			slog.Warn("Curve Optimizer disabled: no SMU command for this CPU", "err", err)
+			return
+		}
+		err := sendCO(0)
+		smuProbeOK = err == nil
 		if smuProbeOK {
 			smuProbeResult.Store(1)
 		} else {
 			smuProbeResult.Store(2)
-		}
-		if !smuProbeOK {
-			slog.Warn("SMU undervolt probe failed — Curve Optimizer will be disabled",
-				"resp", fmt.Sprintf("0x%X", resp), "err", err)
+			slog.Warn("SMU undervolt probe failed — Curve Optimizer will be disabled", "err", err)
 		}
 	})
 	return smuProbeOK
@@ -163,7 +166,9 @@ func SMUProbeUndervolt() bool {
 // mailbox (see the 2026-08-14 lockup in Daemon.uvApplied). The probe is for the
 // caller about to write an offset anyway. The trade is that a machine with the
 // wrong ryzen_smu fork reports "available" until the first real write probes
-// and fails, at which point it reports false and the write is refused.
+// and fails, at which point it reports false and the write is refused. A CPU
+// with no known CO command reports false from the start: that needs no write
+// to find out.
 func SMUUndervoltAvailable() bool {
 	switch smuProbeResult.Load() {
 	case 1:
@@ -171,7 +176,11 @@ func SMUUndervoltAvailable() bool {
 	case 2:
 		return false
 	}
-	return SMUAvailable()
+	if !SMUAvailable() {
+		return false
+	}
+	_, err := coPlatformFor()
+	return err == nil
 }
 
 // smuResponseError returns a human-readable error for a non-OK SMU response.
@@ -182,7 +191,7 @@ func smuResponseError(code uint32) error {
 	case SMUReturnFailed:
 		return fmt.Errorf("SMU command failed (0xFF)")
 	case SMUReturnUnknownCmd:
-		return fmt.Errorf("SMU unknown command (0xFE) — ensure amkillam/ryzen_smu fork is installed (leogx9r fork does not support Strix Halo)")
+		return fmt.Errorf("SMU unknown command (0xFE)")
 	case SMUReturnRejected:
 		return fmt.Errorf("SMU command rejected (0xFD)")
 	case SMUReturnBusy:

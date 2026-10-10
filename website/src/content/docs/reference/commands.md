@@ -773,6 +773,12 @@ one is applied and has to be cleared. Switching to a firmware profile,
 userspace messages to the SMU can collide with the kernel's own, and an
 unnecessary reset is the prime suspect in a hard lock seen during development.
 
+The SMU message that sets an offset depends on the CPU, so voltaire picks it
+from the CPU family and model, using the table from ryzenadj 0.19.0: Renoir,
+Lucienne and Cezanne take one command, Van Gogh and Rembrandt through Strix
+Halo another. On a CPU outside that table it sends nothing and says so. `--dry-run`
+shows the command it would send on your machine.
+
 **Safety limits.** The accepted range is device data (the daemon's
 `device-get` serves it as `undervolt.min`/`max`), and an out-of-range offset is
 refused with your machine's range. On the GZ302EA it matches G-Helper's

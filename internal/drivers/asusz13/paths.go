@@ -43,6 +43,10 @@ var (
 	procStatPath = "/proc/stat"
 	memInfoPath  = "/proc/meminfo"
 
+	// procCPUInfoPath gives the CPUID family and model, which choose the
+	// Curve Optimizer command.
+	procCPUInfoPath = "/proc/cpuinfo"
+
 	// sysCPUDir holds the per-core cpufreq nodes.
 	sysCPUDir = "/sys/devices/system/cpu"
 

@@ -1530,8 +1530,18 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `effectiveProfileForTDP()`, which asks the daemon first and falls back to sysfs.
 - **Undervolt (Curve Optimizer)**: CPU voltage reduction via AMD Curve Optimizer,
   using direct SMU communication through the `ryzen_smu` kernel module's sysfs
-  interface at `/sys/kernel/ryzen_smu_drv/`. Uses only the MP1 0x4C command for
-  CPU CO (iGPU CO was removed — Strix Halo does not support it). Optional
+  interface at `/sys/kernel/ryzen_smu_drv/`. The all-core CO command is the
+  CPU's, keyed on `/proc/cpuinfo` family/model (`coPlatforms`, transcribed from
+  ryzenadj 0.19.0's `set_coall` + `cpuid.c`; 2026-10-09): MP1 0x55 for
+  Renoir/Lucienne/Cezanne, MP1 0x4C for Van Gogh, Rembrandt, Phoenix, Hawk Point,
+  Strix/Krackan Point and Strix Halo (the only row run here). Dragon/Fire Range
+  (ryzenadj's PSMU 0x7) are left out until ryzen_smu's file for that mailbox is
+  checked. **A CPU not in the table is refused before the probe**, since the
+  probe is itself a CO write; `TestUnknownCPUNeverWritesTheMailbox` pins zero
+  mailbox writes, and its negative control (guess 0x4C) was run. The fork hint
+  on a 0xFE answer is per platform (`ForkNote`), and the dry run names the
+  command through the optional `driver.UndervoltCommander`. iGPU CO is not
+  offered (ryzenadj excludes Strix Halo from `set_cogfx`). Optional
   dependency — gracefully disabled when the module is not installed.
   `SMUProbeUndervolt()` sends a CO-0 probe before the first offset write to
   detect whether the installed `ryzen_smu` fork actually supports CO commands on

@@ -366,7 +366,7 @@ func TestDryRunTdpReset(t *testing.T) {
 // reset, so "--set 0" clears an active undervolt. The dry run used to say "No
 // changes", which is the opposite of what the command does.
 func TestDryRunUndervoltZeroIsNotANoOp(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunUndervolt(0) })
+	out := captureStdout(t, func() { cli.DryRunUndervolt("MP1 cmd 0x4C (Strix Halo)", 0) })
 
 	if strings.Contains(out, "No changes") {
 		t.Error("DryRunUndervolt(0) claims no changes, but the command clears any active undervolt")

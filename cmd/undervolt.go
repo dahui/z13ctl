@@ -11,6 +11,7 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/daemon"
+	"github.com/dahui/voltaire/v2/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -140,7 +141,11 @@ func runUndervoltSet() error {
 			cli.DryRunProfileEdit(uvProfileFlag, "Curve Optimizer offset")
 			return nil
 		}
-		cli.DryRunUndervolt(cpuOffset)
+		command, err := undervoltCommand(hw.Undervolt)
+		if err != nil {
+			return err
+		}
+		cli.DryRunUndervolt(command, cpuOffset)
 		return nil
 	}
 
@@ -171,7 +176,18 @@ func runUndervoltReset() error {
 			cli.DryRunProfileEdit(uvProfileFlag, "cleared Curve Optimizer offset")
 			return nil
 		}
-		cli.DryRunUndervoltReset()
+		hw, err := hardware()
+		if err != nil {
+			return err
+		}
+		if hw.Undervolt == nil {
+			return fmt.Errorf("no undervolt control on this device")
+		}
+		command, err := undervoltCommand(hw.Undervolt)
+		if err != nil {
+			return err
+		}
+		cli.DryRunUndervoltReset(command)
 		return nil
 	}
 
@@ -209,6 +225,22 @@ func runUndervoltReset() error {
 	}
 	fmt.Println("Curve Optimizer reset to stock (0)")
 	return nil
+}
+
+// undervoltCommand is the firmware message a write would send, when the driver
+// names one. Its error is the refusal a real write would meet, so a dry run on
+// a CPU the driver does not know says so rather than describing a write that
+// would never happen.
+func undervoltCommand(u driver.Undervolter) (string, error) {
+	c, ok := u.(driver.UndervoltCommander)
+	if !ok {
+		return "", nil
+	}
+	command, err := c.Command()
+	if err != nil {
+		return "", fmt.Errorf("curve optimizer not available — %w", err)
+	}
+	return command, nil
 }
 
 func init() {

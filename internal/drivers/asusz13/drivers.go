@@ -690,3 +690,6 @@ func (u undervolter) Apply(cpuCO int) error {
 }
 
 func (undervolter) Reset() error { return ResetCurveOptimizer() }
+
+// Command names this CPU's Curve Optimizer message for the dry run.
+func (undervolter) Command() (string, error) { return CurveOptimizerCommand() }

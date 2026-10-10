@@ -11,6 +11,9 @@ import (
 	"testing"
 )
 
+// strixHaloCO is ryzenadj's set_coall command for the Z13's CPU.
+const strixHaloCO uint32 = 0x4C
+
 func TestSMUAvailable(t *testing.T) {
 	f := newFakeSysfs(t)
 
@@ -29,7 +32,7 @@ func TestSendSMUCommandEncodesArgsLittleEndian(t *testing.T) {
 	fake.install(t)
 
 	args := [6]uint32{0x0FFFEC, 2, 3, 4, 5, 6}
-	code, out, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, args)
+	code, out, err := SendSMUCommand(MailboxMP1, strixHaloCO, args)
 	if err != nil {
 		t.Fatalf("SendSMUCommand() = %v, want nil", err)
 	}
@@ -56,7 +59,7 @@ func TestSendSMUCommandPropagatesReadFailure(t *testing.T) {
 	fake := &fakeSMU{response: SMUReturnOK, failRead: true}
 	fake.install(t)
 
-	if _, _, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, [6]uint32{}); err == nil {
+	if _, _, err := SendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
 		t.Error("SendSMUCommand() = nil, want an error when the mailbox read fails")
 	}
 }
@@ -68,7 +71,7 @@ func TestSendSMUCommandPropagatesWriteFailure(t *testing.T) {
 	t.Cleanup(func() { smuWriteFile = origW })
 	resetSMUProbe(t)
 
-	if _, _, err := SendSMUCommand(MailboxMP1, smuCmdMP1COALL, [6]uint32{}); err == nil {
+	if _, _, err := SendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
 		t.Error("SendSMUCommand() = nil, want an error when smu_args is not writable")
 	}
 }
@@ -137,10 +140,16 @@ func TestSMUResponseErrorMessages(t *testing.T) {
 			t.Errorf("smuResponseError(0x%X) = nil, want an error", code)
 		}
 	}
-	// The unknown-command message must name the required fork; that string is
-	// the only guidance a user gets when they install the wrong one.
-	if got := smuResponseError(SMUReturnUnknownCmd).Error(); !strings.Contains(got, "amkillam") {
-		t.Errorf("unknown-command error = %q, want it to name the amkillam fork", got)
+	// The unknown-command message must name the required fork where one is
+	// known; that string is the only guidance a user gets when they install the
+	// wrong one. Where none is known, it must not send them after Strix Halo's.
+	halo := coPlatforms[cpuModel{0x1A, 112}]
+	if got := coResponseError(halo, SMUReturnUnknownCmd).Error(); !strings.Contains(got, "amkillam") {
+		t.Errorf("Strix Halo unknown-command error = %q, want it to name the amkillam fork", got)
+	}
+	phoenix := coPlatforms[cpuModel{0x19, 116}]
+	if got := coResponseError(phoenix, SMUReturnUnknownCmd).Error(); strings.Contains(got, "amkillam") || !strings.Contains(got, "Phoenix") {
+		t.Errorf("Phoenix unknown-command error = %q, want it to name Phoenix and no fork", got)
 	}
 }
 

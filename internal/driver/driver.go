@@ -602,6 +602,16 @@ type Undervolter interface {
 	Reset() error
 }
 
+// UndervoltCommander is implemented by an Undervolter whose writes are one
+// named firmware command, so a dry run can show which. It is optional: a
+// driver with nothing that specific to say leaves the dry run generic.
+type UndervoltCommander interface {
+	// Command names what a write would send on this machine, or errors with
+	// the reason nothing would be (the Z13 driver: a CPU with no known Curve
+	// Optimizer command).
+	Command() (string, error)
+}
+
 // Sample is one telemetry reading.
 //
 // Package power arrives in one of two shapes, because the hardware offers one

@@ -396,26 +396,34 @@ func dryRunLanding(env driver.PowerEnvelope, landing string) {
 }
 
 // DryRunUndervolt prints the SMU commands that would be sent for a Curve
-// Optimizer change.
+// Optimizer change. command is the driver's name for the message on this CPU
+// ("MP1 cmd 0x4C (Strix Halo)"), or "" when the driver names none; the caller
+// reads it, so this prints the same thing on any machine.
 //
 // An offset of 0 is not "no change": it encodes to the same argument as
 // ResetCurveOptimizer, so "--set 0" clears any offset currently applied. Saying
 // "no changes" here told users the opposite of what the command does.
-func DryRunUndervolt(cpu int) {
+func DryRunUndervolt(command string, cpu int) {
 	fmt.Println("=== DRY RUN (no SMU write) ===")
-	encoded := asusz13.EncodeCOValue(cpu)
 	if cpu == 0 {
-		fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO 0 — clears any active undervolt)\n", encoded)
+		fmt.Printf("Would send %s (CPU CO 0 — clears any active undervolt)\n", coSend(command, 0))
 		return
 	}
-	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (CPU CO %d)\n", encoded, cpu)
+	fmt.Printf("Would send %s (CPU CO %d)\n", coSend(command, cpu), cpu)
 }
 
 // DryRunUndervoltReset prints the SMU commands that would be sent to reset CO.
-func DryRunUndervoltReset() {
+func DryRunUndervoltReset(command string) {
 	fmt.Println("=== DRY RUN (no SMU write) ===")
-	encoded := asusz13.EncodeCOValue(0)
-	fmt.Printf("Would send MP1 cmd 0x4C with arg 0x%X (reset CPU CO)\n", encoded)
+	fmt.Printf("Would send %s (reset CPU CO)\n", coSend(command, 0))
+}
+
+// coSend is "<command> with arg 0x…", or the offset alone when no command is named.
+func coSend(command string, cpu int) string {
+	if command == "" {
+		command = "the Curve Optimizer offset"
+	}
+	return fmt.Sprintf("%s with arg 0x%X", command, asusz13.EncodeCOValue(cpu))
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

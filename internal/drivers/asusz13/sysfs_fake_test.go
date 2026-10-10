@@ -5,6 +5,8 @@ package asusz13
 // exercised without a Z13 attached.
 
 import (
+	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -128,7 +130,19 @@ func newFakeSysfs(t *testing.T) *fakeSysfs {
 	swap(t, &sysDrmDir, root+"/drm")
 	swap(t, &sysAccelDir, root+"/accel")
 	swap(t, &sysThermalDir, root+"/thermal")
+	// The Z13's CPU, so the Curve Optimizer command is the one the hardware
+	// takes; withCPU replaces it.
+	swap(t, &procCPUInfoPath, root+"/cpuinfo")
+	f.withCPU(t, "AuthenticAMD", 0x1A, 112)
 	return f
+}
+
+// withCPU writes a two-processor cpuinfo naming the given CPU.
+func (f *fakeSysfs) withCPU(t *testing.T, vendor string, family, model int) {
+	t.Helper()
+	block := fmt.Sprintf("processor\t: %%d\nvendor_id\t: %s\ncpu family\t: %d\nmodel\t\t: %d\nmodel name\t: test\n\n",
+		vendor, family, model)
+	f.writeFile(t, procCPUInfoPath, fmt.Sprintf(block, 0)+fmt.Sprintf(block, 1))
 }
 
 // seedLegacyPPT writes the five asus-nb-wmi PPT attributes into dir at 5 W.
@@ -231,6 +245,8 @@ type fakeSMU struct {
 	args     []byte
 	writes   int
 	failRead bool
+	// cmds is every command written, keyed by mailbox file.
+	cmds map[string][]uint32
 }
 
 // install swaps in the fake's I/O for the duration of the test and resets the
@@ -242,8 +258,13 @@ func (s *fakeSMU) install(t *testing.T) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.writes++
-		if filepath.Base(path) == "smu_args" {
+		if name := filepath.Base(path); name == "smu_args" {
 			s.args = append([]byte(nil), data...)
+		} else if len(data) == 4 {
+			if s.cmds == nil {
+				s.cmds = map[string][]uint32{}
+			}
+			s.cmds[name] = append(s.cmds[name], binary.LittleEndian.Uint32(data))
 		}
 		return nil
 	}
