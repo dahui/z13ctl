@@ -278,6 +278,34 @@ func SendPanelOverdriveGet() (handled bool, value int, err error) {
 	return true, value, nil
 }
 
+// SendVRAMGet queries the daemon for the iGPU memory reservation. The daemon
+// asks the root z13ctl-vram helper, since the setting is only reachable as root.
+// Returns (false, nil, nil) if the daemon is not running.
+func SendVRAMGet() (handled bool, st *VRAMState, err error) {
+	return sendVRAM(request{Cmd: "vram-get"})
+}
+
+// SendVRAMSet stores size (one of VRAMState.Options) as the iGPU memory
+// reservation for the next boot, and returns the state afterwards.
+func SendVRAMSet(size string) (handled bool, st *VRAMState, err error) {
+	return sendVRAM(request{Cmd: "vram", Set: size})
+}
+
+func sendVRAM(req request) (bool, *VRAMState, error) {
+	handled, resp, err := sendCommand(req)
+	if !handled || err != nil {
+		return handled, nil, err
+	}
+	if !resp.OK {
+		return true, nil, fmt.Errorf("%s", resp.Error)
+	}
+	var st VRAMState
+	if err := json.Unmarshal([]byte(resp.Value), &st); err != nil {
+		return true, nil, fmt.Errorf("invalid iGPU memory state %q: %w", resp.Value, err)
+	}
+	return true, &st, nil
+}
+
 // SendFanCurveGet queries the daemon for the current fan curve data.
 // Returns JSON value string with both fans' curve and mode.
 func SendFanCurveGet() (handled bool, value string, err error) {

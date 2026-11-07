@@ -126,6 +126,41 @@ func TestSendCommandParsesValue(t *testing.T) {
 	}
 }
 
+func TestSendVRAMSetRoundTrip(t *testing.T) {
+	var got string
+	stubDaemon(t, func(c net.Conn) {
+		defer func() { _ = c.Close() }()
+		s := bufio.NewScanner(c)
+		if s.Scan() {
+			got = s.Text()
+		}
+		_, _ = c.Write([]byte(`{"ok":true,"value":"{\"current\":\"8G\",\"next\":\"0.5G\",\"options\":[\"auto\",\"0.5G\",\"8G\"]}"}` + "\n"))
+	})
+
+	handled, st, err := SendVRAMSet("0.5G")
+	if !handled || err != nil {
+		t.Fatalf("SendVRAMSet = %v, %v", handled, err)
+	}
+	if got != `{"cmd":"vram","set":"0.5G"}` {
+		t.Errorf("request = %s", got)
+	}
+	if st.Current != "8G" || st.Next != "0.5G" || len(st.Options) != 3 {
+		t.Errorf("state = %+v", st)
+	}
+}
+
+func TestSendVRAMGetSurfacesDaemonError(t *testing.T) {
+	stubDaemon(t, func(c net.Conn) {
+		defer func() { _ = c.Close() }()
+		bufio.NewScanner(c).Scan()
+		_, _ = c.Write([]byte(`{"ok":false,"error":"helper not installed"}` + "\n"))
+	})
+	handled, st, err := SendVRAMGet()
+	if !handled || err == nil || st != nil {
+		t.Errorf("SendVRAMGet = %v, %+v, %v; want handled with an error", handled, st, err)
+	}
+}
+
 func TestSubscribeStreamsEvents(t *testing.T) {
 	stubDaemon(t, func(c net.Conn) {
 		_ = bufio.NewScanner(c).Scan()

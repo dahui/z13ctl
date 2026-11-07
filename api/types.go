@@ -194,3 +194,13 @@ type TDPRange struct {
 	Min int `json:"min"`
 	Max int `json:"max"`
 }
+
+// VRAMState is the firmware's iGPU memory reservation (the BIOS UMA frame
+// buffer, Armoury Crate's "Free up memory"). Sizes are labels such as "auto",
+// "0.5G" and "8G"; a set must name one of Options. A new size applies from the
+// next boot, so Current keeps reporting the running size until then.
+type VRAMState struct {
+	Current string   `json:"current"`
+	Next    string   `json:"next,omitempty"` // stored for the next boot; empty when it matches Current
+	Options []string `json:"options"`
+}
