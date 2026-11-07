@@ -54,18 +54,12 @@ Secure Boot on, its signing key must be enrolled once).`,
 				return nil
 			}
 
-			// Written even when it matches Current: until the firmware is known to
-			// report a pending value rather than the running one, skipping the
-			// write could leave an earlier --set in place.
+			// Written even when it matches Current: Current is the size in use this
+			// boot, so a match says nothing about a size stored by an earlier --set.
 			if err = cli.SetVRAM(value); err != nil {
 				return fmt.Errorf("setting iGPU memory: %w", err)
 			}
-			fmt.Printf("iGPU memory set to %s (firmware reported %s before). Reboot for it to take effect.\n", label, st.Label(st.Current))
-
-			after, err := cli.ReadVRAM()
-			if err == nil && after.Current != value {
-				fmt.Printf("Note: the firmware still reports %s until the reboot.\n", after.Label(after.Current))
-			}
+			fmt.Printf("iGPU memory set to %s for the next boot (%s until then). Reboot for it to take effect.\n", label, st.Label(st.Current))
 			return nil
 		}
 
@@ -86,7 +80,7 @@ Secure Boot on, its signing key must be enrolled once).`,
 }
 
 func init() {
-	vramCmd.Flags().BoolVar(&vramGetFlag, "get", false, "Print the current iGPU memory setting")
+	vramCmd.Flags().BoolVar(&vramGetFlag, "get", false, "Print the iGPU memory in use this boot")
 	vramCmd.Flags().BoolVar(&vramListFlag, "list", false, "List the sizes the firmware offers")
 	vramCmd.Flags().StringVar(&vramSetFlag, "set", "", "Set the iGPU memory for the next boot (auto, 512M, 0.5G, 1G, ... 48G)")
 	vramCmd.MarkFlagsMutuallyExclusive("get", "list", "set")

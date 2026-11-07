@@ -13,7 +13,7 @@ package cli
 //
 //	[0] number of options
 //	[1] flags: bit 0 present, bit 1 options are in 512 MB units (else 1 MB)
-//	[2] current value, read live from the BIOS
+//	[2] the value in use this boot (not one DEVS stored for the next)
 //	[3...] the options, the first one 0 (Auto)
 //
 // or the integer 0 when the firmware offers no setting. DEVS writes a value

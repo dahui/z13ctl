@@ -314,8 +314,9 @@ contrib/
   512 MB units), current, then the options, Auto first; DEVS stores a value for
   the next boot and returns 1. The DSDT passes the DEVS value to the BIOS
   without checking it, so `SetVRAM` re-reads the options and refuses anything
-  else, and writes even when the value equals the reported current one (whether
-  DSTS reports the pending or the running value is unverified). WMNB reads five
+  else, and writes even when the value equals the reported current one: DSTS
+  reports the size in use this boot, not a value DEVS stored (on BIOS 314 it read
+  8G right after DEVS 0.5G, and 0.5G after the reboot). WMNB reads five
   DWORDs from its argument buffer, so the buffer is padded to 32 bytes; a
   12-byte buffer aborts with an AML error. `/proc/acpi/call` stays root-only and
   out of `setup`: write access to it runs any ACPI method.

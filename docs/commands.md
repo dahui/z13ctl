@@ -333,8 +333,8 @@ z13ctl vram [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current reservation (`auto`, `0.5G`, `8G`, ...) |
-| `--list` | List the sizes the firmware offers, marking the current one |
+| `--get` | Print the reservation in use this boot (`auto`, `0.5G`, `8G`, ...); a size set since boot shows after the reboot |
+| `--list` | List the sizes the firmware offers, marking the one in use |
 | `--set <size>` | Store a size for the next boot: `auto`, or a size such as `512M`, `0.5G`, `1G`, `8G` |
 
 The sizes come from the firmware and depend on installed memory. On the 64 GB
