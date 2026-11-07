@@ -210,6 +210,13 @@ func DryRunVRAM(value uint16, label string) {
 	fmt.Printf("iGPU memory would be %s from the next boot\n", label)
 }
 
+// DryRunVRAMHelper prints the request a non-root set would send to the helper.
+func DryRunVRAMHelper(label string) {
+	fmt.Println("=== DRY RUN (no request sent) ===")
+	fmt.Printf("Would send to %s:\n  {\"cmd\":\"vram\",\"set\":%q}\n", VRAMHelperSocket(), label)
+	fmt.Printf("iGPU memory would be %s from the next boot\n", label)
+}
+
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
 // The same curve is written to both fans.
 func DryRunFanCurve(points []api.FanCurvePoint) {

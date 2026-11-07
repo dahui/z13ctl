@@ -25,6 +25,7 @@ package cli
 //
 // /proc/acpi/call is left root-only on purpose: write access to it is the
 // ability to run any ACPI method, so z13ctl setup does not grant it to a group.
+// Non-root callers go through the z13ctl-vram helper instead (vramhelper.go).
 
 import (
 	"encoding/binary"
@@ -34,6 +35,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/dahui/z13ctl/api"
 )
 
 const (
@@ -146,6 +149,39 @@ func SetVRAM(value uint16) error {
 // ParseVRAMSize turns "auto", "512M", "0.5G", "8g", "8GB" or a bare number of
 // GB into a firmware value, and checks it is one of st's options.
 func ParseVRAMSize(s string, st VRAMState) (uint16, error) {
+	mb, err := parseSizeMB(s)
+	if err != nil {
+		return 0, err
+	}
+	notOffered := fmt.Errorf("%s is not an offered size (%s)", s, strings.Join(st.OptionLabels(), ", "))
+	if st.UnitMB <= 0 || mb%st.UnitMB != 0 || mb/st.UnitMB > 0xFFFF {
+		return 0, notOffered
+	}
+	value := uint16(mb / st.UnitMB)
+	if !st.Offers(value) {
+		return 0, notOffered
+	}
+	return value, nil
+}
+
+// MatchVRAMOption returns the option in info that s names, in any of the forms
+// ParseVRAMSize accepts. Callers without firmware access use it to check a size
+// before asking the helper, which checks again against the firmware.
+func MatchVRAMOption(s string, info api.VRAMState) (string, error) {
+	mb, err := parseSizeMB(s)
+	if err != nil {
+		return "", err
+	}
+	for _, o := range info.Options {
+		if omb, err := parseSizeMB(o); err == nil && omb == mb {
+			return o, nil
+		}
+	}
+	return "", fmt.Errorf("%s is not an offered size (%s)", s, strings.Join(info.Options, ", "))
+}
+
+// parseSizeMB reads a size as megabytes; "auto" is 0.
+func parseSizeMB(s string) (int, error) {
 	in := strings.ToLower(strings.TrimSpace(s))
 	if in == "auto" {
 		return 0, nil
@@ -160,18 +196,11 @@ func ParseVRAMSize(s string, st VRAMState) (uint16, error) {
 		num = strings.TrimSuffix(strings.TrimSuffix(in, "b"), "g")
 	}
 	f, err := strconv.ParseFloat(num, 64)
-	if err != nil || f <= 0 {
+	mb := f * mbPerUnit
+	if err != nil || f <= 0 || mb > 1<<30 || mb != float64(int(mb)) {
 		return 0, fmt.Errorf("invalid size %q: use auto or a size such as 512M, 0.5G or 8G", s)
 	}
-	mb := f * mbPerUnit
-	if st.UnitMB <= 0 || mb != float64(int(mb)) || int(mb)%st.UnitMB != 0 || int(mb)/st.UnitMB > 0xFFFF {
-		return 0, fmt.Errorf("%s is not an offered size (%s)", s, strings.Join(st.OptionLabels(), ", "))
-	}
-	value := uint16(int(mb) / st.UnitMB)
-	if !st.Offers(value) {
-		return 0, fmt.Errorf("%s is not an offered size (%s)", s, strings.Join(st.OptionLabels(), ", "))
-	}
-	return value, nil
+	return int(mb), nil
 }
 
 // vramCommand builds the acpi_call line for a WMNB call on the VRAM device.

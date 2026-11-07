@@ -388,6 +388,7 @@ func TestDispatchRefusesECCommandsWhileWedged(t *testing.T) {
 		"profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset",
 		"batterylimit", "bootsound", "paneloverdrive",
 		"bootsound-get", "paneloverdrive-get", "tdp-get",
+		"vram", "vram-get",
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()

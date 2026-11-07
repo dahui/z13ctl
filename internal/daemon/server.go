@@ -115,13 +115,16 @@ func (d *Daemon) handleConn(conn net.Conn) {
 // read from its AC or battery table, chosen by power_supply_is_system_supplied(),
 // which evaluates the AC adapter's _PSR on each call. asus-nb-wmi's ppt_* were
 // caches; armoury's are not.
+// vram and vram-get evaluate the ATK WMI method, an SMI into the firmware, on
+// every call, the same path asus-armoury's attributes take.
 // Lighting is hidraw, the profile CRUD commands touch only state, and undervolt
 // is the SMU rather than the EC, so none of those are guarded.
 func ecGuarded(cmd string) bool {
 	switch cmd {
 	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset",
 		"batterylimit", "bootsound", "paneloverdrive",
-		"bootsound-get", "paneloverdrive-get", "tdp-get":
+		"bootsound-get", "paneloverdrive-get", "tdp-get",
+		"vram", "vram-get":
 		return true
 	}
 	return false
@@ -198,6 +201,10 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleUndervoltGet()
 	case "undervolt-reset":
 		return d.handleUndervoltReset(req)
+	case "vram-get":
+		return handleVRAMGet()
+	case "vram":
+		return handleVRAMSet(req)
 	case "get-state":
 		d.mu.Lock()
 		// The legacy FanCurve/TDP/Undervolt fields are projected here from the
@@ -539,6 +546,43 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	d.mu.Unlock()
 	d.saveAndNotify(s)
 	return response{OK: true}
+}
+
+// vramGet and vramSet reach the firmware through the z13ctl-vram helper, the
+// daemon running as the user. Vars so tests can stand in for the helper.
+var (
+	vramGet = cli.VRAMGet
+	vramSet = cli.VRAMSet
+)
+
+// handleVRAMGet is not cached in daemon state: each read is an SMI, so it is
+// fetched on request rather than polled through get-state.
+func handleVRAMGet() response {
+	info, err := vramGet()
+	if err != nil {
+		return response{OK: false, Error: "vram-get: " + err.Error()}
+	}
+	return vramResponse(info)
+}
+
+func handleVRAMSet(req request) response {
+	if req.Set == "" {
+		return response{OK: false, Error: "vram: no size given"}
+	}
+	info, err := vramSet(req.Set)
+	if err != nil {
+		return response{OK: false, Error: "vram: " + err.Error()}
+	}
+	slog.Info("vram", "set", req.Set, "current", info.Current, "next", info.Next)
+	return vramResponse(info)
+}
+
+func vramResponse(info api.VRAMState) response {
+	data, err := json.Marshal(info)
+	if err != nil {
+		return response{OK: false, Error: "vram: " + err.Error()}
+	}
+	return response{OK: true, Value: string(data)}
 }
 
 // readIntSysfs reads a sysfs file, trims whitespace, and parses it as an int.

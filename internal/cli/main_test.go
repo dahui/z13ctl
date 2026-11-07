@@ -28,5 +28,6 @@ func TestMain(m *testing.M) {
 	pptBasePath = nowhere + "/asus-nb-wmi"
 	smuDriverPath = nowhere + "/ryzen_smu_drv"
 	acpiCallPath = nowhere + "/acpi_call"
+	vramRunDir = nowhere + "/run-z13ctl"
 	os.Exit(m.Run())
 }

@@ -31,4 +31,8 @@ var (
 
 	// acpiCallPath is the acpi_call module's command/result file.
 	acpiCallPath = "/proc/acpi/call"
+
+	// vramRunDir holds the z13ctl-vram helper's socket, its lock and the size
+	// stored for the next boot. Under /run so that record clears on reboot.
+	vramRunDir = "/run/z13ctl"
 )
