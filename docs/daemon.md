@@ -190,6 +190,19 @@ not give the same machine as selecting A.
 An empty `ac` or `battery` leaves the profile alone on that source. Both targets
 are validated against the firmware profiles and the saved custom profiles.
 
+### iGPU memory
+
+| Command | Request | Response |
+|---|---|---|
+| Get | `{"cmd":"vram-get"}` | `ok`, `value` (JSON: `current`, `next`, `options`) |
+| Set | `{"cmd":"vram","set":"0.5G"}` | `ok`, `value` (the state afterwards) |
+
+Sizes are labels from `options` (`auto`, `0.5G`, ... `48G` on the 64 GB GZ302EA).
+`current` is the size in use; `next` is present when a different size is stored
+for the next boot. The daemon forwards both commands to the root
+`z13ctl-vram` helper and refuses them while the EC is not answering after
+resume. Neither is part of `get-state`, since every read is a firmware call.
+
 ### Fans, TDP, and undervolt
 
 | Command | Request | Response |

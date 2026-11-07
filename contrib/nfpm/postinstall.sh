@@ -6,4 +6,6 @@ systemctl enable --now z13ctl-perms.service || true
 # RemainAfterExit=yes, so it is already active and new ExecStart lines never run.
 # Restart so an upgrade applies added permission grants without a reboot.
 systemctl restart z13ctl-perms.service || true
+systemctl daemon-reload || true
+systemctl enable --now z13ctl-vram.socket || true
 systemctl --global enable z13ctl.socket z13ctl.service || true

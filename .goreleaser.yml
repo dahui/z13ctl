@@ -79,6 +79,10 @@ nfpms:
         dst: /usr/lib/systemd/user/z13ctl.service
       - src: contrib/systemd/system/z13ctl-perms.service
         dst: /usr/lib/systemd/system/z13ctl-perms.service
+      - src: contrib/systemd/system/z13ctl-vram.socket
+        dst: /usr/lib/systemd/system/z13ctl-vram.socket
+      - src: contrib/systemd/system/z13ctl-vram@.service
+        dst: /usr/lib/systemd/system/z13ctl-vram@.service
       - src: contrib/udev/99-z13ctl.rules
         dst: /usr/lib/udev/rules.d/99-z13ctl.rules
     archlinux:
@@ -87,6 +91,10 @@ nfpms:
       archlinux:
         suggests:
           - "ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer"
+          - "acpi_call-dkms: iGPU memory reservation (vram)"
+      deb:
+        suggests:
+          - acpi-call-dkms
     rpm:
       group: Applications/System
 

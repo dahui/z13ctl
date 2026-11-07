@@ -333,13 +333,15 @@ z13ctl vram [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the reservation in use this boot (`auto`, `0.5G`, `8G`, ...); a size set since boot shows after the reboot |
-| `--list` | List the sizes the firmware offers, marking the one in use |
+| `--get` | Print the reservation in use this boot (`auto`, `0.5G`, `8G`, ...), and the size stored for the next boot if one was set |
+| `--list` | List the sizes the firmware offers, marking the one in use and the one stored for the next boot |
 | `--set <size>` | Store a size for the next boot: `auto`, or a size such as `512M`, `0.5G`, `1G`, `8G` |
 
 The sizes come from the firmware and depend on installed memory. On the 64 GB
 GZ302EA they are `auto`, `0.5G`, `1G`, `2G`, `4G`, `8G`, `16G`, `32G` and `48G`;
-`--set` refuses anything the firmware did not list.
+`--set` refuses anything the firmware did not list. The firmware keeps reporting
+the running size until the reboot; z13ctl remembers the stored one in
+`/run/z13ctl` until then.
 
 This is not the limit on what the GPU can use. Memory the GPU borrows at run
 time (GTT) is capped separately by the kernel's `ttm.pages_limit`, so a small
@@ -348,21 +350,23 @@ models can still use most of it.
 
 The kernel's `asus-armoury` driver does not expose this setting on the Z13: it
 knows only the ROG Ally's device, and this firmware uses another one. `vram`
-therefore calls the ASUS WMI method directly through the `acpi_call` module. It
-needs root, and is not routed through the daemon or opened up by
-[setup](#setup), because write access to `/proc/acpi/call` is the ability to run
-any ACPI method.
+therefore calls the ASUS WMI method directly through the `acpi_call` module.
+`/proc/acpi/call` stays root-only, because write access to it is the ability to
+run any ACPI method. Instead, the packages and [setup](#setup) install
+`z13ctl-vram.socket`: a root helper, started per request, that only reads the
+setting or stores one of the listed sizes. Its socket is open to the setup group,
+so `vram` works without sudo, and the daemon relays it to GUI clients
+(`vram-get` and `vram` in the [daemon protocol](daemon.md)). As root, `vram` calls the
+firmware itself.
 
 ```sh
 # one-time: install the module (with Secure Boot on, enroll the key it prompts
-# for at the next boot), and load it at every boot
+# for at the next boot)
 sudo apt install acpi-call-dkms
-echo acpi_call | sudo tee /etc/modules-load.d/acpi_call.conf
-sudo modprobe acpi_call
 
-sudo z13ctl vram --list
-sudo z13ctl vram --set 0.5G --dry-run
-sudo z13ctl vram --set 0.5G
+z13ctl vram --list
+z13ctl vram --set 0.5G --dry-run
+z13ctl vram --set 0.5G
 ```
 
 ---

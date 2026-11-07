@@ -9,7 +9,8 @@ license=('Apache-2.0')
 provides=('z13ctl')
 conflicts=('z13ctl')
 depends=('glibc')
-optdepends=('ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer')
+optdepends=('ryzen_smu-dkms-git: CPU undervolting via Curve Optimizer'
+            'acpi_call-dkms: iGPU memory reservation (vram)')
 install=z13ctl-bin.install
 source=("https://github.com/dahui/z13ctl/releases/download/v${pkgver}/z13ctl_${pkgver}_linux_amd64.tar.gz")
 sha256sums=('SHA256_PLACEHOLDER')
@@ -23,4 +24,6 @@ package() {
     install -Dm644 "contrib/systemd/user/z13ctl.socket"            "${pkgdir}/usr/lib/systemd/user/z13ctl.socket"
     install -Dm644 "contrib/systemd/user/z13ctl.service"           "${pkgdir}/usr/lib/systemd/user/z13ctl.service"
     install -Dm644 "contrib/systemd/system/z13ctl-perms.service"   "${pkgdir}/usr/lib/systemd/system/z13ctl-perms.service"
+    install -Dm644 "contrib/systemd/system/z13ctl-vram.socket"     "${pkgdir}/usr/lib/systemd/system/z13ctl-vram.socket"
+    install -Dm644 "contrib/systemd/system/z13ctl-vram@.service"   "${pkgdir}/usr/lib/systemd/system/z13ctl-vram@.service"
 }

@@ -33,7 +33,8 @@ cmd/                         Cobra subcommands
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs)
   tdp.go                     get/set/reset TDP power limits (asus-armoury PPT, asus-nb-wmi fallback)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
-  vram.go                    get/list/set the iGPU memory reservation (root, acpi_call; not via the daemon)
+  vram.go                    get/list/set the iGPU memory reservation (direct as root, else the z13ctl-vram helper)
+  vramhelper.go              hidden vram-helper: the root side, one request on stdin (z13ctl-vram@.service)
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
   setup_test.go              drift guard: generated vs packaged contrib/ artifacts
@@ -66,6 +67,9 @@ internal/
     vram.go                  iGPU memory reservation via ATK WMNB device 0x000600C4 through /proc/acpi/call:
                              ReadVRAM, SetVRAM (writes only firmware-listed values), ParseVRAMSize
     vram_test.go             decoding of the real GZ302EA reply, bad replies, size parsing, no unlisted write
+    vramhelper.go            z13ctl-vram helper: ServeVRAMHelper (root side), VRAMGet/VRAMSet (direct or via
+                             /run/z13ctl/vram.sock), flock, next-boot record in /run/z13ctl/vram-next
+    vramhelper_test.go       helper protocol, set/cancel cycle against a stateful fake firmware, non-root path
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
     fan_test.go              ParseFanCurve, FanModeName tests
     sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
@@ -226,6 +230,8 @@ contrib/
   | undervolt set | `{"cmd":"undervolt","set":"-20"}` | `ok` |
   | undervolt get | `{"cmd":"undervolt-get"}` | `ok`, `value` (JSON: `cpu_co`, `active`, `profile`) |
   | undervolt reset | `{"cmd":"undervolt-reset"}` | `ok` |
+  | vram get | `{"cmd":"vram-get"}` | `ok`, `value` (JSON: `current`, `next`, `options`) |
+  | vram set | `{"cmd":"vram","set":"0.5G"}` | `ok`, `value` (JSON, the state afterwards) |
   | profile create | `{"cmd":"profile-create","set":"gaming"}` | `ok` |
   | profile save-as | `{"cmd":"profile-save","set":"gaming"}` | `ok` |
   | profile delete | `{"cmd":"profile-delete","set":"gaming"}` | `ok` |
@@ -319,7 +325,17 @@ contrib/
   8G right after DEVS 0.5G, and 0.5G after the reboot). WMNB reads five
   DWORDs from its argument buffer, so the buffer is padded to 32 bytes; a
   12-byte buffer aborts with an AML error. `/proc/acpi/call` stays root-only and
-  out of `setup`: write access to it runs any ACPI method.
+  out of `setup`: write access to it runs any ACPI method. Non-root callers (the
+  CLI without sudo, the daemon, and through it z13gui) use the **z13ctl-vram
+  helper** instead: `z13ctl-vram.socket` (`/run/z13ctl/vram.sock`, 0660, the setup
+  group, `Accept=yes`) starts one `z13ctl vram-helper` per connection as root,
+  which answers only `vram-get` and `vram` and validates the size against a fresh
+  DSTS. `setup` generates both units; `cmd/setup_test.go` requires them to equal
+  the packaged copies byte for byte. A flock on `/run/z13ctl/vram.lock` serialises
+  firmware access across those processes (acpi_call keeps one result for the
+  whole system). Since DSTS only ever reports the running size, a set writes the
+  stored value to `/run/z13ctl/vram-next`, which is what `next` reports until the
+  reboot clears `/run`. Both daemon commands are `ecGuarded`: each is an SMI.
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
   `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute

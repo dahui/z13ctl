@@ -1,0 +1,15 @@
+[Unit]
+Description=z13ctl iGPU memory helper socket
+# One z13ctl-vram@.service per connection reads or sets the firmware's iGPU
+# memory reservation through acpi_call as root. Group members reach it here
+# instead of being given /proc/acpi/call, which would run any ACPI method.
+
+[Socket]
+ListenStream=/run/z13ctl/vram.sock
+SocketMode=0660
+SocketGroup=users
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

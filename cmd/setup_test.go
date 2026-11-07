@@ -41,6 +41,23 @@ var sysfsGrants = []struct {
 	{name: "ryzen_smu", match: "/sys/kernel/ryzen_smu_drv/", service: true},
 }
 
+// TestGeneratedAndPackagedVRAMUnitsMatch holds the iGPU memory helper's units
+// to the stronger standard of identical text: they carry no per-target grants
+// to list, and a difference in the hardening lines would be as silent as a
+// missing grant.
+func TestGeneratedAndPackagedVRAMUnitsMatch(t *testing.T) {
+	t.Parallel()
+	if got, want := buildVRAMSocketContent("users"), readPackaged(t, "../contrib/systemd/system/z13ctl-vram.socket"); got != want {
+		t.Errorf("buildVRAMSocketContent(\"users\") differs from the packaged z13ctl-vram.socket:\n--- generated\n%s--- packaged\n%s", got, want)
+	}
+	if got, want := vramServiceContent, readPackaged(t, "../contrib/systemd/system/z13ctl-vram@.service"); got != want {
+		t.Errorf("vramServiceContent differs from the packaged z13ctl-vram@.service:\n--- generated\n%s--- packaged\n%s", got, want)
+	}
+	if !strings.Contains(buildVRAMSocketContent("wheel"), "SocketGroup=wheel\n") {
+		t.Error("buildVRAMSocketContent ignores the group")
+	}
+}
+
 func readPackaged(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

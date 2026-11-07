@@ -1,0 +1,17 @@
+[Unit]
+Description=z13ctl iGPU memory helper (one request)
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStartPre=-modprobe -q acpi_call
+ExecStart=z13ctl vram-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=30
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/z13ctl

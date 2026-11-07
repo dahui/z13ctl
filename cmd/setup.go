@@ -14,6 +14,8 @@ import (
 
 const rulesPath = "/etc/udev/rules.d/99-z13ctl.rules"
 const servicePath = "/etc/systemd/system/z13ctl-perms.service"
+const vramSocketPath = "/etc/systemd/system/z13ctl-vram.socket"
+const vramServicePath = "/etc/systemd/system/z13ctl-vram@.service"
 
 var (
 	setupGroup    string
@@ -92,6 +94,48 @@ ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ry
 WantedBy=multi-user.target
 `, group, group, group, group, group)
 }
+
+// buildVRAMSocketContent generates z13ctl-vram.socket, the group's way to the
+// root iGPU memory helper (internal/cli/vramhelper.go). Keep this and
+// vramServiceContent identical to contrib/systemd/system/z13ctl-vram.socket and
+// z13ctl-vram@.service; cmd/setup_test.go compares them.
+func buildVRAMSocketContent(group string) string {
+	return fmt.Sprintf(`[Unit]
+Description=z13ctl iGPU memory helper socket
+# One z13ctl-vram@.service per connection reads or sets the firmware's iGPU
+# memory reservation through acpi_call as root. Group members reach it here
+# instead of being given /proc/acpi/call, which would run any ACPI method.
+
+[Socket]
+ListenStream=/run/z13ctl/vram.sock
+SocketMode=0660
+SocketGroup=%s
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target
+`, group)
+}
+
+const vramServiceContent = `[Unit]
+Description=z13ctl iGPU memory helper (one request)
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStartPre=-modprobe -q acpi_call
+ExecStart=z13ctl vram-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=30
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/z13ctl
+`
 
 // applySysfsPerms scans live sysfs for files managed by z13ctl and either
 // applies chgrp/chmod immediately (dryRun=false) or prints what would be done
@@ -229,6 +273,10 @@ ryzen_smu files. This is required because those attributes are created late in
 the asus_nb_wmi kernel driver's probe() sequence (after all udev events have
 already fired), or live outside any udev subsystem.
 
+Also installs z13ctl-vram.socket and z13ctl-vram@.service, which let the
+group read and set the iGPU memory reservation through a root helper
+without opening up /proc/acpi/call.
+
 Use --perms-only to skip writing the rules file and only reapply sysfs
 permissions (useful after a group change or kernel module reload).
 
@@ -248,8 +296,13 @@ This command must be run with sudo (unless --dry-run is used).`,
 				fmt.Println("Would run: udevadm trigger --subsystem-match=hidraw")
 				fmt.Printf("\nWould write %s:\n\n", servicePath)
 				fmt.Print(buildServiceContent(setupGroup))
+				fmt.Printf("\nWould write %s:\n\n", vramSocketPath)
+				fmt.Print(buildVRAMSocketContent(setupGroup))
+				fmt.Printf("\nWould write %s:\n\n", vramServicePath)
+				fmt.Print(vramServiceContent)
 				fmt.Println("Would run: systemctl daemon-reload")
 				fmt.Println("Would run: systemctl enable --now z13ctl-perms.service")
+				fmt.Println("Would run: systemctl enable --now z13ctl-vram.socket")
 			}
 			fmt.Println("\nWould apply sysfs permissions (files present on this system):")
 			applySysfsPerms(setupGroup, true)
@@ -296,20 +349,33 @@ This command must be run with sudo (unless --dry-run is used).`,
 			return fmt.Errorf("write %s: %w", servicePath, err)
 		}
 		fmt.Printf("Wrote %s\n", servicePath)
+		for _, f := range []struct{ path, content string }{
+			{vramSocketPath, buildVRAMSocketContent(setupGroup)},
+			{vramServicePath, vramServiceContent},
+		} {
+			if err := os.WriteFile(f.path, []byte(f.content), 0o644); err != nil {
+				return fmt.Errorf("write %s: %w", f.path, err)
+			}
+			fmt.Printf("Wrote %s\n", f.path)
+		}
 		if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "note: systemctl daemon-reload failed: %v\n%s", err, out)
-			fmt.Fprintf(os.Stderr, "Enable the service manually: sudo systemctl enable --now z13ctl-perms.service\n")
-		} else if out, err := exec.Command("systemctl", "enable", "--now", "z13ctl-perms.service").CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "note: systemctl enable failed: %v\n%s", err, out)
-			fmt.Fprintf(os.Stderr, "Enable the service manually: sudo systemctl enable --now z13ctl-perms.service\n")
+			fmt.Fprintf(os.Stderr, "Enable the units manually: sudo systemctl enable --now z13ctl-perms.service z13ctl-vram.socket\n")
 		} else {
-			fmt.Println("Enabled z13ctl-perms.service.")
+			for _, unit := range []string{"z13ctl-perms.service", "z13ctl-vram.socket"} {
+				if out, err := exec.Command("systemctl", "enable", "--now", unit).CombinedOutput(); err != nil {
+					fmt.Fprintf(os.Stderr, "note: systemctl enable %s failed: %v\n%s", unit, err, out)
+					fmt.Fprintf(os.Stderr, "Enable it manually: sudo systemctl enable --now %s\n", unit)
+				} else {
+					fmt.Printf("Enabled %s.\n", unit)
+				}
+			}
 		}
 
 		fmt.Printf("\nDone. Members of the '%s' group can now run z13ctl without sudo.\n", setupGroup)
 		fmt.Println("This covers RGB control, performance profiles, battery charge limiting,")
 		fmt.Println("the Armoury Crate button, boot sound, panel overdrive, fan curves, TDP,")
-		fmt.Println("and undervolt (if ryzen_smu is installed).")
+		fmt.Println("undervolt (if ryzen_smu is installed), and iGPU memory (if acpi_call is).")
 		fmt.Printf("If your user is not in '%s', add it with:\n", setupGroup)
 		fmt.Printf("  sudo usermod -aG %s $USER\n", setupGroup)
 		fmt.Println("Then log out and back in for the group change to take effect.")
