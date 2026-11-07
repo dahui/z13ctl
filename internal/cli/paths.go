@@ -28,4 +28,7 @@ var (
 
 	// smuDriverPath holds the ryzen_smu kernel module's mailbox files.
 	smuDriverPath = "/sys/kernel/ryzen_smu_drv"
+
+	// acpiCallPath is the acpi_call module's command/result file.
+	acpiCallPath = "/proc/acpi/call"
 )

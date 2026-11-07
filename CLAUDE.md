@@ -33,6 +33,7 @@ cmd/                         Cobra subcommands
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs)
   tdp.go                     get/set/reset TDP power limits (asus-armoury PPT, asus-nb-wmi fallback)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
+  vram.go                    get/list/set the iGPU memory reservation (root, acpi_call; not via the daemon)
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   install udev rules; applySysfsPerms helper (HID, hwmon, PPT, firmware-attributes, ryzen_smu)
   setup_test.go              drift guard: generated vs packaged contrib/ artifacts
@@ -62,6 +63,9 @@ internal/
     smu.go                   SMU sysfs communication: SMUAvailable, SMUProbeUndervolt, SMUUndervoltAvailable,
                              SendSMUCommand, response codes
     undervolt.go             Curve Optimizer commands: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues, safety limits
+    vram.go                  iGPU memory reservation via ATK WMNB device 0x000600C4 through /proc/acpi/call:
+                             ReadVRAM, SetVRAM (writes only firmware-listed values), ParseVRAMSize
+    vram_test.go             decoding of the real GZ302EA reply, bad replies, size parsing, no unlisted write
     undervolt_test.go        encodeCOValue, ValidateCOValues, smuResponseError tests
     fan_test.go              ParseFanCurve, FanModeName tests
     sysfs_fake_test.go       fake sysfs tree + fakeSMU mailbox + ppdRunner stub
@@ -302,6 +306,19 @@ contrib/
   7.x kernels carry a GZ302EA entry and expose `ppt_pl1_spl`/`ppt_pl2_sppt`/
   `ppt_pl3_fppt` (PL1 28–80, PL2 32–92, PL3 45–93; no APU/Platform sPPT), and
   z13ctl writes power limits through them — see the TDP note.
+- **iGPU memory (`vram`) bypasses asus-armoury on purpose.** The kernel's
+  `apu_mem` attribute drives WMI device 0x000600C1, which is the ROG Ally's and is
+  absent from the Z13 firmware, so the attribute never appears. The Z13's setting
+  is 0x000600C4 (found by g-helper; confirmed in the GZ302EA DSDT under
+  `\_SB.ATKD.WMNB`). DSTS returns u16 words: count, flags (bit 0 present, bit 1
+  512 MB units), current, then the options, Auto first; DEVS stores a value for
+  the next boot and returns 1. The DSDT passes the DEVS value to the BIOS
+  without checking it, so `SetVRAM` re-reads the options and refuses anything
+  else, and writes even when the value equals the reported current one (whether
+  DSTS reports the pending or the running value is unverified). WMNB reads five
+  DWORDs from its argument buffer, so the buffer is padded to 32 bytes; a
+  12-byte buffer aborts with an AML error. `/proc/acpi/call` stays root-only and
+  out of `setup`: write access to it runs any ACPI method.
 - **Fan curves**: Two hwmon devices under asus-nb-wmi: `asus` (RPM readings +
   `pwm_enable`) and `asus_custom_fan_curve` (8-point curves + `pwm_enable`).
   hwmon numbers are unstable across reboots — discovery by `name` sysfs attribute

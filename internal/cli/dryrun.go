@@ -203,6 +203,13 @@ func DryRunPanelOverdrive(value int) {
 	fmt.Printf("Would write %d to %s\n", value, FindPanelOverdrivePath())
 }
 
+// DryRunVRAM prints the acpi_call write that would store an iGPU memory size.
+func DryRunVRAM(value uint16, label string) {
+	fmt.Println("=== DRY RUN (no ACPI call) ===")
+	fmt.Printf("Would write to %s:\n  %s\n", acpiCallPath, vramCommand(wmiMethodDEVS, uint32(value)))
+	fmt.Printf("iGPU memory would be %s from the next boot\n", label)
+}
+
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
 // The same curve is written to both fans.
 func DryRunFanCurve(points []api.FanCurvePoint) {

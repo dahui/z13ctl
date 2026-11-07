@@ -10,7 +10,9 @@ Linux.
 interface — no kernel patches, no external daemons. System settings (profiles,
 battery limit, boot sound, panel overdrive, fan curves, TDP) use the standard
 asus-wmi and asus-armoury sysfs interfaces. CPU undervolting uses the
-`ryzen_smu` kernel module for AMD Curve Optimizer control. A background daemon
+`ryzen_smu` kernel module for AMD Curve Optimizer control. The iGPU memory
+reservation (Armoury Crate's "Free up memory") is set through the ASUS WMI
+method via the `acpi_call` module. A background daemon
 persists state across reboots, restores volatile settings after sleep/resume,
 puts custom fan curves and power limits back when a power profile change
 discards them, re-applies keyboard lighting when the detachable keyboard is

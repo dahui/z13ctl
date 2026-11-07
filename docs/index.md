@@ -27,8 +27,11 @@ on Linux.
 - **Boot sound** — enable or disable the POST beep via the asus-armoury firmware
   attributes interface
 - **Panel overdrive** — toggle display overdrive for reduced motion blur
+- **iGPU memory** — choose how much RAM the firmware reserves for the GPU
+  (Armoury Crate's "Free up memory"), applied on the next boot; needs root and
+  the `acpi_call` module
 
-All features work without root after a one-time `setup` step, and all persist across
+All other features work without root after a one-time `setup` step, and all persist across
 reboots when the daemon is running. The daemon also re-applies keyboard lighting
 automatically when the detachable keyboard is removed and reattached, and puts your
 fan curve and power limits back when the kernel or firmware discards them — which

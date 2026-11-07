@@ -16,7 +16,8 @@ import (
 // that redirected only the asus-nb-wmi path let two tests find the real armoury
 // attributes and write power limits to them; only the attribute's permissions
 // stopped it. The ryzen_smu mailbox is under the same guard, and there a stray
-// write is a CO reset.
+// write is a CO reset. So is /proc/acpi/call, where a stray write changes the
+// BIOS memory split for the next boot.
 func TestMain(m *testing.M) {
 	const nowhere = "/nonexistent/z13ctl-test-sysfs"
 	sysHwmonDir = nowhere + "/hwmon"
@@ -26,5 +27,6 @@ func TestMain(m *testing.M) {
 	sysFirmwareAttrDir = nowhere + "/firmware-attributes"
 	pptBasePath = nowhere + "/asus-nb-wmi"
 	smuDriverPath = nowhere + "/ryzen_smu_drv"
+	acpiCallPath = nowhere + "/acpi_call"
 	os.Exit(m.Run())
 }

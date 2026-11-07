@@ -321,6 +321,52 @@ z13ctl paneloverdrive --set 1
 
 ---
 
+## vram
+
+Get or set how much system memory the firmware reserves for the iGPU at boot:
+the BIOS "UMA Frame Buffer Size", which Armoury Crate shows as **Free up
+memory**. The new size applies from the next boot.
+
+```
+z13ctl vram [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the current reservation (`auto`, `0.5G`, `8G`, ...) |
+| `--list` | List the sizes the firmware offers, marking the current one |
+| `--set <size>` | Store a size for the next boot: `auto`, or a size such as `512M`, `0.5G`, `1G`, `8G` |
+
+The sizes come from the firmware and depend on installed memory. On the 64 GB
+GZ302EA they are `auto`, `0.5G`, `1G`, `2G`, `4G`, `8G`, `16G`, `32G` and `48G`;
+`--set` refuses anything the firmware did not list.
+
+This is not the limit on what the GPU can use. Memory the GPU borrows at run
+time (GTT) is capped separately by the kernel's `ttm.pages_limit`, so a small
+reservation such as `0.5G` leaves the most RAM to the desktop while large local
+models can still use most of it.
+
+The kernel's `asus-armoury` driver does not expose this setting on the Z13: it
+knows only the ROG Ally's device, and this firmware uses another one. `vram`
+therefore calls the ASUS WMI method directly through the `acpi_call` module. It
+needs root, and is not routed through the daemon or opened up by
+[setup](#setup), because write access to `/proc/acpi/call` is the ability to run
+any ACPI method.
+
+```sh
+# one-time: install the module (with Secure Boot on, enroll the key it prompts
+# for at the next boot), and load it at every boot
+sudo apt install acpi-call-dkms
+echo acpi_call | sudo tee /etc/modules-load.d/acpi_call.conf
+sudo modprobe acpi_call
+
+sudo z13ctl vram --list
+sudo z13ctl vram --set 0.5G --dry-run
+sudo z13ctl vram --set 0.5G
+```
+
+---
+
 ## fancurve
 
 Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
