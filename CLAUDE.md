@@ -3298,10 +3298,14 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   change; the target prepends the frontmatter and strips the H1. The page is
   excluded from link validation (its `#Symbol` fragments target gomarkdoc's raw
   `<a name>` anchors, invisible to the validator); every other page is checked.
-  **Today's gomarkdoc adds source links from the git remote** (`dahui/z13ctl`,
-  branch `main` — the wrong api), which the committed page does not have; run
-  it against a copy of `api/` outside the repo until the target passes
-  repository flags (Open work below).
+  Each symbol links to its source line. gomarkdoc takes the repository from
+  the git remote unless told otherwise, which here is `dahui/z13ctl`'s `main`
+  — a different api with different line numbers — so the target passes
+  `--repository.url`/`--repository.default-branch` (`API_REPO_URL`,
+  `API_REPO_BRANCH`: `dahui/voltaire`, `main`) and pins gomarkdoc (v1.1.0)
+  so a regeneration diffs only what the api changed. The links resolve once
+  the repo is renamed and this branch is on main, which is also when the site
+  starts deploying from it.
 - `reference/daemon.md` holds the user-facing socket protocol tables; keep them
   in sync with `dispatch()` in `internal/daemon/server.go`.
 - `reference/protocol.md` — technical HID protocol reference for developers.
@@ -3378,11 +3382,8 @@ diff whenever a main release touches `api/`.
    byte-identical.
 5. ~~`handleUndervoltReset` test with a fake undervolter~~ — landed
    2026-10-09 (`undervolt_reset_test.go`).
-6. **`make docs-api` emits wrong source links.** gomarkdoc reads the git remote
-   and default branch, so links point at `github.com/dahui/z13ctl/blob/main/api/…`
-   — main's old api, wrong line numbers. Until the target passes repository
-   flags (or the repo is renamed), generate from a copy of `api/` outside the
-   repo; the committed page has no source links.
+6. ~~`make docs-api` emits wrong source links~~ — fixed 2026-10-09: the
+   target names the repository and pins gomarkdoc.
 7. **Read device values from the device, not from literals** (Jeff,
    2026-10-09). The precedence is: autodetected from the kernel or firmware, then
    the device TOML, then a built-in default. That applies to every limit, range,
