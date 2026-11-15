@@ -400,7 +400,10 @@ func (b *Backend) scaledCSS() string {
 .error-bar .error-dismiss { min-height: %.0fpx; min-width: %.0fpx; }
 .popup-surface { padding: %.0fpx; }
 .popup-hint { font-size: %.0fpx; padding: %.0fpx %.0fpx; }
-.block-note { font-size: %.0fpx; margin-top: %.0fpx; }`,
+.block-note { font-size: %.0fpx; margin-top: %.0fpx; }
+.main-window .window-header { padding: %.0fpx %.0fpx; }
+.main-window .window-title { font-size: %.0fpx; letter-spacing: %.0fpx; }
+.main-window .window-controls button { min-width: %.0fpx; min-height: %.0fpx; padding: %.0fpx; border-radius: %.0fpx; }`,
 		s,
 		14*s,                 // .drawer font-size
 		48*s, 4*s, 10*s, 6*s, // btn-group button
@@ -467,5 +470,12 @@ func (b *Backend) scaledCSS() string {
 		4*s,            // popup-surface padding
 		10*s, 6*s, 8*s, // popup-hint (font-size, padding-v, padding-h)
 		10*s, 2*s, // block-note (font-size, margin-top)
+		// The full window's own title row. Under gamescope it is the only
+		// way to leave the window by touch, so its buttons are touch-sized
+		// like every other button here; layout.css's desktop sizes are what
+		// the toplevel gets.
+		6*s, 12*s, // window-header (padding-v, padding-h)
+		12*s, 3*s, // window-title (font-size, letter-spacing)
+		48*s, 48*s, 8*s, 24*s, // window-controls button (min-width, min-height, padding, border-radius)
 	)
 }

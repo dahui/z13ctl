@@ -198,3 +198,37 @@ func fitAxis(pref, floor, screen int) int {
 	}
 	return size
 }
+
+// Window controls.
+//
+// The full window draws its own minimize, maximize and close buttons rather than
+// leaving them to the window manager (Jeff, 2026-11-15). Under gamescope it is a
+// page inside voltaire's own fullscreen overlay, not a toplevel, so a manager's
+// controls never existed there; drawn here, they look and act the same in every
+// environment.
+
+// Control is one window-control button.
+type Control string
+
+// The controls, in the order they are laid out, left to right.
+const (
+	Minimize Control = "minimize"
+	Maximize Control = "maximize"
+	Close    Control = "close"
+)
+
+// Controls returns the buttons the full window shows. hosted is true when the
+// window lives inside the backend's own surface (gamescope) rather than being a
+// toplevel. That surface is already fullscreen, so there is nothing to maximize,
+// and a control that can never act is not offered. Minimize stays: there it puts
+// the surface away, as close does, and the same row of buttons is what makes
+// the window familiar from one environment to the next.
+//
+// The order is fixed rather than read from gtk-decoration-layout, because the
+// requirement is the same row everywhere and gamescope has no such setting.
+func Controls(hosted bool) []Control {
+	if hosted {
+		return []Control{Minimize, Close}
+	}
+	return []Control{Minimize, Maximize, Close}
+}

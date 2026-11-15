@@ -23,10 +23,19 @@
 // # Capability is by absence, as everywhere else
 //
 // There is one backend today (KDE's kscreen-doctor). A machine without it —
-// GNOME, wlroots, a gamescope session — reports no rates and the caller shows
-// no control, which is the same rule the device document's nil sections follow.
-// Guessing at a rate we cannot read, or offering a control that silently fails,
-// are both worse than an absent control.
+// GNOME, wlroots — reports no rates and the caller shows no control, which is
+// the same rule the device document's nil sections follow. Guessing at a rate
+// we cannot read, or offering a control that silently fails, are both worse
+// than an absent control.
+//
+// A gamescope session (Steam Gaming Mode) has no backend either, even on a KDE
+// install where kscreen-doctor is on PATH. With no KWin running it falls back
+// to gamescope's Xwayland, which reports no enabled screen, so the control
+// came up dead with "No screen is currently enabled" (found on hardware,
+// 2026-11-15). Gamescope does have a refresh rate of its own, but Steam owns it:
+// the Quick Access Menu's slider writes it, and Steam would overwrite anything
+// written from here. So under gamescope Available answers false and the control
+// is not offered (Jeff, 2026-11-15); the refresh rate is Steam's to set there.
 //
 // The parsing and selection rules are pure and tested; only Query and Apply
 // shell out, through a seam tests replace.
@@ -38,6 +47,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"sort"
 	"time"
@@ -207,6 +217,13 @@ var runner = func(ctx context.Context, name string, args ...string) ([]byte, err
 // lookPath is the other half of the seam: whether the backend is installed.
 var lookPath = exec.LookPath
 
+// getenv is the seam for the session check in Available.
+var getenv = os.Getenv
+
+// gamescopeSession reports whether this process runs under gamescope. The same
+// variable the GUI keys its gamescope backend on, so the two cannot disagree.
+func gamescopeSession() bool { return getenv("GAMESCOPE_WAYLAND_DISPLAY") != "" }
+
 const kscreenDoctor = "kscreen-doctor"
 
 // ErrNoBackend means nothing on this machine can report or set a video mode.
@@ -214,10 +231,15 @@ const kscreenDoctor = "kscreen-doctor"
 // failure.
 var ErrNoBackend = errors.New("no supported display backend")
 
-// Available reports whether a backend exists. It is a PATH lookup, not a query:
-// it runs while the widget tree is being built, and shelling out to the
-// compositor there would put a DBus round trip in front of the first frame.
+// Available reports whether a backend exists: never under gamescope (see the
+// package doc), else whether kscreen-doctor is installed. It is an environment
+// and PATH lookup, not a query: it runs while the widget tree is being built,
+// and shelling out to the compositor there would put a DBus round trip in front
+// of the first frame.
 func Available() bool {
+	if gamescopeSession() {
+		return false
+	}
 	_, err := lookPath(kscreenDoctor)
 	return err == nil
 }

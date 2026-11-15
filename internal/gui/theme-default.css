@@ -80,6 +80,36 @@ window.voltaire-main-window {
     color: @voltaire-text;
 }
 
+/* The full window's title row: voltaire's own window controls, drawn the same
+   on every desktop and under gamescope rather than left to a window manager.
+   Flat icon buttons at rest; close warns with the error token on hover, the
+   one destructive-looking control in the row. A verbatim theme.css written
+   before this existed styles them as its ordinary .drawer buttons. */
+.drawer.main-window .window-header {
+    background: @voltaire-bg;
+}
+
+.drawer.main-window .window-title {
+    color: @voltaire-text-dim;
+}
+
+.drawer.main-window .window-controls button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: @voltaire-text-dim;
+}
+
+.drawer.main-window .window-controls button:hover {
+    background: alpha(@voltaire-surface-alt, 0.8);
+    color: @voltaire-text;
+}
+
+.drawer.main-window .window-controls button.window-close:hover {
+    background: alpha(@voltaire-error, 0.85);
+    color: @voltaire-bg;
+}
+
 /* Dashboard cards — every colour derived from the eight tokens, so existing
    themes (and all fifteen builtins) style the cards with zero edits. The
    chart inside a card recedes so the two borders do not double up. */

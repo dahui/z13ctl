@@ -281,9 +281,41 @@ func TestEnabledCount(t *testing.T) {
 
 func withStubs(t *testing.T, path func(string) (string, error), run func(context.Context, string, ...string) ([]byte, error)) {
 	t.Helper()
-	oldPath, oldRun := lookPath, runner
+	oldPath, oldRun, oldEnv := lookPath, runner, getenv
 	lookPath, runner = path, run
-	t.Cleanup(func() { lookPath, runner = oldPath, oldRun })
+	// A desktop session unless a test says otherwise, so the result never
+	// depends on whether the test runner happens to run under gamescope.
+	getenv = func(string) string { return "" }
+	t.Cleanup(func() { lookPath, runner, getenv = oldPath, oldRun, oldEnv })
+}
+
+// Under gamescope there is no backend even with kscreen-doctor installed: it
+// would query gamescope's Xwayland and find no enabled screen, and Steam owns
+// the refresh rate there. Nothing may be run.
+func TestGamescopeHasNoBackend(t *testing.T) {
+	withStubs(t, foundOnPath,
+		func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("ran the backend under gamescope")
+			return nil, nil
+		})
+	if !Available() {
+		t.Fatal("desktop session with kscreen-doctor installed: want available")
+	}
+	getenv = func(k string) string {
+		if k == "GAMESCOPE_WAYLAND_DISPLAY" {
+			return "gamescope-0"
+		}
+		return ""
+	}
+	if Available() {
+		t.Error("Available under gamescope = true, want false")
+	}
+	if _, err := Query(); !errors.Is(err, ErrNoBackend) {
+		t.Errorf("Query err = %v, want ErrNoBackend", err)
+	}
+	if err := Apply("eDP-1", "1"); !errors.Is(err, ErrNoBackend) {
+		t.Errorf("Apply err = %v, want ErrNoBackend", err)
+	}
 }
 
 func foundOnPath(name string) (string, error) { return "/usr/bin/" + name, nil }

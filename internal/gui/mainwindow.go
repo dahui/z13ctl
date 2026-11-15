@@ -83,66 +83,21 @@ type mainWindow struct {
 	dashboard *dashboardView
 	custom    *customView
 	settings  *settingsView
+
+	// maxBtn is the title row's maximize button, nil when hosted (no maximize
+	// there). windowcontrols.go keeps its icon in step with the window.
+	maxBtn *gtk.Button
+
+	// minimized is true while the toplevel is open but not on screen —
+	// minimized, or suspended by the compositor — and so not being served
+	// (windowcontrols.go). show() rebuilds the toplevel from this state, since
+	// KWin will not present a minimized window again.
+	minimized bool
 }
 
 // newMainWindow builds the full window. It is not shown; show() does that.
 func newMainWindow(w *Window) *mainWindow {
 	m := &mainWindow{w: w, tabs: mainwin.Resolve(w.device), tabBtns: map[string]*gtk.Button{}}
-
-	// A toplevel only where one composites. Under gamescope the backend hosts
-	// the same content inside the surface it already owns, so building a window
-	// here would create one nothing ever draws — and its Escape controller
-	// would be attached to it rather than to anything on screen.
-	if m.w.fullHost() == nil {
-		m.win = gtk.NewWindow()
-		m.win.SetTitle("Voltaire")
-		m.win.AddCSSClass("voltaire-main-window")
-		mw, mh := mainwin.Fit(w.screenSize())
-		m.win.SetDefaultSize(mw, mh)
-		m.win.SetSizeRequest(mainwin.MinWidth, mainwin.MinHeight)
-
-		// Closing the window hides it rather than destroying it: the views hold
-		// daemon state and their own refresh loops, and rebuilding all of it on
-		// every open would also lose the tab the user was last on. Returning
-		// true stops GTK's default handler, which would dispose the toplevel.
-		m.win.ConnectCloseRequest(func() bool {
-			m.hide()
-			return true
-		})
-
-		// Escape closes, matching the drawer. A window with no titlebar
-		// affordance under some compositors would otherwise need the mouse.
-		// The hosted case needs no equivalent: the drawer's own capture-phase
-		// Escape handler is on the surface holding this content, and it calls
-		// hide() through the same path.
-		esc := gtk.NewEventControllerKey()
-		esc.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
-			if keyval == gdk.KEY_Escape {
-				m.hide()
-				return true
-			}
-			return false
-		})
-		m.win.AddController(esc)
-
-		// Reaching for the mouse dismisses the gamepad focus ring, as it does
-		// in the drawer. The same-coordinate guard is the drawer's: touch
-		// events arrive with a synthetic motion that would otherwise clear
-		// gamepad mode on every press. The hosted path needs no equivalent —
-		// the drawer's own controller sits on the surface holding the content.
-		motion := gtk.NewEventControllerMotion()
-		lastX, lastY := math.NaN(), math.NaN()
-		motion.ConnectMotion(func(x, y float64) {
-			if x == lastX && y == lastY {
-				return
-			}
-			lastX, lastY = x, y
-			if w.gamepadActive {
-				w.hideGamepadFocus()
-			}
-		})
-		m.win.AddController(motion)
-	}
 
 	outer := gtk.NewBox(gtk.OrientationVertical, 0)
 	// .drawer carries every widget rule in the theme; .main-window flattens the
@@ -150,6 +105,9 @@ func newMainWindow(w *Window) *mainWindow {
 	outer.AddCSSClass("drawer")
 	outer.AddCSSClass("main-window")
 
+	// Our own title row and window controls, above the tabs, on every surface
+	// (windowcontrols.go).
+	outer.Append(m.buildHeader())
 	outer.Append(m.buildTabBar())
 
 	m.stack = gtk.NewStack()
@@ -166,8 +124,11 @@ func newMainWindow(w *Window) *mainWindow {
 	// gets installed. Built once, before the single SetFullChild call, so the
 	// hosted path's install-once contract holds.
 	m.popup = w.newPopupLayer(outer)
-	if m.win != nil {
-		m.win.SetChild(m.popup.overlay)
+	// A toplevel only where one composites. Under gamescope the backend hosts
+	// the same content inside the surface it already owns, so building a window
+	// there would create one nothing ever draws.
+	if m.w.fullHost() == nil {
+		m.win = m.newToplevel()
 	} else {
 		// Hosted in the backend's surface. Installed now rather than on show so
 		// the first open is a page switch and not a widget build — the same
@@ -184,6 +145,68 @@ func newMainWindow(w *Window) *mainWindow {
 		m.selectTab(m.tabs[0].ID)
 	}
 	return m
+}
+
+// newToplevel builds the desktop toplevel around the already-built content.
+// It is a function rather than part of newMainWindow because a minimized
+// window is brought back by building a fresh one (replaceToplevel).
+func (m *mainWindow) newToplevel() *gtk.Window {
+	win := gtk.NewWindow()
+	win.SetTitle("Voltaire")
+	win.AddCSSClass("voltaire-main-window")
+	mw, mh := mainwin.Fit(m.w.screenSize())
+	win.SetDefaultSize(mw, mh)
+	win.SetSizeRequest(mainwin.MinWidth, mainwin.MinHeight)
+
+	// Closing the window hides it rather than destroying it: the views hold
+	// daemon state and their own refresh loops, and rebuilding all of it on
+	// every open would also lose the tab the user was last on. Returning
+	// true stops GTK's default handler, which would dispose the toplevel.
+	win.ConnectCloseRequest(func() bool {
+		m.hide()
+		return true
+	})
+
+	// Escape closes, matching the drawer and the title row's close button.
+	// The hosted case needs no equivalent: the drawer's own capture-phase
+	// Escape handler is on the surface holding this content, and it calls
+	// hide() through the same path.
+	esc := gtk.NewEventControllerKey()
+	esc.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
+		if keyval == gdk.KEY_Escape {
+			m.hide()
+			return true
+		}
+		return false
+	})
+	win.AddController(esc)
+
+	// Reaching for the mouse dismisses the gamepad focus ring, as it does
+	// in the drawer. The same-coordinate guard is the drawer's: touch
+	// events arrive with a synthetic motion that would otherwise clear
+	// gamepad mode on every press. The hosted path needs no equivalent —
+	// the drawer's own controller sits on the surface holding the content.
+	motion := gtk.NewEventControllerMotion()
+	lastX, lastY := math.NaN(), math.NaN()
+	motion.ConnectMotion(func(x, y float64) {
+		if x == lastX && y == lastY {
+			return
+		}
+		lastX, lastY = x, y
+		if m.w.gamepadActive {
+			m.w.hideGamepadFocus()
+		}
+	})
+	win.AddController(motion)
+
+	// The title row inside the content replaces GTK's fallback header. An
+	// empty titlebar is what suppresses that header while keeping the
+	// client-side frame — the shadow and the resize edges — that a window with
+	// no titlebar at all would lose.
+	win.SetTitlebar(gtk.NewBox(gtk.OrientationHorizontal, 0))
+	m.watchToplevel(win)
+	win.SetChild(m.popup.overlay)
+	return win
 }
 
 // buildTabBar creates the row of page buttons. It is the window's only
@@ -356,9 +379,13 @@ func (m *mainWindow) syncPage(id string) {
 // escalation is a decision about both surfaces and belongs where both are in
 // view (Window.openFull).
 func (m *mainWindow) show() {
-	m.w.fullVisible.Store(true)
-	m.w.setGamepadGrabbed(true)
 	if m.win != nil {
+		if m.minimized {
+			// KWin will neither present a minimized window nor un-minimize
+			// one that is unmapped and remapped; a fresh toplevel maps normally
+			// (windowcontrols.go).
+			m.replaceToplevel()
+		}
 		m.win.SetVisible(true)
 		m.win.Present()
 	} else {
@@ -368,6 +395,15 @@ func (m *mainWindow) show() {
 		m.w.fullHost().ShowFull(true)
 	}
 	m.errView.clear() // never greet an open with the last session's failure
+	m.activate()
+}
+
+// activate starts serving this window: it is what the controller drives, the
+// page on screen is synced, and the polls run. show() calls it, and so does a
+// restore the compositor makes on its own (windowcontrols.go).
+func (m *mainWindow) activate() {
+	m.w.fullVisible.Store(true)
+	m.w.setGamepadGrabbed(true)
 	if id := m.stack.VisibleChildName(); id != "" {
 		m.syncPage(id)
 	}
@@ -378,8 +414,11 @@ func (m *mainWindow) show() {
 	m.w.refreshState()
 }
 
-// hide closes the window and stops everything that was running for it.
-func (m *mainWindow) hide() {
+// deactivate stops serving this window without touching its surface: the
+// half of hide() a minimize also needs, since a minimized window is open but
+// nobody can see it. It releases the controller, which hidblocker would
+// otherwise keep from the game behind it.
+func (m *mainWindow) deactivate() {
 	// Before fullVisible flips: closePopup sweeps every layer regardless, but
 	// the pop of the suspended focus list must happen while this surface's
 	// popup still reads as open.
@@ -390,9 +429,20 @@ func (m *mainWindow) hide() {
 	}
 	m.w.setGamepadGrabbed(false)
 	m.w.hideGamepadFocus()
+	// Stop the get-state poll unless the drawer is up and still reading it.
+	if !m.w.visible.Load() {
+		m.w.telemetryGen++
+	}
+}
+
+// hide closes the window and stops everything that was running for it.
+func (m *mainWindow) hide() {
+	// m.minimized is deliberately left as it is: KWin keeps a minimized window
+	// minimized across an unmap and remap, so the next show() must still
+	// rebuild the toplevel if this one was minimized when it was hidden.
+	m.deactivate()
 	if m.win != nil {
 		m.win.SetVisible(false)
-		m.w.telemetryGen++ // stop the get-state poll; nothing is looking at it
 		return
 	}
 	// Hosted: swap back to the quickbar layout, then dismiss the surface
@@ -402,9 +452,7 @@ func (m *mainWindow) hide() {
 	m.w.fullHost().ShowFull(false)
 	if m.w.visible.Load() {
 		m.w.hide() // clears the poll and the focus list on its own path
-		return
 	}
-	m.w.telemetryGen++
 }
 
 // openFull is the consumer for api.EventGUIOpenFull: the daemon saw a double

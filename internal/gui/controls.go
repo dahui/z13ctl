@@ -180,8 +180,9 @@ func (w *Window) buildContent() gtk.Widgetter {
 	return outer
 }
 
-// buildBottomBar returns the fixed bottom bar: the theme picker button. It sits
-// below the scroll area and is always visible (not scrolled).
+// buildBottomBar returns the fixed bottom bar: the theme picker and the button
+// that opens the full window. It sits below the scroll area and is always
+// visible (not scrolled).
 //
 // It used to carry panel overdrive and boot sound as two bespoke switches.
 // They moved to the full window's Settings tab (Jeff, 2026-08-14) — BIOS
@@ -203,12 +204,17 @@ func (w *Window) buildBottomBar() *gtk.Box {
 	w.paletteBtn.ConnectClicked(func() { w.showThemeView() })
 	bar.Append(w.paletteBtn)
 
-	// There is deliberately no telemetry button here. The drawer is the quick
-	// controls a user wants close at hand; the dashboard is a reading surface
-	// that belongs to the full window, and a chart is the one thing 320px
-	// cannot show at a size worth looking at. The view is still reachable under
-	// gamescope, where there is no second toplevel to put it on — see
-	// Window.openFull.
+	// The full window, opened exactly as the hardware button's second gesture
+	// opens it (Window.openFull, which also takes the in-surface path under
+	// gamescope). A controller user otherwise had no way there short of
+	// reaching for the button on the machine itself (Jeff, 2026-11-15). It
+	// opens the window rather than putting a dashboard in the drawer: a chart
+	// is the one thing 320px cannot show at a size worth looking at.
+	w.fullBtn = gtk.NewButton()
+	w.fullBtn.SetIconName("view-fullscreen-symbolic")
+	w.setHint(w.fullBtn, "Open the full window")
+	w.fullBtn.ConnectClicked(func() { w.openFull() })
+	bar.Append(w.fullBtn)
 
 	return bar
 }
@@ -369,17 +375,25 @@ func boxVisible(box *gtk.Box) func() bool {
 // focusLightingSection in lightingview.go. Only the footer is here, because it
 // is the one piece of chrome that is not a registry control.
 
-// focusFooter: the theme button, alone since the firmware toggles moved to the
-// full window's Settings tab.
+// focusFooter: the theme button and the full-window button, one line because
+// they sit side by side.
 //
 // The footer is fixed chrome outside the scroll area, so it is not a registry
 // control and always comes last regardless of how the sections are ordered.
 func (w *Window) focusFooter(b *focusgrid.Builder, items *[]focusItem) {
 	b.Section("footer")
-	for _, fc := range b.Line(1) {
+	acts := []struct {
+		btn *gtk.Button
+		fn  func()
+	}{
+		{w.paletteBtn, w.showThemeView},
+		{w.fullBtn, w.openFull},
+	}
+	for i, fc := range b.Line(len(acts)) {
+		a := acts[i]
 		*items = append(*items, focusItem{
-			widget: w.paletteBtn, row: fc.Row, col: fc.Col, section: fc.Section,
-			onActivate: func() { w.showThemeView() },
+			widget: a.btn, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: a.fn,
 		})
 	}
 }

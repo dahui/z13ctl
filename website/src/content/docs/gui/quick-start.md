@@ -13,13 +13,16 @@ close it.
 
 ## Opening the full window
 
-Press the **Armoury Crate button twice** — a normal double tap — and the drawer
-is replaced by a full window: a desktop-style window with a **Dashboard** tab
+Press the **Armoury Crate button twice** — a normal double tap — or the
+**expand button** at the bottom of the drawer, beside the theme button, and the
+drawer is replaced by a full window: a desktop-style window with a **Dashboard** tab
 (charts and the everyday controls), a **Profiles** tab (the profile editor) and
 a **Settings** tab (the firmware switches). Switch pages with the tabs under the
-titlebar. Close it with **Escape**, the window's close
-button, or another press of the Armoury Crate button; the drawer is unaffected
-and the next single press opens it as usual.
+title row. The title row carries the window's own **minimize**, **maximize** and
+**close** buttons, the same on every desktop; drag it to move the window, and
+double-click it to maximize. Close the window with **Escape**, the close button,
+or another press of the Armoury Crate button; the drawer is unaffected and the
+next single press opens it as usual.
 
 The first press still opens the drawer immediately, so a single press costs
 nothing extra: the drawer appears, and if a second press follows quickly it is
@@ -30,7 +33,13 @@ toggles, not a double tap.
 Under gamescope the full window opens inside voltaire's own fullscreen surface
 rather than as a separate window — gamescope does not composite a second
 application window. The pages, tabs, and controls are the same; L1/R1 switch
-tabs and B closes it.
+tabs and B closes it. With a controller, the expand button at the bottom of the
+drawer opens it without reaching for the Armoury Crate button. The title row has
+minimize and close buttons sized for touch — there is no maximize, since the
+window already fills the screen — and both return you to the game.
+
+The refresh-rate control is not offered in Gaming Mode: Steam sets the refresh
+rate there, from its Quick Access Menu.
 :::
 
 ## Drawer controls
@@ -206,7 +215,9 @@ control under its own heading for a thumb.
 The refresh-rate dropdown offers the rates your screen supports **at the
 resolution it is currently running**. It deliberately does not change the
 resolution — that belongs in your desktop's own display settings, which ask you
-to confirm that the new mode works before keeping it.
+to confirm that the new mode works before keeping it. It needs KDE Plasma
+(`kscreen-doctor`); in Steam Gaming Mode it is not shown, because Steam owns the
+refresh rate there.
 
 Two details worth knowing:
 

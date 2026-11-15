@@ -386,6 +386,21 @@ outside.
 
 ### The full window (double press)
 
+- [ ] The drawer's expand button (beside the theme button) opens the full
+      window, by mouse and by controller (D-pad to the footer, A). Under
+      gamescope it opens inside the overlay surface.
+- [ ] Under gamescope there is no refresh-rate card on the Dashboard and no
+      refresh-rate row in the Settings tab's Quickbar card.
+- [ ] Title row (desktop): VOLTAIRE plus minimize, maximize, close; no GTK
+      header above it. Drag moves the window, double-click maximizes and the
+      maximize icon turns into restore; the edges still resize.
+- [ ] Minimize: the log shows `full window: suspended by the compositor`, and a
+      connected controller is released to the desktop/game. Restore from the
+      taskbar: `restored`, and the pad drives the window again. Double-press (or
+      the expand button) while minimized: the window comes back
+      (`rebuilt the toplevel`) on the tab it was on.
+- [ ] Title row (gamescope): minimize and close only, touch-sized; both return
+      to the game by touch, and the controller is released.
 - [ ] Double-press the Armoury Crate button — the drawer flashes and the full
       window replaces it. The **Dashboard** tab shows all eight cards
       *immediately* (framed charts, "—" readouts at worst for the first

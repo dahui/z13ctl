@@ -2406,8 +2406,20 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Capability is by absence, as everywhere else: one backend exists
   (`kscreen-doctor`), `Available()` is a PATH lookup rather than a query so the
   widget tree is not built behind a DBus round trip, and a machine without it
-  gets **no card at all** rather than a control that could only ever fail. That
-  covers gamescope for free.
+  gets **no card at all** rather than a control that could only ever fail.
+  **It did not cover gamescope for free**, as this entry used to claim: on a
+  KDE install `kscreen-doctor` is on PATH in Gaming Mode too, and with no KWin
+  it falls back to gamescope's Xwayland, which reports no enabled screen — so
+  the card came up dead reading "No screen is currently enabled" (Jeff, on
+  hardware, 2026-11-15). Gamescope has a refresh rate of its own
+  (`GAMESCOPE_DYNAMIC_REFRESH` on the root window), but Steam's Quick Access
+  Menu writes it and would overwrite anything voltaire set, so the decision was
+  to hide the control there rather than add a backend that races Steam (Jeff,
+  2026-11-15). `display.Available()` answers false whenever
+  `GAMESCOPE_WAYLAND_DISPLAY` is set — the variable the GUI picks its gamescope
+  backend by — which takes out the card, the quickbar row (via the session
+  capability), `Query`/`Apply` and the power-source refresh switching in one
+  place. `TestGamescopeHasNoBackend` pins it; its negative control was run.
   Two rules in the package earned their tests. **Resolution is held fixed** —
   the rates offered are those at the current one, because a list of every mode
   is a resolution picker wearing a refresh rate's label, and changing resolution
@@ -3189,9 +3201,9 @@ way (2026-08-15):
 - **Screenshots:** `VOLTAIRE_GUI_OPEN_FULL=<dashboard|profiles|settings|color>`
   opens the full window on that page; `spectacle -b -n -o <file>` captures it.
   The focus dump names the profiles tab's view `full:custom`.
-- **Last baseline** (2026-08-15, before the Aug–Oct ports): `main` 40, `theme` 73,
-  `color` 11, `full:dashboard` 75, `full:custom` 23, `full:settings` 5. A
-  reference only — recapture before relying on it.
+- **Last baseline** (2026-11-15, after the drawer's expand button): `main` 41,
+  `theme` 73, `color` 11, `full:dashboard` 75, `full:custom` 23,
+  `full:settings` 24. A reference only — recapture before relying on it.
 - Restart `voltaire-gui.service` afterwards; killing test instances by
   `pgrep -x voltaire-gui` PID, never `pkill -f` (it matches the invoking shell).
 
@@ -3369,11 +3381,19 @@ diff whenever a main release touches `api/`.
 1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
    `.claude/plans/quickbar-customization.md`). M4 is complete but for the
    gamescope pass.
-2. **Gamescope Gaming Mode hardware pass** — deferred to one dedicated session
-   (Jeff, 2026-10-09); now also covers the quickbar editor on a controller. Never run; the full window hosted
-   in the overlay surface, the popup layer, and now the preset row and Reset All
-   are all unverified there. Standing pre-release risk; also in
-   `dev/smoke-z13.md`.
+2. **Gamescope Gaming Mode hardware pass** — run by Jeff 2026-11-15: the GUI,
+   the hosted full window and the larger UI all worked, with two exceptions,
+   both fixed the same day and needing a re-check in Gaming Mode: the
+   refresh-rate card showed "No screen" (now hidden there; see the
+   refresh-rate entry), and a controller had no way into the full window (the
+   drawer footer now has an expand button beside the theme button, calling
+   `openFull`; `main` focus grid 40 → 41, `15:1:footer`, every other line
+   byte-identical).
+   The same pass found the hosted full window had no window controls at all;
+   the window now draws its own title row with minimize/maximize/close
+   (minimize/close under gamescope), which also fixed minimize leaving the
+   controller grabbed. Entry in `internal/gui/CLAUDE.md`; plan in
+   `.claude/plans/window-controls.md`. Needs the Gaming Mode re-check too.
 3. **pm_table telemetry** — parser and fixtures done 2026-10-09; the sampler
    and card are deliberately not built (every read is an SMU message; see the
    pm_table entry). Revisit with M5, where the OXP reads the same table:

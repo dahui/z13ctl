@@ -85,6 +85,25 @@
     border-radius: 0;
 }
 
+/* The title row above the tabs (windowcontrols.go). Desktop sizes; the
+   gamescope sheet restates them at touch size for the hosted page. */
+.drawer.main-window .window-header {
+    padding: 4px 6px 0 14px;
+}
+
+.drawer.main-window .window-title {
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 3px;
+}
+
+.drawer.main-window .window-controls button {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 4px;
+    border-radius: 15px;
+}
+
 /* Dashboard cards — the full window's telemetry grid. Compact tiles, not
    panels: the dashboard is information at a glance (Jeff, 2026-08-13), so the
    size is set for all four to sit in one row at the window's 900px default.

@@ -975,7 +975,7 @@ covers the window too, logging its pages as `full:<tab>`.
 
 The full window is **mouse/keyboard-first where the drawer is touch-first**,
 by design decision (Jeff, 2026-08-13): underline tabs, ~30px controls, a
-card-grid dashboard, a system titlebar. The drawer is untouched. How each part
+card-grid dashboard, and (since 2026-11-15) its own title row. The drawer is untouched. How each part
 is achieved is load-bearing:
 
 - **Underline tabs win by specificity, never by dropping classes.** The tab
@@ -996,12 +996,53 @@ is achieved is load-bearing:
   layout.css — touch density under gamescope *by omission*, with no
   per-backend branching in Go. A comment in `scaledCSS` marks the omission as
   deliberate; restating the density block there would undo it silently.
-- **"System titlebar" means doing nothing.** No `SetTitlebar`, no
-  `GtkHeaderBar`, no `SetDecorated`: GTK4 never implemented xdg-decoration, so
-  on Wayland the toplevel gets GTK's fallback CSD header, which
-  kde-gtk-config themes to match the desktop. That is the most "system" look
-  reachable from the app; anything we drew ourselves would also be invisible
-  under gamescope.
+- **The window draws its own title row and controls** (`windowcontrols.go`;
+  Jeff, 2026-11-15). It used to draw nothing: no `SetTitlebar`, so on Wayland
+  GTK's fallback CSD header supplied the controls, themed by kde-gtk-config.
+  The reason given was that "anything we drew ourselves would also be
+  invisible under gamescope", and **that premise was backwards**. Under
+  gamescope the full window is a page inside voltaire's own overlay surface,
+  so what we draw is the only thing that shows, and a manager's controls never
+  existed. Jeff found the window there with no way to close it by touch.
+  Now a `window-header` row ("VOLTAIRE", then the controls) sits above the
+  tabs, inside `.drawer.main-window`, so it is voltaire-themed on every
+  surface. Which buttons exist is `mainwin.Controls`: minimize, maximize and
+  close on a toplevel; minimize and close when hosted, since that surface is
+  already fullscreen. The order is fixed rather than read from
+  `gtk-decoration-layout`, because the point is the same row everywhere.
+  On the toplevel the row is wrapped in a `GtkWindowHandle` (drag,
+  double-click to maximize, the window menu), and `SetTitlebar(empty box)`
+  suppresses GTK's header while keeping the CSD shadow and resize edges. The
+  hosted row gets no handle: a drag would ask gamescope to move the overlay.
+  The buttons are not in any focus grid (B closes, LB/RB switch tabs), so the
+  focus dump stayed byte-identical. Their touch size under gamescope is in
+  `scaledCSS`, because they are new widgets and the "touch density by
+  omission" trick only covers rules that exist.
+  **Minimize is a hide the compositor can undo, and it had been a live bug.**
+  GTK's header already offered minimize, which never ran `hide()`: the
+  controller stayed grabbed (hidblocker keeps it from the game), the polls ran,
+  and the hardware button tried to hide a window nobody could see. `hide()` is
+  now `deactivate()` (stop serving: grab, polls, `fullVisible`) plus the surface
+  half, and `show()` is the surface half plus `activate()`. xdg-shell has no
+  minimized state, so the signal is the toplevel's **suspended** state. A
+  throwaway GTK probe on KWin measured it arriving about 80 ms after any
+  minimize and clearing on restore, so it covers Meta+PgDown and taskbar clicks
+  as well as our button; a window parked on another virtual desktop is
+  suspended too, and not on screen either. Our button also deactivates
+  directly, and treats a window becoming active again as a restore on
+  compositors that send no suspended state. A restore is caught as the state
+  clearing.
+  **Bringing a minimized window back takes a new toplevel.** The same probe
+  showed KWin refuses `Present()` on it (focus-stealing prevention) and keeps it
+  minimized across an unmap and remap, even after a second unmapped; a fresh
+  toplevel maps and takes focus. So `show()` on a minimized window
+  (`m.minimized`) runs `replaceToplevel`: it carries the size and maximized
+  state, moves the content across and destroys the old window, which is why
+  toplevel construction is `newToplevel()`. Verified on the Z13 by driving KWin
+  through its scripting interface (minimize, then restore) and with a throwaway
+  timer build calling `openFull` on a minimized window: KWin then reported it
+  not minimized and active. `hide()` deliberately leaves `m.minimized` set, so
+  a window hidden while minimized is still rebuilt on the next show.
 - **The bumpers switch tabs while the window is up; B closes it.**
   `handleGamepadAction` branches on `fullVisible` ahead of the drawer cases:
   LB/RB call `mainWindow.cycleTab` (clamped, no wrap — `jumpSection`'s edge
@@ -1457,7 +1498,9 @@ title changed to match while the ID stayed `dashboard`.
 - **The refresh-rate card is the only control in the tree that does not talk to
   the daemon** (`internal/display`; the root CLAUDE.md has the argument). It
   returns `nil` when no backend is installed and the card is simply not built —
-  capability by absence, which covers gamescope for free. Its `sync()` runs on
+  capability by absence. It is also absent under gamescope, by decision rather
+  than by accident: there `display.Available()` answers false because Steam
+  owns the refresh rate (root CLAUDE.md, 2026-11-15). Its `sync()` runs on
   page show rather than on the 1 Hz poll: it shells out, and a subprocess per
   second to redraw a value that only changes when the user changes it would be
   its own power draw. A failed read goes to the card's block note, not the error

@@ -222,3 +222,28 @@ func TestTheMinimumFitsTheSmallestScreenWeClaimToSupport(t *testing.T) {
 			mainwin.MinWidth, mainwin.MinHeight, smallestW, smallestH)
 	}
 }
+
+// A toplevel gets the full row; the gamescope-hosted surface is already
+// fullscreen, so it drops maximize and keeps the rest in the same order.
+func TestControls(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		hosted bool
+		want   []mainwin.Control
+	}{
+		{false, []mainwin.Control{mainwin.Minimize, mainwin.Maximize, mainwin.Close}},
+		{true, []mainwin.Control{mainwin.Minimize, mainwin.Close}},
+	}
+	for _, tc := range cases {
+		got := mainwin.Controls(tc.hosted)
+		if len(got) != len(tc.want) {
+			t.Fatalf("hosted=%v: Controls = %v, want %v", tc.hosted, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("hosted=%v: Controls = %v, want %v", tc.hosted, got, tc.want)
+				break
+			}
+		}
+	}
+}

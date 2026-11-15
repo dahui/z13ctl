@@ -176,6 +176,7 @@ type Window struct {
 	mainScroll *gtk.ScrolledWindow // scrollable area in main drawer view
 	viewStack  *gtk.Stack          // switches between the drawer's views
 	paletteBtn *gtk.Button         // theme button in bottom bar
+	fullBtn    *gtk.Button         // opens the full window, beside paletteBtn
 
 	// fullVisible is true when the full window is on screen. Atomic for the
 	// same reason `visible` is: the gamepad reader's goroutine reads both
