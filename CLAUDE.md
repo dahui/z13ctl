@@ -505,7 +505,8 @@ contrib/
   fan mode. `internal/daemon/server_test.go` stays on parse-rejection paths; the
   guards themselves are covered hermetically in `internal/cli/tdp_test.go`.
 - **Per-device lighting states must be normalized before use.** `handleOff`
-  saves a named zone as `{Enabled: false}` with no mode/colour/speed, so
+  saved a named zone as `{Enabled: false}` with no mode/colour/speed (through
+  v1.4.2 — see the next entry), so
   `handleBrightness` reusing that entry produced an *enabled* state with empty
   fields — and `ModeFromString("")` is an error, so every later restore failed
   (daemon start, resume, hotplug). Worse, `applyLightingState` returned on the
@@ -515,6 +516,20 @@ contrib/
   (`handleBrightness`) and the read path (`applyLightingState`) — the read side
   is what repairs the state files users already have. `applyLightingState` now
   continues past a failing zone and returns the first error.
+- **A per-zone `off` keeps the zone's effect and flips `Enabled`**
+  (`zoneOffState`), as the all-device off always did. Normalizing on read
+  repaired mode and colour but could not recover the zone's *own* effect, so
+  `brightness --device` after an off came back on the all-device effect, and
+  `get-state` served the zeroed entry in-session — brightness 0, the hardware's
+  off level, which is how z13gui once re-enabled a zone into darkness. A zone
+  with no entry of its own keeps the all-device state it was showing.
+  `get-state` needs no normalization of its own: `off` was the only writer of a
+  partial entry, and old files are repaired at load. `zoneOffState` is pure
+  because `handleOff` writes HID through `aura`, which a daemon test cannot
+  fake; `lighting_off_test.go`'s negative control (returning the bare
+  `{Enabled: false}`) fails all four cases. The global off's `Devices = nil` is
+  deliberate: keeping per-zone entries disabled there would leave them off
+  after `brightness <level>` (no `--device`) turned the hardware back on.
 - **`cli.SetProfile` must write the primary path even when the loop misses it.**
   It writes every platform-profile class device but only tracks the error for
   the one `FindProfilePath` picked; when no class device has a `profile` file
