@@ -238,17 +238,19 @@ func TestResolveBrightness(t *testing.T) {
 			want: DefaultBrightness,
 		},
 		{
-			// Full off preserves the rest of the global entry, so the stored value is
-			// real — but it still must not be adopted while disabled, or the same
-			// trap applies whenever that value happens to be 0.
-			name: "disabled with a stored brightness",
+			// What `brightness 0` stores on every daemon version: a real effect
+			// at the off level. Coming back at 0 is the same trap as above.
+			name: "disabled at a stored zero",
 			ls:   api.LightingState{Enabled: false, Mode: "breathe", Brightness: 0},
 			want: DefaultBrightness,
 		},
 		{
-			name: "disabled with a non-zero stored brightness",
-			ls:   api.LightingState{Enabled: false, Brightness: 2},
-			want: DefaultBrightness,
+			// An off that kept the zone's level (any all-device off; a per-zone
+			// off from z13ctl 1.4.3 / voltaire 2.0): turning the zone back on
+			// resumes it rather than jumping to the default.
+			name: "disabled at a stored level comes back at that level",
+			ls:   api.LightingState{Enabled: false, Mode: "breathe", Brightness: 1},
+			want: 1,
 		},
 		{
 			name: "enabled passes its value through",

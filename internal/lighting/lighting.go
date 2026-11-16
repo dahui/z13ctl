@@ -30,10 +30,10 @@ const (
 	// for it.
 	//
 	// A per-zone off, the only kind the drawer issues, keeps the zone's effect
-	// and flips Enabled on a 2.0 daemon. Every z13ctl 1.x daemon instead stores
-	// LightingState{Enabled: false} with mode, colours, speed and brightness all
-	// zeroed, and a state file written by one still carries such entries until
-	// the zone is next set. So every field read out of a disabled state still
+	// and flips Enabled on a 2.0 daemon (and z13ctl 1.4.3). Older z13ctl
+	// daemons instead store LightingState{Enabled: false} with mode, colours,
+	// speed and brightness all zeroed, and a state file written by one still
+	// carries such entries until the zone is next set. So every field read out of a disabled state still
 	// needs a fallback — see ResolveBrightness for what happens when one does
 	// not have it.
 	ModeOff = "off"
@@ -215,17 +215,20 @@ func ResolveSpeed(ls api.LightingState) string {
 
 // ResolveBrightness returns the brightness the slider should show.
 //
-// A disabled state carries no dependable brightness, so it reports the default
-// rather than the stored value. A z13ctl 1.x daemon's per-zone off replaces the
-// whole entry with LightingState{Enabled: false} — every other field zeroed — so
-// the stored value is 0, and 0 is the hardware's "off" level, not merely a dim
-// one. (A 2.0 daemon keeps the zone's brightness, but the drawer cannot tell
-// which daemon wrote the entry, and `brightness 0` stores a disabled 0 on both.)
+// A disabled state shows the level it was turned off at, so picking an effect
+// brings the zone back as bright as it was: an off keeps the zone's brightness
+// (the per-zone off since z13ctl 1.4.3 and voltaire 2.0, the all-device off
+// always). A stored 0 is never shown for a disabled state, though — it falls
+// back to the default. A z13ctl 1.4.2-or-older per-zone off replaced the whole
+// entry with LightingState{Enabled: false}, every other field zeroed, and
+// `brightness 0` stores a disabled 0 on every version; 0 is the hardware's
+// "off" level, not merely a dim one, so it is never a level to come back at.
+// The caller clamps to the device's maximum.
 //
-// Without this, turning a zone off and then back on left the keyboard dark: the
-// slider adopted the zero, the next apply sent brightness 0, and the daemon
-// dutifully set the backlight to off while reporting success. The mode button lit
-// up and nothing else happened.
+// Without the fallback, turning a zone off and then back on left the keyboard
+// dark: the slider adopted the zero, the next apply sent brightness 0, and the
+// daemon dutifully set the backlight to off while reporting success. The mode
+// button lit up and nothing else happened.
 //
 // A zero brightness on an *enabled* state is passed through, since that is a
 // setting the user can deliberately choose with the slider, and second-guessing it
@@ -233,6 +236,9 @@ func ResolveSpeed(ls api.LightingState) string {
 // and ResolveSpeed already guard against; brightness was simply missed.
 func ResolveBrightness(ls api.LightingState) int {
 	if !ls.Enabled {
+		if ls.Brightness > 0 {
+			return ls.Brightness
+		}
 		return DefaultBrightness
 	}
 	return ls.Brightness
