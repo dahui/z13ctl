@@ -115,7 +115,7 @@ jobs:
       # with the Go version in go.mod.
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
 
       # Last, and always: lint reuses the warm build cache above and adds its own
       # analysis output to it, so saving after lint captures more than saving after

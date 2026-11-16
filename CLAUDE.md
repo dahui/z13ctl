@@ -3387,14 +3387,20 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
 
-**z13ctl fixes are ported through 1.4.2** (2026-10-09): every main commit since
-v1.3.2 has a counterpart here, the last being the #24 sleep-wake fix. Fixes land
-on main first and are ported in one commit per release; `git log v1.4.2..main`
-on main is the list still to port.
+**z13ctl fixes are ported through 1.4.3** (2026-11-15): every main commit since
+v1.3.2 has a counterpart here. Fixes usually land on main first and are ported
+in one commit per release; `git log v1.4.3..main` on main is the list still to
+port. 1.4.3 ran the other way: the per-zone lighting-off fix was written here
+first and back-ported (main's version is a pure `zoneOffState`, because main's
+`handleOff` writes HID directly); #29's missing `go.sum` entry never applied
+here (the api module resolves through the `replace`); and the dependency
+update — `x/sys` v0.50.0, which needs Go 1.26, `godbus/dbus` v5.2.4, a newer
+`go-evdev`, `pflag` v1.1.0 — was applied to both, with CI's golangci-lint pin
+moved to v2.15.0 in step with the Go version.
 Audited commit by commit on 2026-10-09: every fix on main since the branch point
 has its counterpart here. The only gap was wording from main's 1.4.0 docs commit
 (`b0066d9`): README, the site index and the api guide's power-limit ranges, now
-ported. Main has nothing after v1.4.2.
+ported.
 
 Carried into M5 from M2, because its OXP device is what makes them testable:
 capability *absence* hiding controls (`limits.FromDevice` fills defaults
@@ -3484,8 +3490,8 @@ diff whenever a main release touches `api/`.
    single `voltaire-bin` package and the 1.4.x releases).
 11. **M5** (plugin tier + OXP device, carrying the remaining M2 item above) and
    **M6** (Ally + generic AMD TOMLs).
-12. **Ports from main**: none outstanding (audited 2026-10-09); after any
-    new main release, `git log v1.4.2..main`.
+12. **Ports from main**: none outstanding (1.4.3 ported 2026-11-15); after any
+    new main release, `git log v1.4.3..main`.
 
 ### The daemon — COMPLETE
 
