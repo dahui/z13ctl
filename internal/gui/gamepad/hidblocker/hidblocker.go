@@ -1,6 +1,12 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
+// Package hidblocker keeps games from reading a controller while the drawer
+// has it: a BPF LSM program on the file_permission hook returns -EAGAIN for
+// hidraw reads by the PIDs it is told to block. It needs CAP_BPF and
+// CAP_PERFMON and a kernel with BPF LSM enabled; without them New returns an
+// error and the gamepad reader falls back to pausing Steam. It is cgo-free, so
+// its tests run in make test.
 package hidblocker
 
 import (

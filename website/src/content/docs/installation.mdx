@@ -55,7 +55,9 @@ return a helpful error explaining how to install the module.
 The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in the
 2025 Z13). You must use the
 [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork. Voltaire
-detects the wrong fork at startup and reports undervolt as unavailable.
+detects the wrong fork the first time an offset is applied (the check is
+itself a Curve Optimizer write, so it is not run at startup), and reports
+undervolt as unavailable from then on.
 :::
 
 | Distribution | Package | Source |
@@ -99,12 +101,12 @@ sudo usermod -aG users $USER
 
 Then log out and back in for the group membership to take effect.
 
-Alternatively, download the `.pkg.tar.zst` packages directly from the
+Alternatively, download the `.pkg.tar.zst` package directly from the
 [Releases](https://github.com/dahui/voltaire/releases) page and install with
 pacman:
 
 ```sh
-sudo pacman -U voltaire-*.pkg.tar.zst
+sudo pacman -U voltaire_*.pkg.tar.zst
 ```
 
 If you had `z13ctl-bin` or `z13gui-bin` installed, this package replaces both —
@@ -295,8 +297,10 @@ curve, and performance profile, or straight to the
    `Type=oneshot` service that runs `chgrp` + `chmod g+w` at boot on
    `BAT*/charge_control_end_threshold`, the asus-armoury firmware attributes
    (`boot_sound`, `panel_overdrive`, and the `ppt_*` power limits), the
-   asus-nb-wmi `ppt_*` power limits, and
-   the `ryzen_smu_drv` files.
+   asus-nb-wmi `ppt_*` power limits, the cpufreq `boost` switch (which no udev
+   rule can match), and the `ryzen_smu_drv` files — plus group **read** only
+   on the powercap RAPL `energy_uj` counter, for the dashboard's package-power
+   chart. Read, never write: the same directory holds the CPU's power caps.
 4. Starts the service immediately so battery limit, TDP, and undervolt are
    accessible right away.
 
@@ -404,7 +408,9 @@ systemctl --user daemon-reload
 Then remove the binaries and system files:
 
 ```sh
-sudo rm /usr/local/bin/voltaire /usr/local/bin/voltaire-gui
+sudo rm -f /usr/local/bin/voltaire /usr/local/bin/voltaire-gui \
+            /usr/local/bin/z13ctl /usr/local/bin/z13gui
+rm -f ~/.local/share/applications/voltaire-gui.desktop
 sudo rm /etc/udev/rules.d/99-voltaire.rules
 sudo udevadm control --reload-rules
 sudo systemctl disable --now voltaire-perms.service

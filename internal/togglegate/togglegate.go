@@ -1,6 +1,11 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
+// Package togglegate debounces the daemon's gui-toggle event. Some firmware
+// revisions report one Armoury Crate press twice in the same instant, which
+// would open the drawer and close it again; Accept keeps the first event of a
+// burst. It is a package of its own so the rule is testable outside the cgo
+// GUI.
 package togglegate
 
 import "time"

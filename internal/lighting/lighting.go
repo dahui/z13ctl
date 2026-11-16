@@ -29,12 +29,13 @@ const (
 	// represents this as Enabled=false, and the drawer needs a selectable button
 	// for it.
 	//
-	// Note the daemon does not preserve the rest of the entry on a per-zone off,
-	// which is the only kind the drawer issues: it stores
+	// A per-zone off, the only kind the drawer issues, keeps the zone's effect
+	// and flips Enabled on a 2.0 daemon. Every z13ctl 1.x daemon instead stores
 	// LightingState{Enabled: false} with mode, colours, speed and brightness all
-	// zeroed. So re-enabling cannot restore the previous effect, and every field
-	// read out of a disabled state needs a fallback — see ResolveBrightness for
-	// what happens when one does not have it.
+	// zeroed, and a state file written by one still carries such entries until
+	// the zone is next set. So every field read out of a disabled state still
+	// needs a fallback — see ResolveBrightness for what happens when one does
+	// not have it.
 	ModeOff = "off"
 )
 
@@ -214,10 +215,12 @@ func ResolveSpeed(ls api.LightingState) string {
 
 // ResolveBrightness returns the brightness the slider should show.
 //
-// A disabled state carries no meaningful brightness, so it reports the default
-// rather than the stored value. The daemon's per-zone off replaces the whole entry
-// with LightingState{Enabled: false} — every other field zeroed — so the stored
-// value is 0, and 0 is the hardware's "off" level, not merely a dim one.
+// A disabled state carries no dependable brightness, so it reports the default
+// rather than the stored value. A z13ctl 1.x daemon's per-zone off replaces the
+// whole entry with LightingState{Enabled: false} — every other field zeroed — so
+// the stored value is 0, and 0 is the hardware's "off" level, not merely a dim
+// one. (A 2.0 daemon keeps the zone's brightness, but the drawer cannot tell
+// which daemon wrote the entry, and `brightness 0` stores a disabled 0 on both.)
 //
 // Without this, turning a zone off and then back on left the keyboard dark: the
 // slider adopted the zero, the next apply sent brightness 0, and the daemon

@@ -26,8 +26,8 @@ the mixed history safe:
 
 | Tag range | Module path | Status |
 |---|---|---|
-| `v0.x`–`v1.3.1` | `github.com/dahui/z13ctl` | frozen (pre-rename releases) |
-| `api/v1.0.0`–`api/v1.2.0` | `github.com/dahui/z13ctl/api` | frozen — do not delete; old importers resolve these through the redirect |
+| `v0.x`–`v1.4.2` (and any later 1.x from `main`) | `github.com/dahui/z13ctl` | frozen (pre-rename releases) |
+| `api/v1.0.0`–`api/v1.3.0` | `github.com/dahui/z13ctl/api` | frozen — do not delete; old importers resolve these through the redirect |
 | `v2.0.0+` | `github.com/dahui/voltaire/v2` | current main module |
 | `api/v2.0.0+` | `github.com/dahui/voltaire/api/v2` | current api module |
 

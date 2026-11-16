@@ -1,10 +1,13 @@
 // Copyright 2026 Jeff Hagadorn
 // SPDX-License-Identifier: Apache-2.0
 
+// voltaire-gui — the GTK4 overlay drawer and full window for voltaire.
+//
+// The drawer slides in from a screen edge on a press of the hardware button
+// (reported by the voltaire daemon); a double press, or the drawer's expand
+// button, opens the full window. Everything it changes goes through the
+// daemon's socket, via the api module.
 package main
-
-// voltaire-gui — GTK4 Wayland overlay drawer for voltaire.
-// Slides in from the right edge on Armoury Crate button press (via the voltaire daemon).
 
 import (
 	"fmt"

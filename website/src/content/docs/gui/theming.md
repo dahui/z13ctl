@@ -182,14 +182,14 @@ entirely.
 The stylesheet should define all 8 `@define-color` variables:
 
 ```css
-@define-color z13-accent      #cc0000;
-@define-color z13-bg          #1a1a1a;
-@define-color z13-surface     #2a2a2a;
-@define-color z13-surface-alt #333333;
-@define-color z13-text        #e0e0e0;
-@define-color z13-text-dim    #888888;
-@define-color z13-border      #444444;
-@define-color z13-error       #ff4444;
+@define-color voltaire-accent      #cc0000;
+@define-color voltaire-bg          #1a1a1a;
+@define-color voltaire-surface     #2a2a2a;
+@define-color voltaire-surface-alt #333333;
+@define-color voltaire-text        #e0e0e0;
+@define-color voltaire-text-dim    #888888;
+@define-color voltaire-border      #444444;
+@define-color voltaire-error       #ff4444;
 ```
 
 You can then add any GTK4 CSS rules. `theme.toml` takes priority over

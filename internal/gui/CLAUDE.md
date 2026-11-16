@@ -20,7 +20,7 @@
 > | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
 > | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
 > | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |
-> | the 2×2 profile grid | three firmware buttons + one `Custom` button in the main view; the custom profiles are a **dropdown** inside the custom view (`profiles.go` + `dropdown.go` + `internal/profileui`) |
+> | the 2×2 profile grid | the drawer: firmware buttons (from `device-get`) + one `Custom` **picker dropdown** that activates a saved profile (`mainprofile.go`, `profileui.PickerRows`); the full window: a profile selector dropdown in the Profiles editor (`profiles.go` + `dropdown.go` + `internal/profileui`) |
 > | `GtkDropDown in gamescope` → "use buttons" | still true for GtkDropDown itself — but dropdowns now exist, drawn **inside our own surface** by the popup layer (`popup.go`, and "The in-surface popup layer" below) |
 > | bare `api.SendTdpSet`/`SendFanCurveSet`/`SendUndervoltSet` everywhere | the `...For` variants, addressed per operation by `profileui.PlanEdit` (live vs stored) with a `SendProfileList` probe before every stored send |
 >
@@ -60,16 +60,18 @@ the local override. In production the `go.mod` imports the published tag.
 ## Package layout
 
 ```
-main.go                         GTK Application entry; ConnectActivate → gui.New(app)
+voltaire-gui/main.go            GTK Application entry; ConnectActivate → gui.New(app)
                                 Gamescope env detection + stale socket validation
-Makefile                        build, install, lint, clean, snapshot, release
 internal/gui/
   gui.go                        Window struct, backend selection, show/hide, subscribeLoop, theming
   backend.go                    Backend interface (Configure, WrapContent, Show, Hide)
   controls.go                   All GTK widget construction (drawer, views, bottom bar)
   mainwindow.go                 The full window: a real toplevel with a tab per page,
-                                opened by the double-press gui-open-full event, plus the
-                                HSL picker it hosts as a non-tab stack child
+                                opened by the double-press gui-open-full event or the
+                                drawer's expand button (hosted inside the gamescope surface
+                                via fullSurfaceHost)
+  windowcontrols.go             The full window's own title row and minimize/maximize/close,
+                                and the minimize bookkeeping (suspended state, replaceToplevel)
   dashboard.go                  The Dashboard page: the telemetry tile grid, and the live
                                 controls laid out across the width beneath it
   mainprofile.go                profileSection and autoswitchSection — one instance in the
@@ -87,16 +89,24 @@ internal/gui/
                                 CPU boost / refresh-rate sections, and the Settings tab's
                                 QUICKBAR editor card (rules in internal/controls/editor.go)
   viewhost.go                   viewHost — the two things a view must be told about the
-                                surface it was built into (how to leave, am I on screen)
+                                surface it was built into (am I on screen, which error bar)
   customview.go                 Custom profile view: the customView struct, TDP + undervolt
                                 widgets, sync, and its focus list
   customsend.go                 How that view addresses its target: editPlan, the GTK-thread
                                 snapshots (tdpRequest), probeStoredTarget, every save/reset
+  customcommit.go               The Profiles page's one-commit bar: dirty tracking, the
+                                Apply/Save Changes button, Reset All
   profiles.go                   Its profile selector and inline name entry (on customView)
   fancurve.go                   The fan curve chart (the device's point count): mapping, hit test, Cairo drawing
   sync.go                       Daemon state sync, refreshState, the get-state telemetry poll,
                                 and API send functions
   color.go                      colorInput widget: swatch + presets + Custom button
+  popup.go                      The in-surface popup layer (overlay + scrim + hint label)
+  dropdown.go                   The dropdown control drawn into that layer — never GtkDropDown
+  hint.go                       Anchored help text, replacing GTK tooltips
+  formrow.go                    The window's desktop form row (label column + control)
+  themeview.go                  The theme picker, the drawer's second stack view
+  limitsync.go                  Refetching device-get and moving built sliders' bounds live
   colorpopup.go                 the HSL picker itself — one popup for both surfaces
                                 (colour maths in internal/colorconv)
   errbar.go                     Error bar: reportError/clearError, the only user-facing error surface
@@ -133,10 +143,11 @@ internal/theme/
                                 inherit defaults — this is what keeps old theme.toml files working
                                 when a new color token is added
   css.go                        @define-color generation from a Colors value
-  config.go                     Config persistence (selected theme/accent)
+  config.go                     config.toml persistence (theme, accent, button_press,
+                                refresh_*, quickbar_controls); UpdateAppConfig
   *_test.go                     Theme parsing, CSS generation, and built-in completeness tests
-internal/power/                 Limits value: TDP/fan bounds + rules (mirrors z13ctl internal/cli)
-internal/daemon/                Err(handled, err): collapses an api result pair into one error
+internal/limits/                Limits value: TDP/fan bounds + rules, from device-get
+internal/apiresult/             Err(handled, err): collapses an api result pair into one error
 internal/focusgrid/             Gamepad focus navigation: row/col/section index math
 internal/keyrepeat/             Tracker: which held direction owns the gamepad auto-repeat
 internal/colorconv/             hex <-> HSL/RGB conversion and colour validation
@@ -183,7 +194,9 @@ contrib/
 - **Width**: `SetSizeRequest(320, -1)`. Height is natural (content-driven, scrolled).
 - **Show/hide animation**: smoothstep easing via `AddTickCallback` (VSync-synced),
   with a shared `animGen` generation counter so a show cancels an in-flight hide
-  (and vice versa). Two paths, chosen per Show/Hide by `hasRightNeighbor()`:
+  (and vice versa). Two paths, chosen per Show/Hide by `hasNeighborBeyondEdge()` (over
+  `panelgeom.HasNeighbor`; written below for the default right edge — the drawer
+  can sit on the left, and every "right" mirrors):
   - **No monitor to the right** → slide the right margin (`slideMargin`). Show sets
     opacity=1 then slides in; Hide slides out then sets opacity=0 (hides the 1px
     sliver on the primary's own right edge).
@@ -208,7 +221,8 @@ contrib/
 - **Error surface** (`errbar.go`): every daemon call reports failures through
   `w.reportError(op, err)` and clears on success with `clearError()`/`clearErrorAsync()`.
   The bar is appended to `outer` between `viewStack` and the bottom bar, so one instance
-  covers all four views in both backends. Its dismiss button is in every view's focus
+  covers both drawer views (main, theme) in every backend; the full window has its
+  own, and `reportError` fans out to both (`errBars()`). Its dismiss button is in every view's focus
   grid via `errBarFocusItem()` at `errBarRow` — without that a controller cannot
   dismiss an error at all. `reportError` drops the message when the drawer is already
   closed, so a call still in flight at close does not leave the bar up for the next
@@ -295,7 +309,7 @@ contrib/
   - `Sanitized()` replaces zero fields with defaults, for the day a daemon older
     than the client omits one, **and enforces the ordering/width invariants** that
     a zero check cannot see: `TDPMin < TDPMaxSafe <= TDPMaxForced`, and a
-    temperature axis at least `CurvePoints-1` wide. Each group falls back whole,
+    temperature axis at least `Points-1` wide (`Limits.Points`, the served `fans.points`). Each group falls back whole,
     because an inconsistent triple does not say which member is wrong. Without the
     width check a narrow axis makes `EnforceCurve` emit points below `TempMin` that
     the daemon rejects, and `TempMin == TempMax` divides by zero in the editor's
@@ -362,7 +376,7 @@ contrib/
     - `.error-bar` / `.error-text` / `.error-dismiss` — error surface; colored via the
       `@z13-error` theme token, as is `.tdp-warning`
 - **Profile buttons (main view)**: buttons (`gtk.Button`), stored in
-  `w.profileBtns map[string]*gtk.Button`. The custom view's profile selector and
+  `profileSection.btns`, plus the `Custom` picker dropdown. The custom view's profile selector and
   the autoswitch targets are `dropdown`s (`dropdown.go`) over the in-surface
   popup layer — never GtkDropDown, whose popover is a separate surface.
 - **Focus-loss dismiss** (layer-shell): `EventControllerMotion` tracks `pointerInside`
@@ -684,7 +698,7 @@ Five rules the moves follow:
   point is to shrink one struct should not also rewrite every caller.
 - **A field that serves every view stays on `Window`, even when it looks like
   it belongs to one.** `headerTelemetry` was grouped under the custom view's
-  fields and is the *header's* label, shown on all five; `telemetryGen` and
+  fields and is the *header's* label, shown on every drawer view; `telemetryGen` and
   `telemetryBusy` drive the get-state poll, which runs for as long as the
   drawer is visible whichever view is showing (the dashboard's own loop is
   separate because it reads `telemetry-history`). Moving either into
@@ -950,18 +964,16 @@ reorder, where one containing a whole editor is not. What it left behind was
 dump byte-identical; the entries below that describe the drawer/hosted split
 are history now — the editor has only the hosted layout.
 
-**The gamescope path is unverified**: there is no Gaming Mode session on the
-development machine, so it compiles and is structured correctly but has not been
-seen working. It needs a hardware pass before release.
+**The gamescope path was first run on hardware by Jeff on 2026-11-15**: the
+hosted window and the larger UI worked; the refresh-rate card, the missing way
+into the window by controller, and the missing window controls were fixed the
+same day and need a re-check there (root CLAUDE.md, Open work item 2).
 
-**Two of the four specified pages are absent, not stubbed.** Settings' api
-prerequisites have both landed (`api.ToggleInfo.Description`,
-`api.State.Features`); the page itself waits on Jeff's design pass, since its
-whole content is rendering the device's toggles and inventing that layout ahead
-of the pass would be designing it twice. Quickbar customization needs a
-`gui.toml` writer and a reorder affordance that works on a controller. A tab
-onto an empty page is the same trap as a device document declaring a capability
-nothing reads.
+**All four specified pages exist now.** At the time of writing, Settings and
+quickbar customization were left out rather than stubbed — a tab onto an empty
+page is the same trap as a device document declaring a capability nothing
+reads. Both have since landed: the Settings tab (`settingsview.go`) and its
+QUICKBAR card (`quickbar.go`, saved to config.toml, not gui.toml).
 
 **`VOLTAIRE_GUI_OPEN_FULL=1` opens it at startup**, for the same reason
 `VOLTAIRE_GUI_DUMP_FOCUS=1` exists: the window is otherwise reachable only by
@@ -1207,8 +1219,8 @@ is achieved is load-bearing:
   only place in the GUI that offers firmware toggles. `buildToggle`, the two
   `*Switch` fields, `syncOverdrive`/`syncBootSound` and the two named sends went
   with them, leaving `sendFeatureSet(id, value)` as the GUI's only toggle write
-  path. The bottom bar is the theme button alone, and the `main` focus line is
-  42 → 40 items: the first deliberate re-baseline of the *drawer's* fingerprint,
+  path. The bottom bar was then the theme button alone, and the `main` focus line
+  went 42 → 40 items (since 41: the expand button joined it on 2026-11-15): the first deliberate re-baseline of the *drawer's* fingerprint,
   with the other six lines byte-identical.
 - **Switch styling moved from `.bottom-bar switch` to `.drawer switch`** rather
   than being deleted with the widgets. It now covers this page and, incidentally,
@@ -1271,7 +1283,7 @@ is achieved is load-bearing:
   drew them; the estimate's suppressions (sub-0.5 W rates, answers past a day)
   are `profileui` constants with their reasons on them.
 
-The full window's Telemetry tab draws the daemon's sample history as a **row
+The full window's Dashboard tab draws the daemon's sample history as a **row
 of compact cards** — a `GtkFlowBox` of `.dash-card` tiles, one per measured
 quantity, each a header row (kind name left, live readout right) over a
 sparkline-height Cairo chart — refreshed while it is the visible page, at a
@@ -1630,7 +1642,8 @@ Functions used:
   `handleTDP` does `strconv.Atoi(req.Set)` before it looks at `pl1`/`pl2`/`pl3` and
   rejects the request with `TDP value must be an integer` if it is empty. `watts` is
   then used only as the default for any PL field left blank, so advanced mode passes
-  PL1 as the base value (`SendTdpSet(pl1, pl1, pl2, pl3, force)` in `sendTdp()`).
+  PL1 as the base value. The editor now goes through `customView.readTdpRequest()`
+  → `tdpRequest.send(plan)`, which calls `api.SendTdpSetFor` with the same rule.
 - `api.SendTdpReset() (bool, error)` — reset TDP to firmware defaults
 - `api.SendFanCurveSet(curve string) (bool, error)` — set custom fan curve ("temp:pwm,..." format)
 - `api.SendFanCurveReset() (bool, error)` — reset fan curves to auto
@@ -1728,7 +1741,8 @@ executed.
 - **GDK_SCALE in gamescope** — causes double scaling (GTK scales buffer, then gamescope
   scaler scales again). Use manual CSS scaling via `scaledCSS()` instead.
 - **GtkDropDown in gamescope** — popup list is a separate X11 window. Use buttons or
-  radio buttons instead. Profile selector uses `gtk.Button` with CSS `.active` class.
+  radio buttons instead — or the in-surface `dropdown` (`popup.go`), which every
+  selector now uses.
 - **CheckButton/Switch touch in gamescope** — GTK4's CheckButton and Switch use an
   internal BUBBLE-phase GestureClick, which fails for touch input in gamescope/XWayland.
   Button widgets use CAPTURE phase and work fine. Workaround: `addTouchActivate()` in
@@ -1747,22 +1761,28 @@ Feature-complete for both KDE and gamescope modes:
 - Single-instance activate guard (re-activation toggles instead of building a second drawer)
 - GTK_A11Y=none for systemd AT-SPI timeout prevention
 - RGB lighting controls (mode, color presets + custom chooser/HSL picker, speed, brightness)
-- Profile switching via buttons (quiet/balanced/performance/custom)
+- Profile switching: firmware buttons + a Custom picker dropdown (drawer); the
+  editor on the full window's Profiles tab
 - Custom profile view with:
   - TDP control: basic (single watt slider) and advanced (PL1/PL2/PL3) modes
   - Fan curve editor: Cairo graph with drag interaction, sized by the device's fans.points/pwm_max over its temp_min–temp_max axis
   - Undervolt: CPU Curve Optimizer slider (inside advanced TDP box, hidden when
     `ryzen_smu` unavailable). Slider shows 0 when not on custom profile.
     iGPU CO is not supported on Strix Halo.
-  - Telemetry: APU temp + fan RPM in header and custom view, polled every 1s
-  - Separate save/reset buttons for TDP, fans, and undervolt
+  - One commit bar (Apply/Save Changes, Reset All) with per-card resets
+- Live CPU temp + fan RPM in the drawer header, polled every 1s; the Dashboard's
+  eight telemetry cards over up to an hour of history
+- The full window: Dashboard, Profiles and Settings tabs, its own title row and
+  window controls, hosted inside the gamescope surface in Gaming Mode
+- Quickbar customization (Settings tab QUICKBAR card; gui.toml override)
 - Battery charge limit slider
 - Firmware toggles (panel overdrive, boot sound) on the full window's Settings
   tab, rendered from the device document — never from a written list
 - Screen refresh rate on the full window's Dashboard (KDE; absent elsewhere)
 - 15 built-in themes with accent variants + custom theme.toml support
-- Gamescope view switching: theme picker view + HSL color picker view
-- Resolution-based CSS scaling for gamescope (Z13GUI_SCALE override)
+- Gamescope view switching for the theme picker; the HSL picker is a popup in
+  the in-surface layer, shared by both surfaces
+- Resolution-based CSS scaling for gamescope (VOLTAIRE_GUI_SCALE override)
 - Split-level logging (app=Info, GTK=Error; `-d` enables all Debug)
 - goreleaser + GitHub Actions release pipeline
 - systemd user service with optional gamescope-environment loading

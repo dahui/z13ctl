@@ -454,9 +454,9 @@ outside.
       change the same toggle from the CLI with the tab open: **the switch moves
       within a second**, which is the `state-changed` broadcast all three toggle
       write paths now emit. Set both back to preference afterwards.
-- [ ] The drawer's bottom bar holds **only** the theme button now: the two
-      firmware switches moved to this tab, and the drawer's gamepad footer is
-      one item wide.
+- [ ] The drawer's bottom bar holds the theme button and the expand button
+      only: the two firmware switches moved to this tab, and the drawer's
+      gamepad footer is two items wide (`15:0:footer 15:1:footer`).
 
 ### The Dashboard's controls
 

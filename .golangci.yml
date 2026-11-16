@@ -18,6 +18,8 @@ linters:
           severity: warning
         - name: unused-parameter
           severity: warning
+        - name: package-comments
+          severity: warning
     gocritic:
       enabled-tags:
         - diagnostic

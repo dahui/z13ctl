@@ -400,8 +400,9 @@ udev so the rules take effect immediately.
 
 Also installs ` + servicePath + `, a small systemd oneshot that
 runs 'chgrp' and 'chmod g+w' at boot on the battery charge threshold, the
-asus-armoury firmware-attributes, the PPT power limit attributes, and the
-ryzen_smu files. This is required because those attributes are created late in
+asus-armoury firmware-attributes, the PPT power limit attributes, the cpufreq
+boost switch and the ryzen_smu files, and grants read-only access to the
+powercap RAPL energy counter used for package-power telemetry. This is required because those attributes are created late in
 the asus_nb_wmi kernel driver's probe() sequence (after all udev events have
 already fired), or live outside any udev subsystem.
 

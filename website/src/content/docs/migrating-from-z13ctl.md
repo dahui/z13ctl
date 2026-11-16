@@ -6,7 +6,7 @@ description: What the Voltaire 2.0 rename means for z13ctl and z13gui users — 
 **Voltaire 2.0 is z13ctl 2.0.** The z13ctl CLI/daemon and the z13gui overlay
 merged into one project and took one name. Nothing about the hardware support
 changed, the same people maintain it, and the version numbers continue where
-z13ctl's left off — 2.0 follows 1.3.
+z13ctl's left off — 2.0 follows 1.4.
 
 Upgrading is designed to be uneventful: install the voltaire packages, and
 your settings, profiles, and running clients carry over. This page says

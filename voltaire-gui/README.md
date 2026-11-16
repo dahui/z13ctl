@@ -17,19 +17,24 @@ through the voltaire daemon.
 
 ## Install
 
+`voltaire-gui` ships in the same package as the `voltaire` CLI and daemon, so
+installing Voltaire installs both:
+
 ```sh
 # Arch Linux (AUR)
-yay -S voltaire-gui-bin
+yay -S voltaire-bin
 
 # Debian / Ubuntu
-sudo apt install ./voltaire-gui_*.deb
+sudo apt install ./voltaire_*.deb
 
 # Fedora / RHEL
-sudo dnf install ./voltaire-gui_*.rpm
+sudo dnf install ./voltaire_*.rpm
 
-# Manual (from release tarball)
-tar xzf voltaire-gui_*_linux_amd64.tar.gz
+# Manual (from release tarball, which carries both binaries)
+tar xzf voltaire_*_linux_amd64.tar.gz
+sudo install -Dm755 voltaire /usr/local/bin/voltaire
 sudo install -Dm755 voltaire-gui /usr/local/bin/voltaire-gui
+sudo voltaire setup
 ```
 
 See the [Installation guide](https://dahui.github.io/voltaire/installation/)
@@ -40,10 +45,17 @@ for systemd service setup, source builds, and uninstall instructions.
 Press the **Armoury Crate button** on your Z13 to open the drawer. Press it
 again, click outside, or press Escape to close it.
 
-The drawer controls profiles (including custom TDP, fan curve, and undervolt),
-battery charge limit, RGB lighting (mode, color, speed, brightness), panel
-overdrive, and boot sound. All changes are sent to the voltaire daemon
-immediately and persist across reboots.
+The drawer holds the quick controls: firmware and custom profile selection,
+AC/battery autoswitch, battery charge limit and RGB lighting, with refresh rate
+and CPU boost available as extras. Which sections appear, and in what order, is
+yours to choose.
+
+**Double-press** the button, or tap the expand button at the bottom of the
+drawer, to open the full window. Its **Dashboard** charts live telemetry
+beside the same controls; **Profiles** edits custom profiles (power limits,
+fan curve, undervolt); **Settings** holds the firmware switches, the quickbar
+layout and voltaire's own preferences. All changes go to the voltaire daemon
+and persist across reboots.
 
 ## Documentation
 

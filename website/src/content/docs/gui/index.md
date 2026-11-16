@@ -5,7 +5,9 @@ description: The GTK4 overlay drawer for Voltaire on Wayland — features, displ
 
 `voltaire-gui` is a GTK4 overlay drawer for **Voltaire** on Wayland —
 graphical controls for the 2025 ASUS ROG Flow Z13 on Linux. Press the Armoury
-Crate button and it slides in from the right edge of the screen.
+Crate button and it slides in from the edge of the screen (the right, unless
+you [move it](/voltaire/gui/configuration/)); press it twice, or tap the drawer's
+expand button, for the full window.
 
 ## What voltaire-gui does
 
@@ -24,12 +26,21 @@ Crate button and it slides in from the right edge of the screen.
   advanced mode)
 - **Undervolt** — CPU Curve Optimizer offset (requires `ryzen_smu` kernel
   module; iGPU CO is not supported on Strix Halo)
-- **APU telemetry** — live temperature and fan RPM in the drawer's header, and
-  charted over time on the full window's Dashboard
-- **Battery charge limit** — set the charge cap (40–100%) from the drawer
+- **Telemetry dashboard** — live CPU temperature and fan RPM in the drawer's
+  header; the full window's Dashboard charts temperature, fans, power, battery,
+  load, clocks, memory and network over up to an hour of history
+- **Battery charge limit** — set the charge cap from the drawer (40–100% on the
+  Z13; the range comes from the device)
 - **RGB lighting** — mode, color, speed, and brightness for the keyboard
-  backlight and edge lightbar
-- **System toggles** — panel overdrive and boot sound on/off
+  backlight and edge lightbar; the full window shows one card per zone
+- **Refresh rate** — change the screen's rate, and optionally switch it with the
+  power source (KDE Plasma; not in Steam Gaming Mode, where Steam owns it)
+- **CPU boost** — turn boost clocks off and on; voltaire restores your choice
+  at every start
+- **Firmware switches** — panel overdrive and boot sound on the Z13, on the
+  full window's Settings tab
+- **Customisable drawer** — choose which sections appear and their order, from
+  the Settings tab or `gui.toml`, and which surface a single button press opens
 - **Theme picker** — 15 built-in themes with full custom theme support
 - **Gamepad navigation** — full D-pad + button control for Steam Gaming Mode
 

@@ -22,12 +22,13 @@ discards them, re-applies keyboard lighting when the detachable keyboard is
 reattached, and watches the Armoury Crate button.
 
 > [!TIP]
-> **New to Linux? Install voltaire-gui.** Most users (especially newcomers!)
+> **New to Linux? Use voltaire-gui.** Most users (especially newcomers!)
 > should use **voltaire-gui**, a touch-friendly graphical overlay that exposes
 > every voltaire feature (lighting, fan curves, TDP, undervolt, profiles,
-> battery limit) with no command line required. The raw `voltaire` CLI shines
-> for scripting and advanced tuning, but if you're not a Linux veteran,
-> install voltaire-gui alongside voltaire for a far smoother experience.
+> battery limit) with no command line required. It ships in the same package
+> as the `voltaire` CLI, so every install below includes it. The CLI shines
+> for scripting and advanced tuning; if you're not a Linux veteran, start with
+> the GUI.
 
 ## Install
 
@@ -44,6 +45,7 @@ sudo dnf install ./voltaire_*.rpm
 # Manual (from release tarball)
 tar xzf voltaire_*_linux_amd64.tar.gz
 sudo install -Dm755 voltaire /usr/local/bin/voltaire
+sudo install -Dm755 voltaire-gui /usr/local/bin/voltaire-gui
 sudo voltaire setup
 ```
 

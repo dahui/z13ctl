@@ -17,7 +17,8 @@ Press the **Armoury Crate button twice** — a normal double tap — or the
 **expand button** at the bottom of the drawer, beside the theme button, and the
 drawer is replaced by a full window: a desktop-style window with a **Dashboard** tab
 (charts and the everyday controls), a **Profiles** tab (the profile editor) and
-a **Settings** tab (the firmware switches). Switch pages with the tabs under the
+a **Settings** tab (preferences, the drawer's layout and the firmware
+switches). Switch pages with the tabs under the
 title row. The title row carries the window's own **minimize**, **maximize** and
 **close** buttons, the same on every desktop; drag it to move the window, and
 double-click it to maximize. Close the window with **Escape**, the close button,
@@ -302,8 +303,9 @@ firmware.
 
 ## The Settings tab
 
-The full window's **Settings** tab has two cards: **Voltaire**, for the app's
-own preferences, and **Firmware**, for the switches your machine exposes.
+The full window's **Settings** tab has three cards: **Voltaire**, for the
+app's own preferences, **Quickbar**, for which sections the drawer shows and in
+what order, and **Firmware**, for the switches your machine exposes.
 
 ### Which surface the button opens
 
@@ -315,6 +317,15 @@ gesture away.
 The change takes effect at once; there is nothing to restart and nothing to
 save. It is stored in `~/.config/voltaire/config.toml` as `button_press`, beside
 your theme.
+
+### The drawer's layout
+
+The **Quickbar** card lists every drawer section your machine supports, each
+with a switch to show or hide it and ▲/▼ to move it; the drawer changes as you
+go, and **Reset to default** puts the standard layout back. CPU boost and the
+refresh rate are available here as extra sections, off by default. See
+[Choosing which sections appear](/voltaire/gui/configuration/#choosing-which-sections-appear)
+for the details, including how to fix the layout by hand in `gui.toml`.
 
 ### Firmware switches
 

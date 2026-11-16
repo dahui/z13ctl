@@ -229,7 +229,7 @@ func TestResolveBrightness(t *testing.T) {
 		want int
 	}{
 		{
-			// The exact state z13ctl's per-zone off writes: LightingState{Enabled:
+			// The exact state a z13ctl 1.x per-zone off writes: LightingState{Enabled:
 			// false}, every other field zeroed. Adopting the 0 sent brightness 0 on
 			// the next apply, which is the hardware's off level — so re-enabling a
 			// zone left the keyboard dark while reporting success.

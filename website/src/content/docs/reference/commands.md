@@ -37,7 +37,7 @@ voltaire apply [flags]
 | `--color2` | `000000` | Secondary color for `breathe` mode: 6-digit hex or name |
 | `--mode` | `static` | Lighting mode (see table below) |
 | `--speed` | `normal` | Animation speed: `slow`, `normal`, `fast` |
-| `--brightness` | `high` | Brightness level: `off`, `low`, `medium`, `high` |
+| `--brightness` | `high` | Brightness level: `off`, `low`, `medium`, `high`, or a number from 0 to the device maximum (3 on the Z13) |
 | `--list-colors` | | Print all named colors with swatches and exit |
 
 **Modes:**
@@ -74,7 +74,7 @@ Set the brightness level without changing the current lighting mode or color.
 voltaire brightness <level>
 ```
 
-`<level>` is one of: `off`, `low`, `medium`, `high`
+`<level>` is one of `off`, `low`, `medium` (or `med`), `high` (or `max`), or a number from 0 to the device maximum (3 on the Z13).
 
 ```sh
 voltaire brightness medium
@@ -920,8 +920,10 @@ not require the daemon to be running.
 Install udev rules and a boot service granting a group read/write access to
 the ASUS HID devices, performance profile, battery charge limit, firmware
 attributes (boot sound, panel overdrive), hwmon fan curve attributes,
-asus-armoury PPT power limit attributes (and asus-nb-wmi's, as the fallback) for TDP control, and ryzen_smu sysfs
-files for undervolting (if the module is loaded).
+asus-armoury PPT power limit attributes (and asus-nb-wmi's, as the fallback)
+for TDP control, the cpufreq boost switch, ryzen_smu sysfs files for
+undervolting (if the module is loaded), and read-only access to the powercap
+RAPL energy counter for package-power telemetry.
 
 ```
 sudo voltaire setup [flags]
@@ -966,9 +968,11 @@ voltaire --no-button daemon   # without button watcher
 ```
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
-`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `fancurve`, `tdp`,
-`undervolt`, `status`) route through the daemon socket automatically. If the
-daemon is not running they fall back to direct hardware or sysfs access.
+`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `feature`, `cpuboost`,
+`fancurve`, `tdp`, `undervolt`, `tuning`, `status`) route through the daemon
+socket automatically. If the daemon is not running they fall back to direct
+hardware or sysfs access. `autoswitch` is the exception: it needs the daemon,
+which is what watches the power source.
 
 ## Colors
 

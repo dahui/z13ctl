@@ -143,7 +143,7 @@ render controls against, instead of hardcoding one device's numbers:
   "power":{"tdp_min":28,"tdp_max_safe":75,"tdp_max_forced":80,
            "interface":"asus-armoury",
            "pl2":{"min":32,"max":92},"pl3":{"min":45,"max":93},
-           "floor_curve":[{"temp":35,"pwm":127},{"temp":40,"pwm":127}, "..."],
+           "floor_curve":[{"temp":30,"pwm":127},{"temp":40,"pwm":127}, "..."],
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
   "profiles":{"names":["quiet","balanced","performance"],"default":"balanced",
               "entries":[{"name":"quiet","label":"Quiet"}, "..."]},
@@ -151,14 +151,22 @@ render controls against, instead of hardcoding one device's numbers:
               "modes":[{"name":"static","label":"Static","color":true},
                        {"name":"breathe","label":"Breathe","color":true,"color2":true,"speed":true}, "..."],
               "speeds":["slow","normal","fast"],"brightness_max":3},
-  "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool"},
-             {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool"}],
+  "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool","source":"core"},
+             {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool","source":"core",
+              "description":"Faster pixel response; may cause ghosting ..."}],
+  "cpu":{"boost":true},
   "undervolt":{"min":-40,"max":0},
   "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
   "telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs",
                "history_seconds":3600,"clock_max_mhz":5187,"temp_limit_c":100},
   "buttons":true,"button_label":"Armoury Crate button"}}
 ```
+
+`cpu.boost` says the machine has a global CPU boost switch, so the
+`cpuboost`/`cpuboost-get` commands work; the section is absent otherwise. Each
+toggle's `source` is `"core"` for one a compiled-in driver provides, or
+`"plugin:<id>"`, and is always present; `description` is prose to show beside
+the switch, absent when the device data has none.
 
 `buttons` says the daemon watches a hardware button (and emits the button
 events); `button_label` is what that button is called on this machine, written
@@ -253,9 +261,30 @@ source but no sample carries a reading, and the graph is hidden.
 `telemetry-history` returns what the daemon sampled at 1 Hz, oldest first:
 
 ```json
-{"ok":true,"history":[{"at":1786000000,"temp_c":44,"rpm":[2100,2050]},
-                      {"at":1786000001,"temp_c":45,"rpm":[2150,2100]}, "..."]}
+{"ok":true,"history":[{"at":1786000000,"temp_c":44,"rpm":[2100,2050],
+                       "package_power_w":18.4,"battery_level_pct":81,"cpu_util_pct":7, "...":0},
+                      {"at":1786000001,"temp_c":45,"rpm":[2150,2100], "...":0}, "..."]}
 ```
+
+Each sample carries whichever of these the device measures:
+
+| Field | Meaning |
+|---|---|
+| `at` | Unix seconds |
+| `temp_c`, `gpu_temp_c` | CPU (Tctl) and GPU edge temperature, °C |
+| `rpm` | every fan, in driver order |
+| `package_power_w`, `gpu_power_w`, `npu_power_w` | power draw, watts |
+| `battery_power_w`, `battery_level_pct` | battery flow (positive discharging) and charge |
+| `cpu_util_pct`, `gpu_util_pct`, `npu_util_pct` | utilisation, percent |
+| `cpu_clock_mhz`, `gpu_clock_mhz`, `mem_clock_mhz`, `npu_clock_mhz` | clocks, MHz |
+| `mem_used_mb`, `mem_total_mb`, `vram_used_mb`, `vram_total_mb` | system memory and VRAM carveout |
+| `net_rx_mbps`, `net_tx_mbps` | throughput over physical interfaces, MB/s |
+
+Presence follows what a zero would mean. Utilisation, battery, GPU/NPU power
+and network rates are sent whenever they were read, **zero included** — an idle
+NPU or a resting pack genuinely reads 0 — so their absence means "not
+measured". Temperatures, clocks and the remaining fields are omitted when zero,
+since a zero there is never a reading.
 
 Omit `seconds` for the whole retained window (`telemetry.history_seconds`).
 **Plot against `at` — Unix seconds — never against the array index.** Samples
@@ -537,13 +566,19 @@ downgrade to 1.x still finds its state where it expects it.
 The file is written atomically after every successful command. It stores:
 
 - `lighting` — mode, color, color2, speed, brightness, enabled flag
-- `devices` — per-device overrides (keyboard/lightbar can have independent state)
+- `devices` — per-device overrides (keyboard/lightbar can have independent state).
+  Turning one zone off keeps its effect with `enabled` false, so
+  `voltaire brightness <level> --device <zone>` brings back that zone's own
+  effect. (Daemons before 2.0 cleared the rest of the entry on a per-zone off.)
 - `profile` — the active profile: a firmware profile, or a custom profile name
 - `battery_limit` — last-set charge limit
 - `custom_profiles` — saved custom profiles keyed by name, each holding its own
   `fan_curve`, `tdp`, and `undervolt`. This is the source of truth for custom
   settings.
 - `autoswitch` — `enabled`, and the `ac` and `battery` profile targets
+- `cpu_boost` — present only once boost has been switched off or on through
+  voltaire; a stored `false` is replayed at every daemon start, because cpufreq
+  comes up boosting on every boot
 - `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit
   of clients and daemons from before named profiles existed. They carry the
   active custom profile's settings, or `custom`'s when a firmware profile is
@@ -566,12 +601,14 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `fan_rpm` | `rpm[0]`, kept for clients written before multi-fan support |
 | `package_power_w` | current CPU package draw in watts; absent when unavailable |
 | `battery_power_w` | battery flow in watts, **positive discharging**, negative charging |
-| `features` | every firmware toggle's current value, keyed by id |
+| `features` | every firmware toggle's current value, keyed by id; a toggle that could not be read is **absent**, not zero |
+| `cpu_boost` | whether CPU boost is on, read from the kernel; **absent** when unreadable or on a machine without the switch |
+| `telemetry` | the newest sample, in the same shape as a `telemetry-history` entry: the live edge of the series. Absent when the sampler has nothing recent |
 | `battery_level` | the pack's current charge, percent |
 | `battery_state` | `charging`, `discharging`, `full`, `not-charging` |
 | `on_ac` | whether the charger is plugged in |
 | `source_known` | whether `on_ac` reflects a real reading |
-| `undervolt_available` | whether the `ryzen_smu` kernel module is present and working |
+| `undervolt_available` | whether the `ryzen_smu` kernel module is present — and, once an undervolt has been written, whether that write worked (the check is itself a Curve Optimizer write, so it is not made just to answer this) |
 | `pending_reboot` | whether a changed firmware setting needs a restart; **absent** when the device cannot say |
 | `charger` | which power input is supplying the machine: `adapter`, `usb-c`, or `none`; **absent** when the device cannot say |
 | `tdp_limits` | the power limits the kernel accepts: `backend` (`asus-armoury` or `asus-nb-wmi`), `pl1`/`pl2`/`pl3` as `{min,max}` watts, and `safe_max` (the highest PL1 without `force`). Introduced for z13ctl 1.4 clients, and the live copy of the [`device-get` power section](#device-capabilities)'s ranges: overlay it on each refresh to follow a change of power source or interface. **Absent** while the embedded controller is not answering, and when no power-limit interface is known — keep the last ranges then |
@@ -1090,7 +1127,7 @@ Then confirm voltaire can read the button device:
 
 ```sh
 journalctl --user -u voltaire.service -f
-# Should show: watching Armoury Crate button (shared, non-exclusive) path=/dev/input/eventN
+# Should show: watching hardware button (shared, non-exclusive) path=/dev/input/eventN kind=armoury-crate
 ```
 
 Alternatively, disable the button watcher entirely and let InputPlumber handle

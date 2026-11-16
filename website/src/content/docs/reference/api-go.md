@@ -198,7 +198,7 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
 <a name="FormatFanCurve"></a>
-## func [FormatFanCurve](<https://github.com/dahui/voltaire/blob/main/api/types.go#L416>)
+## func [FormatFanCurve](<https://github.com/dahui/voltaire/blob/main/api/types.go#L423>)
 
 ```go
 func FormatFanCurve(points []FanCurvePoint) string
@@ -1950,7 +1950,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/voltaire/blob/main/api/types.go#L407-L410>)
+## type [FanCurvePoint](<https://github.com/dahui/voltaire/blob/main/api/types.go#L414-L417>)
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -1962,7 +1962,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L425-L428>)
+## type [FanCurveState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L432-L435>)
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -2063,9 +2063,11 @@ type LightingMode struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L397-L404>)
+## type [LightingState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L404-L411>)
 
 LightingState captures all parameters needed to reproduce one lighting zone.
+
+A disabled state \(Enabled false\) keeps the effect it had, so turning a zone or the whole device back on can resume it: a daemon from 2.0 on stores every field of a per\-zone off. Daemons before 2.0 stored a per\-zone off as \{Enabled: false\} with every other field zeroed, so a client that may talk to one must not trust the other fields of a disabled state — in particular its Brightness, where 0 is the hardware's off level.
 
 ```go
 type LightingState struct {
@@ -2394,7 +2396,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPLimits"></a>
-## type [TDPLimits](<https://github.com/dahui/voltaire/blob/main/api/types.go#L466-L472>)
+## type [TDPLimits](<https://github.com/dahui/voltaire/blob/main/api/types.go#L473-L479>)
 
 TDPLimits describes the power limits the running kernel accepts, so a client can bound its controls instead of discovering the range from an error. It is reported by get\-state and never stored.
 
@@ -2413,7 +2415,7 @@ type TDPLimits struct {
 ```
 
 <a name="TDPRange"></a>
-## type [TDPRange](<https://github.com/dahui/voltaire/blob/main/api/types.go#L475-L478>)
+## type [TDPRange](<https://github.com/dahui/voltaire/blob/main/api/types.go#L482-L485>)
 
 TDPRange is an inclusive range in watts.
 
@@ -2425,7 +2427,7 @@ type TDPRange struct {
 ```
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L439-L445>)
+## type [TDPState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L446-L452>)
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -2625,7 +2627,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L433-L436>)
+## type [UndervoltState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L440-L443>)
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

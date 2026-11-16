@@ -457,11 +457,25 @@ func (d *Daemon) handleOff(req request) response {
 	if req.Device != "" {
 		slog.Info("off", "device", req.Device)
 		if !strings.HasPrefix(req.Device, "/") {
-			// Named per-device off: save disabled state for this zone.
+			// Named per-device off: keep the zone's effect and flip Enabled,
+			// as the all-device branch below does. Storing a bare
+			// {Enabled: false} threw away mode, colours, speed and
+			// brightness, so get-state served a zone with no effect (a client
+			// re-enabling it at brightness 0 left the backlight dark while
+			// reporting success) and `brightness --device` could only bring
+			// the zone back on the all-device effect, never its own. A zone
+			// with no entry of its own was showing the all-device state, so
+			// that is what it keeps.
 			if d.state.Devices == nil {
 				d.state.Devices = make(map[string]api.LightingState)
 			}
-			d.state.Devices[req.Device] = api.LightingState{Enabled: false}
+			ls, ok := d.state.Devices[req.Device]
+			if !ok {
+				ls = d.state.Lighting
+			}
+			ls = normalizeLightingState(ls, d.state.Lighting)
+			ls.Enabled = false
+			d.state.Devices[req.Device] = ls
 			if err := saveState(cloneState(d.state)); err != nil {
 				slog.Warn("failed to save state", "err", err)
 			}

@@ -21,11 +21,15 @@ integrations can import it without pulling in the CLI's dependencies.
 `voltaire` builds with `CGO_ENABLED=0`; `voltaire-gui` (the `voltaire-gui/`
 main package plus everything under `internal/gui`) needs CGO and the GTK4
 headers. Every rule worth testing on the GUI side therefore lives in a pure-Go
-package — `internal/limits`, `lighting`, `theme`, `colorconv`, `focusgrid`,
-`keyrepeat`, `panelgeom`, `uiscale`, `togglegate`, `startup`, `apiresult` —
-and the GTK files are thin adaptors that read widgets, call out, and apply the
-answer. That is not a style preference: `internal/gui` is excluded from the
-test run entirely, so logic left in there is unverifiable by construction.
+package — `internal/limits`, `lighting`, `profileui`, `settingsui`,
+`controls`, `mainwin`, `display`, `telemetryplot`, `theme`, `colorconv`,
+`focusgrid`, `keyrepeat`, `panelgeom`, `popupgeom`, `uiscale`, `togglegate`,
+`startup`, `apiresult` — and the GTK files are thin adaptors that read
+widgets, call out, and apply the answer. That is not a style preference: the
+GTK code in `internal/gui` cannot compile without the headers, so it is
+excluded from the test run, and logic left in there is unverifiable by
+construction. (The cgo-free `internal/gui/gamepad` and its `hidblocker` are
+the exception, and do run.)
 
 ## Development setup
 
@@ -57,11 +61,15 @@ sudo dnf install gtk4-devel gtk4-layer-shell-devel
 ```
 
 **BPF development (optional — only for modifying the gamepad hidraw
-blocker):** requires `clang`, `bpftool`, and kernel BTF support.
+blocker):** requires `clang`, `bpftool`, and kernel BTF support. The generated
+bindings (`blocker_x86_bpfel.go` / `.o`) are committed, so this is needed only
+when `blocker.bpf.c` changes:
 
 ```sh
-make vmlinux   # generate kernel BTF header
-make generate  # compile BPF and generate Go bindings
+cd internal/gui/gamepad/hidblocker
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+go generate .   # runs bpf2go (see gen.go)
+rm vmlinux.h
 ```
 
 ## Before submitting a pull request
@@ -81,16 +89,20 @@ Tests do not require hardware or GTK. Pull requests must pass `make test` and
 concurrency invariants that only the race detector enforces.
 
 `make test` derives its package list from `go list ./...` minus
-`internal/gui` and `voltaire-gui`, so a new pure package is picked up
-automatically — there is nothing to register.
+`internal/gui` and `voltaire-gui`, with the cgo-free `internal/gui/gamepad/...`
+added back, so a new pure package is picked up automatically — there is
+nothing to register.
 
 ## Testing notes
 
 - `internal/aura` — fully unit-testable via mock writers; covers every packet
   type
-- `internal/cli` — a fake sysfs tree (`sysfs_fake_test.go`) backs the hwmon,
-  platform-profile, PPT, battery, firmware-attribute, and `ryzen_smu`
-  helpers; also covers color parsing and dry-run output
+- `internal/drivers/asusz13` — a fake sysfs tree (`sysfs_fake_test.go`)
+  backs the hwmon, platform-profile, PPT, battery, firmware-attribute, and
+  `ryzen_smu` drivers, with a `fakeSMU` mailbox
+- `internal/safety` — the fan-floor rules and the raise/release ordering,
+  against a call-order-recording fake driver
+- `internal/cli` — color parsing and dry-run output
 - `internal/hid` — tests cover sysfs parsing; writes are tested via
   pipe-backed mock devices
 - `internal/daemon` — state persistence, `cloneState`, the `saveState` race
@@ -112,15 +124,17 @@ automatically — there is nothing to register.
   integration-tested manually against hardware
 
 :::caution[Tests must never touch real hardware]
-`internal/cli` writes straight to sysfs and `SetProfile` shells out to
-`powerprofilesctl`. Two seams exist so tests cannot reach either: the fake
-sysfs tree redirects every path, and `ppdRunner` / `smuReadFile` /
+`internal/drivers/asusz13` writes straight to sysfs and `SetProfile` shells
+out to `powerprofilesctl`. Two seams exist so tests cannot reach either: the
+fake sysfs tree redirects every path, and `ppdRunner` / `smuReadFile` /
 `smuWriteFile` are swappable. Both were added after tests changed the
-developer's live power profile and TDP.
+developer's live power profile and TDP. The package's `TestMain` also points
+every writable root at a nonexistent directory, so a test that forgets the fake
+fails instead of writing.
 
-`internal/daemon` handlers call `internal/cli` directly, and its path vars are
-unexported, so **daemon tests must stay on validation paths that return before
-any hardware access**. A daemon test that gets past `handleTDP` validation
+`internal/daemon` handlers reach that driver through the assembled
+`device.Device`, and its path vars are unexported, so **daemon tests must stay
+on validation paths that return before any hardware access**. A daemon test that gets past `handleTDP` validation
 will rewrite the machine's actual power limits.
 :::
 
@@ -146,9 +160,10 @@ git tag api/v2.x.y && git push origin api/v2.x.y  # tag api/ first
 git tag v2.x.y     && git push origin v2.x.y       # then tag main module
 ```
 
-GoReleaser handles binary builds, the `.pkg.tar.zst`, `.deb`, and `.rpm`
-packages for both binaries, AUR publishing, and GitHub Release creation
-automatically when the main module tag is pushed.
+GoReleaser builds both binaries, the one `.pkg.tar.zst`, `.deb` and `.rpm`
+package carrying them, and the GitHub Release when the main module tag is
+pushed; the release workflow then patches and pushes the `voltaire-bin` AUR
+package.
 
 The pre-rename tags (`v1.x`, `api/v1.x`) are frozen and must never be deleted
 or reused — the Go module proxy serves them to pre-rename importers through

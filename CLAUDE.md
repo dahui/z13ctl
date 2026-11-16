@@ -23,13 +23,22 @@ api/                         Public client API submodule (github.com/dahui/volta
                              CustomProfile, AutoswitchState; IsCustomProfile/InCustomProfile/ActiveCustomProfile
   device.go                  DeviceInfo + section types — the device-get capability/limits document
   client.go                  SocketPath, Send*, Subscribe (all client functions)
+  events.go                  event names (gui-toggle, gui-open-full, power-source, state-changed)
+  profilename.go             ValidateProfileName, MaxProfileNameLen — the one copy of the name rules
   example_test.go            testable examples for all Send* and Subscribe functions
 main.go                      entry point (voltaire CLI/daemon)
 voltaire-gui/                entry point for the GUI binary (built to voltaire-gui/voltaire-gui
   main.go                    locally — a root dir and a root binary cannot share the name);
                              runs theme.MigrateFromZ13gui() before anything reads config
 cmd/                         Cobra subcommands
-  root.go                    root command, Version var, dryRunFlag, deviceFlag, noButtonFlag, noSleepReleaseFlag
+  root.go                    root command (Version from internal/version), dryRunFlag, deviceFlag,
+                             noButtonFlag, noSleepReleaseFlag
+  hardware.go                how the CLI reaches the assembled device: readLive/daemonState (EC
+                             readings come from the daemon while it is up), liveFanCurve
+  lighting.go                shared lighting flag parsing (parseLightingBrightness: names or 0..max)
+  tuning.go                  tuning --reset (fan curve + power limits + CO in one ordered operation)
+  legacyname.go              warnIfLegacyName: stderr notice when invoked as z13ctl
+  live_test.go               the ecWedged gate on status/fancurve --get (negative control run)
   apply.go                   apply lighting effect
   brightness.go              set brightness only
   daemon.go                  start the daemon (voltaire daemon)
@@ -61,18 +70,17 @@ internal/
                              M1 moved everything that touches sysfs out of here;
                              see "Where the hardware code lives" below.
     doc.go                   package doc file only
-    colors.go                named color table, ResolveColor, PrintColorList
-    parse.go                 ParseColor, ParseBrightness, ParseFanCurve
+    colors.go                ResolveColor/ColorDisplay/PrintColorList over aura's named table
+    parse.go                 ParseColor, ParseFanCurve, TDPStateFor, ValidateProfileName (wrapper)
     dryrun.go                DryRunApply, DryRunOff, DryRunBrightness, DryRunProfile, DryRunProfileCreate/Save/Delete,
                              DryRunAutoswitch, DryRunBatteryLimit, DryRunBootSound, DryRunPanelOverdrive, DryRunFanCurve,
                              DryRunFanCurveReset, DryRunTdp, DryRunTdpReset, DryRunUndervolt, DryRunUndervoltReset
   daemon/                    long-running daemon (socket server, state, button watcher)
-    daemon.go                Package doc, Daemon struct, Options, Run(), getListener() (socket activation)
+    daemon.go                Package doc, Daemon struct, Options, Run(), getListeners() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
     button.go                button watcher + pure pressTick seam: every press emits gui-toggle,
                              a second within [50ms, 400ms] also emits gui-open-full
     button_test.go           pressTick decision table (no evdev device, no clock)
-    button_test.go           device discovery + read-loop filtering (fake evdev device)
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
                              stands down while d.suspending, with a tick-counted staleness ceiling
@@ -108,7 +116,10 @@ internal/
     wakeup.go                wake report: per-source wakeup counters + SCI/GPE counts snapshotted before the
                              suspend is handed to logind, diffed and logged on resume (issue #24)
     wakeup_test.go           diff arithmetic + readers against a fake /sys/class/wakeup and /proc/interrupts
-    client.go                Redirect comment only — client functions live in api/
+    unitlinks.go             removes pre-2.0 user-unit enable symlinks the old packages left behind
+    profile_test.go / undervolt_gate_test.go / undervolt_reset_test.go / release_guard_test.go /
+    toggle_test.go / events_test.go / hotplug_test.go / deviceinfo_test.go / devices_test.go
+                             the guards the decision entries below cite by name
   hid/
     doc.go                   package doc file only
     device.go                Device type, Known (zone name + USB vendor:product, passed in by
@@ -155,7 +166,7 @@ internal/
       tdp.go                 PPT interface choice (asus-armoury, else asus-nb-wmi) and I/O: ReadAllPPT,
                              SetTDPState (clamps into armoury's range), PlanTDPWrites; the envelope overlay
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
-      undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, ValidateCOValues;
+      undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, CurveOptimizerCommand;
                              the per-CPU command table (coPlatforms, from ryzenadj)
       pmtable.go             pure pm_table parser (per-version layout); nothing reads the table —
                              fixtures under load in testdata/
@@ -181,7 +192,8 @@ internal/
   controls/                  M4: which drawer sections exist, what each needs from the device,
                              and their order — Resolve(gui.toml, device) + Layout (headings and
                              separators). Pure; internal/gui holds only ID→builder.
-  mainwin/                   M4: the full window's page list (Telemetry, Profiles, Settings)
+  mainwin/                   M4: the full window's page list (Dashboard, Profiles, Settings), its
+                             window controls (Controls(hosted))
                              and opening geometry — Resolve(device)
                              over the same capabilities controls uses (SupportsAll, so the two
                              cannot disagree) + Fit(screen), which clamps each axis independently.
@@ -262,8 +274,8 @@ contrib/
                              PPT, and ryzen_smu sysfs at boot (keep in sync with buildServiceContent)
   udev/                      packaged copies: 99-voltaire.rules (sysfs grants),
                              99-voltaire-gamepad.rules (gamepad read access)
-  nfpm/                      package scripts: postinstall/preremove/postremove for voltaire,
-                             gui-* for voltaire-gui (each migrates the pre-rename unit)
+  nfpm/                      package scripts: postinstall/preremove/postremove for the one
+                             voltaire package (both binaries; each migrates the pre-rename units)
   aur/                       single voltaire-bin PKGBUILD (both binaries) + its
                              .install; release.yml patches the placeholders and pushes
                              on tag. provides/conflicts cover all four old names;
@@ -293,10 +305,12 @@ prefix:
 | `cli.CheckFanCurveFloor` | `safety.Engine.CheckFanFloorRelease` (live) / `safety.CheckCurveAgainstTDP` (pure) |
 | `cli.CheckFanFloorRelease` / `…At` | `safety.Engine.CheckFanFloorRelease` / `safety.CheckFanFloorReleaseAt` |
 | `cli.FanCurveForTDP`, `cli.FloorPWMAt`, `cli.FloorAdjustsCurve` | `safety.*` (same names) |
-| `cli.HighTDPFanCurve`, `cli.TDPMaxSafe`, `cli.HighTDPMinPWM` | `driver.PowerEnvelope` fields, from the device TOML |
+| `cli.HighTDPFanCurve`, `cli.TDPMaxSafe`, `cli.HighTDPMinPWM` | `driver.PowerEnvelope.FloorCurve` and `.TDPMaxSafe`, from the device TOML; `HighTDPMinPWM` is the floor curve's first PWM (`limits.HighTDPMinPWM` on the GUI side) |
 | `cli.StockProfilePPT` | `driver.PowerEnvelope.StockProfilePPT`, loaded by `internal/device/config.go` |
-| `cli.SetProfile`, `cli.IsStockProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/asusz13` |
-| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.LiveFanCurve`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` (`SetBothFanCurves`/`ReadBothFan*` are now `SetFanCurves`/`ReadFanCurves`/`ReadFanRPMs`, over every enumerated channel) |
+| `cli.SetProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/asusz13` |
+| `cli.IsStockProfile` | `d.isFirmwareProfile` in the daemon (the device's own list); `api.IsStockProfileName` survives, deprecated, for 1.x clients |
+| `cli.LiveFanCurve` | `FanController.LiveCurve()`, wrapped for the CLI by `liveFanCurve(hw)` in `cmd/hardware.go` |
+| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` (`SetBothFanCurves`/`ReadBothFan*` are now `SetFanCurves`/`ReadFanCurves`/`ReadFanRPMs`, over every enumerated channel) |
 | `cli.SMUAvailable`, `cli.SMUProbeUndervolt`, `cli.SetCurveOptimizer`, `cli.ResetCurveOptimizer` | `internal/drivers/asusz13` |
 | `cli.ValidateProfileName` | still `cli` — a wrapper delegating to `api.ValidateProfileName` |
 | `cli.ParseFanCurve`, `cli.ParseColor`, `cli.ResolveColor`, `cli.DryRun*` | still `cli` — presentation, no hardware |
@@ -331,7 +345,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   through raw `hid`/`aura` calls. The init and power quirks stay in `aura` with
   no flag: only the Z13's variant is known, so a flag would have no second
   branch to test.
-- `profile.go` and `batterylimit.go` use path discovery via `/sys/class/*/` rather
+- Profile and battery-threshold paths (`asusz13/sysfs.go`) use discovery via `/sys/class/*/` rather
   than hardcoded paths, so udev-chmoded device inodes are used (not the ACPI alias).
 - `setup.go` uses a two-part permission strategy: udev rules for boot persistence
   (real ADD events) + direct `chgrp`/`chmod` in Go for immediate effect (systemd 259+
@@ -478,7 +492,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   the map or dereferencing a pointer under the lock — a concurrent map
   read/write, which Go turns into an unrecoverable crash rather than a catchable
   panic. `internal/daemon/clone_test.go` guards this under `-race`.
-- **Button watcher**: Finds "Asus WMI hotkeys" input device by sysfs name
+- **Button watcher** (`driver.Buttons`, implemented by `internal/drivers/evdevkey`;
+  the device name, keycode and label are device data): finds the "Asus WMI hotkeys" input device by sysfs name
   (`/sys/class/input/*/device/name`), opens it, and listens for KEY_PROG3 (code 202)
   key-down events. KEY_PROG3 is the Armoury Crate button keycode on the 2025 ROG
   Flow Z13 (differs from older ASUS models that use KEY_PROG1). Forwards press
@@ -490,7 +505,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   tablet-mode transitions away from libinput, so attaching the detachable cover
   after login leaves the desktop in tablet mode and the cover keyboard dead until
   the session restarts. The watcher reads shared; evdev delivers to every
-  non-exclusive reader. This is enforced structurally: `runButtonLoop` takes an
+  non-exclusive reader. This is enforced structurally: evdevkey's `runLoop` takes an
   `eventDevice` interface that deliberately has no `Grab` method, so reintroducing
   the grab is a compile error. Trade-off: the keypress also reaches the desktop,
   and a foreign exclusive grab now fails silently rather than logging EBUSY.
@@ -579,7 +594,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   the obvious `for range ch { toggle() }` — reasonable when only one event
   existed — would toggle its window on every power-source change. A subscriber
   that did *not* want an event must survive the broadcast rather than being
-  pruned. Events are `gui-toggle`, `power-source` and `state-changed`
+  pruned. Events are `gui-toggle`, `gui-open-full`, `power-source` and `state-changed`
   (`api/events.go`), and carry **no payload**: the name says what happened and
   `get-state` answers with current truth, whereas a payload describes the moment
   the event was queued. That is also why `api.Subscribe` keeps its
@@ -613,16 +628,16 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   connection cannot reach it — so cancel closes a `done` channel that the send
   selects on, guarded by `sync.Once` for idempotency. Without it, any caller that
   stops consuming leaks the goroutine and never closes the channel.
-- **`applyLightingState` and `d.dev` require `d.mu`.** The hotplug watcher closes
-  and replaces `d.dev`; `applyLightingState` also reads the `d.state.Devices`
+- **`applyLightingState` and the lighting driver's handle require `d.mu`.** The
+  hotplug watcher reopens it (`d.hw.Lighting.Reopen()`); `applyLightingState` also reads the `d.state.Devices`
   map that socket handlers mutate. The resume watcher previously read both
   unlocked, racing the hotplug watcher over a live HID handle.
 - **IPC library**: Hand-rolled JSON. gRPC/drpc require protobuf code generation;
   `net/rpc` lacks streaming; Twirp is HTTP-only. Decky plugin Python backend connects
   via `asyncio.open_unix_connection()` + `json` — zero extra deps.
-- **Shared sysfs helpers**: `internal/cli/sysfs.go` contains `FindProfilePath()`,
-  `FindBatteryThresholdPath()`, `FindBootSoundPath()`, and `FindPanelOverdrivePath()`,
-  used by both `cmd/` and `internal/daemon/server.go` to avoid duplication. Daemon
+- **Shared sysfs helpers**: `internal/drivers/asusz13/sysfs.go` holds the path
+  discovery (`FindProfilePathFor`, `FindBatteryThresholdPath`, …); `cmd/` and the
+  daemon reach it through the assembled `device.Device`, not directly. Daemon
   GET handlers read sysfs directly (not cached state) for accuracy when another
   process has modified the setting.
 - **asus-armoury firmware-attributes**: The `asus_armoury` kernel module (mainline
@@ -854,12 +869,12 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `ApplyTDPSafely`, which fails closed: if the fan write fails the TDP is not
   written at all. Passing `nil` for the curve asks for `HighTDPFanCurve` wholesale
   and is right only when there genuinely is no curve; `cmd/tdp.go` has no profile
-  state and so passes `cli.LiveFanCurve()`, or a `tdp --set` would discard a
+  state and so passes `liveFanCurve(hw)`, or a `tdp --set` would discard a
   curve the user set moments earlier.
   Release order is the mirror image — lower power *first*, then release the
   fans (`handleTDPReset`, the stock-profile branch, `cmd/tdp.go` reset), so the
-  machine is never at a high limit with no floor. `internal/cli/tdp_test.go`
-  guards this against the fake sysfs; the refusal case and the
+  machine is never at a high limit with no floor. `internal/safety/engine_test.go`
+  (call-order fake) and `internal/drivers/asusz13/tdp_test.go` (fake sysfs) guard this; the refusal case and the
   "keeps a curve that already meets the floor" case are the two that matter.
 - **Fan-floor checks read hardware for the *live* profile, and the profile's own
   TDP for any other.** `CheckFanCurveFloor`/`CheckFanFloorRelease` go through
@@ -885,7 +900,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   paths; the guards themselves are covered hermetically in
   `internal/drivers/asusz13/tdp_test.go` and `internal/safety/safety_test.go`.
 - **Per-device lighting states must be normalized before use.** `handleOff`
-  saves a named zone as `{Enabled: false}` with no mode/colour/speed, so
+  saved a named zone as `{Enabled: false}` with no mode/colour/speed (until
+  2.0 — see the next entry), so
   `handleBrightness` reusing that entry produced an *enabled* state with empty
   fields — and `ModeFromString("")` is an error, so every later restore failed
   (daemon start, resume, hotplug). Worse, `applyLightingState` returned on the
@@ -895,12 +911,28 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   (`handleBrightness`) and the read path (`applyLightingState`) — the read side
   is what repairs the state files users already have. `applyLightingState` now
   continues past a failing zone and returns the first error.
+- **A per-zone `off` keeps the zone's effect and flips `Enabled`** (2026-11-15;
+  `.claude/plans/lighting-off-state-wipe.md`), as the all-device off always
+  did. Normalizing on read repaired mode and colour but could not invent the
+  zone's *own* effect, so `brightness --device` after an off came back on the
+  all-device effect, and `get-state` served the zeroed entry in-session —
+  brightness 0, the hardware's off level, which is how the drawer once re-enabled
+  a zone into darkness. A zone with no entry of its own keeps the all-device
+  state it was showing. `get-state` needs no normalization of its own: `off` was
+  the only writer of a partial entry, and old files are repaired at load.
+  `internal/lighting.ResolveBrightness` keeps its disabled-state fallback,
+  because 1.x daemons still zero the entry and `brightness 0` stores a disabled
+  0 on both. `lighting_off_test.go` drives the handlers over a fake driver; its
+  negative control (the old line restored) fails all four cases. The global
+  off's `Devices = nil` is deliberate and stays: keeping per-zone entries
+  disabled there would leave them off after `brightness <level>` (no
+  `--device`) turned the hardware back on.
 - **`cli.SetProfile` must write the primary path even when the loop misses it.**
   It writes every platform-profile class device but only tracks the error for
   the one `FindProfilePath` picked; when no class device has a `profile` file
   that path is the ACPI alias, which lives outside `sysProfileDir` and the loop
   never visits. It returned nil having written nothing, and still called
-  `setPPD`. Guarded by `primaryWritten` + a fallback write.
+  the power-profiles-daemon sync (`ppdRunner`). Guarded by `primaryWritten` + a fallback write.
 - **`SMUProbeUndervolt()` is destructive — call it only where an offset is
   about to be written.** The "safe no-op probe" sends CO offset 0, which is
   byte-for-byte what `ResetCurveOptimizer` sends, so probing *clears any active
@@ -921,7 +953,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `sync.Once` is fresh every invocation, so a `status` that probed would wipe the
   user's undervolt every run; `status` asks the daemon and falls back to
   `SMUAvailable()` with wording that claims less.
-  `internal/cli/smu_test.go:TestSMUProbeIsDestructive` pins the payload equality;
+  `internal/drivers/asusz13/smu_test.go:TestSMUProbeIsDestructive` pins the payload equality;
   if the probe ever becomes genuinely read-only, that test is the signal to relax
   these warnings.
 - **Every route to a stock profile must clear the undervolt.** `handleProfile`
@@ -1000,7 +1032,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   choice where there is none — the same reasoning as `fullSurfaceHost` in the
   GUI. asus-armoury exposes it as a plain file *beside* the attribute
   directories (`attributes/pending_reboot`), not as an attribute, which is why
-  it is read directly rather than through `togglePaths`.
+  it is read directly rather than through `toggleValuePath`.
   `api.State.PendingReboot` is a `*bool` on the established rule: absent means
   the device cannot say — no firmware interface, a pre-2.0 daemon, or a failed
   read — and rendering that as "nothing pending" would be a claim nothing
@@ -1308,7 +1340,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `sync.Once` makes it a cached bool read rather than the destructive write it
   would otherwise be.
 - **`cli.DryRunTdp` takes the curve as a parameter; it must not read hwmon.**
-  Mirroring `ApplyTDPSafely`'s own `want`, the CLI passes `cli.LiveFanCurve()`.
+  Mirroring `ApplyTDPSafely`'s own `want`, the CLI passes `liveFanCurve(hw)`.
   Reading the fan mode inside the function made `internal/cli/dryrun_test.go`
   depend on the developer's machine — and that test package is `cli_test`, so
   `newFakeSysfs` is out of reach. It was not theoretical: only the `len(live) == 0`
@@ -1324,7 +1356,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
 - **`handleTDPReset` writes `platform_profile` even when already on `balanced`,
   and that is deliberate.** The redundant write costs a WMI call whose
   fan-controller reset is immediately superseded by the fan release that
-  follows, so it is invisible — whereas guarding it would also skip `setPPD`,
+  follows, so it is invisible — whereas guarding it would also skip the PPD sync,
   since `cli.SetProfile` only syncs power-profiles-daemon after a successful
   primary write. `Run()`'s same-value guard exists because nothing else there is
   touching the fans; that reasoning does not transfer to a command whose whole
@@ -1823,18 +1855,17 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
 - **Keyboard hotplug watcher**: `internal/daemon/hotplug.go` handles the
   detachable keyboard. The keyboard (`0b05:1a30`) is its own HID device that
   loses power when detached; on reattach the firmware does not restore the
-  previous RGB effect. The daemon opens the HID device once at startup and holds
-  `d.dev`, so after a detach/reattach cycle the keyboard appears as a *new* hidraw
-  node that the stale `d.dev` never references. `watchHotplug()` polls the
+  previous RGB effect. The lighting driver opens the HID device once at startup and
+  holds the handle, so after a detach/reattach cycle the keyboard appears as a *new*
+  hidraw node the stale handle never references. `watchHotplug()` polls the
   driver's `PresentZones()` (sysfs-only presence check, no device open) every 2s;
-  when a zone appears that was not latched it calls `reopenAndRestore()`, which re-runs
-  `hid.FindDevice("")` under `d.mu`, swaps in the new device (closing the old one),
-  and re-applies saved lighting via the existing `applyLightingState()` (honoring
+  when a zone appears that was not latched it calls `reopenAndRestore()` (daemon.go),
+  which runs `d.hw.Lighting.Reopen()` under `d.mu` (the driver swaps in the new
+  device and closes the old one) and re-applies saved lighting via the existing `applyLightingState()` (honoring
   per-device overrides). If the reopen fails — e.g. udev has not yet chmod'd the new
   hidraw node — the watcher does not latch the present state and retries on the next
   tick. No action is taken on detach (the keyboard powers off in hardware). Run()'s
-  device-close defer closes whatever `d.dev` currently is, since hotplug may have
-  replaced it. **No zone is declared detachable** (2026-10-09): the watcher latches
+  close goes through the driver, so it closes whichever handle is current. **No zone is declared detachable** (2026-10-09): the watcher latches
   the *set* of present zones and reopens when it gains one, so the keyboard
   returning triggers it, and a declared zone whose hardware never appears (a SKU
   without it) cannot block it — a single "all present" bool would have hung on
@@ -2566,15 +2597,15 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   not where `buttonCh` is read: the reader can be held up broadcasting to a slow
   subscriber, and two presses queued behind one of those would be read back to
   back and misread as a hardware duplicate.
-  Nothing consumes `gui-open-full` yet — the full window it is meant to open
-  does not exist. It is additive and subscription-filtered, so no existing
-  client sees it.
+  It is additive and subscription-filtered, so no pre-2.0 client sees it; the
+  full window (next entry) is its consumer.
 - **`gui-open-full`'s consumer is a second GTK surface, and the views it shows
   are second *instances* rather than a second implementation.** The drawer and
-  the full window both host `dashboardView` and `customView`; what differs is
-  carried in a three-field `viewHost` (how to leave, whether this page is on
-  screen, which error bar), because those are the only three things that
-  differ. A view that reads `w.viewStack` — the drawer's — is a view that
+  the full window both hosted `dashboardView` and `customView` when this was
+  written (the drawer's copies were later removed — entries below); what
+  differed was carried in a `viewHost` — today two fields, whether this page
+  is on screen and which error bar, since the third (how to leave) lost its
+  last producer. A view that reads `w.viewStack` — the drawer's — is a view that
   cannot live anywhere else, and every such read is now a `host.current()`
   call. Making that true needed the constructors to *return* the view instead
   of assigning `w.dashboard`, and the focus lists to move onto the view; both
@@ -2620,9 +2651,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   (Jeff, 2026-08-13): the drawer is quick controls, and a chart at 320px is not
   one. `VOLTAIRE_GUI_DUMP_FOCUS` diffed to exactly one removed grid
   (`view=dashboard`), every other list byte-identical including both full-window
-  pages. **The gamescope path itself is unverified — there is no Gaming Mode
-  session on the development machine — so it needs a hardware pass before
-  release.**
+  pages. The gamescope path was first run on hardware by Jeff on 2026-11-15;
+  see Open work item 2 for what it found and what still needs a re-check.
 - **The telemetry sampler stands down while suspending for a *different reason*
   than the other watchers, and the difference is load-bearing.** `reconcileTick`
   and `powerTick` stand down because they **write hardware**, and a write landing
@@ -2648,7 +2678,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   puts live updates on the existing 1 Hz `get-state` poll and history on the
   ring, so the two are one feature seen at two timescales. That was half-built
   for a release: `Sample()` reported temperature, both fans, the energy counter
-  and battery flow, and `handleGetState` published `Temperature` and `RPM[0]` —
+  and battery flow, and the get-state handler published `Temperature` and `RPM[0]` —
   a dashboard charting four series beside readouts showing two. `RPM []int`,
   `PackagePowerW` and `BatteryPowerW` close it; `FanRPM` stays forever as
   `RPM[0]` because every pre-2.0 client reads it. Quoting one of two fans that
@@ -2817,7 +2847,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   the header's live numbers on every view: history is a different command and a
   much larger reply, so running it drawer-wide would be a per-second
   few-hundred-sample round trip nobody is looking at. Every path that leaves the
-  view calls `stopDashboardPolling`, including `hide()`, which has no view switch
+  view calls `dashboardView.stopPolling`, including `hide()`, which has no view switch
   to be caught by the tick's own visible-child guard.
   Failures are silent for the same reason the telemetry poll's are — a background
   refresh the user did not ask for must not repaint the error bar every second —
@@ -3040,7 +3070,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Before-package comments must be `// Package X ...` format (revive `package-comments`).
 - Every package has exactly one file with the package-doc comment (`// Package X ...`).
   For `cmd/`, that comment is in `root.go`. For `aura`, `hid`, and `cli`, there are
-  dedicated `aura.go`, `hid.go`, and `cli.go` doc files.
+  dedicated doc files (`aura/aura.go`, `hid/doc.go`, `cli/doc.go`).
 - Octal literals must use `0o644` form (gocritic `octalLiteral`).
 - Do not use `filepath.Join` with arguments that contain path separators
   (gocritic `filepathJoin`); use string concatenation instead.
@@ -3053,14 +3083,17 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 - Linter settings nest under `linters.settings:` (not top-level `linters-settings:`).
 - `issues.exclude` and `issues.exclude-rules` are not valid in v2.
 - Enabled linters: errcheck, govet (with shadow), staticcheck, misspell, revive
-  (exported + unused-parameter), gocritic (diagnostic + style tags).
+  (exported + unused-parameter + package-comments), gocritic (diagnostic +
+  style tags). Listing revive rules replaces its defaults, so package-comments
+  was silently off until 2026-11-15; turning it on found three packages with no
+  doc comment (`togglegate`, `hidblocker`, the `voltaire-gui` main package).
 - Verify config with: `golangci-lint config verify`
 
 ## Testing
 
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
-  `os.Pipe()` backed devices via `NewTestDevice`; `internal/cli` uses a fake
-  sysfs tree (see below).
+  `os.Pipe()` backed devices via `NewTestDevice`; `internal/drivers/asusz13`
+  uses a fake sysfs tree (see below).
 - **`make test`/`race`/`cover` run `HERMETIC_PKGS`, not `./...`.** That is
   `go list ./...` minus `internal/gui` and `voltaire-gui`, **plus
   `internal/gui/gamepad/...` added back**. `./...` *compiles* everything it
@@ -3082,13 +3115,15 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   cgo-free, it belongs in the run.
   `make lint` deliberately runs the **full** tree, GTK island included; it is a
   local/dev gate where the headers are present.
-- Coverage, measured 2026-08-14: cli 84%, device 70%, asusz13 67%, aura 65%,
-  safety 64%, hid 43%, daemon 42%, api 35%, cmd 8%. Every pure package on the
+- Coverage, measured 2026-11-15: safety 89%, asusz13 78%, cli 76%, device 70%,
+  aura 62%, daemon 52%, hid 43%, api 31%, cmd 14%. Every pure package on the
   GUI side — `limits`, `profileui`, `telemetryplot`, `focusgrid`, `mainwin`,
-  `popupgeom`, `controls`, `colorconv`, `startup`, `display` — sits at 91–99%, which is
+  `popupgeom`, `controls`, `colorconv`, `startup`, `display`, `theme` — sits at
+  91–100%, which is
   the whole argument for the cgo boundary: logic moved out of `internal/gui`
   gets tested, logic left inside it cannot be.
-  Re-measure with `go test -cover ./...` (plus `cd api`) rather than trusting
+  Re-measure with `make cover` (plus `cd api && go test -cover ./...`; a bare
+  `./...` compiles the cgo island) rather than trusting
   these. The previous set in this file had drifted 13 points on aura and 6 on
   api, in both directions — a stale number here reads as a measurement, which
   is the same failure as a chart drawn flat at zero.
@@ -3345,9 +3380,9 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 |---|---|
 | M0 — two live GUI bugs + AllEvents subscription | done |
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
-| M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; three items land with M5 (see below) |
+| M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; one item (capability absence hiding controls) lands with M5 (see below) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **feature-complete but for quickbar customization.** Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `colorView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the gamescope hardware pass — see Open work below. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls) — see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -3376,7 +3411,7 @@ and JSON key): main's only addition since the branch, `State.TDPLimits` from
 z13ctl 1.4.0, is served here too — see the `tdp_limits` entry above. Repeat the
 diff whenever a main release touches `api/`.
 
-### Open work (as of 2026-10-09, in rough priority order)
+### Open work (as of 2026-11-15, in rough priority order)
 
 1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
    `.claude/plans/quickbar-customization.md`). M4 is complete but for the
@@ -3404,7 +3439,7 @@ diff whenever a main release touches `api/`.
    2026-10-09 (`undervolt_reset_test.go`).
 6. ~~`make docs-api` emits wrong source links~~ — fixed 2026-10-09: the
    target names the repository and pins gomarkdoc.
-7. **Read device values from the device, not from literals** (Jeff,
+7. ~~Read device values from the device, not from literals~~ — **done** (Jeff,
    2026-10-09). The precedence is: autodetected from the kernel or firmware, then
    the device TOML, then a built-in default. That applies to every limit, range,
    count or vocabulary, in validation, UI, help text and docs alike.
@@ -3423,9 +3458,10 @@ diff whenever a main release touches `api/`.
    **The wider audit is done and is now a plan:**
    `.claude/plans/device-values-audit.md`, covering profiles, fans, lighting,
    toggles/charger/battery, GPU and telemetry, SMU, and setup. It subsumes the
-   roadmap's M2→M5 carry items. Its §0 is a **safety** fix:
-   `status`/`status --watch` and `fancurve --get` read the EC directly even
-   while the daemon has `ecWedged` latched.
+   roadmap's M2→M5 carry items. **Every section (§0–§7) is done** (the plan's
+   Progress list); its §0 safety fix — `status`/`status --watch` and
+   `fancurve --get` reading the EC while the daemon had `ecWedged` latched —
+   is `readLive` in `cmd/hardware.go`, guarded by `cmd/live_test.go`.
    *Armoury verified live 2026-10-09* after re-running setup. Under `yes` ×32,
    measured with RAPL on performance (firmware alone 70.0 W at 92 °C):
    - 30 W custom held 31.9 W through a foreign `pwm_enable=2` and a same-value
@@ -3435,11 +3471,20 @@ diff whenever a main release touches `api/`.
    - 80 W `--force` put the floor in place before the PPT write and held
      80.0 W at 94 °C.
    - `tdp --reset` landed on balanced at 52.0 W and skipped the SMU write.
-8. **M3 release mechanics** (table above), with the AUR side in
-   `.claude/plans/voltaire-aur-playbook.md`.
-9. **M5** (plugin tier + OXP device, carrying the three M2 items above) and
+8. **Full hardware smoke of the final tree, before tagging.** The three M3
+   parity gates passed on 2026-08-09, before M4 and the device-values audit
+   reworked the drivers, the GUI and the lighting path; every change since was
+   verified piecemeal, but `dev/smoke-z13.md` has not been run end to end
+   against what will ship. Its suspend sections need asking first.
+9. ~~Per-zone `off` discards the zone's lighting state~~ — fixed 2026-11-15
+   (entry above; `lighting_off_test.go`). The same code is on main, where it
+   is still live in every z13ctl 1.x release.
+10. **M3 release mechanics** (table above), with the AUR side in
+   `.claude/plans/voltaire-aur-playbook.md` (corrected 2026-11-15 for the
+   single `voltaire-bin` package and the 1.4.x releases).
+11. **M5** (plugin tier + OXP device, carrying the remaining M2 item above) and
    **M6** (Ally + generic AMD TOMLs).
-10. **Ports from main**: none outstanding (audited 2026-10-09); after any
+12. **Ports from main**: none outstanding (audited 2026-10-09); after any
     new main release, `git log v1.4.2..main`.
 
 ### The daemon — COMPLETE
