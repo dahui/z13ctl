@@ -153,7 +153,7 @@ sudo make install
 
 === "From source"
 
-    Requires Go 1.23 or later.
+    Requires Go 1.26 or later.
 
     ```sh
     git clone https://github.com/dahui/z13ctl
