@@ -85,6 +85,39 @@ func (e Engine) ReadEffective(profile string) (api.TDPState, error) {
 	return s, nil
 }
 
+// ReadDisplayed returns the power limits to *show* for profile: a firmware
+// profile's stock row from env, as the interface would hold it
+// (EffectiveTDP: clamped to its ranges, APU/Platform sPPT zeroed where it has
+// neither), and for anything else (a custom profile, or a profile env has no
+// row for) the reading ReadEffective gives. A firmware profile reads no
+// hardware; env is the caller's, so a cached envelope keeps it that way.
+//
+// On a firmware profile the readback is not the limit in force. The firmware
+// applies its own limits on every platform_profile write and fan release, while
+// the attributes go on showing the last value written (issue #22). On
+// asus-armoury it is worse: current_value is the kernel's cache of the last
+// value written while on the current power source. A custom profile that ran
+// on battery therefore leaves its limit in the battery table, and a later
+// switch to a firmware profile on AC never overwrites it. Measured on a GZ302EA
+// (2026-11-15): balanced on battery read 35/35/45, a custom profile's value,
+// while RAPL held 47.1 W under load. The row is the device's statement of what
+// the profile runs at, and what HandBackToFirmware's row write leaves in the
+// readback. Its PL1 matches the firmware on AC.
+//
+// The trade: a limit written out of band while a firmware profile is active
+// (asusctl, a raw sysfs write) is no longer shown. The readback was never
+// evidence of it either.
+//
+// This is for display only. Anything that decides whether the fans may be
+// released must see the hardware, however stale, which is why
+// CheckFanFloorRelease reads through ReadEffective.
+func (e Engine) ReadDisplayed(env driver.PowerEnvelope, profile string) (api.TDPState, error) {
+	if row, ok := env.StockProfilePPT[profile]; ok {
+		return EffectiveTDP(env, row), nil
+	}
+	return e.ReadEffective(profile)
+}
+
 // deviceEnvelope is the envelope from device data alone where the driver can
 // give it without reading the kernel (driver.DeviceEnvelope), and the full
 // envelope where it cannot.

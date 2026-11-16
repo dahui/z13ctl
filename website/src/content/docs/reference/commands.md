@@ -616,12 +616,19 @@ until the next `tdp --set`, which says so when it applies a limit directly.
 :::
 
 :::note[PPT readback values]
-The values shown by `--get` are the kernel driver's cached values — what was
-last written, not what is in force. asus-armoury's cache starts at its default
-(60/75/86W on AC, 45/52/71W on battery, kept separately for each power source)
-and asus-nb-wmi's at 5W; until something writes them on a stock profile,
-voltaire reports that profile's stock values instead. Use `ryzenadj -i` if you
-need ground-truth PPT readings.
+On a **firmware profile** (`quiet`, `balanced`, `performance` on the Z13),
+`--get` and `status` show that profile's stock values from the device data,
+marked as such (`Set by: the balanced firmware profile`), and never the
+kernel's readback. The firmware runs those profiles on its own limits, and the
+readback says nothing about them: asus-armoury keeps one cached value per power
+source, so a custom limit written on battery is still what it reports on
+battery after you have switched to `balanced` on AC (measured on the GZ302EA:
+35 W reported, 47 W in force). On AC the stock PL1 matches the firmware's; on
+battery the firmware may hold less.
+
+On a **custom profile** the values are the kernel driver's cache, what voltaire
+last wrote, which the daemon keeps in force. Use `ryzenadj -i` if you need
+ground-truth PPT readings.
 :::
 
 **Safety:**
@@ -834,8 +841,9 @@ daemon: undervolt has no sysfs readback, so the line reports availability
 rather than the active offset; and the TDP line asks the daemon which profile is
 active, because a custom TDP equal to the kernel's untouched boot-time values
 (asus-armoury's defaults, or asus-nb-wmi's 5 W) is otherwise indistinguishable
-from them. Like `tdp --get`, the TDP line shows the limits last written, which
-the firmware may since have replaced; see [`tdp`](#tdp).
+from them. Like `tdp --get`, the TDP line shows a firmware profile's stock
+values (marked `(balanced stock)`), and on a custom profile the limits last
+written; see [`tdp`](#tdp).
 
 **Flags:**
 

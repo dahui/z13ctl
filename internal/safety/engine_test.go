@@ -27,6 +27,7 @@ type fakeRig struct {
 	// re-applied limit from one that was never touched.
 	held     api.TDPState
 	firmware api.TDPState
+	reads    int // Power.Read calls
 }
 
 type rigFans struct{ r *fakeRig }
@@ -46,7 +47,10 @@ func (f rigFans) Release() error {
 
 type rigPower struct{ r *fakeRig }
 
-func (p rigPower) Read() (api.TDPState, error) { return p.r.held, nil }
+func (p rigPower) Read() (api.TDPState, error) {
+	p.r.reads++
+	return p.r.held, nil
+}
 
 func (p rigPower) Apply(s api.TDPState) error {
 	p.r.calls = append(p.r.calls, "power.Apply")
@@ -271,4 +275,63 @@ func TestHandBackToFirmwareWithoutFansWritesTheRow(t *testing.T) {
 		t.Fatalf("HandBackToFirmware with no fan control = %v", err)
 	}
 	sequence(t, r.calls, "power.Apply")
+}
+
+// The ReadDisplayed tests pin the split between showing a limit and deciding on
+// one. A firmware profile shows its row whatever the attributes hold, since on
+// asus-armoury they hold whatever was last written on that power source. The
+// fan-floor check must still see the hardware.
+
+func TestReadDisplayedShowsTheRowOnAFirmwareProfile(t *testing.T) {
+	r, e := handBackRig()
+	row := api.TDPState{PL1SPL: 20, PL2SPPT: 26, FPPT: 26, APUSPPT: 26, PlatformSPPT: 26}
+	r.env.StockProfilePPT["balanced"] = row
+	r.held = api.TDPState{PL1SPL: 35, PL2SPPT: 35, FPPT: 45} // a custom profile's leftover
+	got, err := e.ReadDisplayed(r.env, "balanced")
+	if err != nil {
+		t.Fatalf("ReadDisplayed = %v", err)
+	}
+	if got != row {
+		t.Errorf("ReadDisplayed(balanced) = %+v, want the stock row %+v", got, row)
+	}
+	if r.reads != 0 {
+		t.Errorf("ReadDisplayed on a firmware profile read the hardware %d times, want 0", r.reads)
+	}
+}
+
+// The row is shown as the interface holds it. asus-armoury has no APU or
+// Platform sPPT, so the row's values for them would be limits that do not
+// exist on this machine.
+func TestReadDisplayedShowsTheRowAsTheInterfaceHoldsIt(t *testing.T) {
+	r, e := handBackRig()
+	r.env.StockProfilePPT["balanced"] = api.TDPState{PL1SPL: 20, PL2SPPT: 26, FPPT: 26, APUSPPT: 26, PlatformSPPT: 26}
+	r.env.NoSPPTMirrors = true
+	got, err := e.ReadDisplayed(r.env, "balanced")
+	if err != nil {
+		t.Fatalf("ReadDisplayed = %v", err)
+	}
+	if want := (api.TDPState{PL1SPL: 20, PL2SPPT: 26, FPPT: 26}); got != want {
+		t.Errorf("ReadDisplayed(balanced) = %+v, want %+v (no sPPT mirrors on this interface)", got, want)
+	}
+}
+
+func TestReadDisplayedShowsTheHardwareOnACustomProfile(t *testing.T) {
+	r, e := handBackRig()
+	r.held = api.TDPState{PL1SPL: 35, PL2SPPT: 35, FPPT: 45}
+	got, err := e.ReadDisplayed(r.env, "gaming")
+	if err != nil {
+		t.Fatalf("ReadDisplayed = %v", err)
+	}
+	if got != r.held {
+		t.Errorf("ReadDisplayed(gaming) = %+v, want the readback %+v", got, r.held)
+	}
+}
+
+func TestFanFloorCheckIgnoresTheDisplayedRow(t *testing.T) {
+	r, e := handBackRig()
+	r.held = api.TDPState{PL1SPL: 40} // above the safe maximum; the row is 20
+	if err := e.CheckFanFloorRelease("balanced"); err == nil {
+		t.Fatal("CheckFanFloorRelease with hardware at 40W = nil, want a refusal: " +
+			"the check read the displayed row instead of the hardware")
+	}
 }

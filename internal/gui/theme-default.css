@@ -46,6 +46,20 @@ window.voltaire-main-window {
     background: @voltaire-bg;
 }
 
+/* The empty titlebar the window installs to keep its client-side frame
+   (mainwindow.go). GTK puts .titlebar on it, and Adwaita gives that class a
+   header bar's height, so on GNOME the window opened with a blank 46px strip
+   above voltaire's own title row. Breeze sizes it to nothing, which is why it
+   never showed on KDE. */
+window.voltaire-main-window > .titlebar {
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    box-shadow: none;
+    background: none;
+}
+
 .drawer.main-window {
     border-radius: 0;
     border: none;
@@ -273,13 +287,25 @@ window.voltaire-main-window {
 }
 
 
-/* Sliders */
+/* Sliders. Every part the base theme paints is set here, or it shows
+   through: Adwaita draws a white handle and a light trough border, and
+   Breeze edges the filled part in its own blue. The colour picker's
+   per-slider ramps (colorpopup.go) sit at a higher priority and keep their
+   own trough. */
 .drawer scale trough {
     background: @voltaire-surface;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer scale trough highlight {
     background: @voltaire-accent;
+    border: 1px solid @voltaire-accent;
+}
+
+.drawer scale slider {
+    background: @voltaire-surface-alt;
+    border: 1px solid @voltaire-border;
+    box-shadow: none;
 }
 
 
@@ -373,10 +399,24 @@ window.voltaire-main-window {
    visibly not the user's theme under anything but the default palette. */
 .drawer switch {
     background: @voltaire-surface;
+    border: 1px solid @voltaire-border;
 }
 
 .drawer switch:checked {
     background: @voltaire-accent;
+    border-color: @voltaire-accent;
+}
+
+/* The knob too: Adwaita's is white, which on GNOME (and anywhere GTK falls
+   back to Adwaita) put a white circle on every dark theme. */
+.drawer switch slider {
+    background: @voltaire-surface-alt;
+    border: 1px solid @voltaire-border;
+    box-shadow: none;
+}
+
+.drawer switch:disabled {
+    opacity: 0.5;
 }
 
 /* Custom view action buttons (save, reset) */
@@ -407,6 +447,17 @@ window.voltaire-main-window {
 .drawer .save-btn:disabled {
     background: alpha(@voltaire-accent, 0.3);
     color: alpha(#ffffff, 0.45);
+}
+
+/* An insensitive button must look it. Every button rule above sets a text
+   colour, and Adwaita greys a disabled button by setting the button's colour,
+   which ours outranks — so on GNOME the quickbar editor's end arrows and an
+   idle "Reset to default" stayed bright. (Breeze greys the label node instead,
+   which nothing here overrides; a rule on the label would also beat the save
+   button's own disabled colour, which reaches its label by inheritance.) Kept
+   after every button rule of the same specificity, so it wins on order. */
+.drawer button:disabled {
+    color: alpha(@voltaire-text, 0.4);
 }
 
 /* Advanced checkbox in custom view */

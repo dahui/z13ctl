@@ -1654,6 +1654,37 @@ runtime, or is long enough to collide with a user's text scaling, wants the
 same. To reproduce large-text layouts on purpose, run an uncapped build with
 `GDK_DEBUG=no-portals` on this desktop: GTK then reads `settings.ini`'s 144 dpi.
 
+### Every part the base theme paints is pinned, because the base theme varies
+
+voltaire's sheet runs at USER priority on top of whatever GTK theme the session
+has: Breeze on KDE, Adwaita on GNOME, and Adwaita too wherever GTK falls back
+(gamescope's X11 session, or a process the portal refuses — the caps-drop entry
+in the root CLAUDE.md). A property the sheet does not set is the base theme's,
+and it looks right only on the desktop it was checked on. Checked 2026-11-15 by
+running the uncapped build with `GTK_THEME=Adwaita` and `Adwaita:dark` against
+the KDE rendering (screenshots via `VOLTAIRE_GUI_OPEN_FULL`), four leaks, all
+pinned in `theme-default.css`:
+
+- **The empty titlebar** (`mainwindow.go` installs one to keep the client-side
+  frame) gets `.titlebar`, which Adwaita sizes as a header bar: a blank 46px
+  strip above voltaire's own title row on GNOME. `window.voltaire-main-window >
+  .titlebar` zeroes it.
+- **Switch knobs and slider handles** were Adwaita's white on every dark theme.
+  Both are `@voltaire-surface-alt` with a `@voltaire-border` edge now.
+- **Breeze's blue** edged the slider fill and a checked switch even on KDE: the
+  trough, its highlight and the switch carry token borders now, so the KDE
+  rendering changed too, on purpose.
+- **Disabled buttons did not grey on Adwaita.** Adwaita greys by setting the
+  button's colour, which every voltaire button rule outranks; Breeze greys the
+  label node, which nothing here touches. `.drawer button:disabled` sets the
+  button's colour and must stay after every button rule of its specificity. It
+  deliberately does not target `label`: that would also beat `.save-btn:disabled`,
+  whose colour reaches its label by inheritance.
+
+What remains is geometry (Adwaita's switch track is taller than Breeze's), the
+base theme's shape rather than its colours. A new widget type wants the same
+check: run it once under `GTK_THEME=Adwaita` before calling it styled.
+
 ### Service environment
 
 `contrib/z13gui.service` uses `EnvironmentFile=-%t/gamescope-environment` (optional).

@@ -613,7 +613,9 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   are `{"ok":bool,...}`. CLI `--get` commands read sysfs directly (always ground
   truth) — except `profile --get`, which asks the daemon first and falls back to
   sysfs: `platform_profile` is never a custom profile name, so sysfs alone cannot
-  say which custom profile is running.
+  say which custom profile is running; and `tdp --get`, which asks the daemon
+  and on a firmware profile shows its stock row rather than any readback (entry
+  below on `ReadDisplayed`).
   GUI/Decky callers use the daemon socket for all operations including GET. Protocol:
   | Command | Request | Response field |
   |---|---|---|
@@ -1665,6 +1667,46 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Never treat a `ppt_*` readback
   as proof that a limit is in force; the safety rig's `held`/`firmware` fields
   emulate the reset for exactly this reason.
+  **A charger edge moves the readback too, and that re-apply is routine**
+  (2026-11-15). asus-armoury reads back the new source's table, which holds
+  whatever was last written on that source, so a custom profile's PL1 "drifts"
+  on every plug and unplug and the watcher re-writes it — correctly, but it was
+  logged as a WARN. `reconcileOnce` now reads the power source (`d.acPower()`)
+  on the ticks that read the limits, *after* them, and `reconcileTick` puts a
+  drift within `reconcileSourceGraceTicks` (2) of a source change down to it:
+  two because a plug between the two reads shows as the change on one tick and
+  the drift on the next. A tick that does not read the source forgets it, or a
+  latch left over from a stretch on a firmware profile would excuse a later
+  drift. `TestReconcileSourceChangeDriftIsRoutine`; both negative controls
+  (branch disabled, grace of 1) were run.
+- **A firmware profile reports its stock row, never the readback, and only for
+  display: `safety.Engine.ReadDisplayed`** (Jeff, 2026-11-15). On a firmware
+  profile the firmware runs its own limits (the entry above), and on
+  asus-armoury `current_value` is the kernel's cache of the last value written
+  *while on the current power source*. The smoke test found the consequence: a
+  custom profile at 35 W ran on battery, balanced was later selected on AC, and
+  back on battery `status` showed 35/35/45 while RAPL measured 47.1 W under
+  load. `ReadDisplayed(env, profile)` returns the device's `StockProfilePPT`
+  row for a profile that has one, as the interface holds it
+  (`EffectiveTDP`: armoury has no APU/Platform sPPT, so the row's 70s would
+  print as limits that do not exist — caught on hardware), reading no hardware
+  beyond the caller's envelope; `ReadEffective` otherwise. That is also what
+  `HandBackToFirmware`'s row write leaves in the readback, so on AC the output
+  is unchanged.
+  Its callers are the ones that *show* a limit: get-state's `tdp` and
+  `tdp-get` (through `d.displayTDP()`, which keys the row on
+  `platform_profile` when Fn+F5 moved it behind the daemon), and the CLI's
+  no-daemon `tdp --get`/`status`, which also label the values as the profile's
+  stock limits (`stockRowFor`). **Everything that decides stays on
+  `ReadEffective`**: `CheckFanFloorRelease`, and through it
+  `HandBackToFirmware`, must refuse to release the fans while hardware reads
+  above the safe maximum, however stale that reading is.
+  `TestFanFloorCheckIgnoresTheDisplayedRow` and the existing
+  `TestHandBackToFirmwareKeepsTheFloorWhenTheRowFails` both fail when the check
+  is pointed at `ReadDisplayed` (negative control run). Known gaps, accepted:
+  on battery the row (an AC measurement) overstates what the firmware holds,
+  and a limit written out of band on a firmware profile is no longer shown.
+  Battery rows would be device data, measured under load, if ever wanted.
 - **`ReadEffectivePPT` must be passed the *effective* profile**, not
   `platform_profile`. `platform_profile` is never "custom", so passing it makes a
   legitimate custom TDP equal to the boot cache (`safety.CacheStale`: 5 W on

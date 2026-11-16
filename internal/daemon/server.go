@@ -292,15 +292,13 @@ func (d *Daemon) dispatch(req request) response {
 		s.CPUBoost = d.readCPUBoost()
 		// Populate fan curve from hardware for ground truth.
 		s.FanCurve = d.readFanCurveHW()
-		// Populate TDP, substituting per-profile defaults if sysfs is stale.
-		// Pass the daemon's own profile: platform_profile is never "custom", so
-		// using it would report the stock table for a legitimate custom TDP that
-		// happens to equal the interface's boot cache (safety.CacheStale).
-		// Not while wedged: on asus-armoury each PPT read evaluates the AC
-		// adapter's _PSR to pick the AC or battery table — a live ACPI call, where
-		// asus-nb-wmi's ppt_* were caches. s.TDP keeps the state projection.
+		// Populate TDP: a firmware profile's stock row, a custom profile's
+		// readback (displayTDP). Not while wedged: on asus-armoury each PPT read
+		// evaluates the AC adapter's _PSR to pick the AC or battery table — a
+		// live ACPI call, where asus-nb-wmi's ppt_* were caches. s.TDP keeps the
+		// state projection.
 		if !wedged && d.hw != nil && d.hw.Power != nil {
-			if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
+			if tdp, err := d.displayTDP(); err == nil {
 				s.TDP = &tdp
 			}
 			// The bounds the kernel accepts, for z13ctl 1.4 clients; device-get
@@ -890,12 +888,30 @@ func (d *Daemon) handleTDPGet() response {
 	if d.hw == nil || d.hw.Power == nil {
 		return response{OK: false, Error: "reading TDP: no power limit control on this device"}
 	}
-	tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile())
+	tdp, err := d.displayTDP()
 	if err != nil {
 		return response{OK: false, Error: "reading TDP: " + err.Error()}
 	}
 	data, _ := json.Marshal(tdp)
 	return response{OK: true, Value: string(data)}
+}
+
+// displayTDP is the power limits a client should show: on a firmware profile
+// that profile's stock row, on a custom one the readback
+// (safety.Engine.ReadDisplayed says why). The daemon's own profile decides
+// which, since platform_profile never names a custom profile. On a firmware
+// profile the row is keyed on platform_profile when that is a firmware profile
+// too: Fn+F5 or another tool can switch it without telling the daemon, and the
+// firmware runs the profile it was switched to. Only for display; a fan-floor
+// decision reads through ReadEffective. Callers must not hold d.mu.
+func (d *Daemon) displayTDP() (api.TDPState, error) {
+	profile := d.effectiveProfile()
+	if d.isFirmwareProfile(profile) {
+		if hw := d.profileHW(); d.isFirmwareProfile(hw) {
+			profile = hw
+		}
+	}
+	return d.hw.Power.ReadDisplayed(d.env(), profile)
 }
 
 // effectiveProfile returns the profile to use when interpreting PPT values:

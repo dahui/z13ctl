@@ -121,6 +121,11 @@ func runTdpGet() error {
 	// The daemon when it is running: it refuses the read while the EC is not
 	// answering (on asus-armoury each limit read is a live ACPI call), where a
 	// read from here would go straight into the stalled EC.
+	// On a firmware profile both paths show its stock row rather than the
+	// readback, which is not the limit in force there (ReadDisplayed).
+	env := powerEnvFor(hw)
+	profile := effectiveProfileForTDP(hw)
+	stock := stockRowFor(hw, env, profile)
 	var tdp api.TDPState
 	handled, value, sendErr := api.SendTdpGet()
 	switch {
@@ -131,14 +136,17 @@ func runTdpGet() error {
 			return fmt.Errorf("reading TDP: %w", err)
 		}
 	default:
-		if tdp, err = hw.Power.ReadEffective(effectiveProfileForTDP(hw)); err != nil {
+		key := profile
+		if stock != "" {
+			key = stock
+		}
+		if tdp, err = hw.Power.ReadDisplayed(env, key); err != nil {
 			return fmt.Errorf("reading TDP: %w", err)
 		}
 	}
 
 	// The limits are the device's own, in its order and with its names: the
 	// Z13's three as PL1 (SPL), PL2 (sPPT) and PL3 (fPPT).
-	env := powerEnvFor(hw)
 	fmt.Println("TDP Power Limits (watts):")
 	var ranges []string
 	for _, l := range powerLimitsOf(env) {
@@ -155,6 +163,9 @@ func runTdpGet() error {
 	if tdp.APUSPPT != 0 || tdp.PlatformSPPT != 0 {
 		fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
 		fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
+	}
+	if stock != "" {
+		fmt.Printf("  Set by:             the %s firmware profile (its stock limits)\n", stock)
 	}
 	if env.Interface != "" {
 		fmt.Printf("  Interface:          %s (%s)\n", env.Interface, strings.Join(ranges, ", "))

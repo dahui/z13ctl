@@ -322,8 +322,11 @@ sample interval, not an error.
 
 `power.stock_profile_ppt` gives each firmware profile's PPT defaults, which is
 how a client tells "the firmware's numbers" from "numbers the user chose" —
-`tdp-get` on a stock profile reports that profile's own limits, and without
-this table they are indistinguishable from a custom setting. Compare on
+`tdp-get` and get-state's `tdp` on a stock profile report exactly that
+profile's row (keyed on `platform_profile`, so a switch made by Fn+F5 shows the
+profile it switched to), never the kernel's readback, which on asus-armoury is
+a per-power-source cache of the last value written. Without this table they
+are indistinguishable from a custom setting. Compare on
 `pl1_spl`/`pl2_sppt`/`fppt`; the daemon also writes APU and Platform sPPT,
 mirrored from PL2, and they are not part of the comparison.
 
@@ -953,7 +956,10 @@ The power limit files go on showing the custom value, so nothing that reads them
 can tell. The kernel does report both writes, and the daemon listens for them,
 re-writing a custom profile's power limits within two seconds of each. Its own
 fan releases are reported the same way, so a re-apply logged at `INFO` just
-after `tdp --set` is expected. Fan releases are reported through an
+after `tdp --set` is expected. So is one on plugging or unplugging the
+charger: asus-armoury keeps separate AC and battery limits, so the readback
+moves to the other table's value, and the daemon writes the profile's limit
+there too ("the power source changed"). Fan releases are reported through an
 `asus-nb-wmi` attribute that kernels built without the deprecated asus-wmi
 attributes do not have; on those, a release by another tool on fans already on
 auto goes unnoticed until the next platform profile write.

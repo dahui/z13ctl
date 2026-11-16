@@ -166,6 +166,24 @@ func tdpSummary(env driver.PowerEnvelope, t api.TDPState) string {
 	return strings.Join(parts, " / ")
 }
 
+// stockRowFor returns the firmware profile whose stock row stands for the
+// power limits while profile is active, or "" when the limits shown are the
+// hardware's (a custom profile, or one the device has no row for). It mirrors
+// the daemon's displayTDP: on a firmware profile the readback is not the limit
+// in force (safety.Engine.ReadDisplayed), and the row follows platform_profile
+// when something switched it behind the daemon's back.
+func stockRowFor(hw *device.Device, env driver.PowerEnvelope, profile string) string {
+	if _, ok := env.StockProfilePPT[profile]; !ok {
+		return ""
+	}
+	if p := readCurrentProfile(hw); p != profile {
+		if _, ok := env.StockProfilePPT[p]; ok {
+			return p
+		}
+	}
+	return profile
+}
+
 // undervoltShortLabel is the device's compact name for its undervolt offset
 // ("CO" for AMD's Curve Optimizer), for one-line summaries.
 func undervoltShortLabel() string {

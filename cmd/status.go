@@ -114,19 +114,30 @@ func statusReport(out io.Writer) error {
 	// limit read is a live ACPI call). A refused read prints N/A.
 	tdpShown := false
 	ecWithheld := false
+	// On a firmware profile both paths show its stock row (ReadDisplayed), and
+	// the line says so.
 	env := powerEnvFor(hw)
+	stock := stockRowFor(hw, env, profile)
+	stockNote := ""
+	if stock != "" {
+		stockNote = " (" + stock + " stock)"
+	}
 	if handled, value, err := api.SendTdpGet(); handled {
 		var tdp api.TDPState
 		// The daemon refuses EC-backed reads while the EC is not answering;
 		// say so once at the end, rather than leaving the N/As unexplained.
 		ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
 		if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
-			outf("TDP:     %s\n", tdpSummary(env, tdp))
+			outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
 			tdpShown = true
 		}
 	} else if hw.Power != nil {
-		if tdp, tErr := hw.Power.ReadEffective(profile); tErr == nil {
-			outf("TDP:     %s\n", tdpSummary(env, tdp))
+		key := profile
+		if stock != "" {
+			key = stock
+		}
+		if tdp, tErr := hw.Power.ReadDisplayed(env, key); tErr == nil {
+			outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
 			tdpShown = true
 		}
 	}

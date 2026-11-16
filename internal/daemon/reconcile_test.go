@@ -784,6 +784,92 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 	}
 }
 
+// TestReconcileSourceChangeDriftIsRoutine: asus-armoury keeps separate AC and
+// battery limits, so a charger edge makes the PL1 readback move to the other
+// table's value. The watcher re-writes the profile's limit either way; what this
+// pins is that the re-write is logged as routine only when a source change
+// explains the drift, within reconcileSourceGraceTicks of it.
+func TestReconcileSourceChangeDriftIsRoutine(t *testing.T) {
+	tdp := &api.TDPState{PL1SPL: 30, PL2SPPT: 30, FPPT: 30, APUSPPT: 30, PlatformSPPT: 30}
+	type step struct {
+		source string // "ac", "battery", or "" for not read
+		pl1    int
+		curve  bool // the saved curve was found dropped
+	}
+	obsFor := func(s step) reconcileObs {
+		o := reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 1, PL1: s.pl1, ProfileHW: "balanced"}
+		if s.curve {
+			o.WantCurve, o.CurveMode = curve(120), 2
+		}
+		if s.source != "" {
+			o.SourceKnown, o.OnAC = true, s.source == "ac"
+		}
+		return o
+	}
+	tests := []struct {
+		name        string
+		steps       []step // every step but the last must leave the hardware alone
+		wantRoutine bool
+		wantReason  string
+	}{
+		{
+			name:        "drift on the tick the source changed",
+			steps:       []step{{"ac", 30, false}, {"battery", 35, false}},
+			wantRoutine: true,
+			wantReason:  "power source changed",
+		},
+		{
+			name:        "drift on the tick after the source changed",
+			steps:       []step{{"ac", 30, false}, {"battery", 30, false}, {"battery", 35, false}},
+			wantRoutine: true,
+			wantReason:  "power source changed",
+		},
+		{
+			name:       "drift two ticks after the source changed",
+			steps:      []step{{"ac", 30, false}, {"battery", 30, false}, {"battery", 30, false}, {"battery", 35, false}},
+			wantReason: "no longer matches",
+		},
+		{
+			name:       "drift with no source change",
+			steps:      []step{{"ac", 30, false}, {"ac", 35, false}},
+			wantReason: "no longer matches",
+		},
+		{
+			// A tick that did not read the source forgets it, so the next
+			// reading has nothing to differ from.
+			name:       "an unread source resets the latch",
+			steps:      []step{{"ac", 30, false}, {"", 30, false}, {"battery", 35, false}},
+			wantReason: "no longer matches",
+		},
+		{
+			name:       "a dropped curve keeps its own reason",
+			steps:      []step{{"ac", 30, false}, {"battery", 35, true}},
+			wantReason: "fan curve was disabled",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := reconcileState{lastHW: "balanced"}
+			var act reconcileAction
+			for i, s := range tt.steps {
+				st, act = tick(st, obsFor(s))
+				if i < len(tt.steps)-1 && !act.none() {
+					t.Fatalf("step %d acted (%q); the setup steps must leave the hardware alone", i, act.Reason)
+				}
+			}
+			if act.TDP == nil {
+				t.Fatalf("drift was not repaired (reason %q)", act.Reason)
+			}
+			if act.Routine != tt.wantRoutine {
+				t.Errorf("routine = %v, want %v (reason %q)", act.Routine, tt.wantRoutine, act.Reason)
+			}
+			if !strings.Contains(act.Reason, tt.wantReason) {
+				t.Errorf("reason = %q, want it to mention %q", act.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
 // TestReconcileComparesTheEffectiveTDP: a profile saved under asus-nb-wmi's 5 W
 // floor reads back clamped on asus-armoury. Comparing the stored value would see
 // drift on every tick and re-write the limit every two seconds forever.

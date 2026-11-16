@@ -91,7 +91,28 @@ type reconcileObs struct {
 	// the last tick, "" if none. A ProfileHW change to exactly this value is the
 	// daemon's own switch, so the re-apply it calls for is routine.
 	OwnProfileWrite string
+	// OnAC and SourceKnown: the power source, read only when the power limits
+	// are (a custom profile, not standing down) and after them. asus-armoury
+	// keeps separate AC and battery limits, so a source change makes the PL1
+	// readback move without anyone writing it; see reconcileSourceGraceTicks.
+	OnAC        bool
+	SourceKnown bool
 }
+
+// observedSource is the power source as the reconcile watcher last saw it.
+type observedSource uint8
+
+const (
+	sourceUnknown observedSource = iota
+	sourceAC
+	sourceBattery
+)
+
+// reconcileSourceGraceTicks is how many ticks, counting the one that saw a
+// power source change, a PL1 drift is put down to that change. Two, because
+// the source is read after the limits: a plug landing between the two reads
+// shows as a source change on one tick and the drift on the next.
+const reconcileSourceGraceTicks = 2
 
 // reconcileAction is what a tick decided to put back. A zero value means
 // "leave the hardware alone", which is the common case.
@@ -123,6 +144,8 @@ type reconcileState struct {
 	lastHW         string // last observed platform_profile; "" until the first tick
 	suspendedTicks int    // ticks observed during the current suspend
 	suspendGen     int    // the suspend suspendedTicks is counting for
+	lastSource     observedSource
+	sourceGrace    int // ticks left in which a PL1 drift is put down to a source change
 }
 
 // reconcileTick decides what to restore from one observation, judged against
@@ -134,6 +157,27 @@ type reconcileState struct {
 func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelope) (reconcileState, reconcileAction) {
 	st := prev
 	st.lastHW = obs.ProfileHW
+
+	// The power source, latched only across ticks that read it: a latch left
+	// over from before a stretch on a firmware profile (when nothing reads it)
+	// would blame a later drift on a change that happened long ago.
+	sourceChanged := false
+	if obs.SourceKnown {
+		cur := sourceBattery
+		if obs.OnAC {
+			cur = sourceAC
+		}
+		sourceChanged = prev.lastSource != sourceUnknown && prev.lastSource != cur
+		st.lastSource = cur
+	} else {
+		st.lastSource = sourceUnknown
+	}
+	switch {
+	case sourceChanged:
+		st.sourceGrace = reconcileSourceGraceTicks
+	case st.sourceGrace > 0:
+		st.sourceGrace--
+	}
 
 	// Every write below goes through asus-wmi, and into an EC that is not
 	// answering that write wedges the ACPI global mutex and hard-locks the
@@ -257,7 +301,16 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 	switch {
 	case want != nil && obs.PL1 != -1 && obs.PL1 != want.PL1SPL:
 		act.TDP = want
-		if act.Reason == "" {
+		switch {
+		case act.Reason != "":
+		case st.sourceGrace > 0:
+			// asus-armoury reads back the new source's table, which holds
+			// whatever was last written while on that source. Re-writing the
+			// profile's limit there is the watcher doing its job on a charger
+			// edge, not something to warn about.
+			act.Reason = "the power source changed, and the power limits are kept per source"
+			act.Routine = true
+		default:
 			act.Reason = "sustained TDP no longer matches the saved custom value"
 		}
 	case want != nil && policyWritten:
@@ -429,6 +482,11 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
 		}
+		// After the limits, never before: see reconcileSourceGraceTicks. On
+		// asus-armoury the reads above already evaluated the AC adapter's _PSR,
+		// so this costs one more of the same, and only while a custom profile
+		// is active.
+		obs.OnAC, obs.SourceKnown = d.acPower()
 	}
 	// Taken before the read, so a switch landing between the two is at worst
 	// reported as a warning, never a foreign change as the daemon's own.
