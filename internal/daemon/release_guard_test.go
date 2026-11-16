@@ -1,7 +1,8 @@
 package daemon
 
 // release_guard_test.go — keeps fan releases on the one path that re-applies the
-// power limit afterwards.
+// power limit afterwards, and platform_profile writes on the one path that tells
+// the reconcile watcher the daemon made them.
 
 import (
 	"os"
@@ -43,5 +44,40 @@ func TestNoDirectFanRelease(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestProfileWritesGoThroughTheRecorder fails if the daemon writes
+// platform_profile anywhere but setPlatformProfile. An unrecorded write still
+// works, but the reconcile watcher then logs the daemon's own switch as a
+// warning that another tool rewrote the profile, which sends anyone reading
+// the journal after the wrong culprit.
+func TestProfileWritesGoThroughTheRecorder(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if !strings.Contains(line, "Profiles.Set(") || strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			calls++
+			if f != "profile.go" || !strings.Contains(line, "d.hw.Profiles.Set(name)") {
+				t.Errorf("%s:%d writes platform_profile directly; use d.setPlatformProfile:\n\t%s",
+					f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	if calls == 0 {
+		t.Fatal("found no Profiles.Set call at all; the scan would pass vacuously")
 	}
 }

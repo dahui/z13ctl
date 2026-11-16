@@ -385,6 +385,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// they do not composite under gamescope); sensitivity mirrors the daemon's
 	// refusals via profileui.DeleteBlockFor.
 	c.deleteBtn = gtk.NewButtonWithLabel("Delete Profile")
+	shrinkableButton(c.deleteBtn) // its armed label is the row's longest
 	w.setHint(c.deleteBtn, "Remove this saved profile")
 	c.deleteBtn.ConnectClicked(func() { c.deleteProfileClicked() })
 	c.deleteNote = blockNote()

@@ -63,6 +63,7 @@ func main() {
 	slog.SetDefault(slog.New(startup.NewFilterHandler(text, appLevel, gtkLevel)))
 
 	slog.Info("starting", "version", version.Version)
+	logCapabilityDrop()
 
 	// Disable GTK4 accessibility bridge (AT-SPI). voltaire-gui is a hardware overlay
 	// controlled by a physical button — no accessibility consumers. Without this,

@@ -87,6 +87,10 @@ type reconcileObs struct {
 	// (watchPolicyWrites). Like a change in ProfileHW it means the firmware reset
 	// the power limits.
 	PolicyWritten bool
+	// OwnProfileWrite: the platform_profile value the daemon itself wrote since
+	// the last tick, "" if none. A ProfileHW change to exactly this value is the
+	// daemon's own switch, so the re-apply it calls for is routine.
+	OwnProfileWrite string
 }
 
 // reconcileAction is what a tick decided to put back. A zero value means
@@ -260,6 +264,12 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 		act.TDP = want
 		switch {
 		case act.Reason != "":
+		case profileChanged && obs.ProfileHW == obs.OwnProfileWrite:
+			// The daemon switched the profile itself, typically a firmware profile
+			// just before a custom TDP edit promoted "custom". The re-apply is
+			// redundant then, but cheap, and a warning would blame someone else.
+			act.Reason = "voltaire's own platform profile switch resets custom power limits"
+			act.Routine = true
 		case profileChanged:
 			act.Reason = "platform profile was rewritten, which resets custom power limits"
 		default:
@@ -419,6 +429,11 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
 		}
+	}
+	// Taken before the read, so a switch landing between the two is at worst
+	// reported as a warning, never a foreign change as the daemon's own.
+	if own := d.ownProfileWrite.Swap(nil); own != nil {
+		obs.OwnProfileWrite = *own
 	}
 	obs.ProfileHW = d.profileHW()
 	// Consumed here, after every early return above: a write seen while the

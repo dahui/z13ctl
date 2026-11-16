@@ -94,6 +94,13 @@ type Daemon struct {
 	// because the watcher sets it without d.mu.
 	policyWritten atomic.Bool
 
+	// ownProfileWrite is the platform_profile value the daemon itself wrote
+	// since the last reconcile tick ("" if none), set by setPlatformProfile and
+	// consumed by the tick. A profile change matching it is the daemon's own
+	// switch: the re-apply it causes is routine, where a change nobody here made
+	// is worth a warning. Atomic for the same reason as policyWritten.
+	ownProfileWrite atomic.Pointer[string]
+
 	// envCache is the last power envelope read while the EC answered, which env
 	// serves while it does not, and for envCacheTTL after the read. Guarded by mu.
 	envCache   *driver.PowerEnvelope
@@ -381,7 +388,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 	// it. Only a firmware profile name may ever reach that attribute.
 	if d.isFirmwareProfile(d.state.Profile) {
 		if current := d.profileHW(); current != d.state.Profile {
-			if profileErr := d.hw.Profiles.Set(d.state.Profile); profileErr != nil {
+			if profileErr := d.setPlatformProfile(d.state.Profile); profileErr != nil {
 				slog.Warn("failed to restore profile", "err", profileErr)
 			} else {
 				slog.Info("profile restored", "profile", d.state.Profile)

@@ -705,6 +705,22 @@ func TestReconcileReappliesTDPAfterAProfileWrite(t *testing.T) {
 			wantTDP: true,
 		},
 		{
+			// The daemon's own switch, then a custom TDP edit before the next
+			// tick: the re-apply still happens, logged as routine.
+			name:        "profile changed by the daemon itself",
+			lastHW:      "performance",
+			obs:         reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "balanced", PolicyWritten: true, OwnProfileWrite: "balanced"},
+			wantTDP:     true,
+			wantRoutine: true,
+		},
+		{
+			// A daemon write to one value does not vouch for a change to another.
+			name:    "profile changed to something the daemon did not write",
+			lastHW:  "performance",
+			obs:     reconcileObs{Custom: true, WantTDP: tdp, CurveMode: 2, PL1: 30, ProfileHW: "quiet", OwnProfileWrite: "balanced"},
+			wantTDP: true,
+		},
+		{
 			// So is a dropped curve.
 			name:      "reported write that dropped the curve",
 			lastHW:    "balanced",

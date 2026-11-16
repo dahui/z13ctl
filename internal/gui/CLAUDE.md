@@ -1639,6 +1639,21 @@ button padding under gamescope only, so the two sheets look identical in review
 and differ on screen. `.popup-scrim` is the opposite case and correctly has no
 scaled rule: it is a colour with no dimensions, so there is nothing to scale.
 
+### A label that can change must not be able to widen the window
+
+GtkButton measures its label at full width (GTK 4.12+ unless `can-shrink` is
+set), a homogeneous row gives every button the widest one's width, and GTK
+never shrinks a toplevel back once a minimum has pushed it out. The profile
+row's Delete arms to "Tap again to delete", and at a larger text size that one
+label widened the whole full window for the rest of the session (found with
+the portal-less 1.5× fonts, 2026-11-15; measured as the window minimum going
+1592 → 1720 on the arm). Setting `ellipsize` on the label child does nothing
+here; `shrinkableButton` (`SetCanShrink(true)`) does, and survives `SetLabel`.
+The profile action row uses it; any other button whose label is replaced at
+runtime, or is long enough to collide with a user's text scaling, wants the
+same. To reproduce large-text layouts on purpose, run an uncapped build with
+`GDK_DEBUG=no-portals` on this desktop: GTK then reads `settings.ini`'s 144 dpi.
+
 ### Service environment
 
 `contrib/z13gui.service` uses `EnvironmentFile=-%t/gamescope-environment` (optional).

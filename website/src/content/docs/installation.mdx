@@ -379,6 +379,12 @@ it returns `0` (allow).
 voltaire-gui does not use performance monitoring — this capability is a
 kernel-imposed prerequisite for LSM attachment.
 
+**Outside Gaming Mode both are dropped at startup.** The blocker only runs
+under gamescope, so on the desktop voltaire-gui gives both capabilities up
+before it does anything else (the journal says `dropped CAP_BPF/CAP_PERFMON`).
+That also lets the desktop portal answer it, which is how GTK learns your font
+and scaling settings.
+
 **What the BPF program can do:**
 
 - Return `-EAGAIN` for `read()` calls on hidraw devices by specific PIDs

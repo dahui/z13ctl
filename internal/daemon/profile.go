@@ -207,7 +207,7 @@ func (d *Daemon) applyStockHW(profile string) error {
 	if d.hw == nil || d.hw.Profiles == nil {
 		return fmt.Errorf("no platform profile control on this device")
 	}
-	if err := d.hw.Profiles.Set(profile); err != nil {
+	if err := d.setPlatformProfile(profile); err != nil {
 		return err
 	}
 	if err := d.hw.HandBackToFirmware(profile); err != nil {
@@ -602,4 +602,16 @@ func (d *Daemon) firmwareProfiles() []string {
 		return nil
 	}
 	return d.hw.Profiles.Names()
+}
+
+// setPlatformProfile writes platform_profile through the device's profile
+// controller and records the value for the reconcile watcher, which would
+// otherwise log the daemon's own switch as one made by another tool. Every
+// daemon write to platform_profile goes through here.
+func (d *Daemon) setPlatformProfile(name string) error {
+	if err := d.hw.Profiles.Set(name); err != nil {
+		return err
+	}
+	d.ownProfileWrite.Store(&name)
+	return nil
 }

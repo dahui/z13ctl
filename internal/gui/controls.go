@@ -276,6 +276,17 @@ func colorSubBox(label string, content gtk.Widgetter) *gtk.Box {
 	return b
 }
 
+// shrinkableButton lets a button's label shorten with an ellipsis rather than
+// widen the button. GtkButton otherwise measures its label at full width, and
+// in a homogeneous row the widest label sets every button's width: at a larger
+// text size the profile row's "Tap again to delete" made the whole full window
+// wider, and GTK never shrinks a toplevel back. Setting ellipsize on the label
+// is not enough; can-shrink is GTK's switch for this (4.12+), and it survives
+// SetLabel.
+func shrinkableButton(b *gtk.Button) {
+	b.SetCanShrink(true)
+}
+
 // blockNote creates a hidden label for the refusal reason beneath a control.
 //
 // Refusal reasons live in these notes, never in tooltips: a tooltip is a

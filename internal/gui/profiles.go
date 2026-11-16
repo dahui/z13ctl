@@ -91,6 +91,9 @@ func (c *customView) buildProfileSelector() *gtk.Box {
 	// (Natural-width start-aligned buttons were tried first and read as
 	// ragged.)
 	actions.SetHomogeneous(true)
+	for _, b := range []*gtk.Button{c.activateBtn, c.newProfileBtn, c.saveAsBtn} {
+		shrinkableButton(b)
+	}
 	// Kept on the struct so the window can add Delete to this row — a
 	// profile operation belongs with the profile operations.
 	c.profileActions = actions

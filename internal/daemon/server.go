@@ -1151,7 +1151,7 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	} else {
 		slog.Info(cmd + ": no Curve Optimizer offset applied; skipping the SMU write")
 	}
-	if err := d.hw.Profiles.Set(landing); err != nil {
+	if err := d.setPlatformProfile(landing); err != nil {
 		return response{OK: false, Error: cmd + ": switching to the " + landing + " profile: " + err.Error()}
 	}
 	if err := d.hw.HandBackToFirmware(landing); err != nil {
