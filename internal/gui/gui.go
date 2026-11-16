@@ -697,6 +697,15 @@ func (w *Window) show() {
 			})
 		}()
 	}
+	// hide() leaves the drawer on its main view, so the main focus list is the
+	// one to navigate. Installed here rather than left to the last hide():
+	// closing the full window (×, Escape, B) does not go through it, and the
+	// D-pad then walked that window's widgets, none of them on screen, so every
+	// press did nothing until the drawer was closed and reopened. The hosted
+	// full window shows its page after this call, so its list still wins.
+	if w.viewStack != nil {
+		w.swapFocusList(w.mainFocusItems)
+	}
 	w.backend.Show()
 	w.startTelemetryPolling()
 	// The drawer's refresh rate, when the layout includes it: re-read on show
