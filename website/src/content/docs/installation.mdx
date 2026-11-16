@@ -199,13 +199,14 @@ systemctl --user daemon-reload
 systemctl --user enable --now voltaire.socket voltaire.service voltaire-gui.service
 ```
 
-Optionally install the desktop entry, and grant the GUI its gamepad-blocking
-capabilities (see [below](#gamepad-input-blocking-capabilities)):
+Optionally install the desktop entry. `sudo make install` also grants the GUI
+its gamepad-blocking capabilities (see [below](#gamepad-input-blocking-capabilities)),
+and grants them again on every reinstall, since copying a new binary into place
+drops them:
 
 ```sh
 install -Dm644 contrib/voltaire-gui.desktop \
     ~/.local/share/applications/voltaire-gui.desktop
-sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui
 ```
 
 </TabItem>
@@ -343,12 +344,18 @@ automatically:
 | **SIGSTOP fallback** | No extra capabilities | Pauses the Steam process with SIGSTOP / SIGCONT | Game also pauses; PipeWire frame delivery stops |
 
 The AUR, `.deb`, and `.rpm` packages grant the required capabilities
-automatically during installation. If you installed from source or from the
-release binary, grant them manually:
+automatically during installation, as does `sudo make install` from source. If
+you copied the release binary into place yourself, grant them manually, and
+again whenever you replace the binary (a copy does not keep them):
 
 ```sh
 sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui
 ```
+
+To check which method is in use, look for `steam: BPF LSM unavailable, using
+SIGSTOP fallback` in `journalctl --user -u voltaire-gui`; the line after it
+names the reason. `getcap /usr/local/bin/voltaire-gui` shows whether the
+capabilities are present.
 
 <details>
 <summary>What are these capabilities and are they safe?</summary>
@@ -365,7 +372,7 @@ The filter is automatically removed when voltaire-gui exits.
 to attach a single LSM (`lsm/file_permission`) hook that intercepts `read()`
 calls on hidraw character devices (`/dev/hidraw*`). The hook checks whether the
 calling PID is in a small allow-list map and the target device is a hidraw
-device (major 244). If both conditions match, it returns `-EAGAIN`; otherwise
+device (its major number, read from `/proc/devices` at startup). If both conditions match, it returns `-EAGAIN`; otherwise
 it returns `0` (allow).
 
 **CAP_PERFMON** is required by the kernel to attach BPF LSM programs.

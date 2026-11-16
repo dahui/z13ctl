@@ -464,7 +464,18 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   version string embedded in the GUI binary against `$(VERSION)` and warns.
   It reads the string with `grep -aqF` rather than running the binary, because
   the recipe runs as root and `voltaire-gui`'s first statement is
-  `theme.MigrateFromZ13gui()`. The old line was
+  `theme.MigrateFromZ13gui()`. It also re-runs `setcap cap_bpf,cap_perfmon+ep`
+  on the GUI every time (2026-11-15): `install(1)` replaces the file and file
+  capabilities do not survive that, so a source install lost the gamepad
+  blocker on every reinstall and fell back to SIGSTOP silently.
+- **The gamepad blocker needs cilium/ebpf ≥ 0.22 on Linux 7.1+.** Loading the
+  LSM program applies CO-RE relocations against the kernel's BTF, and 7.1
+  extended the BTF header: 0.21 fails with `parsing .BTF header: header
+  contains non-zero trailer`. Verified on 7.3.4 by running `hidblocker`'s
+  `TestNew` as root (compile with `go test -c`, run the binary under `sudo`):
+  0.21 fails, 0.22 attaches. Every privileged install on a current kernel had
+  been falling back to SIGSTOP. That root run is the check to repeat after any
+  ebpf bump. The old line was
   `[ -f x ] && install ... || true`, which reported nothing when the binary was
   absent and swallowed a real `install` failure with it.
 - `--dry-run` is a global persistent flag; each command checks `dryRunFlag` and

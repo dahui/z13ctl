@@ -137,12 +137,21 @@ install:
 # install failure with it. The version is read out of the binary rather than by
 # running it, because this recipe runs as root and voltaire-gui's first
 # statement is theme.MigrateFromZ13gui(); grep needs -a since these are ELF.
+#
+# setcap runs on every install because install(1) replaces the file, and file
+# capabilities do not survive that: a source install that ran setcap once lost
+# the gamepad blocker (CAP_BPF + CAP_PERFMON) on its next "make install", and
+# fell back to pausing Steam with nothing saying why. The packages' install
+# scripts already do the same. Best-effort with a note, not a failure: a
+# filesystem without xattrs, or no setcap binary, still gets a working drawer.
 	@if [ ! -f voltaire-gui/voltaire-gui ]; then \
 		echo "NOTE: voltaire-gui is not built — installing the CLI only."; \
 		echo "      Run 'make build-all' to include the drawer."; \
 	else \
 		install -Dm755 voltaire-gui/voltaire-gui /usr/local/bin/voltaire-gui; \
 		ln -sfn voltaire-gui /usr/local/bin/z13gui; \
+		setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui 2>/dev/null || \
+			echo "NOTE: could not set CAP_BPF/CAP_PERFMON on voltaire-gui; the gamepad blocker will fall back to pausing Steam."; \
 		if [ "$(VERSION)" != "dev" ] && ! grep -aqF "$(VERSION)" voltaire-gui/voltaire-gui; then \
 			echo "WARNING: voltaire-gui was built from a different tree than voltaire ($(VERSION))."; \
 			echo "         Run 'make build-all' and install again — a skewed pair is not a"; \
