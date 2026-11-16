@@ -114,6 +114,14 @@ type customView struct {
 	baseCurve    string // fan curve wire string at last sync
 	baseUv       int    // undervolt slider at last sync
 	baseCaptured bool
+
+	// sections is which cards this device gets (profileui.SectionsFor),
+	// decided once at construction like the widgets it gates. Every widget a
+	// card owns is nil when the card is not built, and every reader checks.
+	sections profileui.EditorSections
+	// tdpScales are the advanced view's limit sliders in the order they were
+	// built — the device's order — so the focus grid follows the screen.
+	tdpScales []*gtk.Scale
 }
 
 // newCustomView builds the custom TDP/fan curve view for the given surface.
@@ -122,6 +130,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// showCustomView resolves the running one. editPlan tolerates "" as well,
 	// but the label built here would not.
 	c := &customView{w: w, host: host, editProfile: api.DefaultCustomProfile}
+	c.sections = profileui.SectionsFor(w.limits)
 
 	c.root = gtk.NewBox(gtk.OrientationVertical, 0)
 	view := c.root
@@ -177,129 +186,158 @@ func newCustomView(w *Window, host viewHost) *customView {
 	profileSec := sec
 	sec.Append(c.buildProfileSelector())
 
-	// --- TDP / POWER ---
-	sec = newSection(leftCol)
-	powerSec := sec
-	// The card holds the TDP limits and, in advanced mode, the undervolt —
-	// every power-domain control, with its own actions at the bottom. "TDP"
-	// would undersell that.
-	sec.Append(sectionLabel("POWER"))
+	// Each card is built only where the device has the capability: a
+	// control for something the machine lacks is not shown with another
+	// machine's bounds (profileui.SectionsFor).
+	var powerSec, fanSec *gtk.Box
 
-	// Advanced checkbox — placed above sliders so toggle swaps content in-place.
-	c.tdpAdvancedCheck = gtk.NewCheckButtonWithLabel("Advanced")
-	c.tdpAdvancedCheck.AddCSSClass("advanced-check")
-	if w.gamescope {
-		addTouchActivate(c.tdpAdvancedCheck, func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) })
+	if c.sections.Power {
+		// --- TDP / POWER ---
+		sec = newSection(leftCol)
+		powerSec = sec
+		// The card holds the TDP limits and, in advanced mode, the undervolt —
+		// every power-domain control, with its own actions at the bottom. "TDP"
+		// would undersell that.
+		sec.Append(sectionLabel("POWER"))
+
+		// Advanced checkbox — placed above sliders so toggle swaps content in-place.
+		c.tdpAdvancedCheck = gtk.NewCheckButtonWithLabel("Advanced")
+		c.tdpAdvancedCheck.AddCSSClass("advanced-check")
+		if w.gamescope {
+			addTouchActivate(c.tdpAdvancedCheck, func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) })
+		}
+		sec.Append(c.tdpAdvancedCheck)
+
+		// Basic TDP box (visible by default).
+		tdpBasicBox := gtk.NewBox(gtk.OrientationVertical, 4)
+		c.tdpBasicScale = gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(w.limits.TDPMin), float64(w.limits.BasicSliderMax()), 1)
+		c.tdpBasicScale.SetDigits(0)
+		c.tdpBasicScale.SetDrawValue(false)
+		c.tdpBasicScale.SetFocusable(false)
+		w.wheelScrollsView(c.tdpBasicScale)
+		// Labelled from the scale's own value (the bottom of the device's range
+		// until the first sync), never from a number of its own that could fall
+		// outside that range.
+		c.tdpBasicLabel = gtk.NewLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
+		c.tdpBasicLabel.AddCSSClass("scale-value")
+		c.tdpBasicScale.ConnectValueChanged(func() {
+			c.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
+			c.refreshCommitDirty()
+		})
+		// Value beside the slider, not centred beneath it: the desktop eye scans
+		// a form row, where a touch column would stack for a thumb.
+		basicRow := gtk.NewBox(gtk.OrientationHorizontal, 10)
+		c.tdpBasicScale.SetHExpand(true)
+		basicRow.Append(c.tdpBasicScale)
+		basicRow.Append(c.tdpBasicLabel)
+		tdpBasicBox.Append(basicRow)
+		sec.Append(tdpBasicBox)
+
+		// Advanced box (hidden by default) — replaces basic slider in-place.
+		c.tdpAdvancedBox = gtk.NewBox(gtk.OrientationVertical, 4)
+		c.tdpAdvancedBox.SetVisible(false)
+
+		c.tdpWarn = gtk.NewLabel(tdpWarningText(w.limits))
+		c.tdpWarn.SetWrap(true)
+		c.tdpWarn.SetHAlign(gtk.AlignStart)
+		c.tdpWarn.AddCSSClass("tdp-warning")
+		c.tdpAdvancedBox.Append(c.tdpWarn)
+
+		// Each slider spans its own limit's range: on asus-armoury PL2 and PL3 have
+		// higher minimums and maximums than PL1, and PL1's range would offer values
+		// the daemon raises or refuses.
+		pl2lo, pl2hi := w.limits.PL2Range()
+		pl3lo, pl3hi := w.limits.PL3Range()
+		//
+		// Which limits exist, their order and their names are the device's
+		// (limits.PowerLimits, from device-get's power.limits). The ids stay the
+		// wire's three because the TDP command takes exactly those; a device that
+		// lets the user set only PL1 gets one slider and sends the others blank.
+		for _, pl := range w.limits.PowerLimits {
+			var lo, hi int
+			var scale **gtk.Scale
+			var label **gtk.Label
+			switch pl.ID {
+			case "pl1":
+				lo, hi, scale, label = w.limits.TDPMin, w.limits.TDPMaxForced, &c.tdpPL1Scale, &c.tdpPL1Label
+			case "pl2":
+				lo, hi, scale, label = pl2lo, pl2hi, &c.tdpPL2Scale, &c.tdpPL2Label
+			case "pl3":
+				lo, hi, scale, label = pl3lo, pl3hi, &c.tdpPL3Scale, &c.tdpPL3Label
+			default:
+				continue // an id this build has no wire field for
+			}
+			*scale, *label = c.buildTdpScale(pl.Label, pl.Description, lo, hi)
+			c.tdpScales = append(c.tdpScales, *scale)
+		}
+
+		// The undervolt exists only where the device declares one; its name is
+		// the device's (limits.UVText), "CPU Curve Optimizer" on AMD.
+		if c.sections.Undervolt {
+			// --- UNDERVOLT (inside advanced box) ---
+			c.uvBox = gtk.NewBox(gtk.OrientationVertical, 4)
+			// Hidden by default; sync shows it when UndervoltAvailable.
+			c.uvBox.SetVisible(false)
+
+			c.uvBox.Append(sectionLabel("UNDERVOLT"))
+
+			uvWarn := gtk.NewLabel(profileui.UndervoltNote())
+			uvWarn.SetWrap(true)
+			uvWarn.SetHAlign(gtk.AlignStart)
+			uvWarn.AddCSSClass("tdp-warning")
+			c.uvBox.Append(uvWarn)
+
+			c.uvCpuScale, c.uvCpuLabel = c.buildUvScale(w.limits.UVText.Label, float64(w.limits.UVMin), float64(w.limits.UVMax))
+
+			// No per-domain save: the page's one commit button carries the offset
+			// (customcommit.go), so only the reset is here, as a right-aligned
+			// secondary action like the other cards' resets.
+			uvBtnRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+			uvBtnRow.AddCSSClass("custom-actions")
+			uvBtnRow.SetHAlign(gtk.AlignEnd)
+
+			c.resetUvBtn = gtk.NewButtonWithLabel("Reset UV")
+			c.resetUvBtn.ConnectClicked(func() { c.resetUndervolt() })
+			uvBtnRow.Append(c.resetUvBtn)
+
+			c.uvBox.Append(uvBtnRow)
+			c.tdpAdvancedBox.Append(c.uvBox)
+		}
+
+		sec.Append(c.tdpAdvancedBox)
+
+		c.tdpAdvancedCheck.ConnectToggled(func() {
+			adv := c.tdpAdvancedCheck.Active()
+			c.tdpAdvancedBox.SetVisible(adv)
+			tdpBasicBox.SetVisible(!adv)
+			// The toggle swaps which widgets a commit reads (and whether the
+			// undervolt is reachable), so the dirty set can change without any
+			// value moving.
+			c.refreshCommitDirty()
+		})
 	}
-	sec.Append(c.tdpAdvancedCheck)
 
-	// Basic TDP box (visible by default).
-	tdpBasicBox := gtk.NewBox(gtk.OrientationVertical, 4)
-	c.tdpBasicScale = gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(w.limits.TDPMin), float64(w.limits.BasicSliderMax()), 1)
-	c.tdpBasicScale.SetDigits(0)
-	c.tdpBasicScale.SetDrawValue(false)
-	c.tdpBasicScale.SetFocusable(false)
-	w.wheelScrollsView(c.tdpBasicScale)
-	// Labelled from the scale's own value (the bottom of the device's range
-	// until the first sync), never from a number of its own that could fall
-	// outside that range.
-	c.tdpBasicLabel = gtk.NewLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
-	c.tdpBasicLabel.AddCSSClass("scale-value")
-	c.tdpBasicScale.ConnectValueChanged(func() {
-		c.tdpBasicLabel.SetLabel(fmt.Sprintf("%d W", int(c.tdpBasicScale.Value())))
-		c.refreshCommitDirty()
-	})
-	// Value beside the slider, not centred beneath it: the desktop eye scans
-	// a form row, where a touch column would stack for a thumb.
-	basicRow := gtk.NewBox(gtk.OrientationHorizontal, 10)
-	c.tdpBasicScale.SetHExpand(true)
-	basicRow.Append(c.tdpBasicScale)
-	basicRow.Append(c.tdpBasicLabel)
-	tdpBasicBox.Append(basicRow)
-	sec.Append(tdpBasicBox)
+	if c.sections.Fans {
+		// --- FAN CURVE ---
+		sec = newSection(rightCol)
+		fanSec = sec
+		sec.Append(sectionLabel("FAN CURVE"))
 
-	// Advanced box (hidden by default) — replaces basic slider in-place.
-	c.tdpAdvancedBox = gtk.NewBox(gtk.OrientationVertical, 4)
-	c.tdpAdvancedBox.SetVisible(false)
+		// Presets sit above the chart, and choosing one is an ordinary edit: the
+		// points land in the editor, the commit bar goes dirty, and nothing has
+		// been written. That is the whole design — a preset is a starting point
+		// you can drag before committing, never a mode the profile remembers.
+		//
+		// The device declares them (rules in internal/limits), so nothing here
+		// knows what "quiet" means; a device with none gets no row at all.
+		if row, btns := c.buildPresetRow(); row != nil {
+			c.presetBtns = btns
+			sec.Append(row)
+		}
 
-	c.tdpWarn = gtk.NewLabel(tdpWarningText(w.limits))
-	c.tdpWarn.SetWrap(true)
-	c.tdpWarn.SetHAlign(gtk.AlignStart)
-	c.tdpWarn.AddCSSClass("tdp-warning")
-	c.tdpAdvancedBox.Append(c.tdpWarn)
-
-	// Each slider spans its own limit's range: on asus-armoury PL2 and PL3 have
-	// higher minimums and maximums than PL1, and PL1's range would offer values
-	// the daemon raises or refuses.
-	pl2lo, pl2hi := w.limits.PL2Range()
-	pl3lo, pl3hi := w.limits.PL3Range()
-	c.tdpPL1Scale, c.tdpPL1Label = c.buildTdpScale("PL1 (SPL)", "Sustained power limit — the long-term average power the CPU targets.",
-		w.limits.TDPMin, w.limits.TDPMaxForced)
-	c.tdpPL2Scale, c.tdpPL2Label = c.buildTdpScale("PL2 (SPPT)", "Short boost — maximum power during brief burst workloads.",
-		pl2lo, pl2hi)
-	c.tdpPL3Scale, c.tdpPL3Label = c.buildTdpScale("PL3 (FPPT)", "Fast boost — peak instantaneous power for single-threaded spikes.",
-		pl3lo, pl3hi)
-
-	// --- UNDERVOLT (inside advanced box) ---
-	c.uvBox = gtk.NewBox(gtk.OrientationVertical, 4)
-	// Hidden by default; sync shows it when UndervoltAvailable.
-	c.uvBox.SetVisible(false)
-
-	c.uvBox.Append(sectionLabel("UNDERVOLT"))
-
-	uvWarn := gtk.NewLabel("Undervolt offsets are only active while the Custom profile is selected. Switching to a stock profile resets them to 0. Unstable values may cause crashes.")
-	uvWarn.SetWrap(true)
-	uvWarn.SetHAlign(gtk.AlignStart)
-	uvWarn.AddCSSClass("tdp-warning")
-	c.uvBox.Append(uvWarn)
-
-	c.uvCpuScale, c.uvCpuLabel = c.buildUvScale("CPU Curve Optimizer", float64(w.limits.UVMin), float64(w.limits.UVMax))
-
-	// No per-domain save: the page's one commit button carries the offset
-	// (customcommit.go), so only the reset is here, as a right-aligned
-	// secondary action like the other cards' resets.
-	uvBtnRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	uvBtnRow.AddCSSClass("custom-actions")
-	uvBtnRow.SetHAlign(gtk.AlignEnd)
-
-	c.resetUvBtn = gtk.NewButtonWithLabel("Reset UV")
-	c.resetUvBtn.ConnectClicked(func() { c.resetUndervolt() })
-	uvBtnRow.Append(c.resetUvBtn)
-
-	c.uvBox.Append(uvBtnRow)
-	c.tdpAdvancedBox.Append(c.uvBox)
-
-	sec.Append(c.tdpAdvancedBox)
-
-	c.tdpAdvancedCheck.ConnectToggled(func() {
-		adv := c.tdpAdvancedCheck.Active()
-		c.tdpAdvancedBox.SetVisible(adv)
-		tdpBasicBox.SetVisible(!adv)
-		// The toggle swaps which widgets a commit reads (and whether the
-		// undervolt is reachable), so the dirty set can change without any
-		// value moving.
-		c.refreshCommitDirty()
-	})
-
-	// --- FAN CURVE ---
-	sec = newSection(rightCol)
-	fanSec := sec
-	sec.Append(sectionLabel("FAN CURVE"))
-
-	// Presets sit above the chart, and choosing one is an ordinary edit: the
-	// points land in the editor, the commit bar goes dirty, and nothing has
-	// been written. That is the whole design — a preset is a starting point
-	// you can drag before committing, never a mode the profile remembers.
-	//
-	// The device declares them (rules in internal/limits), so nothing here
-	// knows what "quiet" means; a device with none gets no row at all.
-	if row, btns := c.buildPresetRow(); row != nil {
-		c.presetBtns = btns
-		sec.Append(row)
+		c.fanCurve = c.newFanCurveEditor()
+		sec.Append(c.fanCurve.area)
 	}
-
-	c.fanCurve = c.newFanCurveEditor()
-	sec.Append(c.fanCurve.area)
 
 	// AUTOSWITCH used to sit here, in a card under the fan editor, on the
 	// reading that it selects profiles and so belongs with the profile
@@ -317,27 +355,28 @@ func newCustomView(w *Window, host viewHost) *customView {
 	// customcommit.go). Resets are not saves — they remove a subsystem from
 	// the profile — so each card keeps its own, as a right-aligned secondary
 	// action.
-	c.resetTdpBtn = gtk.NewButtonWithLabel("Reset TDP")
-	c.resetTdpBtn.ConnectClicked(func() { c.resetTdp() })
+	if powerSec != nil {
+		c.resetTdpBtn = gtk.NewButtonWithLabel("Reset TDP")
+		c.resetTdpBtn.ConnectClicked(func() { c.resetTdp() })
+		powerRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		powerRow.AddCSSClass("custom-actions")
+		powerRow.SetHAlign(gtk.AlignEnd)
+		powerRow.Append(c.resetTdpBtn)
+		powerSec.Append(powerRow)
+	}
 
-	c.resetFanBtn = gtk.NewButtonWithLabel("Reset Fans")
-	w.setHint(c.resetFanBtn, "Reset fan curves to firmware auto")
-	c.resetFanBtn.ConnectClicked(func() { c.resetFanCurve() })
-
-	c.resetNote = blockNote()
-
-	powerRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	powerRow.AddCSSClass("custom-actions")
-	powerRow.SetHAlign(gtk.AlignEnd)
-	powerRow.Append(c.resetTdpBtn)
-	powerSec.Append(powerRow)
-
-	fanRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	fanRow.AddCSSClass("custom-actions")
-	fanRow.SetHAlign(gtk.AlignEnd)
-	fanRow.Append(c.resetFanBtn)
-	fanSec.Append(fanRow)
-	fanSec.Append(c.resetNote)
+	if fanSec != nil {
+		c.resetFanBtn = gtk.NewButtonWithLabel("Reset Fans")
+		w.setHint(c.resetFanBtn, "Reset fan curves to firmware auto")
+		c.resetFanBtn.ConnectClicked(func() { c.resetFanCurve() })
+		c.resetNote = blockNote()
+		fanRow := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		fanRow.AddCSSClass("custom-actions")
+		fanRow.SetHAlign(gtk.AlignEnd)
+		fanRow.Append(c.resetFanBtn)
+		fanSec.Append(fanRow)
+		fanSec.Append(c.resetNote)
+	}
 
 	// --- DELETE ---
 	// Lives in the editor rather than on the profile row: the editor knows its
@@ -362,6 +401,14 @@ func newCustomView(w *Window, host viewHost) *customView {
 
 	c.buildFocusList()
 	return c
+}
+
+// scaleInt is a slider's value, 0 for one this device does not build.
+func scaleInt(sc *gtk.Scale) int {
+	if sc == nil {
+		return 0
+	}
+	return int(sc.Value())
 }
 
 // buildTdpScale creates a labeled TDP slider and appends it to the advanced
@@ -412,10 +459,10 @@ func (c *customView) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gt
 	sc.SetValue(hi)
 	sc.SetFocusable(false)
 	c.w.wheelScrollsView(sc)
-	valLabel := gtk.NewLabel(uvText(int(hi)))
+	valLabel := gtk.NewLabel(c.uvText(int(hi)))
 	valLabel.AddCSSClass("scale-value")
 	sc.ConnectValueChanged(func() {
-		valLabel.SetLabel(uvText(int(sc.Value())))
+		valLabel.SetLabel(c.uvText(int(sc.Value())))
 		c.refreshCommitDirty()
 	})
 	// Same desktop form row as buildTdpScale.
@@ -429,13 +476,10 @@ func (c *customView) buildUvScale(label string, lo, hi float64) (*gtk.Scale, *gt
 	return sc, valLabel
 }
 
-// uvText formats an undervolt value. The slider's header row already shows
-// the name on the same line, so the value stands bare ("-20", "0 (stock)").
-func uvText(val int) string {
-	if val == 0 {
-		return "0 (stock)"
-	}
-	return fmt.Sprintf("%d", val)
+// uvText formats an undervolt value for the readout, in the device's unit
+// (profileui.UndervoltValueText).
+func (c *customView) uvText(val int) string {
+	return profileui.UndervoltValueText(val, c.w.limits.UVText.Unit)
 }
 
 // Edit target and fan floor.
@@ -569,7 +613,7 @@ func (c *customView) sync() {
 	}
 	if c.uvCpuScale != nil {
 		c.uvCpuScale.SetValue(float64(es.CO))
-		c.uvCpuLabel.SetLabel(uvText(es.CO))
+		c.uvCpuLabel.SetLabel(c.uvText(es.CO))
 	}
 
 	// Delete affordance, mirroring the daemon's refusals. The reason goes to
@@ -700,8 +744,8 @@ func (c *customView) buildFocusList() {
 	}
 
 	nameVis := func() bool { return c.nameRow != nil && c.nameRow.IsVisible() }
-	advVis := func() bool { return c.tdpAdvancedBox.IsVisible() }
-	uvVis := func() bool { return c.tdpAdvancedBox.IsVisible() && c.uvBox != nil && c.uvBox.IsVisible() }
+	advVis := func() bool { return c.tdpAdvancedBox != nil && c.tdpAdvancedBox.IsVisible() }
+	uvVis := func() bool { return advVis() && c.uvBox != nil && c.uvBox.IsVisible() }
 	var fc focusgrid.Coord
 
 	// The list follows the two-column page in reading order — the PROFILE
@@ -717,32 +761,38 @@ func (c *customView) buildFocusList() {
 	buttonLine(c.activateBtn, c.newProfileBtn, c.saveAsBtn, c.deleteBtn)
 	visibleButtonLine(nameVis, c.nameOKBtn, c.nameCancelBtn)
 
-	b.Section("power")
-	fc = b.One()
-	items = append(items, focusItem{
-		widget: c.tdpAdvancedCheck, row: fc.Row, col: fc.Col, section: fc.Section,
-		onActivate: func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) },
-	})
-	sliderLine(c.tdpBasicScale, 5, func() bool { return c.tdpBasicScale.IsVisible() })
-	for _, sc := range []*gtk.Scale{c.tdpPL1Scale, c.tdpPL2Scale, c.tdpPL3Scale} {
-		sliderLine(sc, 1, advVis)
+	if c.sections.Power {
+		b.Section("power")
+		fc = b.One()
+		items = append(items, focusItem{
+			widget: c.tdpAdvancedCheck, row: fc.Row, col: fc.Col, section: fc.Section,
+			onActivate: func() { c.tdpAdvancedCheck.SetActive(!c.tdpAdvancedCheck.Active()) },
+		})
+		sliderLine(c.tdpBasicScale, 5, func() bool { return c.tdpBasicScale.IsVisible() })
+		for _, sc := range c.tdpScales {
+			sliderLine(sc, 1, advVis)
+		}
+		if c.uvCpuScale != nil {
+			sliderLine(c.uvCpuScale, 1, uvVis)
+			visibleButtonLine(uvVis, c.resetUvBtn)
+		}
+		buttonLine(c.resetTdpBtn)
 	}
-	sliderLine(c.uvCpuScale, 1, uvVis)
-	visibleButtonLine(uvVis, c.resetUvBtn)
-	buttonLine(c.resetTdpBtn)
 
-	b.Section("fan")
-	// The preset row is above the chart on screen, so it is above it here:
-	// a focus order that disagrees with the reading order is the failure
-	// nobody notices with a pointer in their hand.
-	if len(c.presetBtns) > 0 {
-		buttonLine(c.presetBtns...)
+	if c.fanCurve != nil {
+		b.Section("fan")
+		// The preset row is above the chart on screen, so it is above it
+		// here: a focus order that disagrees with the reading order is the
+		// failure nobody notices with a pointer in their hand.
+		if len(c.presetBtns) > 0 {
+			buttonLine(c.presetBtns...)
+		}
+		fc = b.One()
+		items = append(items, focusItem{
+			widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
+		})
+		buttonLine(c.resetFanBtn)
 	}
-	fc = b.One()
-	items = append(items, focusItem{
-		widget: c.fanCurve.area, row: fc.Row, col: fc.Col, section: fc.Section,
-	})
-	buttonLine(c.resetFanBtn)
 
 	b.Section("commit")
 	// Same line as Commit because they share the bar. A focus line that did
@@ -798,14 +848,21 @@ func tdpWarningText(l limits.Limits) string {
 // themselves come back from the sync that follows.
 func (c *customView) applyLimits() {
 	l := c.w.limits
-	c.tdpBasicScale.SetRange(float64(l.TDPMin), float64(l.BasicSliderMax()))
-	c.tdpPL1Scale.SetRange(float64(l.TDPMin), float64(l.TDPMaxForced))
+	setRange := func(sc *gtk.Scale, lo, hi int) {
+		if sc != nil {
+			sc.SetRange(float64(lo), float64(hi))
+		}
+	}
+	setRange(c.tdpBasicScale, l.TDPMin, l.BasicSliderMax())
+	setRange(c.tdpPL1Scale, l.TDPMin, l.TDPMaxForced)
 	lo, hi := l.PL2Range()
-	c.tdpPL2Scale.SetRange(float64(lo), float64(hi))
+	setRange(c.tdpPL2Scale, lo, hi)
 	lo, hi = l.PL3Range()
-	c.tdpPL3Scale.SetRange(float64(lo), float64(hi))
-	c.uvCpuScale.SetRange(float64(l.UVMin), float64(l.UVMax))
-	c.tdpWarn.SetLabel(tdpWarningText(l))
+	setRange(c.tdpPL3Scale, lo, hi)
+	setRange(c.uvCpuScale, l.UVMin, l.UVMax)
+	if c.tdpWarn != nil {
+		c.tdpWarn.SetLabel(tdpWarningText(l))
+	}
 	if c.fanCurve != nil {
 		// A curve of the old length cannot be edited or sent against the new
 		// shape; the placeholder is honest until the next sync adopts the

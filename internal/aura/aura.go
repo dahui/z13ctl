@@ -30,6 +30,10 @@ const auraID = 0x5d
 // takes the same four levels — so it lives here and the driver reports it.
 const MaxBrightness = 3
 
+// BrightnessNames names the protocol's four levels, 0 first — the words the
+// CLI accepts and a client may show. Index i is level i.
+var BrightnessNames = []string{"off", "low", "medium", "high"}
+
 // Init sends the ASUS Aura initialization sequence.
 // The Z13-specific Dynamic Lighting Init packet (0xC0 0x03 0x01) is always sent
 // because the 2025 ROG Flow Z13 requires it to activate the lightbar.

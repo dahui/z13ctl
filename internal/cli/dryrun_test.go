@@ -12,7 +12,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 )
 
 // z13Env returns the Z13 power envelope from the embedded device data — the
@@ -260,7 +260,7 @@ func tdpAt(watts, pl1, pl2, pl3 int) api.TDPState { return cli.TDPStateFor(watts
 func TestDryRunTdp(t *testing.T) {
 	// The plan is passed in: the dry run prints the writes it is given rather
 	// than discovering the interface, which would depend on this machine.
-	plan := []asusz13.PPTWrite{
+	plan := []asus.PPTWrite{
 		{Path: "/fw/ppt_pl1_spl/current_value", Watts: 30},
 		{Path: "/fw/ppt_pl2_sppt/current_value", Watts: 32},
 		{Path: "/fw/ppt_pl3_fppt/current_value", Watts: 45},

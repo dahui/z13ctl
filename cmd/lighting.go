@@ -98,10 +98,18 @@ func checkLightingZone(c driver.LightingCaps, zone string) error {
 // parseLightingBrightness parses a brightness name or number against the
 // device's ceiling. The names are positions on its scale — off is 0, high
 // the ceiling, low 1 and medium the middle — so they mean the same thing on
-// any number of levels.
-func parseLightingBrightness(s string, maxLevel int) (int, error) {
+// any number of levels. A device that names its own levels (names, one per
+// level) is understood in those words too.
+func parseLightingBrightness(s string, maxLevel int, names ...string) (int, error) {
 	if maxLevel <= 0 {
 		return 0, errors.New("this device has no brightness control")
+	}
+	if len(names) == maxLevel+1 {
+		for i, n := range names {
+			if strings.EqualFold(s, n) {
+				return i, nil
+			}
+		}
 	}
 	switch strings.ToLower(s) {
 	case "off":

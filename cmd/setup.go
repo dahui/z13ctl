@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dahui/voltaire/v2/internal/device"
-	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 )
 
 const rulesPath = "/etc/udev/rules.d/99-voltaire.rules"
@@ -86,7 +86,7 @@ func buildRulesContent(group string) string {
 	for _, name := range targets.buttons {
 		fmt.Fprintf(&buttons, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", MODE="0660", GROUP="%s"`+"\n", name, group)
 	}
-	curves, readings := asusz13.FanHwmonNames()
+	curves, readings := asus.FanHwmonNames()
 	return fmt.Sprintf(`# 99-voltaire.rules — voltaire device access
 #
 # Grants members of the %s group read/write access to:
@@ -113,7 +113,7 @@ ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="%s", RUN+="/bin/sh -c 'for f in 
 # which logged "failed with exit code 1" on every boot (issue #25).
 ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] || continue; chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%%p/energy_uj; do [ -e \"$$f\" ] && chgrp %s \"$$f\" && chmod g+r \"$$f\"; done'"
-`, group, strings.Join(asusz13.SafeToggleIDs(), ", "), curves, readings,
+`, group, strings.Join(asus.SafeToggleIDs(), ", "), curves, readings,
 		hid.String(), group, group, buttons.String(),
 		toggleUdevRules(group), group, curves, group, readings, group, group, group)
 }
@@ -123,7 +123,7 @@ ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 
 // second list to update, and nothing outside it ever is.
 func toggleUdevRules(group string) string {
 	var b strings.Builder
-	for _, id := range asusz13.SafeToggleIDs() {
+	for _, id := range asus.SafeToggleIDs() {
 		p := toggleAttrPath(id)
 		fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="firmware-attributes", KERNEL=="asus-armoury", RUN+="/usr/bin/chgrp %s %s", RUN+="/usr/bin/chmod g+w %s"`+"\n", group, p, p)
 	}
@@ -137,7 +137,7 @@ func toggleAttrPath(id string) string {
 
 // toggleAttrPaths is every allowlisted toggle's value file, space-separated.
 func toggleAttrPaths() string {
-	ids := asusz13.SafeToggleIDs()
+	ids := asus.SafeToggleIDs()
 	paths := make([]string, len(ids))
 	for i, id := range ids {
 		paths[i] = toggleAttrPath(id)
@@ -230,7 +230,7 @@ func applySysfsPerms(group string, dryRun bool) {
 	}
 
 	// Firmware-attributes (asus-armoury): the toggles the daemon may write.
-	for _, id := range asusz13.SafeToggleIDs() {
+	for _, id := range asus.SafeToggleIDs() {
 		p := toggleAttrPath(id)
 		if _, err := os.Stat(p); err != nil {
 			continue
@@ -239,7 +239,7 @@ func applySysfsPerms(group string, dryRun bool) {
 	}
 
 	// hwmon fan curve attributes: scan by name for the correct hwmon device.
-	curves, readings := asusz13.FanHwmonNames()
+	curves, readings := asus.FanHwmonNames()
 	hwmonEntries, hwErr := os.ReadDir("/sys/class/hwmon")
 	if hwErr == nil {
 		for _, e := range hwmonEntries {

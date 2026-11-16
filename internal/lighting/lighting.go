@@ -61,6 +61,9 @@ type Caps struct {
 	Modes         []api.LightingMode
 	Speeds        []string
 	BrightnessMax int
+	// BrightnessNames names each level from 0 to BrightnessMax, lower case as
+	// the device serves them; empty when the device names none.
+	BrightnessNames []string
 }
 
 // fallback is what the drawer offered before the daemon described its
@@ -76,8 +79,9 @@ var fallback = Caps{
 		{Name: "rainbow", Label: "Rainbow", Speed: true},
 		{Name: "strobe", Label: "Strobe", Color: true, Speed: true},
 	},
-	Speeds:        []string{"slow", "normal", "fast"},
-	BrightnessMax: 3,
+	Speeds:          []string{"slow", "normal", "fast"},
+	BrightnessMax:   3,
+	BrightnessNames: []string{"off", "low", "medium", "high"},
 }
 
 // CapsFrom reads the device document's lighting section. A nil document means
@@ -111,6 +115,15 @@ func CapsFrom(doc *api.DeviceInfo) Caps {
 	}
 	if c.BrightnessMax <= 0 {
 		c.BrightnessMax = fallback.BrightnessMax
+	}
+	// Names only when there is one per level; a daemon older than the field
+	// sends none, and on the scale the fallback describes its names are what
+	// that daemon's levels always meant.
+	switch {
+	case len(li.BrightnessNames) == c.BrightnessMax+1:
+		c.BrightnessNames = li.BrightnessNames
+	case len(li.BrightnessNames) == 0 && c.BrightnessMax == fallback.BrightnessMax:
+		c.BrightnessNames = fallback.BrightnessNames
 	}
 	return c
 }
@@ -173,15 +186,16 @@ func (c Caps) KnownMode(mode string) bool {
 	return false
 }
 
-// BrightnessName is the window's label for a level: Off/Low/Medium/High on a
-// four-level scale, where the names are what the CLI and the Aura levels
-// always meant, and the number otherwise — a fifth name would be invented.
+// BrightnessName is the window's label for a level: the device's own name for
+// it where it names its levels (Off/Low/Medium/High on the Z13's Aura scale),
+// and the number otherwise — a name the device did not give would be invented.
+// Level 0 is always the hardware's off.
 func (c Caps) BrightnessName(level int) string {
+	if len(c.BrightnessNames) == c.BrightnessMax+1 && c.BrightnessMax > 0 {
+		return titleCase(c.BrightnessNames[min(max(level, 0), c.BrightnessMax)])
+	}
 	if level == 0 {
 		return "Off"
-	}
-	if c.BrightnessMax == 3 {
-		return [...]string{"Off", "Low", "Medium", "High"}[min(max(level, 0), 3)]
 	}
 	return strconv.Itoa(level)
 }

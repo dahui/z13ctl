@@ -141,7 +141,7 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 	if desktop {
 		p.customBtn = gtk.NewButtonWithLabel(p.customLabel(nil))
 		p.customBtn.SetHExpand(true)
-		w.setHint(p.customBtn, "Custom profiles: power limits, fan curve and undervolt")
+		w.setHint(p.customBtn, profileui.CustomButtonHint(profileui.SectionsFor(w.limits)))
 		p.customBtn.ConnectClicked(func() { p.openCustom() })
 		stockRow.Append(p.customBtn)
 		return p, formRow("Profile", stockRow)
@@ -252,7 +252,7 @@ func (p *profileSection) sync() {
 	note := ""
 	if !canPick {
 		note = profileui.NoCustomProfilesNote(
-			buttonpref.OpenGesture(p.w.press, buttonpref.Window, p.w.buttonLabel()))
+			buttonpref.OpenGestureFor(p.w.device, p.w.press, buttonpref.Window, p.w.buttonLabel()))
 	}
 	setBlockNote(p.customNote, note)
 }

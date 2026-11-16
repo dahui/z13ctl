@@ -22,8 +22,8 @@ var (
 var tuningCmd = &cobra.Command{
 	Use:   "tuning",
 	Short: "Manage tuning overrides as a group",
-	Long: `Manage the tuning overrides — fan curve, power limits and Curve Optimizer
-offset — as one group.
+	Long: `Manage the tuning overrides — fan curve, power limits and undervolt offset —
+as one group.
 
 --reset clears all three and returns the machine to the device's default
 firmware profile (balanced on the Z13) with firmware fan control and stock power
@@ -92,7 +92,7 @@ func runTuningReset() error {
 }
 
 func init() {
-	tuningCmd.Flags().BoolVar(&tuningResetFlag, "reset", false, "Clear the fan curve, power limits and Curve Optimizer offset")
+	tuningCmd.Flags().BoolVar(&tuningResetFlag, "reset", false, "Clear the fan curve, power limits and undervolt offset")
 	tuningCmd.Flags().StringVar(&tuningProfileFlag, "profile", "", "Custom profile to clear (default: the active profile)")
 	rootCmd.AddCommand(tuningCmd)
 }

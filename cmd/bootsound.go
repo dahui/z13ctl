@@ -20,9 +20,11 @@ var (
 
 var bootsoundCmd = &cobra.Command{
 	Use:   "bootsound",
-	Short: "Get or set the boot POST sound via asus-armoury firmware attributes",
-	Long: `Get or set the boot POST sound via the Linux asus-armoury firmware-attributes
-sysfs interface.
+	Short: "Get or set the boot POST sound (ASUS firmware toggle)",
+	Long: `Get or set the boot POST sound, an ASUS firmware toggle exposed by the kernel's
+asus-armoury firmware-attributes interface. It is the named form of
+'voltaire feature --get/--set boot_sound', kept for scripts; a device without
+the toggle refuses it.
 
 Values are the ones the firmware lists for the attribute (--list on the
 feature command shows them); for this switch:

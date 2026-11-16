@@ -9,10 +9,13 @@ package daemon
 // cases stay on the ring, which is where the behaviour worth pinning is.
 
 import (
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/telemetryplot"
 	"github.com/dahui/voltaire/v2/internal/telemetryring"
@@ -605,5 +608,60 @@ func TestSamplerStandsDownWhileTheECIsWedged(t *testing.T) {
 	d.sampleOnce()
 	if got := d.history().Len(); got != 1 {
 		t.Errorf("after the EC answered the ring holds %d samples, want 1", got)
+	}
+}
+
+// stubTelemetry and stubFans are the two drivers a sample is assembled from,
+// with no hardware behind them.
+type stubTelemetry struct{ temp int }
+
+func (stubTelemetry) Info() driver.TelemetryInfo { return driver.TelemetryInfo{} }
+func (s stubTelemetry) Sample() (driver.Sample, error) {
+	return driver.Sample{TempC: s.temp}, nil
+}
+
+type stubFans struct {
+	rpm []int
+	err error
+}
+
+func (stubFans) Shape() driver.FanShape                  { return driver.FanShape{} }
+func (f stubFans) ReadRPM() ([]int, error)               { return f.rpm, f.err }
+func (stubFans) ReadMode() (int, error)                  { return 2, nil }
+func (stubFans) ApplyCurve([]api.FanCurvePoint) error    { return nil }
+func (stubFans) Release() error                          { return nil }
+func (stubFans) LiveCurve() ([]api.FanCurvePoint, error) { return nil, nil }
+
+// TestSampleTakesRPMFromTheFanController pins where fan speed comes from now
+// that the telemetry driver no longer reads it: the daemon merges the fan
+// controller's reading into every sample, for the history ring and for
+// get-state alike. A failed fan read costs only the RPM, never the sample.
+func TestSampleTakesRPMFromTheFanController(t *testing.T) {
+	d := &Daemon{
+		hw:        &device.Device{Telemetry: stubTelemetry{temp: 61}, Fans: stubFans{rpm: []int{2400, 2600}}},
+		telemetry: telemetryring.New(4),
+	}
+	d.sampleOnce()
+	e, ok := d.history().Latest()
+	if !ok {
+		t.Fatal("sampleOnce recorded nothing")
+	}
+	if e.Sample.TempC != 61 || !slices.Equal(e.Sample.RPM, []int{2400, 2600}) {
+		t.Errorf("recorded sample = temp %d rpm %v, want 61 and the fan controller's [2400 2600]",
+			e.Sample.TempC, e.Sample.RPM)
+	}
+
+	d.hw.Fans = stubFans{err: errors.New("hwmon gone")}
+	s, err := d.liveSample()
+	if err != nil {
+		t.Fatalf("a failed fan read failed the sample: %v", err)
+	}
+	if s.TempC != 61 || s.RPM != nil {
+		t.Errorf("with the fan read failing: temp %d rpm %v, want 61 and no RPM", s.TempC, s.RPM)
+	}
+
+	d.hw.Fans = nil
+	if s, err := d.liveSample(); err != nil || s.RPM != nil {
+		t.Errorf("with no fan controller: rpm %v err %v, want none and no error", s.RPM, err)
 	}
 }

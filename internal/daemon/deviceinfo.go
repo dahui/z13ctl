@@ -42,7 +42,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw == nil {
 		return &api.DeviceInfo{}
 	}
-	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model}
+	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model, Name: hw.Name}
 	if hw.Fans != nil {
 		s := hw.Fans.Shape()
 		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax,
@@ -72,6 +72,12 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		if !env.PL3.IsZero() {
 			info.Power.PL3 = &api.PowerRange{Min: env.PL3.Min, Max: env.PL3.Max}
 		}
+		// Which limits a user may set, and their words — the power driver's
+		// answer (kernel presence, device data, its own wording). Empty from a
+		// driver that says nothing; a client then offers its built-in three.
+		for _, l := range env.Limits {
+			info.Power.Limits = append(info.Power.Limits, api.PowerLimit{ID: l.ID, Label: l.Label, Description: l.Description})
+		}
 		// Copied for the same reason as the floor curve: the wire document must
 		// not alias the envelope's own map, or a client that mutated what it was
 		// given would be editing the device definition every later caller reads.
@@ -94,6 +100,11 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw.Lighting != nil {
 		c := hw.Lighting.Caps()
 		info.Lighting = &api.LightingInfo{Zones: hw.Lighting.Zones(), Speeds: c.Speeds, BrightnessMax: c.BrightnessMax}
+		// Only a full set of names is served: a client indexes them by level,
+		// and a short list would name the wrong level or none.
+		if len(c.BrightnessNames) == c.BrightnessMax+1 {
+			info.Lighting.BrightnessNames = slices.Clone(c.BrightnessNames)
+		}
 		for _, z := range c.Zones {
 			info.Lighting.Labels = append(info.Lighting.Labels, z.Label)
 		}
@@ -123,6 +134,11 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw.Undervolt != nil {
 		lo, hi := hw.Undervolt.Range()
 		info.Undervolt = &api.UndervoltInfo{Min: lo, Max: hi}
+		if d, ok := hw.Undervolt.(driver.UndervoltDescriber); ok {
+			t := d.Text()
+			info.Undervolt.Label, info.Undervolt.ShortLabel = t.Label, t.ShortLabel
+			info.Undervolt.Unit, info.Undervolt.Description = t.Unit, t.Description
+		}
 	}
 	if hw.Battery != nil {
 		caps := hw.Battery.Caps()

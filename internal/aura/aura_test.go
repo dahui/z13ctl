@@ -225,3 +225,14 @@ func TestTurnOff(t *testing.T) {
 		t.Error("TurnOff: missing Brightness 0 packet")
 	}
 }
+
+// TestBrightnessNamesCoverEveryLevel keeps the level names in step with the
+// scale they name: one per level, 0 through aura.MaxBrightness.
+func TestBrightnessNamesCoverEveryLevel(t *testing.T) {
+	if len(aura.BrightnessNames) != aura.MaxBrightness+1 {
+		t.Fatalf("%d brightness names for levels 0–%d", len(aura.BrightnessNames), aura.MaxBrightness)
+	}
+	if aura.BrightnessNames[0] != "off" {
+		t.Errorf("level 0 is named %q; it is the off level", aura.BrightnessNames[0])
+	}
+}

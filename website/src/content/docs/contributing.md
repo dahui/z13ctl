@@ -97,9 +97,12 @@ nothing to register.
 
 - `internal/aura` — fully unit-testable via mock writers; covers every packet
   type
-- `internal/drivers/asusz13` — a fake sysfs tree (`sysfs_fake_test.go`)
-  backs the hwmon, platform-profile, PPT, battery, firmware-attribute, and
-  `ryzen_smu` drivers, with a `fakeSMU` mailbox
+- `internal/drivers/asus`, `amd` and `linux` — each has its own fake sysfs
+  tree (`sysfs_fake_test.go`) for the subtree it drives: hwmon fans, PPT and
+  firmware attributes (`asus`); the `ryzen_smu` mailbox as a `fakeSMU`, amdgpu
+  and the NPU (`amd`); platform-profile, power_supply, RAPL and procfs
+  (`linux`). `internal/drivers/register` assembles the embedded device files
+  and the developer guide's example with the real drivers
 - `internal/safety` — the fan-floor rules and the raise/release ordering,
   against a call-order-recording fake driver
 - `internal/cli` — color parsing and dry-run output
@@ -124,13 +127,14 @@ nothing to register.
   integration-tested manually against hardware
 
 :::caution[Tests must never touch real hardware]
-`internal/drivers/asusz13` writes straight to sysfs and `SetProfile` shells
-out to `powerprofilesctl`. Two seams exist so tests cannot reach either: the
-fake sysfs tree redirects every path, and `ppdRunner` / `smuReadFile` /
-`smuWriteFile` are swappable. Both were added after tests changed the
-developer's live power profile and TDP. The package's `TestMain` also points
-every writable root at a nonexistent directory, so a test that forgets the fake
-fails instead of writing.
+The drivers under `internal/drivers` write straight to sysfs, and the profile
+driver shells out to `powerprofilesctl`. Two seams exist so tests cannot reach
+either: each package's fake sysfs tree redirects every path, and `ppdRunner`
+(`linux`) / `smuReadFile` / `smuWriteFile` (`amd`) are swappable. Both were
+added after tests changed the developer's live power profile and TDP. Each
+driver package's `TestMain` also points every writable root at a nonexistent
+directory, so a test that forgets the fake fails instead of writing. See
+[Writing a driver](/voltaire/dev/writing-a-driver/#testing-without-hardware).
 
 `internal/daemon` handlers reach that driver through the assembled
 `device.Device`, and its path vars are unexported, so **daemon tests must stay

@@ -65,8 +65,8 @@ type telemetryAction struct {
 // where they are least trustworthy.
 //
 // The EC gate beside it is the opposite case: it **is** a safety property, and
-// must not be relaxed on the reasoning above. Sample reads fan RPM through
-// asus-wmi and the battery through ACPI, and does it once a second — so while
+// must not be relaxed on the reasoning above. A sample reads fan RPM through
+// the fan controller (asus-wmi on the Z13) and the battery through ACPI, and does it once a second — so while
 // the EC is not answering, this watcher would be the most frequent thing to walk
 // into it, and one blocked read holds the ACPI global mutex as surely as a
 // write. The gap in the graph is the cost; the reconcile watcher's probe lifts
@@ -159,10 +159,34 @@ func packagePowerW(prev, cur energyReading) (watts float64, ok bool) {
 	return watts, true
 }
 
-// It deliberately takes neither hwMu nor d.mu for the read itself: sampling is
-// the same class of hardware access as a *-get handler, and blocking the
-// dashboard's data behind a fan write sequence would be the regression those
-// handlers avoid by the same reasoning. The ring carries its own lock.
+// liveSample is one telemetry reading with every fan's speed merged in from
+// the fan controller. Fan speed is the fan driver's reading, so the telemetry
+// driver does not read it a second way — which is what lets one telemetry
+// driver serve machines whose fans belong to different vendors' drivers. A
+// failed fan read leaves RPM empty rather than failing the sample, for the
+// reason everything but the temperature is best-effort (driver.Sample).
+//
+// Callers check d.hw.Telemetry and the EC gate first: the RPM read is asus-wmi
+// on the Z13, and it runs inside the same gate as the rest of the sample.
+func (d *Daemon) liveSample() (driver.Sample, error) {
+	s, err := d.hw.Telemetry.Sample()
+	if err != nil {
+		return s, err
+	}
+	if d.hw.Fans != nil {
+		if rpms, err := d.hw.Fans.ReadRPM(); err == nil {
+			s.RPM = rpms
+		}
+	}
+	return s, nil
+}
+
+// sampleOnce takes one sample into the history ring, unless the tick stands
+// it down. It deliberately takes neither hwMu nor d.mu for the read itself:
+// sampling is the same class of hardware access as a *-get handler, and
+// blocking the dashboard's data behind a fan write sequence would be the
+// regression those handlers avoid by the same reasoning. The ring carries its
+// own lock.
 func (d *Daemon) sampleOnce() {
 	d.mu.Lock()
 	suspending, wedged := d.suspending, d.ecWedged
@@ -178,7 +202,7 @@ func (d *Daemon) sampleOnce() {
 		return
 	}
 
-	s, err := d.hw.Telemetry.Sample()
+	s, err := d.liveSample()
 	if err != nil {
 		// A failed read is a gap, not a zero. Recording zeros would draw a
 		// temperature of 0°C, which reads as a measurement rather than as

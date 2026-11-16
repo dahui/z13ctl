@@ -5,7 +5,7 @@ package cli
 //
 // Device limits (the power envelope) come in as parameters — mirroring how the
 // real paths get them from the assembled device — while the sysfs *paths* are
-// asked of the asusz13 driver directly: a dry run's job is to spell out what
+// asked of the asus, amd and linux drivers directly: a dry run's job is to spell out what
 // this machine's driver would write, and the paths are that driver's own
 // knowledge. Per-device dry-run display becomes driver data in the
 // capability-protocol milestone.
@@ -19,7 +19,9 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/amd"
+	"github.com/dahui/voltaire/v2/internal/drivers/asus"
+	"github.com/dahui/voltaire/v2/internal/drivers/linux"
 	"github.com/dahui/voltaire/v2/internal/hid"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
@@ -81,7 +83,7 @@ func DryRunOff() {
 // DryRunBatteryLimit prints the sysfs write that would be performed for a battery limit change.
 func DryRunBatteryLimit(limit int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", limit, asusz13.FindBatteryThresholdPath())
+	fmt.Printf("Would write %d to %s\n", limit, linux.FindBatteryThresholdPath())
 }
 
 // DryRunProfile prints the sysfs writes that would be performed for a profile
@@ -102,11 +104,11 @@ func DryRunProfile(env driver.PowerEnvelope, firmware []string, profile string) 
 	}
 
 	fmt.Println("Would reset the CPU Curve Optimizer to stock")
-	primary := asusz13.FindProfilePath()
+	primary := linux.FindProfilePath()
 	// Name-mapped, as SetProfile does for every device including the primary —
 	// printing the raw name here showed "quiet" where "low-power" gets written.
-	fmt.Printf("Would write %q to %s\n", asusz13.ProfileNameForDevice(filepath.Dir(primary), profile), primary)
-	dir := asusz13.SysProfileDir()
+	fmt.Printf("Would write %q to %s\n", linux.ProfileNameForDevice(filepath.Dir(primary), profile), primary)
+	dir := linux.SysProfileDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -120,10 +122,10 @@ func DryRunProfile(env driver.PowerEnvelope, firmware []string, profile string) 
 		if _, err := os.Stat(p); err != nil {
 			continue
 		}
-		name := asusz13.ProfileNameForDevice(base, profile)
+		name := linux.ProfileNameForDevice(base, profile)
 		fmt.Printf("Would write %q to %s\n", name, p)
 	}
-	if ppd := asusz13.PPDProfile(profile); ppd != "" {
+	if ppd := linux.PPDProfile(profile); ppd != "" {
 		fmt.Printf("Would run: powerprofilesctl set %s\n", ppd)
 	}
 	// Switching to a stock profile writes that profile's stock row, then
@@ -199,7 +201,7 @@ func dryRunTarget(name string) string {
 }
 
 func dryRunACPath() string {
-	if p := asusz13.FindACOnlinePath(); p != "" {
+	if p := linux.FindACOnlinePath(); p != "" {
 		return p
 	}
 	return "(no mains power supply found)"
@@ -208,7 +210,7 @@ func dryRunACPath() string {
 // DryRunBootSound prints the sysfs write that would be performed for a boot sound change.
 func DryRunBootSound(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, asusz13.FindBootSoundPath())
+	fmt.Printf("Would write %d to %s\n", value, asus.FindBootSoundPath())
 }
 
 // DryRunCPUBoost prints the sysfs write that would be performed for a CPU
@@ -219,14 +221,14 @@ func DryRunCPUBoost(on bool) {
 		v = 1
 	}
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", v, asusz13.CPUBoostPath())
+	fmt.Printf("Would write %d to %s\n", v, linux.CPUBoostPath())
 	fmt.Println("  (this moves every cpufreq policy at once)")
 }
 
 // DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, asusz13.FindPanelOverdrivePath())
+	fmt.Printf("Would write %d to %s\n", value, asus.FindPanelOverdrivePath())
 }
 
 // DryRunFeature prints the sysfs write a generic firmware-toggle set would
@@ -234,7 +236,7 @@ func DryRunPanelOverdrive(value int) {
 // truthful rather than an empty path.
 func DryRunFeature(id string, value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	path := asusz13.FindTogglePath(id)
+	path := asus.FindTogglePath(id)
 	if path == "" {
 		path = fmt.Sprintf("<no %s attribute on this driver>", id)
 	}
@@ -245,11 +247,11 @@ func DryRunFeature(id string, value int) {
 // The same curve is written to every fan's curve channel.
 func DryRunFanCurve(points []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := asusz13.FindFanCurveHwmonPath()
+	curveDir := asus.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	chans := asusz13.FanPWMIndices()
+	chans := asus.FanPWMIndices()
 	if len(chans) == 0 {
 		fmt.Printf("Would write the curve to every pwm*_auto_point* channel in %s and set each pwm*_enable to 1 (custom)\n", curveDir)
 	}
@@ -266,11 +268,11 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 // DryRunFanCurveReset prints the sysfs writes for a fan curve reset (every fan).
 func DryRunFanCurveReset() {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := asusz13.FindFanCurveHwmonPath()
+	curveDir := asus.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	chans := asusz13.FanPWMIndices()
+	chans := asus.FanPWMIndices()
 	if len(chans) == 0 {
 		fmt.Printf("Would write 2 (auto) to every pwm*_enable in %s\n", curveDir)
 	}
@@ -306,17 +308,17 @@ func DryRunFanCurveReset() {
 // being true once the floor became a per-point minimum rather than a replacement
 // curve.
 //
-// writes is the plan from asusz13.PlanTDPWrites, passed in for the same reason
+// writes is the plan from asus.PlanTDPWrites, passed in for the same reason
 // as live: discovering the PPT interface in here would make the output depend on
 // the machine running the tests.
-func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.FanCurvePoint, writes []asusz13.PPTWrite) {
+func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.FanCurvePoint, writes []asus.PPTWrite) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	if force {
 		fmt.Printf("--force given: sustained limit allowed above %dW (up to %dW)\n",
 			env.TDPMaxSafe, env.TDPMaxForced)
 	}
 	if s.PL1SPL > env.TDPMaxSafe {
-		curveDir := asusz13.FindFanCurveHwmonPath()
+		curveDir := asus.FindFanCurveHwmonPath()
 		if curveDir == "" {
 			curveDir = "<hwmon not found>"
 		}
@@ -423,7 +425,7 @@ func coSend(command string, cpu int) string {
 	if command == "" {
 		command = "the Curve Optimizer offset"
 	}
-	return fmt.Sprintf("%s with arg 0x%X", command, asusz13.EncodeCOValue(cpu))
+	return fmt.Sprintf("%s with arg 0x%X", command, amd.EncodeCOValue(cpu))
 }
 
 // DryRunBrightness prints the packet sequence for a brightness-only change.

@@ -52,7 +52,7 @@ func (c *customView) buildCommitBar() *gtk.Box {
 	// would put that ordering in the GUI. See api.SendTuningReset.
 	c.resetAllBtn = gtk.NewButtonWithLabel("Reset All")
 	c.resetAllBtn.SetHAlign(gtk.AlignStart)
-	c.w.setHint(c.resetAllBtn, "Clear the fan curve, power limits and undervolt from this profile")
+	c.w.setHint(c.resetAllBtn, profileui.ResetAllHint(c.sections))
 	c.resetAllBtn.ConnectClicked(func() { c.resetAllTuning() })
 	bar.Append(c.resetAllBtn)
 
@@ -83,14 +83,10 @@ func (c *customView) buildCommitBar() *gtk.Box {
 // widget shows the target's own values — which is the definition of "clean".
 func (c *customView) syncCommitBar(plan profileui.EditPlan) {
 	c.commitBtn.SetLabel(profileui.CommitLabel(plan.Live))
-	c.baseBasic = int(c.tdpBasicScale.Value())
-	c.baseAdv = [3]int{
-		int(c.tdpPL1Scale.Value()),
-		int(c.tdpPL2Scale.Value()),
-		int(c.tdpPL3Scale.Value()),
-	}
+	c.baseBasic = scaleInt(c.tdpBasicScale)
+	c.baseAdv = c.advValues()
 	c.baseCurve = c.readFanCurve()
-	c.baseUv = int(c.uvCpuScale.Value())
+	c.baseUv = scaleInt(c.uvCpuScale)
 	c.baseCaptured = true
 	c.applyCommitDirty()
 }
@@ -99,8 +95,14 @@ func (c *customView) syncCommitBar(plan profileui.EditPlan) {
 // laid out: the daemon offers CO (uvBox) and the advanced controls are open.
 // A hidden slider's value is not an edit — it is unreachable.
 func (c *customView) uvEditable() bool {
-	return c.uvCpuScale != nil && c.uvBox != nil &&
+	return c.uvCpuScale != nil && c.uvBox != nil && c.tdpAdvancedBox != nil &&
 		c.uvBox.Visible() && c.tdpAdvancedBox.Visible()
+}
+
+// advValues is the advanced view's three limits, 0 for one the device does
+// not let the user set.
+func (c *customView) advValues() [3]int {
+	return [3]int{scaleInt(c.tdpPL1Scale), scaleInt(c.tdpPL2Scale), scaleInt(c.tdpPL3Scale)}
 }
 
 // commitDirty reports which domains differ from the baseline. GTK main
@@ -109,14 +111,12 @@ func (c *customView) commitDirty() (tdp, fans, uv bool) {
 	if !c.baseCaptured {
 		return false, false, false
 	}
-	if c.tdpAdvancedCheck.Active() {
-		tdp = [3]int{
-			int(c.tdpPL1Scale.Value()),
-			int(c.tdpPL2Scale.Value()),
-			int(c.tdpPL3Scale.Value()),
-		} != c.baseAdv
-	} else {
-		tdp = int(c.tdpBasicScale.Value()) != c.baseBasic
+	switch {
+	case c.tdpAdvancedCheck == nil: // no POWER card on this device
+	case c.tdpAdvancedCheck.Active():
+		tdp = c.advValues() != c.baseAdv
+	default:
+		tdp = scaleInt(c.tdpBasicScale) != c.baseBasic
 	}
 	fans = c.readFanCurve() != c.baseCurve
 	uv = c.uvEditable() && int(c.uvCpuScale.Value()) != c.baseUv
@@ -158,7 +158,7 @@ func (c *customView) commitChanges() {
 	}
 	req := c.readTdpRequest() // widget reads stay on the GTK thread
 	curve := c.readFanCurve()
-	uv := fmt.Sprintf("%d", int(c.uvCpuScale.Value()))
+	uv := fmt.Sprintf("%d", scaleInt(c.uvCpuScale))
 	plan := c.editPlan()
 	go func() {
 		if err := probeStoredTarget(plan); err != nil {

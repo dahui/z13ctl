@@ -79,6 +79,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type LightingMode](<#LightingMode>)
 - [type LightingState](<#LightingState>)
 - [type PowerInfo](<#PowerInfo>)
+- [type PowerLimit](<#PowerLimit>)
 - [type PowerRange](<#PowerRange>)
 - [type ProfileEntry](<#ProfileEntry>)
 - [type ProfileInfo](<#ProfileInfo>)
@@ -1817,7 +1818,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="BatteryInfo"></a>
-## type [BatteryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L265-L270>)
+## type [BatteryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L300-L305>)
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
@@ -1833,7 +1834,7 @@ type BatteryInfo struct {
 ```
 
 <a name="CPUInfo"></a>
-## type [CPUInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L247-L253>)
+## type [CPUInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L282-L288>)
 
 CPUInfo says what CPU\-level controls the device offers. A section rather than a bool for the same reason BatteryInfo is one: its contents are independently absent, so a machine that gains a second CPU control later can say so without this field having meant two things.
 
@@ -1871,7 +1872,7 @@ func (p CustomProfile) Empty() bool
 Empty reports whether the profile controls no subsystem at all. An empty profile cannot be activated: there would be nothing to apply.
 
 <a name="DeviceInfo"></a>
-## type [DeviceInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L16-L38>)
+## type [DeviceInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L16-L43>)
 
 DeviceInfo describes the assembled device: its identity, the capabilities it has, and the limits that go with them. Returned by SendDeviceGet.
 
@@ -1879,6 +1880,11 @@ DeviceInfo describes the assembled device: its identity, the capabilities it has
 type DeviceInfo struct {
     ID    string `json:"id"`    // device data identifier, e.g. "asus-rog-flow-z13-2025"
     Model string `json:"model"` // short hardware name for display, e.g. "GZ302"
+
+    // Name is the machine's display name, e.g. "ASUS ROG Flow Z13 (2025)".
+    // Absent from a daemon older than the field, or when the device data names
+    // none; a client then shows Model, else ID.
+    Name string `json:"name,omitempty"`
 
     Fans      *FanInfo       `json:"fans,omitempty"`
     Power     *PowerInfo     `json:"power,omitempty"`
@@ -1974,7 +1980,7 @@ type FanCurveState struct {
 ```
 
 <a name="FanInfo"></a>
-## type [FanInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L45-L72>)
+## type [FanInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L50-L77>)
 
 FanInfo is the device's fan\-curve shape: how many points a curve holds and the axes an editor should draw. TempMin/TempMax are the editor's temperature axis, not validation bounds — the hardware tolerates points outside them. Points is the kernel's count where the daemon can read it; size an editor from it, never from a constant.
 
@@ -2010,7 +2016,7 @@ type FanInfo struct {
 ```
 
 <a name="FanPreset"></a>
-## type [FanPreset](<https://github.com/dahui/voltaire/blob/main/api/device.go#L83-L88>)
+## type [FanPreset](<https://github.com/dahui/voltaire/blob/main/api/device.go#L88-L93>)
 
 FanPreset is one named fan curve offered as a starting point. Name is the wire/CLI identifier \(lowercase, matched case\-insensitively\); Label is what to show; Description is optional prose for a tooltip.
 
@@ -2026,7 +2032,7 @@ type FanPreset struct {
 ```
 
 <a name="LightingInfo"></a>
-## type [LightingInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L161-L174>)
+## type [LightingInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L182-L199>)
 
 LightingInfo describes the device's lighting: its zones, the effects it offers and the inputs each takes, the speeds, and the brightness scale. Build lighting controls from it rather than from a list of your own — the fields beyond Zones are absent from a daemon older than them, and a client then falls back to what it knew before.
 
@@ -2044,11 +2050,15 @@ type LightingInfo struct {
     Speeds []string `json:"speeds,omitempty"`
     // BrightnessMax is the top brightness level; levels run from 0 (off).
     BrightnessMax int `json:"brightness_max,omitempty"`
+    // BrightnessNames names each level, 0 first (BrightnessMax+1 entries),
+    // when the lighting protocol has names for them; absent when its levels
+    // are only numbers, or from a daemon older than the field.
+    BrightnessNames []string `json:"brightness_names,omitempty"`
 }
 ```
 
 <a name="LightingMode"></a>
-## type [LightingMode](<https://github.com/dahui/voltaire/blob/main/api/device.go#L178-L184>)
+## type [LightingMode](<https://github.com/dahui/voltaire/blob/main/api/device.go#L203-L209>)
 
 LightingMode is one effect: its wire name, a label, and the inputs it takes — the primary colour, the second colour, and an animation speed.
 
@@ -2081,7 +2091,7 @@ type LightingState struct {
 ```
 
 <a name="PowerInfo"></a>
-## type [PowerInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L100-L123>)
+## type [PowerInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L105-L136>)
 
 PowerInfo is the device's power\-limit envelope. Sustained limits above TDPMaxSafe require the caller's explicit force flag and put the fans on FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means the device imposes no floor.
 
@@ -2111,11 +2121,32 @@ type PowerInfo struct {
     // hardcoded table is answering for the wrong machine the moment voltaire
     // supports a second one. Empty means the device declares no stock table.
     StockProfilePPT map[string]TDPState `json:"stock_profile_ppt,omitempty"`
+
+    // Limits are the power limits this device lets a user set, in display
+    // order, with the words to show for each — so a client neither assumes
+    // three limits nor names them in one vendor's terms. Ranges are not
+    // repeated here: PL1's is TDPMin..TDPMaxForced, PL2's and PL3's are the
+    // fields above. Absent from a daemon older than the field; a client then
+    // offers its built-in three.
+    Limits []PowerLimit `json:"limits,omitempty"`
+}
+```
+
+<a name="PowerLimit"></a>
+## type [PowerLimit](<https://github.com/dahui/voltaire/blob/main/api/device.go#L140-L144>)
+
+PowerLimit is one settable power limit. ID is "pl1", "pl2" or "pl3" — the tdp command's pl1/pl2/pl3 fields and TDPState's PL1SPL/PL2SPPT/FPPT.
+
+```go
+type PowerLimit struct {
+    ID          string `json:"id"`
+    Label       string `json:"label"`
+    Description string `json:"description,omitempty"`
 }
 ```
 
 <a name="PowerRange"></a>
-## type [PowerRange](<https://github.com/dahui/voltaire/blob/main/api/device.go#L126-L129>)
+## type [PowerRange](<https://github.com/dahui/voltaire/blob/main/api/device.go#L147-L150>)
 
 PowerRange is an inclusive range in watts.
 
@@ -2127,7 +2158,7 @@ type PowerRange struct {
 ```
 
 <a name="ProfileEntry"></a>
-## type [ProfileEntry](<https://github.com/dahui/voltaire/blob/main/api/device.go#L151-L154>)
+## type [ProfileEntry](<https://github.com/dahui/voltaire/blob/main/api/device.go#L172-L175>)
 
 ProfileEntry is one firmware profile's display label.
 
@@ -2139,7 +2170,7 @@ type ProfileEntry struct {
 ```
 
 <a name="ProfileInfo"></a>
-## type [ProfileInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L144-L148>)
+## type [ProfileInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L165-L169>)
 
 ProfileInfo lists the firmware performance profiles this device offers, in the order to present them \(the kernel's: least to most power\).
 
@@ -2442,7 +2473,7 @@ type TDPState struct {
 ```
 
 <a name="TelemetryInfo"></a>
-## type [TelemetryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L286-L302>)
+## type [TelemetryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L321-L337>)
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
@@ -2581,7 +2612,7 @@ func main() {
 </details>
 
 <a name="ToggleInfo"></a>
-## type [ToggleInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L190-L215>)
+## type [ToggleInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L215-L240>)
 
 ToggleInfo describes one firmware toggle the device offers. ID is the wire identifier for the feature/feature\-get commands; Label is a human\-readable fallback for clients with no nicer name of their own. Kind says how the value is shaped — "bool" toggles take 0 or 1.
 
@@ -2615,7 +2646,7 @@ type ToggleInfo struct {
 ```
 
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L238-L241>)
+## type [UndervoltInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L263-L276>)
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 
@@ -2623,6 +2654,16 @@ UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max;
 type UndervoltInfo struct {
     Min int `json:"min"`
     Max int `json:"max"`
+
+    // How to name the offset: Label for a control ("CPU Curve Optimizer"),
+    // ShortLabel for a compact summary ("CO"), Unit for a value's suffix
+    // (empty when the steps are unitless), Description for one line of help.
+    // Each is absent when the device says nothing, and from a daemon older
+    // than the fields; a client then uses its own words.
+    Label       string `json:"label,omitempty"`
+    ShortLabel  string `json:"short_label,omitempty"`
+    Unit        string `json:"unit,omitempty"`
+    Description string `json:"description,omitempty"`
 }
 ```
 

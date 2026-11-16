@@ -134,49 +134,68 @@ internal/
   driver/                    the per-hardware-class interfaces the daemon and CLI program
                              against (Fans, Power, Profile, Lighting, Buttons, …) +
                              driver.PowerEnvelope; device support is implementations
-                             selected by data, not calls into one machine's sysfs layout
+                             selected by data, not calls into one machine's sysfs layout.
+                             doc.go is the driver contract
   device/                    assembles a Device (per-class driver fields, nil where the
                              machine has no such capability) from DMI identity matched
                              against the embedded devices/*.toml
-    devices/                 device data — asus-rog-flow-z13-2025.toml
+    devices/                 device data — asus-rog-flow-z13-2025.toml (schema: config.go;
+                             documented key by key in website/.../dev/device-files.md)
+  devicefixture/             a synthetic second device (TOML + the document the daemon
+                             produces from it) for tests of the capability-absence rules
   drivers/
-    asusz13/                 the 2025 ROG Flow Z13 (GZ302) driver: hwmon fan pair, PPT,
-                             platform_profile, battery threshold, asus-armoury toggles,
-                             ryzen_smu CO. This is where internal/cli's hardware code
-                             moved at M1 — same files, same tests, same assertions.
-      drivers.go             the driver.* implementations the registry constructs
+    (split by vendor/subsystem on 2026-11-15 — was one asusz13/ package; method
+     names in device files unchanged. No driver package imports another: the
+     couplings are injected in register/.)
+    asus/                    ASUS firmware interfaces, shared by every asus-wmi/asus-armoury
+                             machine; doc.go says what is data vs code
+      drivers.go             fanController, powerLimiter, toggles; ThrottlePolicyPath
       fan.go                 hwmon discovery; channels, points and fans enumerated from attribute
                              names; curve read/write (every channel), RPM, mode control,
                              SetAllFansFullSpeed, VerifyFanCurveActive
-      sysfs.go               FindProfilePath, SetProfile, battery threshold, boot sound,
-                             panel overdrive, APU temperature, battery capacity
-      power.go               FindACOnlinePath, OnACPower (Mains-only discovery)
-      rapl.go                powercap package-energy counter (read-only grant) + battery
-                             flow, state and the Wh energy pair from power_supply
-                             (power_now, or current x voltage; energy_now, or charge x voltage)
-      gpu.go                 amdgpu, all from one card: edge temp and sclk (its own hwmon, by
-                             label), busy %, VRAM carveout, and the pure gpu_metrics parser
-                             (per-revision offset table, 2.0–3.0)
-      cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory,
-                             and the global boost switch (read/write/verify)
-      npu.go                 amdxdna NPU power/util/clock over DRM ioctls; queried only
-                             while runtime_status reads active (opening it resumes the NPU)
-      net.go                 /proc/net/dev byte counters, summed over physical interfaces
-                             only (a /sys/class/net/*/device link) so tunnels never double-count
       tdp.go                 PPT interface choice (asus-armoury, else asus-nb-wmi) and I/O: ReadAllPPT,
-                             SetTDPState (clamps into armoury's range), PlanTDPWrites; the envelope overlay
+                             SetTDPState (clamps into armoury's range), PlanTDPWrites; the envelope
+                             overlay; which limits exist (presentLimits) and their wording
+                             (pptLimitText, completeLimits)
+      armoury.go             boot sound / panel overdrive helpers, charge_mode (ReadCharger,
+                             ChargerFromArmoury), pending_reboot
+      paths.go / main_test.go / sysfs_fake_test.go   its own roots, guard and fake tree
+      fan_sysfs_test.go / fan_enum_test.go / tdp_test.go / ppt_test.go / toggles_test.go
+    amd/                     AMD silicon
       smu.go                 SMU sysfs mailbox: SMUAvailable, SMUProbeUndervolt, SendSMUCommand
       undervolt.go           Curve Optimizer: SetCurveOptimizer, ResetCurveOptimizer, CurveOptimizerCommand;
                              the per-CPU command table (coPlatforms, from ryzenadj)
+      undervolter.go         driver.Undervolter (NewUndervolter) + Text(): the CO's wording
       pmtable.go             pure pm_table parser (per-version layout); nothing reads the table —
                              fixtures under load in testdata/
-      paths.go               sysfs roots as vars (injectable by tests); see Testing
-      sysfs_fake_test.go     fake sysfs tree + fakeSMU mailbox + ppdRunner stub
-      fan_sysfs_test.go / smu_test.go / tdp_test.go / power_test.go / undervolt_test.go
-      ppt_test.go            interface selection, kernel-range envelope, clamping, armoury readback
-      main_test.go           TestMain: every writable sysfs root points nowhere until a fake swaps it in
-      rapl_test.go / battery_test.go / gpu_test.go / cpu_test.go / net_test.go
-      register/             blank-import side-effect package wiring it into the registry
+      gpu.go                 amdgpu, all from one card: edge temp and sclk (its own hwmon, by
+                             label), busy %, VRAM carveout, and the pure gpu_metrics parser
+                             (per-revision offset table, 2.0–3.0); GPUSource adapter
+      npu.go                 amdxdna NPU power/util/clock over DRM ioctls; queried only
+                             while runtime_status reads active (opening it resumes the NPU); NPUSource
+      k10temp.go             APU temperature (ReadAPUTemperature)
+      paths.go / main_test.go / sysfs_fake_test.go   its own roots, guard, fake tree + fakeSMU
+    linux/                   generic Linux interfaces
+      profile.go             platform_profile: FindProfilePath, SetProfile (+ PPD sync via ppdRunner)
+      drivers.go             profileController (extra policy paths injected), battery
+                             (ChargerFunc injected), cpuBoost, and the telemetry composer
+                             (TelemetrySources{Temp, GPU, NPU} injected); RPM is the daemon's
+      power.go               FindACOnlinePath, OnACPower (Mains-only discovery), battery threshold,
+                             health, capacity, ReadChargerFromSupplies
+      rapl.go                powercap package-energy counter (read-only grant) + battery
+                             flow, state and the Wh energy pair from power_supply
+                             (power_now, or current x voltage; energy_now, or charge x voltage)
+      cpu.go                 procfs/cpufreq: jiffie counters, average core clock, memory,
+                             and the global boost switch (read/write/verify)
+      net.go                 /proc/net/dev byte counters, summed over physical interfaces
+                             only (a /sys/class/net/*/device link) so tunnels never double-count
+      paths.go / main_test.go / sysfs_fake_test.go   its own roots, guard and fake tree
+    internal/sysfsio/        path-parameterised read/write/find-hwmon helpers the three share
+    register/                blank-import package: method name → factory, and the one place
+                             drivers from different packages meet (charger, policy paths,
+                             telemetry sources). docs_test.go holds the developer guide's
+                             drift guards (the device-file example assembles; every schema
+                             key is documented)
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
     evdevkey/                driver.Buttons over one key on an evdev device ("evdev-key")
   safety/                    the thermal-safety rules between handlers and drivers, pure and
@@ -245,6 +264,9 @@ internal/
     commit.go                the window's one-commit labels: CommitLabel, UnsavedSummary
     battery.go               the battery card's headline: level, rate, and the
                              time-to-limit/full/empty estimate off the Wh pair
+    editor.go                which editor cards a device gets (SectionsFor), the hints
+                             naming what a custom profile holds, the undervolt note and
+                             readout, the header line
   colorconv/                 RRGGBB ⇄ HSL for the colour picker (separate so it is testable)
   focusgrid/                 D-pad focus navigation over rows/columns/sections
   keyrepeat/                 which held direction owns the gamepad auto-repeat
@@ -293,8 +315,9 @@ website/                     the docs site (Astro Starlight; see Documentation)
 
 M1 moved every function that touches sysfs out of `internal/cli` and into
 `internal/drivers/asusz13`, and lifted the thermal-safety rules into
-`internal/safety`. **Many decision entries below still name the pre-M1
-`cli.*` symbols.** Their reasoning is unchanged and still load-bearing — only
+`internal/safety`; on 2026-11-15 `asusz13` was split by vendor/subsystem into
+`asus`, `amd` and `linux` (second table below). **Many decision entries below
+still name the pre-M1 `cli.*` symbols, or `asusz13.*`.** Their reasoning is unchanged and still load-bearing — only
 the package moved — so read them through this table rather than trusting the
 prefix:
 
@@ -307,13 +330,24 @@ prefix:
 | `cli.FanCurveForTDP`, `cli.FloorPWMAt`, `cli.FloorAdjustsCurve` | `safety.*` (same names) |
 | `cli.HighTDPFanCurve`, `cli.TDPMaxSafe`, `cli.HighTDPMinPWM` | `driver.PowerEnvelope.FloorCurve` and `.TDPMaxSafe`, from the device TOML; `HighTDPMinPWM` is the floor curve's first PWM (`limits.HighTDPMinPWM` on the GUI side) |
 | `cli.StockProfilePPT` | `driver.PowerEnvelope.StockProfilePPT`, loaded by `internal/device/config.go` |
-| `cli.SetProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/asusz13` |
+| `cli.SetProfile`, `cli.OnACPower`, `cli.FindACOnlinePath` | `internal/drivers/linux` |
 | `cli.IsStockProfile` | `d.isFirmwareProfile` in the daemon (the device's own list); `api.IsStockProfileName` survives, deprecated, for 1.x clients |
 | `cli.LiveFanCurve` | `FanController.LiveCurve()`, wrapped for the CLI by `liveFanCurve(hw)` in `cmd/hardware.go` |
-| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.SetAllFansFullSpeed` | `internal/drivers/asusz13` (`SetBothFanCurves`/`ReadBothFan*` are now `SetFanCurves`/`ReadFanCurves`/`ReadFanRPMs`, over every enumerated channel) |
-| `cli.SMUAvailable`, `cli.SMUProbeUndervolt`, `cli.SetCurveOptimizer`, `cli.ResetCurveOptimizer` | `internal/drivers/asusz13` |
+| `cli.SetBothFanCurves`, `cli.ResetAllFanCurves`, `cli.SetAllFansFullSpeed` | `internal/drivers/asus` (`SetBothFanCurves`/`ReadBothFan*` are now `SetFanCurves`/`ReadFanCurves`/`ReadFanRPMs`, over every enumerated channel) |
+| `cli.SMUAvailable`, `cli.SMUProbeUndervolt`, `cli.SetCurveOptimizer`, `cli.ResetCurveOptimizer` | `internal/drivers/amd` |
 | `cli.ValidateProfileName` | still `cli` — a wrapper delegating to `api.ValidateProfileName` |
 | `cli.ParseFanCurve`, `cli.ParseColor`, `cli.ResolveColor`, `cli.DryRun*` | still `cli` — presentation, no hardware |
+
+And for entries written before the 2026-11-15 split:
+
+| Written as `asusz13.…` / `internal/drivers/asusz13/…` | Now |
+|---|---|
+| `fan.go`, fan curves, `FanHwmonNames`, `tdp.go`, PPT, `safeToggles`, boot sound / panel overdrive, `charge_mode`, `throttle_thermal_policy`, `pending_reboot` | `internal/drivers/asus` |
+| `smu.go`, `undervolt.go` (`coPlatforms`), `pmtable.go` + `testdata/`, `gpu.go`, `npu.go`, the APU temperature (k10temp) | `internal/drivers/amd` |
+| `sysfs.go` (`SetProfile`, `ppdRunner`, profile discovery), `power.go`, battery threshold/health (`ReadBatteryHealthPercent`), `rapl.go`, `cpu.go`, `net.go`, the telemetry composer | `internal/drivers/linux` (`sysfs.go` is now `profile.go`) |
+| `asusz13/register` | `internal/drivers/register` |
+| the `-X …asusz13.smuDriverPath` hardware-test override | `make build-hwtest` (sets `amd.smuDriverPath`, checks the symbol table) |
+| fan RPM inside `Telemetry.Sample()` | the daemon's `liveSample()`, which merges `Fans.ReadRPM()` |
 
 The structural rule the move bought: `Device` carries a `safety.Engine`, never
 the raw `driver.PowerLimiter`, so no handler or plugin can reach a PPT write
@@ -1916,13 +1950,55 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   Carrying the other two would cost twice — the fallback would stop being
   interchangeable with the fetched value, and the guard would fire on a
   difference that means nothing while saying nothing about the ones that do.
-  **Capability *absence* is still not handled.** A nil `Power` or `Fans`
-  section means the device lacks that capability and its controls should be
-  hidden; `FromDevice` fills in defaults instead, because `Limits` describes
-  bounds and cannot say "this control does not exist". That one needs a device
-  that actually lacks a capability before it can be anything but untested
-  generality. (`Curve` becoming a slice and firmware profile names from
-  `ProfileInfo` both landed with the 2026-10-09 device-values audit.)
+  **Capability *absence* hides controls** (2026-11-15). `Limits` carries
+  `HasPower`/`HasFans`/`HasUndervolt`/`HasBattery` from the document's
+  sections; the numbers are still always complete (Sanitized fills them so no
+  arithmetic divides by zero) but no longer imply presence. `DefaultLimits`,
+  the answer when the daemon did not answer, has every capability. Without a
+  second real device the rules are tested against a synthetic one
+  (`internal/devicefixture`: one power limit, no fans, undervolt, lighting,
+  button or toggles), whose document `internal/daemon`'s
+  `TestSyntheticFixtureIsADocumentTheDaemonProduces` proves the daemon really
+  produces (regenerate with `VOLTAIRE_UPDATE_FIXTURE=1`). See the
+  device-genericity entry below for what each surface does with it.
+  (`Curve` becoming a slice and firmware profile names from `ProfileInfo` both
+  landed with the 2026-10-09 device-values audit.)
+- **One ASUS driver for every ASUS machine; text and controls follow the
+  device** (Jeff, 2026-11-15; `.claude/plans/device-genericity.md`). Three
+  changes, made so the ROG Ally X and Xbox Ally X can be device files rather
+  than code. (1) The Z13 package `asusz13` was split by vendor/subsystem into
+  `asus`, `amd` and `linux` — move, don't rewrite: method names unchanged, all
+  141 tests kept, four assertions changed. No driver package imports another;
+  `register` injects the couplings (the armoury charger into the battery,
+  `throttle_thermal_policy` into the profile watcher, AMD's sources into the
+  telemetry composer), and fan RPM moved to the daemon (`liveSample`) so it has
+  one reader. The Z13's 5 W asus-nb-wmi boot cache became device data
+  (`power.boot_cache_pl1`) rather than a driver constant. (2) `device-get`
+  gained the words a client needs to stay vendor-neutral: `name`,
+  `power.limits[{id,label,description}]` (kernel presence ∩ the TOML's
+  `[[power.limits]]`, wording TOML → driver → client), `undervolt.{label,
+  short_label,unit,description}` (TOML → `driver.UndervoltDescriber`, AMD's
+  "CPU Curve Optimizer"/"CO"), and `lighting.brightness_names`. All
+  additive; an older daemon gets the client's built-in words. (3) The GUI and
+  CLI read them: the editor builds POWER/FAN/UNDERVOLT cards per
+  `profileui.SectionsFor` and one slider per served limit; the Profiles tab
+  needs profiles plus something to tune; Settings always shows (it holds
+  VOLTAIRE and QUICKBAR) while its FIRMWARE card and the button preference go
+  on a device without them; hints, the undervolt note, the header line and the
+  "no custom profiles" gesture are all `profileui`/`buttonpref` rules; the CLI
+  lists "Supported devices" from the device files' names and prints only the
+  device's limits in `tdp --get`/`status`. On the Z13 the focus dump stayed
+  byte-identical on all six lines and every CLI output but help is
+  byte-identical; the one visible change is "PL2 (SPPT)/PL3 (FPPT)" becoming
+  "PL2 (sPPT)/PL3 (fPPT)", the kernel's spelling and the CLI's. The developer
+  guide (`website/.../dev/`: architecture, device-files, writing-a-driver,
+  plugins — the last marked *planned*) is guarded by
+  `internal/drivers/register/docs_test.go`: the device-file page's example must
+  parse and assemble, and every schema key must appear on the page.
+  **Deferred, recorded in the plan:** setup grants sourced from the drivers
+  (with M5's `[[perms]]`), per-device dry-run data, a 1080p `uiscale`
+  reference width, refusing `--pl2/--pl3` where absent, the `CacheStale` TDPMin
+  fallback, the Aura init packet as a device flag, `examples/plugins/`.
 - **A capability the document declares must be one the driver actually reads.**
   Capability discovery is by absence, so a declared-but-unread source does not
   degrade to "nothing shown" — it degrades to a dashboard drawing a graph that
@@ -3094,8 +3170,8 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
 ## Testing
 
 - Hardware not required. `internal/aura` uses `mockWriter`; `internal/hid` uses
-  `os.Pipe()` backed devices via `NewTestDevice`; `internal/drivers/asusz13`
-  uses a fake sysfs tree (see below).
+  `os.Pipe()` backed devices via `NewTestDevice`; `internal/drivers/asus`,
+  `amd` and `linux` each use a fake sysfs tree (see below).
 - **`make test`/`race`/`cover` run `HERMETIC_PKGS`, not `./...`.** That is
   `go list ./...` minus `internal/gui` and `voltaire-gui`, **plus
   `internal/gui/gamepad/...` added back**. `./...` *compiles* everything it
@@ -3117,7 +3193,8 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   cgo-free, it belongs in the run.
   `make lint` deliberately runs the **full** tree, GTK island included; it is a
   local/dev gate where the headers are present.
-- Coverage, measured 2026-11-15: safety 89%, asusz13 78%, cli 76%, device 70%,
+- Coverage, measured 2026-11-15: safety 89%, asus 82%, linux 82%, amd 68%,
+  register 92%, cli 76%, device 70%,
   aura 62%, daemon 52%, hid 43%, api 31%, cmd 14%. Every pure package on the
   GUI side — `limits`, `profileui`, `telemetryplot`, `focusgrid`, `mainwin`,
   `popupgeom`, `controls`, `colorconv`, `startup`, `display`, `theme` — sits at
@@ -3131,40 +3208,45 @@ golangci-lint **v2** format. Config at `.golangci.yml`.
   is the same failure as a chart drawn flat at zero.
 - aura error branches (write failures) are not covered because mockWriter never errors.
 
-### Fake sysfs (`internal/drivers/asusz13`)
+### Fake sysfs (`internal/drivers/asus`, `amd`, `linux`)
 
-All sysfs roots this package touches live in `paths.go` as package **vars**, not
-consts, purely so tests can redirect them. `sysfs_fake_test.go` provides
-`newFakeSysfs(t)`, which builds a temp-dir tree (hwmon curve + readings +
-k10temp devices, platform-profile devices, PPT, ryzen_smu, battery,
-firmware-attributes) and points every var at it, restoring them on cleanup.
+Each driver package keeps the sysfs roots it touches in its own `paths.go` as
+package **vars**, not consts, purely so tests can redirect them, and has its own
+`sysfs_fake_test.go` building only its own subtree: hwmon curve + readings, PPT
+and firmware-attributes (`asus`); ryzen_smu, k10temp, amdgpu, the NPU (`amd`);
+platform-profile devices, power_supply, powercap, procfs (`linux`). Each
+`newFakeSysfs(t)` points its package's vars at a temp tree and restores them on
+cleanup. The split was mechanical: all 141 tests kept their names; only four
+assertions changed (RPM moved to a daemon test, telemetry uses injected stub
+sources, the policy-path test moved to `register`, `NewBattery(caps, nil)`).
 
 Two seams exist specifically to stop tests from touching the developer's machine
 — both were added after tests did exactly that:
 
-- `ppdRunner` (`sysfs.go`) wraps the `powerprofilesctl` exec. `newFakeSysfs`
+- `ppdRunner` (`linux/profile.go`) wraps the `powerprofilesctl` exec. `newFakeSysfs`
   replaces it with a recorder; without this, exercising `SetProfile` changes the
   live power-profiles-daemon profile.
-- `smuReadFile` / `smuWriteFile` (`smu.go`) wrap the ryzen_smu mailbox I/O.
+- `smuReadFile` / `smuWriteFile` (`amd/smu.go`) wrap the ryzen_smu mailbox I/O.
   `fakeSMU` emulates the driver's write-then-read-response protocol, which plain
   files cannot. `resetSMUProbe(t)` clears the `sync.Once` behind
   `SMUProbeUndervolt` so each case re-probes.
 
 **Never let a test reach a real sysfs write.** `internal/daemon` handlers reach
-hardware through the assembled `device.Device`, and `asusz13`'s path vars are
-unexported, so daemon tests must stay on validation/rejection paths that return
+hardware through the assembled `device.Device`, and the driver packages' path
+vars are unexported, so daemon tests must stay on validation/rejection paths that return
 before any hardware access — `server_test.go` documents this at
 `TestHandleTDPForceBoundaryRejections`. A daemon test that gets past
 `handleTDP` validation will change the machine's actual power limits.
 `deviceinfo_test.go` is the exception and says why: `deviceInfoFor` is a pure
 projection of constructor data, so it can drive the real Z13 assembly safely.
 
-`internal/drivers/asusz13/main_test.go`'s `TestMain` points every writable sysfs
-root at a nonexistent directory before any test runs, so a test that forgets the
+Each driver package's `main_test.go` `TestMain` points every writable sysfs
+root at a nonexistent directory before any test runs (a new package gets one in
+the same commit that creates it), so a test that forgets the
 fake fails with "no such file" rather than touching the machine. It was added
 during the armoury port, after `tdp_test.go`'s `usePPTTempDir` (which swapped
 only `pptBasePath`) let three tests find the real armoury attributes and try to
-write them; their permissions were all that stopped it. The fake has the five
+write them; their permissions were all that stopped it. `asus`'s fake has the five
 asus-nb-wmi PPT files at the 5 W boot cache; `f.withArmouryPPT(t)` adds armoury's
 three with the GZ302EA bounds, making armoury the interface in use.
 
@@ -3184,9 +3266,14 @@ run on the Z13. The procedure that has worked, and the traps found the hard way:
 
 - **Stop the installed daemon** (`systemctl --user stop voltaire.service
   voltaire.socket`) and run the build under test in the foreground,
-  `daemon --no-button`, logging to a file. Build it with the SMU path pointed
-  nowhere — `-ldflags "-X github.com/dahui/voltaire/v2/internal/drivers/asusz13.smuDriverPath=/nonexistent/ryzen_smu_drv"`
-  — so nothing can send a Curve Optimizer write (see the 2026-08-14 lockup).
+  `daemon --no-button`, logging to a file. Build it with `make build-hwtest`,
+  which points `amd.smuDriverPath` nowhere so nothing can send a Curve
+  Optimizer write (see the 2026-08-14 lockup), and fails unless the override
+  really landed. Never hand-write the `-X` flag: it silently does nothing for a
+  symbol that no longer exists — the variable moved from `asusz13` to `amd`
+  on 2026-11-15 — and Go records the flag in the binary's build info, so even
+  grepping the binary for the path passes a build that can still write the
+  mailbox. The target checks the symbol table instead.
 - **Back up `~/.local/state/voltaire/state.json` first, and never overwrite an
   existing backup** — a rerun after an aborted run would otherwise back up the
   test's own state. Record `platform_profile` before starting and set it back by
@@ -3251,6 +3338,7 @@ make build              # go build voltaire (CGO_ENABLED=0), version from git ta
 make build-gui          # go build voltaire-gui (CGO=1; needs gtk4 + gtk4-layer-shell headers)
                         #   → voltaire-gui/voltaire-gui
 make build-all          # both — what `make install` wants (see below)
+make build-hwtest       # voltaire-hwtest: SMU mailbox pointed nowhere, for hardware runs (verified)
 make test               # go test over HERMETIC_PKGS (both modules; no cgo)
 make race               # same set under -race
 make cover              # test + coverage report
@@ -3358,6 +3446,14 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 - `reference/daemon.md` holds the user-facing socket protocol tables; keep them
   in sync with `dispatch()` in `internal/daemon/server.go`.
 - `reference/protocol.md` — technical HID protocol reference for developers.
+- `dev/architecture.md`, `dev/device-files.md`, `dev/writing-a-driver.md`,
+  `dev/plugins.md` — the developer guide (sidebar "Developers"). The
+  device-file page documents every schema key and holds a complete example
+  between `<!-- example-device:start/end -->` markers; both are checked by
+  `internal/drivers/register/docs_test.go`, so a new `toml:` key fails
+  `make test` until it is documented there. `plugins.md` describes the M5 tier
+  and is marked planned until `plughost` exists; the package comment of
+  `internal/driver` (`doc.go`) is the driver contract the guide restates.
 - `dev/smoke-z13.md` — the hardware smoke checklist (edited in place during
   smoke runs; it is a site page now, same content).
 - `migrating-from-z13ctl.md` — the 2.0 migration story, linked from the README,
@@ -3382,7 +3478,7 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 |---|---|
 | M0 — two live GUI bugs + AllEvents subscription | done |
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
-| M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done; one item (capability absence hiding controls) lands with M5 (see below) |
+| M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done (capability absence hiding controls landed 2026-11-15) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
 | M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls) — see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
@@ -3404,9 +3500,9 @@ has its counterpart here. The only gap was wording from main's 1.4.0 docs commit
 (`b0066d9`): README, the site index and the api guide's power-limit ranges, now
 ported.
 
-Carried into M5 from M2, because its OXP device is what makes them testable:
-capability *absence* hiding controls (`limits.FromDevice` fills defaults
-instead). (Firmware profile names from `api.ProfileInfo` and `limits.Curve`
+Carried into M5 from M2, and **done** 2026-11-15 against a synthetic device
+rather than waiting for the OXP: capability *absence* hiding controls (see the
+device-genericity entry). (Firmware profile names from `api.ProfileInfo` and `limits.Curve`
 as a slice sized by the served `fans.points` both landed 2026-10-09 with the
 device-values audit.) The two device-document fields the plan specified and M2
 left out — `battery.health` and `telemetry.{power_draw,history_seconds}` — are

@@ -61,6 +61,12 @@ type Tab struct {
 	// shown at all — the same rule the drawer's sections follow, for the same
 	// reason.
 	Requires []controls.Capability
+
+	// RequiresAny lists capabilities of which the device needs at least one.
+	// The Profiles tab is the case: it needs profiles, and something for a
+	// custom profile to hold — power limits, a fan curve or an undervolt —
+	// without needing all three.
+	RequiresAny []controls.Capability
 }
 
 // The tab IDs. They match the drawer's stack child names where the same view
@@ -87,14 +93,16 @@ var defaultOrder = []Tab{
 	{ID: TabDashboard, Title: "Dashboard",
 		Requires: []controls.Capability{controls.CapTelemetry}},
 	{ID: TabProfiles, Title: "Profiles",
-		Requires: []controls.Capability{controls.CapProfiles}},
-	// Settings last: firmware toggles are set-and-forget, so it is the page a
-	// user visits least and the one it costs least to reach past the other
-	// two. It requires toggles rather than any document section, since the
-	// page is a rendering of that list and an empty one leaves nothing to
-	// show — see controls.CapToggles.
-	{ID: TabSettings, Title: "Settings",
-		Requires: []controls.Capability{controls.CapToggles}},
+		Requires: []controls.Capability{controls.CapProfiles},
+		RequiresAny: []controls.Capability{
+			controls.CapPower, controls.CapFans, controls.CapUndervolt,
+		}},
+	// Settings last: it is the page a user visits least and the one it costs
+	// least to reach past the other two. It requires nothing: besides the
+	// firmware toggles it holds voltaire's own preferences and the quickbar
+	// editor, which every machine has, so the FIRMWARE card is what goes on a
+	// device without toggles (settingsui.ShowFirmwareCard), not the page.
+	{ID: TabSettings, Title: "Settings"},
 }
 
 // All returns every known tab in order. The returned slice shares nothing with
@@ -104,6 +112,7 @@ func All() []Tab {
 	copy(out, defaultOrder)
 	for i := range out {
 		out[i].Requires = append([]controls.Capability(nil), defaultOrder[i].Requires...)
+		out[i].RequiresAny = append([]controls.Capability(nil), defaultOrder[i].RequiresAny...)
 	}
 	return out
 }
@@ -119,7 +128,7 @@ func Resolve(info *api.DeviceInfo) []Tab {
 	all := All()
 	out := make([]Tab, 0, len(all))
 	for _, t := range all {
-		if controls.SupportsAll(info, t.Requires) {
+		if controls.SupportsAll(info, t.Requires) && controls.SupportsAny(info, t.RequiresAny) {
 			out = append(out, t)
 		}
 	}

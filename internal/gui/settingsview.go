@@ -106,7 +106,11 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	inner.SetMarginTop(10)
 	inner.SetMarginBottom(8)
 
-	inner.Append(s.buildAppCard())
+	// The VOLTAIRE card holds the hardware button's preference and nothing
+	// else, so a device with no button gets no card (buttonpref.ShowPreference).
+	if buttonpref.ShowPreference(w.device) {
+		inner.Append(s.buildAppCard())
+	}
 	inner.Append(s.buildQuickbarCard())
 
 	s.card = gtk.NewBox(gtk.OrientationVertical, 6)
@@ -131,6 +135,10 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	s.rebootLbl.SetVisible(false)
 	s.card.Append(s.rebootLbl)
 
+	// A device with no firmware toggles gets no FIRMWARE card: the page keeps
+	// its other cards, and a card explaining its own emptiness is the
+	// tab-onto-an-empty-page trap one level down (settingsui.ShowFirmwareCard).
+	s.card.SetVisible(settingsui.ShowFirmwareCard(w.device))
 	inner.Append(s.card)
 
 	// Shown in place of the rows, and it says which kind of nothing this is:
@@ -185,7 +193,7 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 	// Two lines of prose: what the setting is for, then what the current
 	// choice actually does. The second is the one that changes, and it is the
 	// one that tells the user about the double press at all.
-	desc := gtk.NewLabel(buttonpref.RowDescription)
+	desc := gtk.NewLabel(buttonpref.RowDescriptionFor(s.w.buttonLabel()))
 	desc.SetHAlign(gtk.AlignStart)
 	desc.SetXAlign(0)
 	desc.SetWrap(true)
@@ -363,17 +371,20 @@ func (s *settingsView) buildFocusList() {
 	// right has to reach the second. A coordinate that disagrees with what is on
 	// screen is the failure nobody notices with a mouse in their hand — the
 	// profile row on the dashboard was written the wrong way round first.
-	opts := buttonpref.Options()
-	b.Section("voltaire")
-	for i, c := range b.Line(len(opts)) {
-		btn := s.pressBtns[opts[i]]
-		if btn == nil {
-			continue
+	// No card, no section: a device without a hardware button builds no
+	// preference buttons (pressBtns stays empty).
+	if opts := buttonpref.Options(); len(s.pressBtns) > 0 {
+		b.Section("voltaire")
+		for i, c := range b.Line(len(opts)) {
+			btn := s.pressBtns[opts[i]]
+			if btn == nil {
+				continue
+			}
+			items = append(items, focusItem{
+				widget: btn, row: c.Row, col: c.Col, section: c.Section,
+				onActivate: func() { btn.Activate() },
+			})
 		}
-		items = append(items, focusItem{
-			widget: btn, row: c.Row, col: c.Col, section: c.Section,
-			onActivate: func() { btn.Activate() },
-		})
 	}
 
 	s.appendQuickbarFocus(b, &items)

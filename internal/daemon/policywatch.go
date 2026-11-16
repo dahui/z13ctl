@@ -45,7 +45,8 @@ func (d *Daemon) policyWritePaths() []string {
 // custom limit, while the machine runs at the firmware's.
 //
 // The kernel reports both through sysfs_notify on attributes the profile driver
-// names (driver.PolicyWriteNotifier; asusz13 documents which and why), and
+// names (driver.PolicyWriteNotifier; internal/drivers/linux and asus document
+// which and why), and
 // poll(POLLPRI) sees each one. An attribute that does not exist is skipped, so
 // a kernel without one loses only what that one reported.
 //

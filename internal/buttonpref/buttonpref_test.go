@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
+	"github.com/dahui/voltaire/v2/internal/devicefixture"
 )
 
 func TestParse(t *testing.T) {
@@ -150,5 +152,38 @@ func TestButtonName(t *testing.T) {
 	}
 	if got := buttonpref.OpenGesture(buttonpref.Quickbar, buttonpref.Window, ""); got != "Press the hardware button twice" {
 		t.Errorf("OpenGesture with no label = %q", got)
+	}
+}
+
+// A device without a hardware button has no presses to arrange, and no
+// sentence may tell its user to press one.
+func TestADeviceWithoutAButton(t *testing.T) {
+	syn := devicefixture.Synthetic()
+	if buttonpref.ShowPreference(syn) {
+		t.Error("ShowPreference = true for a device with no button")
+	}
+	if !buttonpref.ShowPreference(nil) {
+		t.Error("ShowPreference(nil) = false; no answer is not evidence of no button")
+	}
+	if !buttonpref.ShowPreference(&api.DeviceInfo{Buttons: true}) {
+		t.Error("ShowPreference = false for a device with a button")
+	}
+	got := buttonpref.OpenGestureFor(syn, buttonpref.Quickbar, buttonpref.Window, "")
+	if strings.Contains(got, "Press") || !strings.Contains(got, "expand button") {
+		t.Errorf("OpenGestureFor(no button) = %q, want the expand button named", got)
+	}
+	withButton := &api.DeviceInfo{Buttons: true}
+	if got, want := buttonpref.OpenGestureFor(withButton, buttonpref.Quickbar, buttonpref.Window, "Armoury Crate button"),
+		buttonpref.OpenGesture(buttonpref.Quickbar, buttonpref.Window, "Armoury Crate button"); got != want {
+		t.Errorf("OpenGestureFor(button) = %q, want %q", got, want)
+	}
+}
+
+func TestRowDescriptionNamesTheButton(t *testing.T) {
+	if got := buttonpref.RowDescriptionFor(""); got != buttonpref.RowDescription {
+		t.Errorf("RowDescriptionFor(\"\") = %q, want %q", got, buttonpref.RowDescription)
+	}
+	if got := buttonpref.RowDescriptionFor("Armoury Crate button"); !strings.Contains(got, "Armoury Crate button") {
+		t.Errorf("RowDescriptionFor = %q, want the button named", got)
 	}
 }

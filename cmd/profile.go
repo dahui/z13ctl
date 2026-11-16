@@ -196,7 +196,7 @@ func describeProfile(p api.CustomProfile) string {
 		parts = append(parts, fmt.Sprintf("%dW", p.TDP.PL1SPL))
 	}
 	if p.Undervolt != nil {
-		parts = append(parts, fmt.Sprintf("CO %d", p.Undervolt.CPUCO))
+		parts = append(parts, fmt.Sprintf("%s %d", undervoltShortLabel(), p.Undervolt.CPUCO))
 	}
 	if len(parts) == 0 {
 		return "(empty)"

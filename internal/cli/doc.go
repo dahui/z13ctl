@@ -9,7 +9,7 @@
 //	dryrun.go — DryRun* display for every mutating command
 //
 // The sysfs hardware layer this package used to carry lives in
-// internal/drivers/asusz13 since the driver extraction, and the color table
+// internal/drivers/{asus,amd,linux} since the driver extraction, and the color table
 // moved to internal/aura with the lighting driver. Callers reach hardware
 // through the device registry's assembled device; what remains here is the
 // pure, device-independent surface both cmd/ and the daemon share.

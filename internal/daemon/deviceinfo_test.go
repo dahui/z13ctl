@@ -10,14 +10,17 @@ package daemon
 
 import (
 	"encoding/json"
+	"github.com/dahui/voltaire/v2/internal/drivers/linux"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/devicefixture"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/amd"
 	"github.com/dahui/voltaire/v2/internal/limits"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
@@ -132,7 +135,7 @@ func TestDeviceGetProjectsTheAssembledDevice(t *testing.T) {
 // measurement.
 //
 // It replaced TestTelemetryDeclaresNoPowerSourceYet, which pinned the *absence*
-// of power_draw while asusz13 read nothing for it. Both directions still fail
+// of power_draw while the Z13 driver read nothing for it. Both directions still fail
 // loudly; only the expected answer changed, because Sample now reads the
 // powercap energy counter.
 //
@@ -165,7 +168,7 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 	case declared && !reads:
 		// Distinguish "not implemented" from "not permitted". Only the first
 		// is a defect; the second is a machine that has not run setup.
-		if _, _, rErr := asusz13.ReadPackageEnergy(); rErr != nil {
+		if _, _, rErr := linux.ReadPackageEnergy(); rErr != nil {
 			t.Skipf("the counter is declared but unreadable here (%v); "+
 				"run 'sudo voltaire setup' to grant it", rErr)
 		}
@@ -180,7 +183,7 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 	// absence of the *device* is a skip, absence of the *reader* a failure.
 	if gpuReads := s.GPUTempC != 0 || s.GPUBusyKnown || s.GPUClockMHz != 0; gpuReads != (info.Telemetry.GPU != "") {
 		if info.Telemetry.GPU != "" {
-			if _, err := asusz13.ReadGPUBusyPct(); err != nil {
+			if _, err := amd.ReadGPUBusyPct(); err != nil {
 				t.Skipf("gpu declared but no readable amdgpu here: %v", err)
 			}
 		}
@@ -191,7 +194,7 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 	}
 	if npuReads := s.NPUKnown; npuReads != (info.Telemetry.NPU != "") {
 		if info.Telemetry.NPU != "" {
-			if _, err := asusz13.ReadNPURuntimeActive(); err != nil {
+			if _, err := amd.ReadNPURuntimeActive(); err != nil {
 				t.Skipf("npu declared but no amdxdna device here: %v", err)
 			}
 		}
@@ -203,7 +206,7 @@ func TestTelemetryDeclarationMatchesWhatIsRead(t *testing.T) {
 	// so a zero pair means the read did not happen.
 	if netReads := s.NetRxBytes != 0 || s.NetTxBytes != 0; netReads != (info.Telemetry.Net != "") {
 		if info.Telemetry.Net != "" {
-			if _, _, err := asusz13.ReadNetBytes(); err != nil {
+			if _, _, err := linux.ReadNetBytes(); err != nil {
 				t.Skipf("net declared but no physical interface here: %v", err)
 			}
 		}
@@ -270,7 +273,12 @@ func TestDeviceGetWireKeys(t *testing.T) {
 		`"description":"Faster pixel response for the display (may cause ghosting)"`,
 		`"buttons":true,"button_label":"Armoury Crate button"`,
 		`"lighting":{"zones":["keyboard","lightbar"],"labels":["Keyboard","Lightbar"],"modes":[{"name":"static","label":"Static","color":true},{"name":"breathe","label":"Breathe","color":true,"color2":true,"speed":true},`,
-		`"speeds":["slow","normal","fast"],"brightness_max":3}`,
+		`"speeds":["slow","normal","fast"],"brightness_max":3,"brightness_names":["off","low","medium","high"]}`,
+		`"id":"asus-rog-flow-z13-2025","model":"GZ302","name":"ASUS ROG Flow Z13 (2025)"`,
+		`"limits":[{"id":"pl1","label":"PL1 (SPL)","description":"Sustained power limit`,
+		`{"id":"pl2","label":"PL2 (sPPT)",`,
+		`{"id":"pl3","label":"PL3 (fPPT)",`,
+		`"undervolt":{"min":-40,"max":0,"label":"CPU Curve Optimizer","short_label":"CO","description":`,
 		`"pwm_max":255,"labels":["Fan 1","Fan 2"],"rpm_max":8900`,
 		`"profiles":{"names":["quiet","balanced","performance"],"default":"balanced","entries":[{"name":"quiet","label":"Quiet"},`,
 	} {
@@ -626,5 +634,36 @@ func TestChartHintWireKeys(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("document does not contain %s\ngot: %s", want, data)
 		}
+	}
+}
+
+// TestSyntheticFixtureIsADocumentTheDaemonProduces keeps internal/devicefixture
+// honest: its document must be exactly what the daemon serves for its device
+// file, assembled with the real drivers. The GUI's pure packages test their
+// rules against that document, so a fixture that drifted from the daemon would
+// prove things about a document no daemon produces. Rewrite it after a
+// deliberate change with VOLTAIRE_UPDATE_FIXTURE=1.
+func TestSyntheticFixtureIsADocumentTheDaemonProduces(t *testing.T) {
+	c, err := device.ParseConfig(devicefixture.SyntheticConfig())
+	if err != nil {
+		t.Fatalf("synthetic.toml: %v", err)
+	}
+	got, err := json.MarshalIndent(deviceInfoFor(assembleForTest(c)), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("VOLTAIRE_UPDATE_FIXTURE") != "" {
+		if werr := os.WriteFile("../devicefixture/synthetic.json", append(got, '\n'), 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+		t.Log("rewrote internal/devicefixture/synthetic.json")
+		return
+	}
+	want, err := json.MarshalIndent(devicefixture.Synthetic(), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("the daemon's document for synthetic.toml differs from synthetic.json\ndaemon:\n%s\nfixture:\n%s", got, want)
 	}
 }

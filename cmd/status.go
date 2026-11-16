@@ -114,20 +114,19 @@ func statusReport(out io.Writer) error {
 	// limit read is a live ACPI call). A refused read prints N/A.
 	tdpShown := false
 	ecWithheld := false
+	env := powerEnvFor(hw)
 	if handled, value, err := api.SendTdpGet(); handled {
 		var tdp api.TDPState
 		// The daemon refuses EC-backed reads while the EC is not answering;
 		// say so once at the end, rather than leaving the N/As unexplained.
 		ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
 		if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
-			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
-				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
+			outf("TDP:     %s\n", tdpSummary(env, tdp))
 			tdpShown = true
 		}
 	} else if hw.Power != nil {
 		if tdp, tErr := hw.Power.ReadEffective(profile); tErr == nil {
-			outf("TDP:     %dW (PL1) / %dW (PL2) / %dW (PL3)\n",
-				tdp.PL1SPL, tdp.PL2SPPT, tdp.FPPT)
+			outf("TDP:     %s\n", tdpSummary(env, tdp))
 			tdpShown = true
 		}
 	}

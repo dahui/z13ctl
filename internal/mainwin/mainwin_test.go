@@ -87,17 +87,23 @@ func TestATabWithNothingToShowIsDropped(t *testing.T) {
 			[]string{mainwin.TabProfiles, mainwin.TabSettings}},
 		{"no profiles", func(d *api.DeviceInfo) { d.Profiles = nil },
 			[]string{mainwin.TabDashboard, mainwin.TabSettings}},
-		// Toggles are a list, not a nil-able section, so "no settings" is an
-		// empty one — a device with nothing to switch must not get a page
-		// whose entire content is an explanation of its own emptiness.
+		// Profiles with nothing for a custom profile to hold: the editor
+		// would be an empty page.
+		{"profiles but nothing to tune", func(d *api.DeviceInfo) {
+			d.Power, d.Fans, d.Undervolt = nil, nil, nil
+		}, []string{mainwin.TabDashboard, mainwin.TabSettings}},
+		// Any one of them is enough.
+		{"power alone is something to tune", func(d *api.DeviceInfo) {
+			d.Fans, d.Undervolt = nil, nil
+		}, []string{mainwin.TabDashboard, mainwin.TabProfiles, mainwin.TabSettings}},
+		// Settings also holds voltaire's own preferences and the quickbar
+		// editor, so a device with no firmware toggles keeps the page and
+		// loses only its FIRMWARE card.
 		{"no toggles", func(d *api.DeviceInfo) { d.Toggles = nil },
-			[]string{mainwin.TabDashboard, mainwin.TabProfiles}},
-		{"an empty toggle list is the same as none",
-			func(d *api.DeviceInfo) { d.Toggles = []api.ToggleInfo{} },
-			[]string{mainwin.TabDashboard, mainwin.TabProfiles}},
+			[]string{mainwin.TabDashboard, mainwin.TabProfiles, mainwin.TabSettings}},
 		{"nothing at all", func(d *api.DeviceInfo) {
 			d.Telemetry, d.Profiles, d.Toggles = nil, nil, nil
-		}, nil},
+		}, []string{mainwin.TabSettings}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,7 +148,10 @@ func TestEveryTabIsLookupable(t *testing.T) {
 		if tab.Title == "" {
 			t.Errorf("tab %q has no title", id)
 		}
-		if len(tab.Requires) == 0 {
+		// Settings is the one page every machine has content for (voltaire's
+		// own preferences); any other tab requiring nothing could never be
+		// filtered out, which is a page that can open onto nothing.
+		if len(tab.Requires) == 0 && id != mainwin.TabSettings {
 			t.Errorf("tab %q requires nothing, so it can never be filtered out", id)
 		}
 	}

@@ -298,6 +298,20 @@ func SupportsAll(info *api.DeviceInfo, want []Capability) bool {
 	return true
 }
 
+// SupportsAny reports whether info has at least one capability in want. An
+// empty want is satisfied, as SupportsAll's is, and so is a nil document.
+func SupportsAny(info *api.DeviceInfo, want []Capability) bool {
+	if info == nil || len(want) == 0 {
+		return true
+	}
+	for _, c := range want {
+		if hasCapability(info, c) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 	switch capability {
 	case CapFans:

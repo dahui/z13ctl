@@ -43,6 +43,10 @@ type Meta struct {
 	// Model is the short hardware name for display ("GZ302").
 	Model string `toml:"model"`
 
+	// Name is the machine's display name ("ASUS ROG Flow Z13 (2025)"), for
+	// help text and the capability API. Optional; clients fall back to Model.
+	Name string `toml:"name"`
+
 	// Match lists DMI patterns; any one matching claims the machine.
 	Match []Match `toml:"match"`
 }
@@ -135,14 +139,37 @@ type StockRow struct {
 
 // PowerConfig selects and parameterizes the power-limit driver.
 type PowerConfig struct {
-	Method       string              `toml:"method"`
-	TDPMin       int                 `toml:"tdp_min"`
-	TDPMaxSafe   int                 `toml:"tdp_max_safe"`
-	TDPMaxForced int                 `toml:"tdp_max_forced"`
-	TDPDefault   int                 `toml:"tdp_default"`
-	FloorCurve   [][]int             `toml:"floor_curve"` // [[temp, pwm], ...]
-	StockPPT     map[string]StockRow `toml:"stock_ppt"`
+	Method       string  `toml:"method"`
+	TDPMin       int     `toml:"tdp_min"`
+	TDPMaxSafe   int     `toml:"tdp_max_safe"`
+	TDPMaxForced int     `toml:"tdp_max_forced"`
+	TDPDefault   int     `toml:"tdp_default"`
+	FloorCurve   [][]int `toml:"floor_curve"` // [[temp, pwm], ...]
+	// BootCachePL1 is the PL1 value the power-limit attributes hold after boot,
+	// before anything writes them (5 on the Z13's asus-nb-wmi attributes) — a
+	// readback still equal to it says nothing about the limits in force.
+	// Optional: 0 leaves safety.CacheStale's own fallback (PL1 at tdp_min), and
+	// an interface that reports its defaults (asus-armoury) supplies its own.
+	BootCachePL1 int `toml:"boot_cache_pl1"`
+	// Limits ([[power.limits]]) narrows and names the settable limits: which of
+	// pl1/pl2/pl3 to offer, in order, and their wording. Optional — without it
+	// the power driver offers every limit the kernel exposes, in its own words;
+	// with it, a listed limit the kernel lacks is still dropped, and an entry
+	// with no label takes the driver's.
+	Limits   []PowerLimitConfig  `toml:"limits"`
+	StockPPT map[string]StockRow `toml:"stock_ppt"`
 }
+
+// PowerLimitConfig is one [[power.limits]] entry.
+type PowerLimitConfig struct {
+	ID          string `toml:"id"` // "pl1", "pl2" or "pl3"
+	Label       string `toml:"label"`
+	Description string `toml:"description"`
+}
+
+// PowerLimitIDs are the limits a power envelope can describe, in their
+// natural order: the tdp command's pl1/pl2/pl3 fields.
+var PowerLimitIDs = []string{"pl1", "pl2", "pl3"}
 
 // Envelope returns the driver.PowerEnvelope this config describes.
 func (c PowerConfig) Envelope() driver.PowerEnvelope {
@@ -150,6 +177,9 @@ func (c PowerConfig) Envelope() driver.PowerEnvelope {
 		TDPMin:       c.TDPMin,
 		TDPMaxSafe:   c.TDPMaxSafe,
 		TDPMaxForced: c.TDPMaxForced,
+	}
+	if c.BootCachePL1 > 0 {
+		env.Initial = api.TDPState{PL1SPL: c.BootCachePL1}
 	}
 	if len(c.StockPPT) > 0 {
 		env.StockProfilePPT = make(map[string]api.TDPState, len(c.StockPPT))
@@ -161,6 +191,9 @@ func (c PowerConfig) Envelope() driver.PowerEnvelope {
 	}
 	for _, p := range c.FloorCurve {
 		env.FloorCurve = append(env.FloorCurve, api.FanCurvePoint{Temp: p[0], PWM: p[1]})
+	}
+	for _, l := range c.Limits {
+		env.Limits = append(env.Limits, driver.PowerLimitSpec{ID: l.ID, Label: l.Label, Description: l.Description})
 	}
 	return env
 }
@@ -322,6 +355,19 @@ type UndervoltConfig struct {
 	Method string `toml:"method"`
 	Min    int    `toml:"min"`
 	Max    int    `toml:"max"`
+
+	// Wording overrides; each empty one takes the driver's own (see
+	// driver.UndervoltText).
+	Label       string `toml:"label"`
+	ShortLabel  string `toml:"short_label"`
+	Unit        string `toml:"unit"`
+	Description string `toml:"description"`
+}
+
+// Text is the wording device data gives the undervolt control, for the
+// driver to fill in where it is empty.
+func (c UndervoltConfig) Text() driver.UndervoltText {
+	return driver.UndervoltText{Label: c.Label, ShortLabel: c.ShortLabel, Unit: c.Unit, Description: c.Description}
 }
 
 // TelemetryConfig selects the telemetry driver and describes what it reports.
@@ -488,6 +534,22 @@ func (c Config) Validate() error {
 		}
 		if p.TDPDefault != 0 && (p.TDPDefault < p.TDPMin || p.TDPDefault > p.TDPMaxSafe) {
 			fail("power.tdp_default %d outside [%d, %d]", p.TDPDefault, p.TDPMin, p.TDPMaxSafe)
+		}
+		if p.BootCachePL1 < 0 || p.BootCachePL1 > p.TDPMaxForced {
+			fail("power.boot_cache_pl1 %d outside [0, %d]", p.BootCachePL1, p.TDPMaxForced)
+		}
+		seenLimit := map[string]bool{}
+		for _, l := range p.Limits {
+			switch {
+			case !slices.Contains(PowerLimitIDs, l.ID):
+				fail("power.limits id %q is not one of %v", l.ID, PowerLimitIDs)
+			case seenLimit[l.ID]:
+				fail("power.limits lists %q twice", l.ID)
+			}
+			seenLimit[l.ID] = true
+		}
+		if len(p.Limits) > 0 && !seenLimit["pl1"] {
+			fail("power.limits must include pl1, the sustained limit every TDP sets")
 		}
 		for i, pt := range p.FloorCurve {
 			if len(pt) != 2 {

@@ -170,6 +170,26 @@ func TestCapsFromTheDocument(t *testing.T) {
 		t.Errorf("four-level names lost")
 	}
 
+	// Served names win, one per level; a list of the wrong length is ignored
+	// rather than misaligned against the scale.
+	named := CapsFrom(&api.DeviceInfo{Lighting: &api.LightingInfo{
+		Zones: []string{"logo"}, BrightnessMax: 2, BrightnessNames: []string{"off", "dim", "bright"},
+	}})
+	if named.BrightnessName(1) != "Dim" || named.BrightnessName(2) != "Bright" || named.BrightnessName(0) != "Off" {
+		t.Errorf("served names: %q %q", named.BrightnessName(1), named.BrightnessName(2))
+	}
+	short := CapsFrom(&api.DeviceInfo{Lighting: &api.LightingInfo{
+		Zones: []string{"logo"}, BrightnessMax: 2, BrightnessNames: []string{"off", "on"},
+	}})
+	if short.BrightnessName(1) != "1" {
+		t.Errorf("mis-sized names should give the number, got %q", short.BrightnessName(1))
+	}
+	// A four-level scale whose daemon names nothing still gets the Aura names
+	// it always had — but only on four levels.
+	if got := CapsFrom(&api.DeviceInfo{Lighting: &api.LightingInfo{Zones: []string{"k"}, BrightnessMax: 3}}).BrightnessName(3); got != "High" {
+		t.Errorf("unnamed four-level scale = %q, want High", got)
+	}
+
 	// A daemon older than the fields: zones only. The rest is the fallback.
 	old := CapsFrom(&api.DeviceInfo{Lighting: &api.LightingInfo{Zones: []string{"keyboard", "lightbar"}}})
 	if len(old.Modes) != 5 || old.BrightnessMax != 3 || old.Zones[1].Label != "Lightbar" {

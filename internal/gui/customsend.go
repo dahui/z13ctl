@@ -26,6 +26,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 // editPlan resolves how the view must address its target right now. Computed
@@ -53,20 +54,39 @@ type tdpRequest struct {
 // undefined behaviour, not merely a stale value.
 func (c *customView) readTdpRequest() tdpRequest {
 	if c.tdpAdvancedCheck != nil && c.tdpAdvancedCheck.Active() {
-		pl1v, pl2v, pl3v := c.tdpPL1Scale.Value(), c.tdpPL2Scale.Value(), c.tdpPL3Scale.Value()
+		pl1v, pl2v, pl3v := c.tdpPL1Scale.Value(), scaleValue(c.tdpPL2Scale), scaleValue(c.tdpPL3Scale)
 		pl1 := fmt.Sprintf("%d", int(pl1v))
 		maxPL := int(math.Max(pl1v, math.Max(pl2v, pl3v)))
 		return tdpRequest{
 			// watts doubles as the base value; the daemon parses it before it looks
 			// at the PL fields and rejects the request outright if it is empty.
+			// A limit the device does not let the user set goes blank, which the
+			// daemon fills from watts.
 			watts: pl1,
 			pl1:   pl1,
-			pl2:   fmt.Sprintf("%d", int(pl2v)),
-			pl3:   fmt.Sprintf("%d", int(pl3v)),
+			pl2:   scaleText(c.tdpPL2Scale),
+			pl3:   scaleText(c.tdpPL3Scale),
 			force: c.w.limits.ForceRequired(maxPL),
 		}
 	}
-	return tdpRequest{watts: fmt.Sprintf("%d", int(c.tdpBasicScale.Value()))}
+	return tdpRequest{watts: fmt.Sprintf("%d", scaleInt(c.tdpBasicScale))}
+}
+
+// scaleValue is a slider's value, 0 for one this device does not build.
+func scaleValue(sc *gtk.Scale) float64 {
+	if sc == nil {
+		return 0
+	}
+	return sc.Value()
+}
+
+// scaleText is a slider's value for the wire, "" for one this device does not
+// build.
+func scaleText(sc *gtk.Scale) string {
+	if sc == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", int(sc.Value()))
 }
 
 // send performs the socket round-trip for the plan's target. Safe to call

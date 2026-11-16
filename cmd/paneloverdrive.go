@@ -21,9 +21,11 @@ var (
 
 var paneloverdriveCmd = &cobra.Command{
 	Use:   "paneloverdrive",
-	Short: "Get or set panel refresh overdrive via asus-armoury firmware attributes",
-	Long: `Get or set the display panel refresh overdrive via the Linux asus-armoury
-firmware-attributes sysfs interface.
+	Short: "Get or set panel refresh overdrive (ASUS firmware toggle)",
+	Long: `Get or set the display panel's refresh overdrive, an ASUS firmware toggle
+exposed by the kernel's asus-armoury firmware-attributes interface. It is the
+named form of 'voltaire feature --get/--set panel_overdrive', kept for scripts;
+a device without the toggle refuses it.
 
 Values are the ones the firmware lists for the attribute (--list on the
 feature command shows them); for this switch:

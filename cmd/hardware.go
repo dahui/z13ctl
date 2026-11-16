@@ -14,6 +14,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/dahui/voltaire/v2/internal/safety"
 	"os"
 	"strconv"
 	"strings"
@@ -109,7 +110,73 @@ func envFromInfo(p *api.PowerInfo) driver.PowerEnvelope {
 	if p.PL3 != nil {
 		env.PL3 = driver.PowerRange{Min: p.PL3.Min, Max: p.PL3.Max}
 	}
+	for _, l := range p.Limits {
+		env.Limits = append(env.Limits, driver.PowerLimitSpec{ID: l.ID, Label: l.Label, Description: l.Description})
+	}
 	return env
+}
+
+// powerLimitsOf is the limits a user may set on this device, in its order and
+// with its names. An envelope without the list — a daemon older than the
+// field — gets the three ids every such daemon took, named by id.
+func powerLimitsOf(env driver.PowerEnvelope) []driver.PowerLimitSpec {
+	if len(env.Limits) > 0 {
+		return env.Limits
+	}
+	return []driver.PowerLimitSpec{{ID: "pl1", Label: "PL1"}, {ID: "pl2", Label: "PL2"}, {ID: "pl3", Label: "PL3"}}
+}
+
+// limitValue is a TDP state's value for a limit id.
+func limitValue(t api.TDPState, id string) (int, bool) {
+	switch id {
+	case "pl1":
+		return t.PL1SPL, true
+	case "pl2":
+		return t.PL2SPPT, true
+	case "pl3":
+		return t.FPPT, true
+	}
+	return 0, false
+}
+
+// limitRange is the range the envelope accepts for a limit id.
+func limitRange(env driver.PowerEnvelope, id string) (lo, hi int, ok bool) {
+	switch id {
+	case "pl1":
+		return env.TDPMin, env.TDPMaxForced, true
+	case "pl2":
+		r := safety.PL2Range(env)
+		return r.Min, r.Max, true
+	case "pl3":
+		r := safety.PL3Range(env)
+		return r.Min, r.Max, true
+	}
+	return 0, 0, false
+}
+
+// tdpSummary is the one-line form of a TDP state status prints: each limit
+// the device lets a user set, "52W (PL1) / 71W (PL2) / 70W (PL3)" on the Z13.
+func tdpSummary(env driver.PowerEnvelope, t api.TDPState) string {
+	var parts []string
+	for _, l := range powerLimitsOf(env) {
+		if v, ok := limitValue(t, l.ID); ok {
+			parts = append(parts, fmt.Sprintf("%dW (%s)", v, strings.ToUpper(l.ID)))
+		}
+	}
+	return strings.Join(parts, " / ")
+}
+
+// undervoltShortLabel is the device's compact name for its undervolt offset
+// ("CO" for AMD's Curve Optimizer), for one-line summaries.
+func undervoltShortLabel() string {
+	if hw, err := hardware(); err == nil && hw.Undervolt != nil {
+		if d, ok := hw.Undervolt.(driver.UndervoltDescriber); ok {
+			if t := d.Text(); t.ShortLabel != "" {
+				return t.ShortLabel
+			}
+		}
+	}
+	return "undervolt"
 }
 
 // liveFanCurve returns the fan curve currently in force, or nil when there is

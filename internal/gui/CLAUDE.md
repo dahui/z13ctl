@@ -317,8 +317,22 @@ contrib/
     so it held only for limits compiled in — exactly what breaks when the daemon
     starts serving them. `HighTDPMinPWM` is exempt from the zero check — 0
     legitimately means "no fan floor on this device" — but is clamped to `PWMMax`.
-  - `power.Curve` is a fixed `[8]` array. If a device ever needs a different point
-    count it becomes a slice and the compile-time length guarantee is lost.
+  - `limits.Curve` is a slice sized by the served `fans.points`; `FitCurve` is
+    the one gate a curve from outside enters the editor through.
+  - **A control for a capability the device lacks is not built** (2026-11-15).
+    The editor builds its POWER, FAN CURVE and UNDERVOLT cards per
+    `profileui.SectionsFor(w.limits)` and one advanced slider per entry in
+    `w.limits.PowerLimits`, labelled from it (`tdpScales` keeps the build order
+    for the focus grid). Every widget a card owns is nil when the card is not
+    built, so every reader goes through a nil-safe helper (`scaleInt`,
+    `scaleText`, `advValues`) or checks — `commitDirty`, `readTdpRequest`,
+    `applyLimits` and `buildFocusList` all do. A limit the device does not let
+    the user set is sent blank, which the daemon fills from `watts`. The
+    Settings page drops its VOLTAIRE card without a hardware button and its
+    FIRMWARE card without toggles. Absence is decided at build time, like the
+    widgets; a later change in the capability set is logged and needs a
+    restart, as before. On the Z13 every card exists and the focus dump is
+    byte-identical.
 - **High-TDP fan floor**: while sustained PL1 exceeds the device's safe maximum the
   daemon rejects any fan curve point below the device's floor curve at that point's
   temperature (a 127→255 ramp on the Z13; it was a flat 204 through z13ctl v1.2.1),

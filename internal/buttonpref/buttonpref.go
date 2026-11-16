@@ -21,7 +21,11 @@
 // value, its parsing, its labels and the mapping; internal/gui shows a surface.
 package buttonpref
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/dahui/voltaire/api/v2"
+)
 
 // Surface is one of the two things the button can raise.
 type Surface string
@@ -94,9 +98,22 @@ const (
 
 	// RowDescription says only what the setting is *for*. What each choice
 	// does is Summary's job, because that sentence has to name the current
-	// selection to be worth reading at all.
+	// selection to be worth reading at all. RowDescriptionFor names the
+	// device's own button; this is its wording when the device names none.
 	RowDescription = "Which surface a single press of the hardware button opens."
 )
+
+// RowDescriptionFor is RowDescription naming the device's button.
+func RowDescriptionFor(label string) string {
+	return "Which surface a single press of the " + Name(label) + " opens."
+}
+
+// ShowPreference reports whether the preference is worth offering: only a
+// device with a hardware button has presses to arrange. A nil document — the
+// daemon did not answer — keeps it, the posture every capability check takes.
+func ShowPreference(info *api.DeviceInfo) bool {
+	return info == nil || info.Buttons
+}
 
 // Name is the button's name for use mid-sentence: label, or FallbackName.
 func Name(label string) string {
@@ -136,4 +153,18 @@ func OpenGesture(single, want Surface, label string) string {
 		return "Press the " + Name(label)
 	}
 	return "Press the " + Name(label) + " twice"
+}
+
+// OpenGestureFor is OpenGesture for a device: on one with no hardware button
+// the full window is reached only through the drawer's own expand button, and
+// telling the user to press a button the machine does not have would leave
+// them looking for it.
+func OpenGestureFor(info *api.DeviceInfo, single, want Surface, label string) string {
+	if !ShowPreference(info) {
+		if want == Window {
+			return "Use the expand button at the foot of the quickbar"
+		}
+		return "Open voltaire"
+	}
+	return OpenGesture(single, want, label)
 }

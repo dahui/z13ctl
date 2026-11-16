@@ -32,7 +32,7 @@ Levels are positions on the device's scale, or a number from 0 to its maximum:
 		if err := checkLightingZone(caps, deviceFlag); err != nil {
 			return err
 		}
-		level, err := parseLightingBrightness(args[0], caps.BrightnessMax)
+		level, err := parseLightingBrightness(args[0], caps.BrightnessMax, caps.BrightnessNames...)
 		if err != nil {
 			return err
 		}

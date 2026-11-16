@@ -43,7 +43,7 @@ var applyCmd = &cobra.Command{
 		if err := checkLightingZone(caps, deviceFlag); err != nil {
 			return err
 		}
-		brightness, err := parseLightingBrightness(brightnessFlag, caps.BrightnessMax)
+		brightness, err := parseLightingBrightness(brightnessFlag, caps.BrightnessMax, caps.BrightnessNames...)
 		if err != nil {
 			return fmt.Errorf("--brightness: %w", err)
 		}

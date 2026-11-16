@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/devicefixture"
 	"github.com/dahui/voltaire/v2/internal/settingsui"
 )
 
@@ -181,5 +182,17 @@ func TestRebootNoticeDoesNotNameASetting(t *testing.T) {
 			t.Errorf("banner names %q; asus-armoury exposes one flag for the whole "+
 				"interface and cannot say which setting is pending", forbidden)
 		}
+	}
+}
+
+func TestShowFirmwareCard(t *testing.T) {
+	if settingsui.ShowFirmwareCard(devicefixture.Synthetic()) {
+		t.Error("a device with no toggles should get no FIRMWARE card")
+	}
+	if !settingsui.ShowFirmwareCard(nil) {
+		t.Error("no document: keep the card so it can say to start the daemon")
+	}
+	if !settingsui.ShowFirmwareCard(&api.DeviceInfo{Toggles: []api.ToggleInfo{{ID: "x", Kind: api.ToggleKindBool}}}) {
+		t.Error("a device with toggles should get the card")
 	}
 }

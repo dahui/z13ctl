@@ -4,6 +4,7 @@
 package limits
 
 import (
+	"github.com/dahui/voltaire/v2/internal/devicefixture"
 	"reflect"
 	"testing"
 
@@ -59,6 +60,8 @@ func z13Document() *api.DeviceInfo {
 				"performance": {PL1SPL: 70, PL2SPPT: 86, FPPT: 86},
 			},
 		},
+		Undervolt: &api.UndervoltInfo{Min: -40, Max: 0},
+		Battery:   &api.BatteryInfo{ChargeLimit: true, ChargeLimitMin: 40, ChargeLimitMax: 100, Health: true},
 	}
 }
 
@@ -211,5 +214,43 @@ func TestFromDeviceCarriesTheCurveShape(t *testing.T) {
 	}
 	if c := l.DefaultCurve(); len(c) != 6 {
 		t.Errorf("DefaultCurve has %d points, want 6", len(c))
+	}
+}
+
+// TestFromDeviceRecordsWhatTheDeviceLacks drives the synthetic device — one
+// power limit, no fans, no undervolt — through the conversion. A capability
+// the document omits must read as absent, not as the Z13's bounds, and the
+// power limits must be the device's own one, in its own words.
+func TestFromDeviceRecordsWhatTheDeviceLacks(t *testing.T) {
+	l := FromDevice(devicefixture.Synthetic())
+	if !l.HasPower || l.HasFans || l.HasUndervolt || !l.HasBattery {
+		t.Errorf("presence = power %v fans %v undervolt %v battery %v, want true false false true",
+			l.HasPower, l.HasFans, l.HasUndervolt, l.HasBattery)
+	}
+	if len(l.PowerLimits) != 1 || l.PowerLimits[0].ID != "pl1" || l.PowerLimits[0].Label != "TDP" {
+		t.Errorf("PowerLimits = %+v, want the device's single TDP limit", l.PowerLimits)
+	}
+	if l.HasLimit("pl2") || l.HasLimit("pl3") || !l.HasLimit("pl1") {
+		t.Error("HasLimit disagrees with the device's one limit")
+	}
+	if l.TDPMin != 8 || l.TDPMaxSafe != 25 || l.TDPMaxForced != 30 {
+		t.Errorf("TDP range = %d/%d/%d, want the device's 8/25/30", l.TDPMin, l.TDPMaxSafe, l.TDPMaxForced)
+	}
+	// A device with no PL2 reads it back as 0; that is not a reason to open
+	// the advanced view.
+	if l.NeedsAdvanced(true, api.TDPState{PL1SPL: 20}) {
+		t.Error("NeedsAdvanced read an absent PL2's zero as a user choice")
+	}
+}
+
+// TestDefaultLimitsHaveEveryCapability: the fallback stands in for the machine
+// its numbers describe, so with no daemon answer nothing is hidden.
+func TestDefaultLimitsHaveEveryCapability(t *testing.T) {
+	d := DefaultLimits()
+	if !d.HasPower || !d.HasFans || !d.HasUndervolt || !d.HasBattery || len(d.PowerLimits) != 3 {
+		t.Errorf("DefaultLimits = %+v, want every capability and the three limits", d)
+	}
+	if got := FromDevice(nil); !reflect.DeepEqual(got, d) {
+		t.Error("FromDevice(nil) is not DefaultLimits")
 	}
 }

@@ -68,7 +68,7 @@ func TestHandleTDPRejectsInvalidRequests(t *testing.T) {
 // attributes (asus-armoury's, or asus-nb-wmi's ppt_*) once validation passes, and
 // the Z13 driver's path vars are unexported, so a case that gets past validation
 // would change the developer's actual power limits as a test side effect.
-// Accepted-input behaviour is covered hermetically in internal/drivers/asusz13/tdp_test.go.
+// Accepted-input behaviour is covered hermetically in internal/drivers/asus/tdp_test.go.
 func TestHandleTDPForceBoundaryRejections(t *testing.T) {
 	d := &Daemon{hw: testDev}
 	for _, watts := range []string{"76", "80", "93"} {
@@ -90,7 +90,7 @@ func TestHandleTDPForceBoundaryRejections(t *testing.T) {
 // on set and the floor-release check on reset — cannot be driven from this
 // package without changing the machine's real fan mode, because whether they
 // refuse depends on the actual ppt_* values and the Z13 driver's path vars are
-// unexported. Both are covered hermetically in internal/drivers/asusz13 and
+// unexported. Both are covered hermetically in internal/drivers/asus and
 // internal/safety against the fake sysfs tree.
 func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 	tests := []struct {

@@ -59,6 +59,15 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Developers',
+					items: [
+						{ label: 'Architecture', slug: 'dev/architecture' },
+						{ label: 'Device Files', slug: 'dev/device-files' },
+						{ label: 'Writing a Driver', slug: 'dev/writing-a-driver' },
+						{ label: 'Plugins (Planned)', slug: 'dev/plugins' },
+					],
+				},
+				{
 					label: 'Project',
 					items: [
 						{ label: 'Contributing', slug: 'contributing' },

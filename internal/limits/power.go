@@ -132,6 +132,67 @@ type Limits struct {
 	// BatteryMin..BatteryMax is the charge limit range, in percent. The kernel
 	// publishes no range for the threshold, so the daemon serves device data.
 	BatteryMin, BatteryMax int
+
+	// HasPower, HasFans, HasUndervolt and HasBattery say which capability
+	// sections the device declares. The numbers above are always complete —
+	// Sanitized fills them so arithmetic never divides by zero — but a control
+	// for a capability the device lacks is not shown at all, rather than shown
+	// with another machine's bounds. DefaultLimits, the answer when the daemon
+	// gave none, has every capability: it stands in for the machine the
+	// fallback numbers describe.
+	HasPower, HasFans, HasUndervolt, HasBattery bool
+
+	// PowerLimits are the limits a user may set, in display order, with the
+	// words to show for each (api.PowerInfo.Limits). A daemon older than the
+	// field gets the built-in three, which is what it always offered.
+	PowerLimits []api.PowerLimit
+
+	// UVText is how to name the undervolt offset (api.UndervoltInfo's label
+	// fields); an empty field takes the built-in wording.
+	UVText UVText
+}
+
+// UVText names the undervolt control: Label for the control, ShortLabel for a
+// compact summary, Unit for a value's suffix ("" for unitless steps),
+// Description for one line of help.
+type UVText struct {
+	Label, ShortLabel, Unit, Description string
+}
+
+// defaultPowerLimits is the built-in wording for the three limits, the same
+// words the asus power driver serves — kept equal by
+// TestDocumentMatchesTheDrawersFallback, like every other default here.
+func defaultPowerLimits() []api.PowerLimit {
+	return []api.PowerLimit{
+		{ID: "pl1", Label: "PL1 (SPL)", Description: "Sustained power limit — the long-term average power the CPU targets."},
+		{ID: "pl2", Label: "PL2 (sPPT)", Description: "Short boost — maximum power during brief burst workloads."},
+		{ID: "pl3", Label: "PL3 (fPPT)", Description: "Fast boost — peak instantaneous power for single-threaded spikes."},
+	}
+}
+
+// defaultUVText is the built-in undervolt wording, the Curve Optimizer
+// driver's own.
+var defaultUVText = UVText{
+	Label:       "CPU Curve Optimizer",
+	ShortLabel:  "CO",
+	Description: "All-core Curve Optimizer offset: negative values lower the CPU's voltage curve. Unstable values may cause crashes.",
+}
+
+// HasLimit reports whether the device lets a user set the limit with this id
+// ("pl1", "pl2", "pl3").
+func (l Limits) HasLimit(id string) bool {
+	_, ok := l.PowerLimit(id)
+	return ok
+}
+
+// PowerLimit returns the device's entry for the limit with this id.
+func (l Limits) PowerLimit(id string) (api.PowerLimit, bool) {
+	for _, p := range l.PowerLimits {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return api.PowerLimit{}, false
 }
 
 // DefaultLimits returns the 2025 ROG Flow Z13 (GZ302) values, as its device
@@ -156,6 +217,12 @@ func DefaultLimits() Limits {
 		UVMax:         0,
 		BatteryMin:    40,
 		BatteryMax:    100,
+		HasPower:      true,
+		HasFans:       true,
+		HasUndervolt:  true,
+		HasBattery:    true,
+		PowerLimits:   defaultPowerLimits(),
+		UVText:        defaultUVText,
 		// The device file's floor_curve: 50% at idle temperatures, full speed by 80°C.
 		// The ramp is what protects the APU; the bottom is what keeps it quiet.
 		FloorCurve: []api.FanCurvePoint{
@@ -335,6 +402,37 @@ func (l Limits) Sanitized() Limits {
 	}
 
 	l.Presets = sanitizedPresets(l.Presets, l.Points, l.PWMMax)
+
+	// Wording: a device with power limits always names at least one, and an
+	// unnamed limit or undervolt field takes the built-in words. Copied so the
+	// caller never shares a slice with the document cache.
+	if len(l.PowerLimits) == 0 {
+		l.PowerLimits = defaultPowerLimits()
+	} else {
+		l.PowerLimits = append([]api.PowerLimit(nil), l.PowerLimits...)
+	}
+	for i, p := range l.PowerLimits {
+		for _, def := range defaultPowerLimits() {
+			if def.ID != p.ID {
+				continue
+			}
+			if p.Label == "" {
+				l.PowerLimits[i].Label = def.Label
+			}
+			if p.Description == "" {
+				l.PowerLimits[i].Description = def.Description
+			}
+		}
+	}
+	if l.UVText.Label == "" {
+		l.UVText.Label = defaultUVText.Label
+	}
+	if l.UVText.ShortLabel == "" {
+		l.UVText.ShortLabel = defaultUVText.ShortLabel
+	}
+	if l.UVText.Description == "" {
+		l.UVText.Description = defaultUVText.Description
+	}
 	return l
 }
 
@@ -607,7 +705,9 @@ func (l Limits) NeedsAdvanced(isCustom bool, t api.TDPState) bool {
 		return true
 	}
 	b := l.BasicTriple(t.PL1SPL)
-	return t.PL2SPPT != b.PL2SPPT || t.FPPT != b.FPPT
+	// Only the limits the device has: one with no PL2 reads it back as 0,
+	// which is not a sign the user set it apart from PL1.
+	return (l.HasLimit("pl2") && t.PL2SPPT != b.PL2SPPT) || (l.HasLimit("pl3") && t.FPPT != b.FPPT)
 }
 
 // FanCurveIsCustom reports whether a fan curve reported by the daemon is actually

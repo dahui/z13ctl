@@ -7,18 +7,21 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dahui/voltaire/api/v2"
 
+	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/version"
 
-	// The Z13 driver registers its factories for this whole binary here: both
+	// The drivers register their factories for this whole binary here: both
 	// the daemon's device assembly and the CLI's fallback assembly
 	// (hardware.go) fail loudly for any capability whose factory the binary
 	// does not carry. Registration is a per-binary choice by design.
-	_ "github.com/dahui/voltaire/v2/internal/drivers/asusz13/register"
+	_ "github.com/dahui/voltaire/v2/internal/drivers/register"
 )
 
 // profileFlagUsage is shared by the fancurve, tdp, and undervolt commands so
@@ -85,22 +88,47 @@ var (
 var rootCmd = &cobra.Command{
 	Use:     "voltaire",
 	Version: version.Version,
-	Short:   "System control for supported laptops (the 2025 ASUS ROG Flow Z13 today)",
-	Long: `voltaire — system control for supported laptops
+	Short:   "System control for supported laptops and handhelds",
+	Long: `voltaire — system control for supported laptops and handhelds
 
 Controls RGB lighting, performance profiles, fan curves, power limits, battery
-charge limit, firmware toggles and Curve Optimizer through the kernel's own
+charge limit, firmware toggles and CPU undervolting through the kernel's own
 interfaces. What a machine offers, and every range and name, comes from its
-device file and from what the kernel reports; the supported device today is the
-2025 ASUS ROG Flow Z13.`,
+device file and from what the kernel reports, so a command for something this
+machine lacks says so rather than guessing.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
 
 func init() {
+	rootCmd.Long += supportedDevicesText()
 	rootCmd.PersistentFlags().StringVar(&deviceFlag, "device", "", "Target lighting zone (keyboard or lightbar on the Z13) or a hidraw path (default: all)")
 	rootCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview changes without applying them")
 	rootCmd.PersistentFlags().BoolVar(&noButtonFlag, "no-button", false, "Disable the hardware button watcher (daemon only)")
 	rootCmd.PersistentFlags().BoolVar(&noSleepReleaseFlag, "no-sleep-release", false,
 		"Keep the custom fan curve through sleep instead of handing the fans back to the firmware (daemon only)")
+}
+
+// supportedDevicesText lists the machines this binary carries device data for,
+// by their display names, for the root help. It is read from the embedded
+// device files rather than written here, so a new device file is listed the
+// day it lands.
+func supportedDevicesText() string {
+	cfgs, err := device.Configs()
+	if err != nil || len(cfgs) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(cfgs))
+	for _, c := range cfgs {
+		n := c.Device.Name
+		if n == "" {
+			n = c.Device.Model
+		}
+		if n == "" {
+			n = c.Device.ID
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return "\n\nSupported devices:\n  " + strings.Join(names, "\n  ")
 }

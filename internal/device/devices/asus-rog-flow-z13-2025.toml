@@ -1,13 +1,13 @@
 # 2025 ASUS ROG Flow Z13 (GZ302 series, Strix Halo).
 #
 # Every number here is measured or verified on hardware; sources are noted per
-# block. While internal/cli still carries these values as constants, the test
-# suite pins this file against them (TestZ13FileMatchesCliConstants) — change
-# both together until the constants are deleted.
+# block. The format is documented key by key in the developer docs
+# (website/src/content/docs/dev/device-files.md).
 
 [device]
 id    = "asus-rog-flow-z13-2025"
 model = "GZ302"
+name  = "ASUS ROG Flow Z13 (2025)"
 
 # product_name carries the SKU twice ("ROG Flow Z13 GZ302EA_GZ302EA"), so the
 # prefix form covers every GZ302 variant.
@@ -89,6 +89,10 @@ tdp_min        = 5
 tdp_max_safe   = 75
 tdp_max_forced = 93
 tdp_default    = 50
+# The PL1 the asus-nb-wmi attributes hold after boot, before anything writes
+# them: a readback of 5 W is the kernel's cache, not a limit in force.
+# (asus-armoury reports its own defaults and replaces this.)
+boot_cache_pl1 = 5
 floor_curve    = [[30, 127], [40, 127], [50, 140], [60, 165], [65, 190], [70, 215], [75, 235], [80, 255]]
 
 # Measured with ryzenadj. Only PL1 matches what the firmware enforces — under

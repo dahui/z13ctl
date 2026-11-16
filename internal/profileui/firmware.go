@@ -16,11 +16,15 @@ type Firmware []api.ProfileEntry
 // FirmwareFrom reads the firmware profiles from the device document. A nil
 // document — no daemon, or one too old to answer device-get — yields the
 // built-in list, the same posture limits.FromDevice and controls.Resolve take:
-// no answer is not evidence the machine lacks profiles. A daemon that sends
+// no answer is not evidence the machine lacks profiles. A document without a
+// profiles section is that evidence, and yields none. A daemon that sends
 // names without labelled entries (older than the field) gets fallback labels.
 func FirmwareFrom(info *api.DeviceInfo) Firmware {
-	if info == nil || info.Profiles == nil || len(info.Profiles.Names) == 0 {
+	if info == nil {
 		return defaultFirmware()
+	}
+	if info.Profiles == nil || len(info.Profiles.Names) == 0 {
+		return Firmware{}
 	}
 	p := info.Profiles
 	labels := make(map[string]string, len(p.Entries))

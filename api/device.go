@@ -17,6 +17,11 @@ type DeviceInfo struct {
 	ID    string `json:"id"`    // device data identifier, e.g. "asus-rog-flow-z13-2025"
 	Model string `json:"model"` // short hardware name for display, e.g. "GZ302"
 
+	// Name is the machine's display name, e.g. "ASUS ROG Flow Z13 (2025)".
+	// Absent from a daemon older than the field, or when the device data names
+	// none; a client then shows Model, else ID.
+	Name string `json:"name,omitempty"`
+
 	Fans      *FanInfo       `json:"fans,omitempty"`
 	Power     *PowerInfo     `json:"power,omitempty"`
 	Profiles  *ProfileInfo   `json:"profiles,omitempty"`
@@ -120,6 +125,22 @@ type PowerInfo struct {
 	// hardcoded table is answering for the wrong machine the moment voltaire
 	// supports a second one. Empty means the device declares no stock table.
 	StockProfilePPT map[string]TDPState `json:"stock_profile_ppt,omitempty"`
+
+	// Limits are the power limits this device lets a user set, in display
+	// order, with the words to show for each — so a client neither assumes
+	// three limits nor names them in one vendor's terms. Ranges are not
+	// repeated here: PL1's is TDPMin..TDPMaxForced, PL2's and PL3's are the
+	// fields above. Absent from a daemon older than the field; a client then
+	// offers its built-in three.
+	Limits []PowerLimit `json:"limits,omitempty"`
+}
+
+// PowerLimit is one settable power limit. ID is "pl1", "pl2" or "pl3" — the
+// tdp command's pl1/pl2/pl3 fields and TDPState's PL1SPL/PL2SPPT/FPPT.
+type PowerLimit struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // PowerRange is an inclusive range in watts.
@@ -171,6 +192,10 @@ type LightingInfo struct {
 	Speeds []string `json:"speeds,omitempty"`
 	// BrightnessMax is the top brightness level; levels run from 0 (off).
 	BrightnessMax int `json:"brightness_max,omitempty"`
+	// BrightnessNames names each level, 0 first (BrightnessMax+1 entries),
+	// when the lighting protocol has names for them; absent when its levels
+	// are only numbers, or from a daemon older than the field.
+	BrightnessNames []string `json:"brightness_names,omitempty"`
 }
 
 // LightingMode is one effect: its wire name, a label, and the inputs it takes
@@ -238,6 +263,16 @@ const (
 type UndervoltInfo struct {
 	Min int `json:"min"`
 	Max int `json:"max"`
+
+	// How to name the offset: Label for a control ("CPU Curve Optimizer"),
+	// ShortLabel for a compact summary ("CO"), Unit for a value's suffix
+	// (empty when the steps are unitless), Description for one line of help.
+	// Each is absent when the device says nothing, and from a daemon older
+	// than the fields; a client then uses its own words.
+	Label       string `json:"label,omitempty"`
+	ShortLabel  string `json:"short_label,omitempty"`
+	Unit        string `json:"unit,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // CPUInfo says what CPU-level controls the device offers. A section rather

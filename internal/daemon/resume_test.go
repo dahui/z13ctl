@@ -422,7 +422,7 @@ func (errBattery) SetChargeLimit(int) error                { return nil }
 func (b errBattery) Status() (driver.BatteryStatus, error) { return driver.BatteryStatus{}, b.err }
 
 // TestProbeECClassifiesThroughTheDriver pins that the ENOENT/ENODEV split
-// survives the driver abstraction: asusz13's Status returns the capacity read's
+// survives the driver abstraction: the power_supply battery's Status returns the capacity read's
 // error unwrapped, and a wrapped one must classify the same way. A device with
 // no battery capability has nothing cheap to probe and must not block a restore.
 func TestProbeECClassifiesThroughTheDriver(t *testing.T) {

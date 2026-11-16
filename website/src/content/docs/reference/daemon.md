@@ -135,7 +135,7 @@ render controls against, instead of hardcoding one device's numbers:
 
 ```json
 {"ok":true,"device":{
-  "id":"asus-rog-flow-z13-2025","model":"GZ302",
+  "id":"asus-rog-flow-z13-2025","model":"GZ302","name":"ASUS ROG Flow Z13 (2025)",
   "fans":{"points":8,"temp_min":35,"temp_max":105,"pwm_max":255,
           "labels":["Fan 1","Fan 2"],"rpm_max":8900,
           "presets":[{"name":"quiet","label":"Quiet","description":"Fans stopped until 60°C, ...",
@@ -143,6 +143,9 @@ render controls against, instead of hardcoding one device's numbers:
   "power":{"tdp_min":28,"tdp_max_safe":75,"tdp_max_forced":80,
            "interface":"asus-armoury",
            "pl2":{"min":32,"max":92},"pl3":{"min":45,"max":93},
+           "limits":[{"id":"pl1","label":"PL1 (SPL)","description":"Sustained power limit — ..."},
+                     {"id":"pl2","label":"PL2 (sPPT)","description":"Short boost — ..."},
+                     {"id":"pl3","label":"PL3 (fPPT)","description":"Fast boost — ..."}],
            "floor_curve":[{"temp":30,"pwm":127},{"temp":40,"pwm":127}, "..."],
            "stock_profile_ppt":{"balanced":{"pl1_spl":52,"pl2_sppt":71,"fppt":70}, "...":{}}},
   "profiles":{"names":["quiet","balanced","performance"],"default":"balanced",
@@ -150,12 +153,14 @@ render controls against, instead of hardcoding one device's numbers:
   "lighting":{"zones":["keyboard","lightbar"],"labels":["Keyboard","Lightbar"],
               "modes":[{"name":"static","label":"Static","color":true},
                        {"name":"breathe","label":"Breathe","color":true,"color2":true,"speed":true}, "..."],
-              "speeds":["slow","normal","fast"],"brightness_max":3},
+              "speeds":["slow","normal","fast"],"brightness_max":3,
+              "brightness_names":["off","low","medium","high"]},
   "toggles":[{"id":"boot_sound","label":"POST boot sound","kind":"bool","source":"core"},
              {"id":"panel_overdrive","label":"Panel overdrive","kind":"bool","source":"core",
               "description":"Faster pixel response; may cause ghosting ..."}],
   "cpu":{"boost":true},
-  "undervolt":{"min":-40,"max":0},
+  "undervolt":{"min":-40,"max":0,"label":"CPU Curve Optimizer","short_label":"CO",
+               "description":"All-core Curve Optimizer offset: ..."},
   "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
   "telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs",
                "history_seconds":3600,"clock_max_mhz":5187,"temp_limit_c":100},
@@ -167,6 +172,27 @@ render controls against, instead of hardcoding one device's numbers:
 toggle's `source` is `"core"` for one a compiled-in driver provides, or
 `"plugin:<id>"`, and is always present; `description` is prose to show beside
 the switch, absent when the device data has none.
+
+`name` is the machine's display name, for titles and bug reports (absent when
+the device data gives none: show `model`).
+
+`power.limits` lists the limits a user may set, in the order to show them,
+each with its `id` (`pl1`, `pl2` or `pl3` — the `tdp` command's fields), a
+`label` and a one-line `description`. It is the kernel's answer where the
+interface reports which limits exist, filtered by the device data: a device
+that lets you set only the sustained limit lists `pl1` alone, and a client
+offers one control rather than three. The ranges stay where they are
+(`tdp_min`..`tdp_max_forced` for `pl1`, `pl2`, `pl3`). Absent from a daemon older
+than the field: offer all three.
+
+`undervolt`'s `label`, `short_label`, `unit` and `description` name the offset
+on this device — "CPU Curve Optimizer" / "CO" on AMD, unitless steps — so a
+client need not know which vendor's mechanism it is driving. Any of them may be
+absent; fall back to your own wording.
+
+`lighting.brightness_names` names each brightness level from 0 to
+`brightness_max`, lower case, when the protocol has names for them; absent
+when the levels are only numbers. It always has `brightness_max`+1 entries.
 
 `buttons` says the daemon watches a hardware button (and emits the button
 events); `button_label` is what that button is called on this machine, written

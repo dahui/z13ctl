@@ -106,6 +106,16 @@ func EmptyReason(doc *api.DeviceInfo) string {
 	}
 }
 
+// ShowFirmwareCard reports whether the Settings page builds its FIRMWARE card.
+// A device whose document lists no toggles has nothing for it to hold, and the
+// page's other cards are reason enough to keep the page — so the card goes,
+// rather than staying to explain its own emptiness. A nil document keeps it:
+// the daemon did not answer, and EmptyReason's "start the daemon" is the one
+// empty state the user can act on.
+func ShowFirmwareCard(doc *api.DeviceInfo) bool {
+	return doc == nil || len(doc.Toggles) > 0
+}
+
 // RebootNotice is the banner text for a firmware setting that is waiting on a
 // restart, or "" when there is nothing to say.
 //

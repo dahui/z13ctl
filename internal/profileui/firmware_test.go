@@ -64,3 +64,11 @@ func TestLabelUsesKernelSpellings(t *testing.T) {
 		}
 	}
 }
+
+// A document is an answer: one with no profiles section means the device
+// offers none, not that the Z13's three should be shown.
+func TestFirmwareFromADeviceWithoutProfiles(t *testing.T) {
+	if got := profileui.FirmwareFrom(&api.DeviceInfo{}); len(got) != 0 {
+		t.Errorf("FirmwareFrom(no profiles) = %v, want none", got.Names())
+	}
+}

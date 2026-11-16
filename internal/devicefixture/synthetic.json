@@ -1,0 +1,58 @@
+{
+  "id": "synthetic-handheld",
+  "model": "SYN1",
+  "name": "Synthetic Handheld",
+  "power": {
+    "tdp_min": 8,
+    "tdp_max_safe": 25,
+    "tdp_max_forced": 30,
+    "stock_profile_ppt": {
+      "balanced": {
+        "pl1_spl": 15,
+        "pl2_sppt": 0,
+        "fppt": 0,
+        "apu_sppt": 0,
+        "platform_sppt": 0
+      },
+      "performance": {
+        "pl1_spl": 25,
+        "pl2_sppt": 0,
+        "fppt": 0,
+        "apu_sppt": 0,
+        "platform_sppt": 0
+      }
+    },
+    "limits": [
+      {
+        "id": "pl1",
+        "label": "TDP",
+        "description": "The power the processor may draw."
+      }
+    ]
+  },
+  "profiles": {
+    "names": [
+      "balanced",
+      "performance"
+    ],
+    "default": "balanced",
+    "entries": [
+      {
+        "name": "balanced",
+        "label": "Balanced"
+      },
+      {
+        "name": "performance",
+        "label": "Performance"
+      }
+    ]
+  },
+  "battery": {
+    "charge_limit": true,
+    "charge_limit_min": 40,
+    "charge_limit_max": 100
+  },
+  "telemetry": {
+    "history_seconds": 600
+  }
+}

@@ -30,8 +30,9 @@ var (
 
 var fancurveCmd = &cobra.Command{
 	Use:   "fancurve",
-	Short: "Get or set custom fan curves via asus-nb-wmi hwmon",
-	Long: `Get or set custom fan curves via the Linux asus-nb-wmi hwmon sysfs interface.
+	Short: "Get or set custom fan curves",
+	Long: `Get or set custom fan curves through the kernel's hwmon fan-curve interface
+(asus-nb-wmi's on ASUS machines).
 
 The same curve is always applied to every fan.
 
@@ -49,8 +50,9 @@ The mode shown by --get is the truth: "custom" means the kernel is honouring
 your curve, "auto" means it is not, whatever points are listed. The kernel
 driver discards custom fan curves on every system power profile change — GNOME
 power modes, power-profiles-daemon (including its automatic AC/battery
-switching), Fn+F5, asusctl. Run the daemon and it re-applies your curve within
-a couple of seconds; without it, re-run --set after any profile change.
+switching), and on ASUS machines Fn+F5 and asusctl. Run the daemon and it
+re-applies your curve within a couple of seconds; without it, re-run --set
+after any profile change.
 
 Use --profile <name> to store a curve in a profile you are NOT running: nothing
 is written to the fans, which is how you build the profile 'voltaire autoswitch'

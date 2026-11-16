@@ -15,7 +15,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	// Registers the Z13 driver factories, as the voltaire binary does.
-	_ "github.com/dahui/voltaire/v2/internal/drivers/asusz13/register"
+	_ "github.com/dahui/voltaire/v2/internal/drivers/register"
 )
 
 // testDev is the full Z13 device assembled exactly as Run's assembly does,
@@ -29,36 +29,53 @@ var testDev = func() *device.Device {
 	}
 	for _, c := range configs {
 		if c.Device.ID == fallbackDeviceID {
-			d, err := device.Assemble(c)
-			if err != nil {
-				panic(err)
-			}
-			// The PPT driver lays the running kernel's ranges over the device
-			// data (asus-armoury's 28–80 W PL1 where it exists), which would make
-			// every envelope-reading test depend on the machine running it. Reads
-			// and writes still go to the real driver, so the rule that a daemon
-			// test must stay on rejection paths is unchanged.
-			d.Power.Power = deviceFileEnvelope{Power: d.Power.Power, env: c.Power.Envelope()}
-			// Same reason for the profile list: the driver offers the kernel's
-			// choices filtered by the device data, and a machine without
-			// asus-wmi's handler would otherwise offer the tests a different
-			// list. Get/Set still reach the real driver.
-			d.Profiles = deviceFileProfiles{ProfileController: d.Profiles, names: c.Profiles.Names}
-			// And the toggle list: the driver describes toggles from the
-			// kernel's attribute metadata when asus-armoury is loaded.
-			d.Toggles = deviceFileToggles{Toggles: d.Toggles, specs: declaredToggles(c)}
-			// And the fan shape: the driver lays hwmon's point count and fan
-			// labels over the device data.
-			d.Fans = deviceFileFans{FanController: d.Fans, shape: c.Fans.Shape()}
-			// And the telemetry declaration: the driver drops sources whose
-			// hardware is absent and adds the kernel's chart hints. Sample still
-			// reads the real machine, which the declaration guard needs.
-			d.Telemetry = deviceFileTelemetry{Telemetry: d.Telemetry, info: c.Telemetry.Info()}
-			return d
+			return assembleForTest(c)
 		}
 	}
 	panic("Z13 device file not found in embedded device data")
 }()
+
+// assembleForTest assembles c with the registered drivers, then puts device
+// data in place of every answer a driver would read from the running kernel,
+// so a test's result does not depend on the machine running it. Reads and
+// writes still go to the real drivers, so the rule that a daemon test must
+// stay on rejection paths is unchanged.
+func assembleForTest(c device.Config) *device.Device {
+	d, err := device.Assemble(c)
+	if err != nil {
+		panic(err)
+	}
+	if d.Power != nil {
+		// The PPT driver lays the running kernel's ranges over the device data
+		// (asus-armoury's 28–80 W PL1 where it exists). DeviceEnvelope is the
+		// driver's view of the device data alone — the file's numbers with the
+		// driver's limit wording filled in — which is also what the daemon
+		// serves while the EC is not answering.
+		d.Power.Power = deviceFileEnvelope{Power: d.Power.Power,
+			env: d.Power.Power.(driver.DeviceEnvelope).DeviceEnvelope()}
+	}
+	if d.Profiles != nil {
+		// The driver offers the kernel's choices filtered by the device data,
+		// and a machine without that handler would offer a different list.
+		d.Profiles = deviceFileProfiles{ProfileController: d.Profiles, names: c.Profiles.Names, def: c.Profiles.Default}
+	}
+	if d.Toggles != nil {
+		// The driver describes toggles from the kernel's attribute metadata
+		// when asus-armoury is loaded.
+		d.Toggles = deviceFileToggles{Toggles: d.Toggles, specs: declaredToggles(c)}
+	}
+	if d.Fans != nil {
+		// The driver lays hwmon's point count and fan labels over the data.
+		d.Fans = deviceFileFans{FanController: d.Fans, shape: c.Fans.Shape()}
+	}
+	if d.Telemetry != nil {
+		// The driver drops sources whose hardware is absent and adds the
+		// kernel's chart hints. Sample still reads the real machine, which the
+		// declaration guard needs.
+		d.Telemetry = deviceFileTelemetry{Telemetry: d.Telemetry, info: c.Telemetry.Info()}
+	}
+	return d
+}
 
 // deviceFileEnvelope reports the device file's envelope in place of the
 // driver's live one.
@@ -74,13 +91,14 @@ func (p deviceFileEnvelope) Envelope() driver.PowerEnvelope { return p.env }
 type deviceFileProfiles struct {
 	driver.ProfileController
 	names []string
+	def   string
 }
 
 func (p deviceFileProfiles) Names() []string { return append([]string(nil), p.names...) }
 
 // Default is the device file's declared default, rather than the driver's
 // rule applied to its sysfs-read list.
-func (p deviceFileProfiles) Default() string { return "balanced" }
+func (p deviceFileProfiles) Default() string { return p.def }
 
 // testEnv is the Z13 device file's power envelope, for the pure tick
 // functions' tables. Not testDev.Power.Envelope(): the driver lays the running

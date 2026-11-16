@@ -24,21 +24,25 @@ import "github.com/dahui/voltaire/api/v2"
 // omitting a field this build expects reads as zero, and a zero TDPMaxSafe
 // would demand the force flag for every TDP the user could pick.
 //
-// Capability *absence* is deliberately not handled here. A nil Power or Fans
-// section means the device has no such capability and its controls should be
-// hidden entirely; this function fills in defaults instead, because Limits
-// describes bounds and has no way to say "this control does not exist". That
-// is the remaining half of the capability work and it needs a device that
-// actually lacks a capability to be worth anything — today's single device has
-// all of them, so filling in defaults is exactly what the drawer did before.
+// Capability *absence* is recorded rather than papered over: a nil Power,
+// Fans, Undervolt or Battery section leaves its Has flag false, and the
+// controls for it are not shown. The numbers are still filled in by Sanitized
+// so nothing downstream divides by zero, but a hidden control never shows
+// them — the alternative, which this function did until 2026-11-15, was a
+// device with no power section getting the Z13's 5–93 W sliders.
 func FromDevice(info *api.DeviceInfo) Limits {
 	if info == nil {
 		return DefaultLimits()
 	}
 
-	l := Limits{Model: info.Model}
+	l := Limits{Model: info.Model,
+		HasPower: info.Power != nil, HasFans: info.Fans != nil,
+		HasUndervolt: info.Undervolt != nil, HasBattery: info.Battery != nil}
 
 	if p := info.Power; p != nil {
+		// Copied for the same reason as the floor curve below. Empty from a
+		// daemon older than the field; Sanitized supplies the built-in three.
+		l.PowerLimits = append([]api.PowerLimit(nil), p.Limits...)
 		l.TDPMin, l.TDPMaxSafe, l.TDPMaxForced = p.TDPMin, p.TDPMaxSafe, p.TDPMaxForced
 		if r := p.PL2; r != nil {
 			l.PL2Min, l.PL2Max = r.Min, r.Max
@@ -95,6 +99,7 @@ func FromDevice(info *api.DeviceInfo) Limits {
 
 	if u := info.Undervolt; u != nil {
 		l.UVMin, l.UVMax = u.Min, u.Max
+		l.UVText = UVText{Label: u.Label, ShortLabel: u.ShortLabel, Unit: u.Unit, Description: u.Description}
 	}
 	// A daemon older than the range fields serves charge_limit with no bounds;
 	// zero then reads as "not served" and Sanitized supplies the 40–100 every

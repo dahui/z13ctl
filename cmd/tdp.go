@@ -16,7 +16,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/daemon"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asusz13"
+	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
@@ -36,8 +36,9 @@ var (
 var tdpCmd = &cobra.Command{
 	Use:   "tdp",
 	Short: "Get or set TDP power limits (PPT)",
-	Long: `Get or set TDP power limits. On the ROG Flow Z13 they go through the
-kernel's asus-armoury firmware-attributes, or the older asus-nb-wmi PPT
+	Long: `Get or set TDP power limits. Which limits a device lets you set, and what
+each is called, is its own; --get lists them. On ASUS machines they go through
+the kernel's asus-armoury firmware-attributes, or the older asus-nb-wmi PPT
 attributes on kernels that do not expose them there.
 
 With --get, prints the current PPT (Package Power Tracking) values and the
@@ -70,7 +71,7 @@ the Z13), writes that profile's stock PPT values (bringing a high custom limit
 down first), and then resets fan curves to auto mode, which puts the firmware's
 own limits back in force.
 
-PPT attributes:
+PPT attributes (the AMD and ASUS terms; a device may set fewer):
   PL1/SPL          — Sustained Power Limit: the continuous power budget the APU
                      can draw indefinitely. This is your effective base TDP.
   PL2/sPPT         — Short-term boost: the APU can draw this much power for
@@ -135,20 +136,28 @@ func runTdpGet() error {
 		}
 	}
 
+	// The limits are the device's own, in its order and with its names: the
+	// Z13's three as PL1 (SPL), PL2 (sPPT) and PL3 (fPPT).
+	env := powerEnvFor(hw)
 	fmt.Println("TDP Power Limits (watts):")
-	fmt.Printf("  PL1 (SPL):          %d\n", tdp.PL1SPL)
-	fmt.Printf("  PL2 (sPPT):         %d\n", tdp.PL2SPPT)
-	fmt.Printf("  PL3 (fPPT):         %d\n", tdp.FPPT)
+	var ranges []string
+	for _, l := range powerLimitsOf(env) {
+		v, ok := limitValue(tdp, l.ID)
+		if !ok {
+			continue
+		}
+		fmt.Printf("  %-20s%d\n", l.Label+":", v)
+		if lo, hi, ok := limitRange(env, l.ID); ok {
+			ranges = append(ranges, fmt.Sprintf("%s %d–%dW", strings.ToUpper(l.ID), lo, hi))
+		}
+	}
 	// 0 means the interface does not expose it (asus-armoury on the GZ302EA).
 	if tdp.APUSPPT != 0 || tdp.PlatformSPPT != 0 {
 		fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
 		fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
 	}
-	env := powerEnvFor(hw)
 	if env.Interface != "" {
-		pl2, pl3 := safety.PL2Range(env), safety.PL3Range(env)
-		fmt.Printf("  Interface:          %s (PL1 %d–%dW, PL2 %d–%dW, PL3 %d–%dW)\n", env.Interface,
-			env.TDPMin, env.TDPMaxForced, pl2.Min, pl2.Max, pl3.Min, pl3.Max)
+		fmt.Printf("  Interface:          %s (%s)\n", env.Interface, strings.Join(ranges, ", "))
 	}
 	// The help text cannot know this machine's numbers, so it points here.
 	if env.TDPMaxSafe > 0 {
@@ -218,7 +227,7 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(env, tdp, tdpForceFlag, liveFanCurve(hw), asusz13.PlanTDPWrites(tdp))
+		cli.DryRunTdp(env, tdp, tdpForceFlag, liveFanCurve(hw), asus.PlanTDPWrites(tdp))
 		printNotes(notes)
 		return nil
 	}

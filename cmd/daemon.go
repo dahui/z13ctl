@@ -25,8 +25,8 @@ var daemonCmd = &cobra.Command{
 	Long: `Run the voltaire daemon as a long-running process.
 
 The daemon opens and holds the lighting HID devices, restores the last-applied
-lighting state on startup, watches the hardware button (the Armoury Crate
-button on the Z13), and serves a
+lighting state on startup, watches the device's hardware button where it has
+one (the Armoury Crate button on the Z13), and serves a
 Unix socket at $XDG_RUNTIME_DIR/voltaire/voltaire.sock (plus the pre-rename
 $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock, kept through 2.x for older clients).
 

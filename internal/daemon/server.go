@@ -316,7 +316,7 @@ func (d *Daemon) dispatch(req request) response {
 		// there — the two readings were always independent on the wire.
 		sampled := false
 		if !wedged && d.hw != nil && d.hw.Telemetry != nil {
-			if sample, err := d.hw.Telemetry.Sample(); err == nil {
+			if sample, err := d.liveSample(); err == nil {
 				sampled = true
 				d.applyLiveTelemetry(&s, sample)
 			}

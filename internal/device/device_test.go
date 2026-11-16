@@ -102,6 +102,19 @@ func TestZ13StockTableNamesAreReserved(t *testing.T) {
 // round-trip through state.
 // The hold is what stops the Z13's sleep/wake cycling (issue #24); losing it from
 // the file, or from Shape, silently brings the cycling back.
+// TestZ13DeclaresItsBootCache pins the measured asus-nb-wmi boot cache in the
+// data, now that the driver no longer assumes it: without it a 5 W readback
+// after boot would be trusted as a limit in force on the fallback interface.
+func TestZ13DeclaresItsBootCache(t *testing.T) {
+	c := z13Config(t)
+	if got := c.Power.BootCachePL1; got != 5 {
+		t.Fatalf("power.boot_cache_pl1 = %d, want the measured 5", got)
+	}
+	if got := c.Power.Envelope().Initial; got != (api.TDPState{PL1SPL: 5}) {
+		t.Errorf("envelope Initial = %+v, want PL1 at 5 W", got)
+	}
+}
+
 func TestZ13CarriesTheSleepReleaseSettle(t *testing.T) {
 	if got := z13Config(t).Fans.Shape().SleepReleaseSettle; got != 3*time.Second {
 		t.Errorf("SleepReleaseSettle = %v, want the measured 3s", got)
@@ -297,6 +310,21 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 				StockPPT: map[string]StockRow{"quiet": {}}}
 			c.Profiles = &ProfilesConfig{Method: "m", Names: []string{"quiet", "balanced"}}
 		}, `missing profile "balanced"`},
+		{"power limit with an unknown id", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40,
+				Limits: []PowerLimitConfig{{ID: "pl1"}, {ID: "pl4"}}}
+		}, `id "pl4"`},
+		{"power limit listed twice", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40,
+				Limits: []PowerLimitConfig{{ID: "pl1"}, {ID: "pl1"}}}
+		}, "twice"},
+		{"power limits without pl1", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40,
+				Limits: []PowerLimitConfig{{ID: "pl2"}}}
+		}, "must include pl1"},
+		{"boot cache above the forced maximum", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40, BootCachePL1: 41}
+		}, "boot_cache_pl1"},
 		{"inverted power limits", func(c *Config) {
 			c.Power = &PowerConfig{Method: "m", TDPMin: 50, TDPMaxSafe: 30, TDPMaxForced: 40}
 		}, "tdp_min < tdp_max_safe"},
@@ -506,5 +534,32 @@ func TestBatteryChargeLimitRange(t *testing.T) {
 	z13 := z13Config(t)
 	if caps := z13.Battery.Caps(); caps.ChargeLimitMin != 40 || caps.ChargeLimitMax != 100 {
 		t.Errorf("Z13 range = %d–%d, want the declared 40–100", caps.ChargeLimitMin, caps.ChargeLimitMax)
+	}
+}
+
+// TestParseConfigRejectsUnknownKeys pins the strictness hand-written device
+// data needs: a misspelled key is an error naming the key, never a silent
+// default.
+func TestParseConfigRejectsUnknownKeys(t *testing.T) {
+	raw := []byte(`
+[device]
+id = "x"
+model = "X"
+[[device.match]]
+vendor = "V"
+product = "P"
+[power]
+method = "m"
+tdp_min = 5
+tdp_max_sfae = 30
+tdp_max_forced = 40
+`)
+	_, err := ParseConfig(raw)
+	if err == nil || !strings.Contains(err.Error(), "power.tdp_max_sfae") {
+		t.Fatalf("ParseConfig = %v, want an error naming power.tdp_max_sfae", err)
+	}
+	fixed := []byte(strings.Replace(string(raw), "tdp_max_sfae", "tdp_max_safe", 1))
+	if _, err := ParseConfig(fixed); err != nil {
+		t.Errorf("the corrected file: %v", err)
 	}
 }

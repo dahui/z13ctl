@@ -25,27 +25,30 @@ var (
 
 var undervoltCmd = &cobra.Command{
 	Use:   "undervolt",
-	Short: "Get or set CPU Curve Optimizer offsets via ryzen_smu",
-	Long: `Get or set AMD Curve Optimizer (CO) offsets for all CPU cores.
+	Short: "Get or set the CPU undervolt offset",
+	Long: `Get or set an all-core CPU undervolt offset, on devices that offer one.
 
-Curve Optimizer adjusts the voltage-frequency curve — negative values reduce
-voltage (undervolt), improving efficiency and thermals without reducing performance.
+An undervolt lowers the CPU's voltage-frequency curve — negative values reduce
+voltage, improving efficiency and thermals without reducing performance.
 
-With --get, prints the current CO offset from daemon state. CO values have no
-sysfs readback, so this shows the last-applied value and whether it is active.
+With --get, prints the current offset from daemon state. The offset has no
+readback, so this shows the last-applied value and whether it is active.
 
-With --set, applies an all-core CPU CO offset. Values must be 0 (stock) or
-negative (undervolt).
+With --set, applies an all-core offset. Values must be 0 (stock) or negative
+(undervolt).
 
-With --reset, resets CPU CO to 0 (stock voltage).
+With --reset, resets the offset to 0 (stock voltage).
 
 The accepted range is device data; an out-of-range offset is refused with the
 range this machine accepts.
 
-Requires the ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR).
-The amkillam fork is required for Strix Halo (Ryzen AI MAX+) support.
-CO values are volatile — they reset on reboot and sleep. The daemon reapplies
+Offsets are volatile — they reset on reboot and sleep. The daemon reapplies
 them automatically on startup and resume when a custom profile is active.
+
+On AMD processors the offset is the Curve Optimizer (CO), written through the
+ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR); the amkillam fork is
+required for Strix Halo (Ryzen AI MAX+). A processor without a known Curve
+Optimizer command is refused before anything is written.
 
 Use --profile <name> to store an offset in a profile you are NOT running:
 nothing is applied to the CPU until you select that profile.`,
@@ -244,9 +247,9 @@ func undervoltCommand(u driver.Undervolter) (string, error) {
 }
 
 func init() {
-	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print current Curve Optimizer offset")
-	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set all-core CPU CO offset (0 or negative)")
-	undervoltCmd.Flags().BoolVar(&uvResetFlag, "reset", false, "Reset CO to stock (0)")
+	undervoltCmd.Flags().BoolVar(&uvGetFlag, "get", false, "Print the current undervolt offset")
+	undervoltCmd.Flags().StringVar(&uvSetFlag, "set", "", "Set the all-core undervolt offset (0 or negative)")
+	undervoltCmd.Flags().BoolVar(&uvResetFlag, "reset", false, "Reset the offset to stock (0)")
 	undervoltCmd.Flags().StringVar(&uvProfileFlag, "profile", "", profileFlagUsage)
 	rootCmd.AddCommand(undervoltCmd)
 }

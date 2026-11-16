@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
@@ -39,6 +40,7 @@ var ErrUnknownDevice = errors.New("device: no device file matches this machine")
 type Device struct {
 	ID    string // device file id, for logs and the capability API
 	Model string // short hardware name, for display
+	Name  string // display name from device data ("" when it gives none)
 
 	Fans      driver.FanController
 	Power     *safety.Engine // power limits, reachable only through the engine
@@ -91,6 +93,29 @@ var (
 	configsErr  error
 )
 
+// ParseConfig decodes one device file and validates it. A key the format does
+// not define is an error, not ignored: a misspelled key in hand-written device
+// data would otherwise silently fall back to a default — tdp_max_sfae leaving
+// the safe maximum at zero — and the data would read as correct.
+func ParseConfig(raw []byte) (Config, error) {
+	var c Config
+	md, err := toml.Decode(string(raw), &c)
+	if err != nil {
+		return Config{}, err
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+		return Config{}, fmt.Errorf("unknown keys: %s", strings.Join(keys, ", "))
+	}
+	if err := c.Validate(); err != nil {
+		return Config{}, err
+	}
+	return c, nil
+}
+
 // Configs returns every embedded device config, parsed and validated, in
 // filename order (which makes match order deterministic). The set is fixed at
 // build time, so parse failures are build defects: they fail every call, and
@@ -113,12 +138,8 @@ func Configs() ([]Config, error) {
 				configsErr = fmt.Errorf("%s: %w", name, err)
 				return
 			}
-			var c Config
-			if err := toml.Unmarshal(raw, &c); err != nil {
-				configsErr = fmt.Errorf("%s: %w", name, err)
-				return
-			}
-			if err := c.Validate(); err != nil {
+			c, err := ParseConfig(raw)
+			if err != nil {
 				configsErr = fmt.Errorf("%s: %w", name, err)
 				return
 			}
@@ -168,7 +189,7 @@ func Detect() (*Device, error) {
 // silently dropping the capability would misreport the hardware to every
 // client.
 func Assemble(c Config) (*Device, error) {
-	d := &Device{ID: c.Device.ID, Model: c.Device.Model}
+	d := &Device{ID: c.Device.ID, Model: c.Device.Model, Name: c.Device.Name}
 
 	if c.Fans != nil {
 		f, err := lookup("fans", fansFactories, c.Fans.Method)

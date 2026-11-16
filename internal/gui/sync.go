@@ -6,7 +6,6 @@ package gui
 // sync.go — daemon state synchronization and API communication.
 
 import (
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -58,14 +57,7 @@ func (w *Window) updateHeader() {
 	if w.headerTelemetry == nil || w.state == nil {
 		return
 	}
-	text := fmt.Sprintf("%d°C", w.state.Temperature)
-	if f := profileui.FanRPMText(w.state); f != "" {
-		text += " · " + f
-	}
-	if p := profileui.SourceLabel(w.state); p != "" {
-		text = p + " · " + text
-	}
-	w.headerTelemetry.SetLabel(text)
+	w.headerTelemetry.SetLabel(profileui.HeaderLine(w.state))
 }
 
 // refreshState fetches daemon state and re-syncs the custom view, the profile

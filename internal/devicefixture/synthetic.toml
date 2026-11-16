@@ -1,0 +1,43 @@
+# A synthetic second device, for tests only — never embedded, never matched.
+#
+# It is deliberately unlike the Z13: one settable power limit, two firmware
+# profiles, a battery, telemetry, and nothing else — no fans, no undervolt, no
+# lighting, no hardware button, no firmware toggles. Tests use it to prove
+# that what a client shows comes from the device document rather than from
+# assumptions a single supported device let slip into the code.
+
+[device]
+id    = "synthetic-handheld"
+model = "SYN1"
+name  = "Synthetic Handheld"
+
+[[device.match]]
+vendor  = "Nobody"
+product = "Synthetic Handheld"
+
+[power]
+method         = "asus-nb-wmi-ppt"
+tdp_min        = 8
+tdp_max_safe   = 25
+tdp_max_forced = 30
+
+[[power.limits]]
+id          = "pl1"
+label       = "TDP"
+description = "The power the processor may draw."
+
+[power.stock_ppt]
+balanced    = { pl1 = 15 }
+performance = { pl1 = 25 }
+
+[profiles]
+method  = "platform-profile"
+names   = ["balanced", "performance"]
+default = "balanced"
+
+[battery]
+method = "power-supply"
+
+[telemetry]
+method          = "hwmon-rapl"
+history_seconds = 600

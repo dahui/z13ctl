@@ -1,21 +1,7 @@
-// Package driver defines the per-hardware-class interfaces the daemon and CLI
-// program against, so that device support is a set of implementations selected
-// by device data rather than calls into one device's sysfs layout.
-//
-// Drivers are deliberately dumb. A driver implementation must not start
-// goroutines, must not hold locks across calls, and must not contain policy —
-// serialization stays with the daemon's hwMu, and every safety rule (the
-// high-TDP fan floor above all) lives in the safety engine that sits between
-// handlers and these interfaces. A driver that needs to "decide" something has
-// the wrong shape: it reports facts (its envelope, its shape, its readings)
-// and performs writes it was handed.
-//
-// Interfaces are per hardware class, not per device. A device is an assembly
-// of implementations chosen by the device registry from DMI-matched device
-// data; a nil interface on the assembled device means the capability does not
-// exist there, which is also exactly what the socket API reports to clients —
-// capability discovery by absence, never by error.
 package driver
+
+// driver.go — the per-hardware-class interfaces and the values they carry.
+// The contract every implementation keeps is in doc.go.
 
 import (
 	"context"
@@ -148,6 +134,13 @@ type PowerEnvelope struct {
 	// as 0 and are never written; resolving a TDP leaves them 0.
 	NoSPPTMirrors bool
 
+	// Limits names the power limits this device lets a user set, in display
+	// order, with the words to show for each. The power driver fills it: which
+	// limits exist is what the kernel exposes (narrowed by device data), and
+	// each label is device data's or else the driver's own. Empty means the
+	// driver says nothing, and a client falls back to its built-in three.
+	Limits []PowerLimitSpec
+
 	// Initial is what the interface's cache holds before anything writes it,
 	// for the fields where that is known (zero fields are not compared). A
 	// readback equal to it says nothing about the limits in force, so
@@ -174,6 +167,14 @@ type PowerEnvelope struct {
 // read of the kernel's bounds could reach it.
 type DeviceEnvelope interface {
 	DeviceEnvelope() PowerEnvelope
+}
+
+// PowerLimitSpec is one settable power limit: its id — "pl1", "pl2" or
+// "pl3", the api.TDPState field it sets — and how to name it.
+type PowerLimitSpec struct {
+	ID          string
+	Label       string // e.g. "PL1 (SPL)"
+	Description string // one line on what the limit governs
 }
 
 // PowerRange is an inclusive range in watts.
@@ -238,6 +239,10 @@ type LightingCaps struct {
 	Modes         []LightingMode
 	Speeds        []string // slowest first
 	BrightnessMax int      // levels are 0 (off) to BrightnessMax
+
+	// BrightnessNames names each level, 0 first, when the protocol has names
+	// for them (len BrightnessMax+1); nil when the levels are only numbers.
+	BrightnessNames []string
 }
 
 // LightingZone is one addressable zone: its wire name and a display label.
@@ -602,6 +607,20 @@ type Undervolter interface {
 	Reset() error
 }
 
+// UndervoltText is how to name an Undervolter's offset: Label for a control
+// ("CPU Curve Optimizer"), ShortLabel for a compact summary ("CO"), Unit for a
+// value's suffix ("" when the steps are unitless), Description for one line of
+// help. Empty fields mean the driver has nothing to say there.
+type UndervoltText struct {
+	Label, ShortLabel, Unit, Description string
+}
+
+// UndervoltDescriber is implemented by an Undervolter that can name what it
+// sets. Optional: a client falls back to its own wording without it.
+type UndervoltDescriber interface {
+	Text() UndervoltText
+}
+
 // UndervoltCommander is implemented by an Undervolter whose writes are one
 // named firmware command, so a dry run can show which. It is optional: a
 // driver with nothing that specific to say leaves the dry run generic.
@@ -629,7 +648,11 @@ type UndervoltCommander interface {
 // sequential caller, does the arithmetic.
 type Sample struct {
 	TempC int
-	RPM   []int
+
+	// RPM is every fan's speed, in FanController.ReadRPM's order. The daemon
+	// fills it from the fan controller; a telemetry driver leaves it nil, so
+	// one telemetry driver serves whichever vendor's driver owns the fans.
+	RPM []int
 
 	// PackagePowerW is an instantaneous package-power reading, zero when the
 	// device reports none or reports energy instead.

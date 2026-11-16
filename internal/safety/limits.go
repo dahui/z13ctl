@@ -5,7 +5,7 @@ package safety
 // written, and whether a readback is the interface's untouched cache.
 //
 // The ranges are the envelope's, and a driver that can read the kernel's own
-// bounds puts them there (asusz13 does on asus-armoury: PL1 28–80, PL2 32–92,
+// bounds puts them there (the asus driver does on asus-armoury: PL1 28–80, PL2 32–92,
 // PL3 45–93 W on the GZ302EA). Device data alone gives one range for all three.
 
 import (
@@ -141,10 +141,10 @@ func EffectiveTDP(env driver.PowerEnvelope, s api.TDPState) api.TDPState {
 // CacheStale reports whether a readback is the interface's own initial cache
 // rather than anything written since boot, and so says nothing about the limits
 // in force: every field the envelope's Initial sets still holds that value. On
-// asus-nb-wmi that is PL1 at the 5 W the attributes start at; on asus-armoury it
-// is every limit still at its default_value, which armoury re-seeds per power
-// source. An envelope with no Initial falls back to PL1 at TDPMin, the rule
-// that predates drivers reporting one.
+// asus-nb-wmi that is PL1 at the device file's boot_cache_pl1 (5 W on the
+// Z13); on asus-armoury it is every limit still at its default_value, which
+// armoury re-seeds per power source. An envelope with no Initial falls back to
+// PL1 at TDPMin, the rule that predates drivers reporting one.
 func CacheStale(env driver.PowerEnvelope, s api.TDPState) bool {
 	in := env.Initial
 	if in == (api.TDPState{}) {

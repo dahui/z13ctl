@@ -37,7 +37,7 @@ HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | \
 	grep -v -e '/internal/gui' -e '/voltaire-gui'; \
 	go list ./internal/gui/gamepad/... 2>/dev/null)
 
-.PHONY: build build-gui build-all test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
+.PHONY: build build-gui build-all build-hwtest test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
 
 ## build: compile voltaire with version from git tags
 build:
@@ -55,6 +55,24 @@ build-gui:
 # daemon is exactly the CLI/GUI version skew that shipping one package exists to
 # make impossible.
 build-all: build build-gui
+
+## build-hwtest: compile voltaire-hwtest, a CLI/daemon that cannot reach the
+## SMU mailbox — for hardware runs on power, fan or sleep handling, where a
+## Curve Optimizer write is the one thing that has hard-locked the machine.
+# The override points amd.smuDriverPath nowhere. -X silently does nothing for a
+# symbol that does not exist, so a moved or renamed variable would build a
+# binary that CAN write the mailbox while looking like the safe one. The check
+# is that the symbol is in the binary: -X always sets an existing string var,
+# so present means overridden. It is not a grep for the path — Go records the
+# -ldflags text in the binary's build info, so the path is there even when -X
+# hit nothing (found by the negative control). Unstripped for that reason.
+HWTEST_SMU    := /nonexistent/ryzen_smu_drv
+HWTEST_SYMBOL := github.com/dahui/voltaire/v2/internal/drivers/amd.smuDriverPath
+build-hwtest:
+	CGO_ENABLED=0 go build -ldflags "-X github.com/dahui/voltaire/v2/internal/version.Version=$(VERSION)-hwtest -X $(HWTEST_SYMBOL)=$(HWTEST_SMU)" -o voltaire-hwtest .
+	@go tool nm voltaire-hwtest 2>/dev/null | grep -q ' $(HWTEST_SYMBOL)$$' || { rm -f voltaire-hwtest; \
+		echo "build-hwtest: $(HWTEST_SYMBOL) is not in the binary, so the override did nothing — has it moved?" >&2; exit 1; }
+	@echo "voltaire-hwtest: SMU mailbox pointed at $(HWTEST_SMU)"
 
 ## test: run all tests (both modules — api/ is separate, so ./... misses it).
 ## internal/gui is the cgo island and voltaire-gui is the main package that
@@ -235,7 +253,7 @@ docs-build:
 
 ## clean: remove all generated build and test artifacts
 clean:
-	rm -f voltaire z13ctl voltaire-gui/voltaire-gui
+	rm -f voltaire voltaire-hwtest z13ctl voltaire-gui/voltaire-gui
 	rm -rf dist/
 	find . -name '*.test' -delete
 	find . -name 'coverage.out' -o -name 'coverage.*' -o -name '*.coverprofile' -o -name 'profile.cov' | xargs rm -f

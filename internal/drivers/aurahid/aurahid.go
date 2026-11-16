@@ -92,6 +92,7 @@ func New(c Config) (*Lighting, error) {
 	}
 	l.caps.Speeds = append([]string(nil), speeds...)
 	l.caps.BrightnessMax = aura.MaxBrightness
+	l.caps.BrightnessNames = aura.BrightnessNames
 	// The protocol decides the levels; the kernel's LED class is a second
 	// opinion worth a warning when it disagrees, since one of them is then
 	// describing hardware the other is not.
@@ -118,6 +119,7 @@ func (l *Lighting) Caps() driver.LightingCaps {
 	c.Zones = append([]driver.LightingZone(nil), l.caps.Zones...)
 	c.Modes = append([]driver.LightingMode(nil), l.caps.Modes...)
 	c.Speeds = append([]string(nil), l.caps.Speeds...)
+	c.BrightnessNames = append([]string(nil), l.caps.BrightnessNames...)
 	return c
 }
 

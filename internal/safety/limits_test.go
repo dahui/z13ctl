@@ -8,7 +8,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
-// armouryEnvelope is the GZ302EA as asusz13 reports it on asus-armoury: the
+// armouryEnvelope is the GZ302EA as the asus driver reports it on asus-armoury: the
 // kernel's per-limit ranges over the device file's safe maximum.
 func armouryEnvelope() driver.PowerEnvelope {
 	return driver.PowerEnvelope{
