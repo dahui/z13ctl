@@ -42,11 +42,20 @@ type State struct {
 	// and a client showing a switch has to be able to render "I do not know".
 	// A device with no boost control omits it too, so a client that hides the
 	// control on absence is right on both counts.
-	CPUBoost    *bool `json:"cpu_boost,omitempty"`
-	OnAC        bool  `json:"on_ac"`                  // true when running on mains power
-	SourceKnown bool  `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
-	Temperature int   `json:"temperature,omitempty"`  // CPU temperature (Tctl), degrees Celsius
-	FanRPM      int   `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
+	CPUBoost *bool `json:"cpu_boost,omitempty"`
+
+	// DrawerButton is the hardware button whose presses open voltaire, by the
+	// id device-get's hardware_buttons gives it. get-state reports it
+	// resolved: the user's choice, else the device's default, and
+	// DrawerButtonNone when no button opens it. Absent when the device
+	// declares no buttons, or from a daemon that predates the choice. In the
+	// state file it is the user's choice alone, "" meaning the device default.
+	DrawerButton string `json:"drawer_button,omitempty"`
+
+	OnAC        bool `json:"on_ac"`                  // true when running on mains power
+	SourceKnown bool `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
+	Temperature int  `json:"temperature,omitempty"`  // CPU temperature (Tctl), degrees Celsius
+	FanRPM      int  `json:"fan_rpm,omitempty"`      // fan1 speed in RPM
 
 	// RPM is every fan the device reports, in the driver's order; FanRPM is
 	// RPM[0]. Both are carried because they answer different questions and one

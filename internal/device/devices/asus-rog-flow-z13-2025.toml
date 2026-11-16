@@ -134,12 +134,16 @@ name  = "keyboard"
 label = "Keyboard"
 usb   = "0b05:1a30" # GZ302EA-Keyboard
 zone  = 0
+# Interface 0 is the only one with the Aura report (0x5d). Interface 2 is the
+# cover's typing interface and 3 its touchpad; neither may be granted.
+interface = 0
 
 [[lighting.zones]]
 name  = "lightbar"
 label = "Lightbar"
 usb   = "0b05:18c6" # N-KEY Device
 zone  = 1
+interface = 0
 
 # asus-armoury firmware-attributes (mainline since Linux 6.19).
 [toggles]
@@ -216,12 +220,18 @@ net             = "procfs"
 # client's 4 MiB reply ceiling, not memory).
 history_seconds = 3600
 
+# The buttons a user may open voltaire with. List only keys captured on this
+# machine (evtest) that do nothing else here: the node's capability bitmap
+# advertises 38 keys, asus-wmi's keymap for every ASUS model, and the kernel
+# acts on some of them itself (Fn+F5 cycles the fan profile).
+#
 # The Armoury Crate button: KEY_PROG3 on the "Asus WMI hotkeys" input device
 # (older ASUS models use KEY_PROG1). The same node carries SW_TABLET_MODE —
 # never grab it exclusively (issue #10).
-[button]
+[[buttons]]
+id      = "armoury-crate"
+label   = "Armoury Crate button"
+default = true
 method  = "evdev-key"
 device  = "Asus WMI hotkeys"
 keycode = 202
-kind    = "armoury-crate"
-label   = "Armoury Crate button"

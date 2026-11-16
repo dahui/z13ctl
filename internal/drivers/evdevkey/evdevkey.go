@@ -12,14 +12,22 @@
 // costs nothing — evdev delivers events to every non-exclusive reader — and
 // the eventDevice seam deliberately has no Grab method, so reintroducing the
 // grab is a compile error.
+//
+// It also never reads a typing keyboard unless the device data opts that node
+// in (keyboard_node), and opens read-only. The first is the runtime half of
+// the guard whose other half is the udev grant (ENV{ID_INPUT_KEYBOARD}!="1"):
+// a grant widened by hand still cannot turn the watcher into a keylogger. The
+// second matters because a writable evdev node accepts injected events.
 package evdevkey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,21 +55,83 @@ type eventDevice interface {
 	Close() error
 }
 
-// openEventDevice opens an evdev node. Indirected so tests can substitute a fake.
-var openEventDevice = func(path string) (eventDevice, error) { return evdev.Open(path) }
-
-// Buttons watches one key on one input device.
-type Buttons struct {
-	deviceName string // sysfs device name to find ("Asus WMI hotkeys")
-	keycode    evdev.EvCode
-	kind       string // ButtonEvent.Kind delivered for each press
-	checked    bool   // checkKey has run; Watch is the only goroutine touching it
+// openEventDevice opens an evdev node read-only: the watcher only reads, and a
+// writable evdev fd can inject events. Indirected so tests can substitute a
+// fake.
+var openEventDevice = func(path string) (eventDevice, error) {
+	return evdev.OpenWithFlags(path, os.O_RDONLY)
 }
 
-// New returns a watcher for the named input device and keycode. Pure: the
-// device is located and opened only once Watch runs.
-func New(deviceName string, keycode int, kind string) *Buttons {
-	return &Buttons{deviceName: deviceName, keycode: evdev.EvCode(keycode), kind: kind}
+// Buttons watches one key, or one chord of keys, on one input device.
+type Buttons struct {
+	deviceName    string // sysfs device name to find ("Asus WMI hotkeys")
+	keycode       evdev.EvCode
+	chord         []evdev.EvCode // non-empty: a chord (evdev-chord), and keycode is unused
+	id            string         // ButtonEvent.ID delivered for each press
+	allowKeyboard bool           // device data opted a typing-keyboard node in (keyboard_node)
+	checked       bool           // checkKey has run; Watch is the only goroutine touching it
+}
+
+// New returns a watcher for the named input device and keycode, delivering id
+// with each press. allowKeyboard is the device data's keyboard_node opt-in;
+// without it a node that is a typing keyboard is refused. Pure: the device is
+// located and opened only once Watch runs.
+func New(deviceName string, keycode int, id string, allowKeyboard bool) *Buttons {
+	return &Buttons{deviceName: deviceName, keycode: evdev.EvCode(keycode), id: id, allowKeyboard: allowKeyboard}
+}
+
+// NewChord returns a watcher for a button that arrives as a chord: several
+// keys pressed together, as a OneXPlayer's buttons send Ctrl+Alt+Meta on its
+// AT keyboard. A press is reported once, on the key-down that completes the
+// chord, and the chord re-arms when any of its keys is released. Every key
+// must be held: matching on one distinguishing key, as HHD does, would fire on
+// that key typed alone, and voltaire never grabs the node to stop the desktop
+// seeing the same keys.
+func NewChord(deviceName string, keys []int, id string, allowKeyboard bool) *Buttons {
+	b := &Buttons{deviceName: deviceName, id: id, allowKeyboard: allowKeyboard}
+	for _, k := range keys {
+		b.chord = append(b.chord, evdev.EvCode(k))
+	}
+	return b
+}
+
+// press decides whether one key event completes the button, updating the
+// chord state it is given (unused for a single key). Pure, so the chord rules
+// are tested without a device.
+func (b *Buttons) press(held map[evdev.EvCode]bool, fired *bool, code evdev.EvCode, value int32) bool {
+	if len(b.chord) == 0 {
+		// Value 1 = key-down; ignore auto-repeat (2) and key-up (0).
+		return value == 1 && code == b.keycode
+	}
+	if !slices.Contains(b.chord, code) {
+		return false
+	}
+	switch value {
+	case 0:
+		held[code] = false
+		*fired = false // any key up re-arms the chord
+	case 1:
+		held[code] = true
+		if *fired {
+			return false
+		}
+		for _, k := range b.chord {
+			if !held[k] {
+				return false
+			}
+		}
+		*fired = true
+		return true
+	}
+	return false // auto-repeat
+}
+
+// keys is every key the button needs: the chord, or the single key.
+func (b *Buttons) keys() []evdev.EvCode {
+	if len(b.chord) > 0 {
+		return b.chord
+	}
+	return []evdev.EvCode{b.keycode}
 }
 
 // findDevice returns the /dev/input/eventN path for the named input device by
@@ -108,6 +178,13 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 			}
 			continue
 		}
+		// Before opening, never after: the refusal is about what the node is,
+		// and a static sysfs bitmap answers it without touching the device.
+		if !b.allowKeyboard {
+			if kbd, err := isTypingKeyboard(filepath.Base(path)); kbd || err != nil {
+				return fmt.Errorf("refusing to read %s (%s): %w", b.deviceName, path, keyboardRefusal(err))
+			}
+		}
 		dev, err := openEventDevice(path)
 		if err != nil {
 			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
@@ -125,7 +202,7 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 			b.checked = true
 			b.checkKey(filepath.Base(path))
 		}
-		slog.Info("watching hardware button (shared, non-exclusive)", "path", path, "kind", b.kind)
+		slog.Info("watching hardware button (shared, read-only)", "path", path, "button", b.id)
 		if err := b.runLoop(ctx, dev, ch); err != nil {
 			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
 			select {
@@ -156,6 +233,7 @@ func (b *Buttons) runLoop(ctx context.Context, dev eventDevice, ch chan<- driver
 	}()
 	defer close(stop)
 
+	held, fired := map[evdev.EvCode]bool{}, false // chord state, fresh per open
 	for {
 		evt, err := dev.ReadOne()
 		if err != nil {
@@ -164,11 +242,10 @@ func (b *Buttons) runLoop(ctx context.Context, dev eventDevice, ch chan<- driver
 			}
 			return err
 		}
-		// Value 1 = key-down; ignore auto-repeat (2) and key-up (0).
-		if evt.Type == evdev.EV_KEY && evt.Value == 1 && evt.Code == b.keycode {
-			slog.Info("hardware button pressed", "kind", b.kind)
+		if evt.Type == evdev.EV_KEY && b.press(held, &fired, evt.Code, evt.Value) {
+			slog.Info("hardware button pressed", "button", b.id)
 			select {
-			case ch <- driver.ButtonEvent{Kind: b.kind}:
+			case ch <- driver.ButtonEvent{ID: b.id}:
 			default: // non-blocking: discard if nobody consuming
 			}
 		}
@@ -186,15 +263,57 @@ func (b *Buttons) checkKey(event string) {
 		slog.Debug("button key capabilities unreadable", "event", event, "err", err)
 		return
 	}
-	has, err := bitmapHas(strings.TrimSpace(string(data)), int(b.keycode))
+	for _, k := range b.keys() {
+		has, err := bitmapHas(strings.TrimSpace(string(data)), int(k))
+		if err != nil {
+			slog.Debug("button key capabilities unparseable", "event", event, "err", err)
+			return
+		}
+		if !has {
+			slog.Warn("button device does not report a configured key; presses will not be seen",
+				"name", b.deviceName, "event", event, "keycode", int(k))
+		}
+	}
+}
+
+// errTypingKeyboard is the refusal for a node that is a typing keyboard.
+var errTypingKeyboard = errors.New("it is a typing keyboard; reading it would see every keystroke " +
+	"(a device file may opt such a node in with keyboard_node, scoped to its model)")
+
+// keyboardRefusal is the reason isTypingKeyboard's answer gives for refusing.
+func keyboardRefusal(err error) error {
 	if err != nil {
-		slog.Debug("button key capabilities unparseable", "event", event, "err", err)
-		return
+		return fmt.Errorf("its key capabilities cannot be read, so it cannot be shown not to be a keyboard: %w", err)
 	}
-	if !has {
-		slog.Warn("button device does not report the configured key; presses will not be seen",
-			"name", b.deviceName, "event", event, "keycode", int(b.keycode))
+	return errTypingKeyboard
+}
+
+// IsTypingKeyboard reports whether the input node event ("event4") is a typing
+// keyboard, by the test the watcher refuses on. voltaire setup applies it
+// before its direct grant, so the two cannot disagree.
+func IsTypingKeyboard(event string) (bool, error) { return isTypingKeyboard(event) }
+
+// isTypingKeyboard applies udev's own test (input_id's ID_INPUT_KEYBOARD) to
+// the node's static key bitmap: a device reporting every key in the first
+// 32-bit word but KEY_RESERVED — KEY_ESC (1) through KEY_S (31), the escape
+// key, the number row and most of two letter rows — is a typing keyboard. An unreadable bitmap is an error, which the caller treats as a
+// refusal: the guard fails closed.
+func isTypingKeyboard(event string) (bool, error) {
+	data, err := os.ReadFile(inputClassDir + "/" + event + "/device/capabilities/key")
+	if err != nil {
+		return false, err
 	}
+	bitmap := strings.TrimSpace(string(data))
+	for key := 1; key < 32; key++ { // udev's mask: 0xFFFFFFFE over the first word
+		has, err := bitmapHas(bitmap, key)
+		if err != nil {
+			return false, err
+		}
+		if !has {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // bitmapHas reports whether bit is set in a sysfs input capability bitmap:

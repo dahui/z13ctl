@@ -6,14 +6,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/drivers/asus"
+	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
+	"github.com/dahui/voltaire/v2/internal/drivers/hidrawbtn"
 )
 
 const rulesPath = "/etc/udev/rules.d/99-voltaire.rules"
@@ -42,8 +47,34 @@ var (
 // content cannot depend on which machine runs it. A grant for hardware the
 // machine lacks matches nothing.
 type setupTargets struct {
-	hid     []string // "vvvv:pppp", lowercase hex, sorted
-	buttons []string // input device names, sorted
+	hid        []hidGrant    // lighting interfaces, read-write; sorted, deduplicated
+	hidButtons []hidGrant    // hidraw-report button interfaces, read-only, none already in hid
+	buttons    []buttonGrant // evdev button nodes; sorted by name, deduplicated
+}
+
+// allHID is every hidraw interface setup grants, lighting and buttons alike:
+// the interfaces revokeStaleHidrawGrants must leave alone.
+func (t setupTargets) allHID() []hidGrant { return append(slices.Clone(t.hid), t.hidButtons...) }
+
+// hidGrant is one USB interface a lighting zone writes. The interface is part
+// of the grant because a keyboard's other interfaces include the one it types
+// through: granting by vendor:product alone gave every process in the group
+// the cover's raw keystrokes over hidraw, from z13ctl's first commit until
+// 2026-11-15.
+type hidGrant struct {
+	usb   string // "vvvv:pppp", lowercase hex
+	iface int    // bInterfaceNumber
+}
+
+// buttonGrant is one input node a button reads. An ordinary grant (no
+// deviceID) is written so it can never match a typing keyboard; a
+// keyboard_node grant is written scoped to its device's DMI match instead, so
+// it can never apply on another machine. Read access to a typing keyboard is
+// read access to every keystroke, which is the line this keeps.
+type buttonGrant struct {
+	name     string         // the input device's sysfs name
+	deviceID string         // keyboard_node only: the device file that opted it in
+	dmi      []device.Match // keyboard_node only: that file's DMI patterns
 }
 
 // deviceSetupTargets collects setupTargets from the embedded device files. Its
@@ -54,46 +85,108 @@ func deviceSetupTargets() (setupTargets, error) {
 	if err != nil {
 		return setupTargets{}, err
 	}
+	return setupTargetsFrom(configs), nil
+}
+
+// setupTargetsFrom is deviceSetupTargets over the configs given, so tests can
+// drive a device file that does not ship (a keyboard_node button, say).
+func setupTargetsFrom(configs []device.Config) setupTargets {
 	var t setupTargets
 	for _, c := range configs {
 		if c.Lighting != nil {
 			for _, z := range c.Lighting.Zones {
 				v, p, err := z.USBIDs()
-				if err != nil {
-					continue
+				if err != nil || z.Interface == nil {
+					continue // refused by Validate; never grant a whole device
 				}
-				t.hid = append(t.hid, fmt.Sprintf("%04x:%04x", v, p))
+				t.hid = append(t.hid, hidGrant{usb: fmt.Sprintf("%04x:%04x", v, p), iface: *z.Interface})
 			}
 		}
-		if c.Button != nil && c.Button.Device != "" {
-			t.buttons = append(t.buttons, c.Button.Device)
+		for _, b := range c.Buttons {
+			if b.Method == "hidraw-report" {
+				v, p, err := b.USBIDs()
+				if err != nil || b.Interface == nil {
+					continue // refused by Validate
+				}
+				t.hidButtons = append(t.hidButtons, hidGrant{usb: fmt.Sprintf("%04x:%04x", v, p), iface: *b.Interface})
+				continue
+			}
+			if b.Device == "" {
+				continue
+			}
+			g := buttonGrant{name: b.Device}
+			if b.KeyboardNode != "" {
+				g.deviceID, g.dmi = c.Device.ID, c.Device.Match
+			}
+			t.buttons = append(t.buttons, g)
 		}
 	}
-	slices.Sort(t.hid)
-	slices.Sort(t.buttons)
+	byInterface := func(a, b hidGrant) int {
+		if c := strings.Compare(a.usb, b.usb); c != 0 {
+			return c
+		}
+		return a.iface - b.iface
+	}
+	slices.SortFunc(t.hid, byInterface)
 	t.hid = slices.Compact(t.hid)
-	t.buttons = slices.Compact(t.buttons)
-	return t, nil
+	// A button on an interface lighting already writes needs no grant of its
+	// own: the read-write one covers it, and a second, read-only rule after it
+	// would take the write away.
+	t.hidButtons = slices.DeleteFunc(t.hidButtons, func(g hidGrant) bool { return slices.Contains(t.hid, g) })
+	slices.SortFunc(t.hidButtons, byInterface)
+	t.hidButtons = slices.Compact(t.hidButtons)
+	slices.SortFunc(t.buttons, func(a, b buttonGrant) int {
+		return strings.Compare(a.name+"\x00"+a.deviceID, b.name+"\x00"+b.deviceID)
+	})
+	t.buttons = slices.CompactFunc(t.buttons, func(a, b buttonGrant) bool {
+		return a.name == b.name && a.deviceID == b.deviceID
+	})
+	return t
+}
+
+// buttonRules is the udev grant for each button node: read-only, because a
+// writable input node accepts injected events.
+func buttonRules(grants []buttonGrant, group string) string {
+	var b strings.Builder
+	for _, g := range grants {
+		if g.deviceID == "" {
+			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ENV{ID_INPUT_KEYBOARD}!="1", MODE="0640", GROUP="%s"`+"\n", g.name, group)
+			continue
+		}
+		for _, m := range g.dmi {
+			product := m.Product
+			if product == "" {
+				product = m.ProductPrefix + "*"
+			}
+			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ATTR{[dmi/id]sys_vendor}=="%s", ATTR{[dmi/id]product_name}=="%s", MODE="0640", GROUP="%s"`+"\n",
+				g.name, m.Vendor, product, group)
+		}
+	}
+	return b.String()
 }
 
 func buildRulesContent(group string) string {
 	targets, _ := deviceSetupTargets() // refused earlier by RunE on error
-	var hid, buttons strings.Builder
-	for _, id := range targets.hid {
-		v, p, _ := strings.Cut(id, ":")
-		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", MODE="0660", GROUP="%s"`+"\n", v, p, group)
+	var hid strings.Builder
+	for _, g := range targets.hid {
+		v, p, _ := strings.Cut(g.usb, ":")
+		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ATTRS{bInterfaceNumber}=="%02x", MODE="0660", GROUP="%s"`+"\n", v, p, g.iface, group)
 	}
-	for _, name := range targets.buttons {
-		fmt.Fprintf(&buttons, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", MODE="0660", GROUP="%s"`+"\n", name, group)
+	for _, g := range targets.hidButtons {
+		v, p, _ := strings.Cut(g.usb, ":")
+		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ATTRS{bInterfaceNumber}=="%02x", MODE="0640", GROUP="%s"`+"\n", v, p, g.iface, group)
 	}
 	curves, readings := asus.FanHwmonNames()
 	return fmt.Sprintf(`# 99-voltaire.rules — voltaire device access
 #
 # Grants members of the %s group read/write access to:
-#   - the HID devices of every lighting zone the device files declare (RGB control)
+#   - the HID interface of every lighting zone the device files declare (RGB
+#     control) — that interface only, never the device's others, one of which
+#     is how a keyboard types
 #   - platform-profile attributes for performance profile control
 #   - the battery charge_control_end_threshold for battery limit control
-#   - the hardware buttons' input devices for the daemon button watcher
+#   - the hardware buttons' input devices for the daemon button watcher (read
+#     only, and never a typing keyboard: ENV{ID_INPUT_KEYBOARD}!="1")
 #   - asus-armoury firmware-attributes (%s)
 #   - cpufreq's global boost switch (perms unit only — udev cannot see it)
 #   - hwmon fan curve attributes (%s + %s pwm_enable)
@@ -114,7 +207,7 @@ ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="%s", RUN+="/bin/sh -c 'for f in 
 ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] || continue; chgrp %s \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%%p/energy_uj; do [ -e \"$$f\" ] && chgrp %s \"$$f\" && chmod g+r \"$$f\"; done'"
 `, group, strings.Join(asus.SafeToggleIDs(), ", "), curves, readings,
-		hid.String(), group, group, buttons.String(),
+		hid.String(), group, group, buttonRules(targets.buttons, group),
 		toggleUdevRules(group), group, curves, group, readings, group, group, group)
 }
 
@@ -319,21 +412,149 @@ func applySysfsPerms(group string, dryRun bool) {
 		}
 	}
 
-	// The hardware buttons' input devices, by the names the device files give.
+	// The hardware buttons' input devices, by the names the device files give,
+	// under the same two rules as the udev grant: read-only, and never a typing
+	// keyboard unless this machine's own device file opted that node in.
 	targets, _ := deviceSetupTargets()
+	matchedID := ""
+	if c, err := device.MatchConfig(); err == nil {
+		matchedID = c.Device.ID
+	}
 	entries, err := os.ReadDir("/sys/class/input")
 	if err == nil {
 		for _, e := range entries {
-			namePath := "/sys/class/input/" + e.Name() + "/device/name"
-			nameBytes, err := os.ReadFile(namePath)
+			if !strings.HasPrefix(e.Name(), "event") {
+				continue
+			}
+			nameBytes, err := os.ReadFile("/sys/class/input/" + e.Name() + "/device/name")
 			if err != nil {
 				continue
 			}
-			if slices.Contains(targets.buttons, strings.TrimSpace(string(nameBytes))) {
-				chgrpChmod("/dev/input/"+e.Name(), "g+rw")
+			if buttonNodeGranted(targets.buttons, strings.TrimSpace(string(nameBytes)), e.Name(), matchedID) {
+				chgrpChmod("/dev/input/"+e.Name(), "g=r") // exact: drops a write bit an older setup granted
 			}
 		}
 	}
+
+	revokeStaleHidrawGrants(targets.allHID(), group, dryRun)
+}
+
+// revokeStaleHidrawGrants takes setup's group back off the hidraw interfaces
+// of a lighting device that are not its lighting interface. udev leaves a
+// node's permissions alone once no rule sets them, so the per-device grant
+// every release before 2026-11-15 wrote — which reached the Z13 cover's
+// typing interface — would otherwise persist on an installed machine until
+// the node is next created. A node is reset to the kernel's default
+// (root:root 0600) only if it still carries setup's group, so access some
+// other tool granted is left alone.
+func revokeStaleHidrawGrants(grants []hidGrant, group string, dryRun bool) {
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		return
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return
+	}
+	nodes, _ := filepath.Glob("/sys/class/hidraw/hidraw*")
+	for _, n := range nodes {
+		uevent, err := os.ReadFile(n + "/device/uevent")
+		if err != nil {
+			continue
+		}
+		iface, err := os.ReadFile(n + "/device/../bInterfaceNumber")
+		if err != nil {
+			continue
+		}
+		usb, stale := staleHidrawInterface(string(uevent), strings.TrimSpace(string(iface)), grants)
+		// A udev rule cannot read a report descriptor, so a device file that
+		// names a keyboard's interface by mistake would grant its keystrokes.
+		// Setup can read it: such a node is revoked too, and said out loud.
+		keyboard := false
+		if !stale && usb != "" {
+			if desc, err := os.ReadFile(n + "/device/report_descriptor"); err == nil && hidrawbtn.IsKeyboardDescriptor(desc) {
+				keyboard = true
+				fmt.Printf("Warning: a device file grants %s, interface %s of %s, which is a keyboard; "+
+					"refusing it (please report this as a device-file bug).\n",
+					"/dev/"+filepath.Base(n), strings.TrimSpace(string(iface)), usb)
+			}
+		}
+		if !stale && !keyboard {
+			continue
+		}
+		dev := "/dev/" + filepath.Base(n)
+		var st syscall.Stat_t
+		if syscall.Stat(dev, &st) != nil || int(st.Gid) != gid {
+			continue
+		}
+		if dryRun {
+			fmt.Printf("  revoke %s from %s (interface %s of %s is not its lighting interface)\n", group, dev, strings.TrimSpace(string(iface)), usb)
+			continue
+		}
+		if os.Chown(dev, 0, 0) == nil && os.Chmod(dev, 0o600) == nil {
+			fmt.Printf("Removed group %s from %s (interface %s of %s is not its lighting interface).\n",
+				group, dev, strings.TrimSpace(string(iface)), usb)
+		}
+	}
+}
+
+// staleHidrawInterface reports whether a hidraw node — its HID uevent and its
+// USB bInterfaceNumber — belongs to a lighting device but is not an interface
+// that device's grant names, and which device ("vvvv:pppp") it belongs to.
+func staleHidrawInterface(uevent, iface string, grants []hidGrant) (string, bool) {
+	var usb string
+	for _, line := range strings.Split(uevent, "\n") {
+		id, ok := strings.CutPrefix(line, "HID_ID=")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(id, ":") // bus:vendor:product, eight hex digits each
+		if len(parts) != 3 || len(parts[1]) < 4 || len(parts[2]) < 4 {
+			return "", false
+		}
+		usb = strings.ToLower(parts[1][len(parts[1])-4:] + ":" + parts[2][len(parts[2])-4:])
+	}
+	n, err := strconv.ParseUint(iface, 16, 8)
+	if usb == "" || err != nil {
+		return "", false
+	}
+	known := false
+	for _, g := range grants {
+		if g.usb != usb {
+			continue
+		}
+		known = true
+		if g.iface == int(n) {
+			return usb, false
+		}
+	}
+	return usb, known
+}
+
+// isTypingKeyboard is the watcher's keyboard test, a var so tests can stand
+// in for sysfs.
+var isTypingKeyboard = evdevkey.IsTypingKeyboard
+
+// buttonNodeGranted reports whether the input node event, named name, gets
+// the direct grant. A keyboard_node grant applies only when the device file
+// that opted it in is the one matching this machine; any other grant only to
+// a node that is not a typing keyboard (an unreadable bitmap counts as one).
+func buttonNodeGranted(grants []buttonGrant, name, event, matchedID string) bool {
+	for _, g := range grants {
+		if g.name != name {
+			continue
+		}
+		if g.deviceID != "" {
+			if g.deviceID == matchedID {
+				return true
+			}
+			continue
+		}
+		if kbd, err := isTypingKeyboard(event); err == nil && !kbd {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanupOldArtifacts removes what a pre-2.0 "z13ctl setup" installed.

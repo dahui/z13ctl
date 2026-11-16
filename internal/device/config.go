@@ -7,6 +7,7 @@ package device
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ type Config struct {
 	Undervolt *UndervoltConfig `toml:"undervolt"`
 	CPU       *CPUConfig       `toml:"cpu"`
 	Telemetry *TelemetryConfig `toml:"telemetry"`
-	Button    *ButtonConfig    `toml:"button"`
+	Buttons   []ButtonConfig   `toml:"buttons"`
 }
 
 // Meta identifies the device family and how to recognize it.
@@ -240,18 +241,31 @@ type LightingZoneConfig struct {
 	Label string `toml:"label"`
 	USB   string `toml:"usb"`  // "0b05:1a30"
 	Zone  int    `toml:"zone"` // the protocol's zone byte
+
+	// Interface is the USB interface carrying the lighting reports
+	// (bInterfaceNumber), the only one voltaire setup grants. Required: a
+	// keyboard's other interfaces include the one it types through, and a
+	// grant by vendor:product alone hands every process in the group its raw
+	// keystrokes over hidraw — which every z13ctl release did for the Z13's
+	// cover until 2026-11-15.
+	Interface *int `toml:"interface"`
 }
 
 // USBIDs parses the zone's "vvvv:pppp" USB identifier.
 func (z LightingZoneConfig) USBIDs() (vendor, product uint16, err error) {
-	v, p, ok := strings.Cut(z.USB, ":")
+	return ParseUSB(z.USB)
+}
+
+// ParseUSB parses a "vvvv:pppp" USB identifier in hex.
+func ParseUSB(id string) (vendor, product uint16, err error) {
+	v, p, ok := strings.Cut(id, ":")
 	if !ok || len(v) != 4 || len(p) != 4 {
-		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", z.USB)
+		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", id)
 	}
 	vn, err1 := strconv.ParseUint(v, 16, 16)
 	pn, err2 := strconv.ParseUint(p, 16, 16)
 	if err1 != nil || err2 != nil {
-		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", z.USB)
+		return 0, 0, fmt.Errorf("usb %q must be vvvv:pppp in hex", id)
 	}
 	return uint16(vn), uint16(pn), nil
 }
@@ -427,17 +441,62 @@ func (c TelemetryConfig) Info() driver.TelemetryInfo {
 	}
 }
 
-// ButtonConfig selects the hardware-button driver.
+// ButtonConfig is one hardware button the user may choose to open voltaire
+// with. The list is the device's, never the user's: a user picks among these
+// entries, and nothing reads a keyboard to learn a key. Only list a button
+// captured on the real machine (evtest) that has no other job there — the
+// kernel's capability bitmap advertises keys a model never sends, and since
+// the watcher never grabs, a key that already does something would do both.
 type ButtonConfig struct {
+	// ID names the button in state and on the wire ("armoury-crate"). Lowercase
+	// letters, digits and hyphens; stable once shipped, since a user's choice
+	// is stored by it.
+	ID string `toml:"id"`
+
+	// Label is what the button is called on this machine, as it would appear
+	// mid-sentence ("Armoury Crate button").
+	Label string `toml:"label"`
+
+	// Default marks the button that opens voltaire out of the box. At most
+	// one; with none, no button opens it until the user picks one.
+	Default bool `toml:"default"`
+
 	Method  string `toml:"method"`
 	Device  string `toml:"device"`  // input device name to find by sysfs
-	Keycode int    `toml:"keycode"` // key code to watch for
-	Kind    string `toml:"kind"`    // driver.ButtonEvent.Kind delivered per press
-	// Label is what the button is called on this machine, as it would appear
-	// mid-sentence ("Armoury Crate button"). Optional; clients fall back to a
-	// generic name.
-	Label string `toml:"label"`
+	Keycode int    `toml:"keycode"` // key code to watch for (evdev-key)
+	Keys    []int  `toml:"keys"`    // keys held together (evdev-chord)
+
+	// hidraw-report: the node by USB vendor:product and interface (the grant
+	// is written from the same values), and the report byte meaning a press.
+	USB       string `toml:"usb"`
+	Interface *int   `toml:"interface"`
+	ReportID  int    `toml:"report_id"` // first report byte; 0 for unnumbered reports
+	Byte      int    `toml:"byte"`      // offset in the report as read, report ID included
+	Value     int    `toml:"value"`
+
+	// KeyboardNode opts a node that udev classes as a typing keyboard in, and
+	// says why it is safe on this model ("the AT keyboard carries only the
+	// button chords on the X2 Mini Pro"). Without it neither the udev grant
+	// nor the watcher will touch a keyboard. With it the grant is written
+	// scoped to this device's DMI match, so it can never apply to another
+	// machine, and the match may not contain udev glob characters.
+	KeyboardNode string `toml:"keyboard_node"`
 }
+
+// USBIDs parses a hidraw-report button's "vvvv:pppp" USB identifier.
+func (b ButtonConfig) USBIDs() (vendor, product uint16, err error) {
+	return ParseUSB(b.USB)
+}
+
+// buttonIDPattern is what a button id may contain.
+var buttonIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// evdevMethods are the button methods that read an evdev node, the only kind
+// a keyboard opt-in can apply to.
+var evdevMethods = []string{"evdev-key", "evdev-chord"}
+
+// udevGlob reports whether s holds a character udev treats as a pattern.
+func udevGlob(s string) bool { return strings.ContainsAny(s, "*?[|") }
 
 // Validate reports everything wrong with a config at once, so a device data PR
 // gets one round of feedback rather than one error per push. A valid config is
@@ -648,6 +707,10 @@ func (c Config) Validate() error {
 			if z.Zone < 0 || z.Zone > 255 {
 				fail("lighting.zones[%d] (%s) zone byte %d outside 0–255", i, z.Name, z.Zone)
 			}
+			if z.Interface == nil || *z.Interface < 0 || *z.Interface > 255 {
+				fail("lighting.zones[%d] (%s) needs interface, the USB interface number (0–255) carrying "+
+					"its reports: only that interface is granted", i, z.Name)
+			}
 		}
 	}
 	if c.Toggles != nil {
@@ -700,16 +763,71 @@ func (c Config) Validate() error {
 	if c.Telemetry != nil && c.Telemetry.Method == "" {
 		fail("telemetry.method is required")
 	}
-	if c.Button != nil {
-		if c.Button.Method == "" {
-			fail("button.method is required")
+	seenButton := map[string]bool{}
+	defaults := 0
+	for i, b := range c.Buttons {
+		name := fmt.Sprintf("buttons[%d]", i)
+		if b.ID != "" {
+			name = fmt.Sprintf("button %q", b.ID)
 		}
-		if c.Button.Device == "" || c.Button.Keycode <= 0 {
-			fail("button needs both device and a positive keycode")
+		switch {
+		case b.ID == "":
+			fail("%s: id is required — the user's choice is stored by it", name)
+		case !buttonIDPattern.MatchString(b.ID):
+			fail("%s: id must be lowercase letters, digits and single hyphens", name)
+		case seenButton[b.ID]:
+			fail("%s: duplicate id", name)
 		}
-		if c.Button.Kind == "" {
-			fail("button.kind is required — it names the event the daemon receives")
+		seenButton[b.ID] = true
+		if b.Label == "" {
+			fail("%s: label is required — it is what the button list shows", name)
 		}
+		if b.Default {
+			defaults++
+		}
+		if b.Method == "" {
+			fail("%s: method is required", name)
+		}
+		if b.Method == "evdev-key" && (b.Device == "" || b.Keycode <= 0) {
+			fail("%s: evdev-key needs both device and a positive keycode", name)
+		}
+		if b.Method == "hidraw-report" {
+			if _, _, err := b.USBIDs(); err != nil {
+				fail("%s: %v", name, err)
+			}
+			if b.Interface == nil || *b.Interface < 0 || *b.Interface > 255 {
+				fail("%s: hidraw-report needs interface, the USB interface number (0–255): only that interface is granted", name)
+			}
+			if b.ReportID < 0 || b.ReportID > 255 || b.Byte < 0 || b.Value < 0 || b.Value > 255 {
+				fail("%s: hidraw-report needs report_id and value in 0–255 and a byte offset of 0 or more", name)
+			}
+		}
+		if b.Method == "evdev-chord" {
+			distinct := map[int]bool{}
+			for _, k := range b.Keys {
+				if k > 0 {
+					distinct[k] = true
+				}
+			}
+			if b.Device == "" || len(b.Keys) < 2 || len(distinct) != len(b.Keys) {
+				fail("%s: evdev-chord needs device and at least two distinct positive keys", name)
+			}
+		}
+		if b.KeyboardNode != "" {
+			if !slicesContains(evdevMethods, b.Method) {
+				fail("%s: keyboard_node applies only to evdev methods", name)
+			}
+			for _, m := range c.Device.Match {
+				if udevGlob(m.Vendor) || udevGlob(m.Product) || udevGlob(m.ProductPrefix) {
+					fail("%s: keyboard_node needs a device.match free of udev glob characters (*?[|), "+
+						"or the grant's DMI scope could match other machines", name)
+					break
+				}
+			}
+		}
+	}
+	if defaults > 1 {
+		fail("at most one button may be the default (got %d)", defaults)
 	}
 
 	return errors.Join(errs...)

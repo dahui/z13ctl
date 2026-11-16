@@ -195,6 +195,8 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleBootSound(req)
 	case "bootsound-get":
 		return d.handleBootSoundGet()
+	case "button-set":
+		return d.handleButtonSet(req)
 	case "cpuboost":
 		return d.handleCPUBoost(req)
 	case "cpuboost-get":
@@ -290,6 +292,15 @@ func (d *Daemon) dispatch(req request) response {
 		// Left nil when the read fails, which a client renders as unknown —
 		// false would say the CPU is not boosting.
 		s.CPUBoost = d.readCPUBoost()
+		// The button that opens voltaire, resolved, so a client never applies
+		// the device default itself. Absent with no buttons to choose from.
+		if d.hw != nil && len(d.hw.ButtonList) > 0 {
+			choice := s.DrawerButton
+			s.DrawerButton = api.DrawerButtonNone
+			if id := d.resolveDrawerButton(choice); id != "" {
+				s.DrawerButton = id
+			}
+		}
 		// Populate fan curve from hardware for ground truth.
 		s.FanCurve = d.readFanCurveHW()
 		// Populate TDP: a firmware profile's stock row, a custom profile's

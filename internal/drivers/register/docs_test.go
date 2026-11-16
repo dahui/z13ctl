@@ -84,8 +84,10 @@ func TestEveryDeviceFileKeyIsDocumented(t *testing.T) {
 		t.Fatalf("found only %d keys; the walk is not reaching the schema", len(seen))
 	}
 	for key := range seen {
-		// A block is documented under its `[name]` heading, a key as `name`.
-		if !strings.Contains(doc, "`"+key+"`") && !strings.Contains(doc, "`["+key+"]`") {
+		// A block is documented under its `[name]` heading (`[[name]]` for an
+		// array of blocks), a key as `name`.
+		if !strings.Contains(doc, "`"+key+"`") && !strings.Contains(doc, "`["+key+"]`") &&
+			!strings.Contains(doc, "`[["+key+"]]`") {
 			t.Errorf("device-file key %q is not documented in %s", key, deviceFilesDoc)
 		}
 	}

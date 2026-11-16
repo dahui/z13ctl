@@ -32,6 +32,7 @@ import (
 	"slices"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/limits"
 	"github.com/dahui/voltaire/v2/internal/profileui"
@@ -46,10 +47,8 @@ func (w *Window) firmware() profileui.Firmware {
 // buttonLabel is the hardware button's name from the current document, "" when
 // the device gives none (buttonpref then says "hardware button").
 func (w *Window) buttonLabel() string {
-	if w.device == nil {
-		return ""
-	}
-	return w.device.ButtonLabel
+	_, label, _ := buttonpref.Drawer(w.device, w.state)
+	return label
 }
 
 // adoptStateLimits lays a fetched state's live power-limit ranges over the

@@ -75,10 +75,20 @@ type popupLayer struct {
 // when that fits. SetPropagateNaturalHeight is what makes the scroller report
 // the body's natural height when measured, and absorb a Shortened placement
 // with no re-measurement when it does not fit.
+//
+// SetPropagateNaturalWidth matters as much. Without it a scroller with no
+// horizontal scrolling reports its child's *minimum* width as its natural one,
+// and an ellipsizing row's minimum is a glyph or two, so a list could only ever
+// be as wide as its trigger. That went unnoticed while every trigger sat in a
+// wide form row, and showed the moment one was short: with Settings' button
+// chooser reading "No button", "Armoury Crate button" opened as "Arm…". The
+// box is still capped at the surface by popupgeom, so a long profile name
+// ellipsizes at the panel edge rather than widening it.
 func newPopupScroll() *gtk.ScrolledWindow {
 	scroll := gtk.NewScrolledWindow()
 	scroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 	scroll.SetPropagateNaturalHeight(true)
+	scroll.SetPropagateNaturalWidth(true)
 	return scroll
 }
 

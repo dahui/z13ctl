@@ -168,12 +168,12 @@ func TestADeviceWithoutAButton(t *testing.T) {
 	if !buttonpref.ShowPreference(&api.DeviceInfo{Buttons: true}) {
 		t.Error("ShowPreference = false for a device with a button")
 	}
-	got := buttonpref.OpenGestureFor(syn, buttonpref.Quickbar, buttonpref.Window, "")
+	got := buttonpref.OpenGestureFor(syn, nil, buttonpref.Quickbar, buttonpref.Window)
 	if strings.Contains(got, "Press") || !strings.Contains(got, "expand button") {
 		t.Errorf("OpenGestureFor(no button) = %q, want the expand button named", got)
 	}
-	withButton := &api.DeviceInfo{Buttons: true}
-	if got, want := buttonpref.OpenGestureFor(withButton, buttonpref.Quickbar, buttonpref.Window, "Armoury Crate button"),
+	withButton := &api.DeviceInfo{Buttons: true, ButtonLabel: "Armoury Crate button"}
+	if got, want := buttonpref.OpenGestureFor(withButton, nil, buttonpref.Quickbar, buttonpref.Window),
 		buttonpref.OpenGesture(buttonpref.Quickbar, buttonpref.Window, "Armoury Crate button"); got != want {
 		t.Errorf("OpenGestureFor(button) = %q, want %q", got, want)
 	}
@@ -185,5 +185,79 @@ func TestRowDescriptionNamesTheButton(t *testing.T) {
 	}
 	if got := buttonpref.RowDescriptionFor("Armoury Crate button"); !strings.Contains(got, "Armoury Crate button") {
 		t.Errorf("RowDescriptionFor = %q, want the button named", got)
+	}
+}
+
+// A handheld's two buttons, the second the default.
+var twoButtons = &api.DeviceInfo{
+	Buttons:     true,
+	ButtonLabel: "OneXPlayer button",
+	HardwareButtons: []api.ButtonInfo{
+		{ID: "home", Label: "Home button"},
+		{ID: "oxp", Label: "OneXPlayer button", Default: true},
+	},
+}
+
+func TestChoicesListTheDevicesButtonsThenNone(t *testing.T) {
+	got := buttonpref.Choices(twoButtons)
+	want := []buttonpref.Choice{
+		{ID: "home", Label: "Home button"},
+		{ID: "oxp", Label: "OneXPlayer button"},
+		{ID: api.DrawerButtonNone, Label: buttonpref.NoButtonLabel},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Choices = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Choices[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// No list to choose from: no daemon, or one that predates the list.
+	for _, info := range []*api.DeviceInfo{nil, {Buttons: true, ButtonLabel: "Armoury Crate button"}} {
+		if buttonpref.ShowChooser(info) || buttonpref.Choices(info) != nil {
+			t.Errorf("a chooser offered for %+v", info)
+		}
+	}
+}
+
+func TestDrawerFollowsTheDaemonsAnswer(t *testing.T) {
+	for _, c := range []struct {
+		desc      string
+		info      *api.DeviceInfo
+		st        *api.State
+		wantID    string
+		wantLabel string
+		wantOK    bool
+		wantText  string
+	}{
+		{"the daemon's resolved choice", twoButtons, &api.State{DrawerButton: "home"}, "home", "Home button", true, "Home button"},
+		{"no state yet: the device default", twoButtons, nil, "oxp", "OneXPlayer button", true, "OneXPlayer button"},
+		{"the user chose none", twoButtons, &api.State{DrawerButton: api.DrawerButtonNone}, "", "", false, buttonpref.NoButtonLabel},
+		{"an older daemon: its one label", &api.DeviceInfo{Buttons: true, ButtonLabel: "Armoury Crate button"}, &api.State{}, "", "Armoury Crate button", true, "Armoury Crate button"},
+		{"a device with no button", &api.DeviceInfo{}, &api.State{}, "", "", false, buttonpref.NoButtonLabel},
+		{"no document", nil, nil, "", "", true, "Hardware button"},
+	} {
+		id, label, ok := buttonpref.Drawer(c.info, c.st)
+		if id != c.wantID || label != c.wantLabel || ok != c.wantOK {
+			t.Errorf("%s: Drawer = (%q, %q, %v), want (%q, %q, %v)", c.desc, id, label, ok, c.wantID, c.wantLabel, c.wantOK)
+		}
+		if got := buttonpref.ChooserText(c.info, c.st); got != c.wantText {
+			t.Errorf("%s: ChooserText = %q, want %q", c.desc, got, c.wantText)
+		}
+	}
+}
+
+// With no button opening voltaire, the editor note must not tell the user to
+// press one.
+func TestOpenGestureWithNoButtonChosen(t *testing.T) {
+	got := buttonpref.OpenGestureFor(twoButtons, &api.State{DrawerButton: api.DrawerButtonNone},
+		buttonpref.Quickbar, buttonpref.Window)
+	if strings.Contains(got, "Press") {
+		t.Errorf("OpenGestureFor(none chosen) = %q, names a button that does nothing", got)
+	}
+	got = buttonpref.OpenGestureFor(twoButtons, &api.State{DrawerButton: "home"}, buttonpref.Quickbar, buttonpref.Window)
+	if !strings.Contains(got, "Home button twice") {
+		t.Errorf("OpenGestureFor(home) = %q, want the chosen button's double press", got)
 	}
 }

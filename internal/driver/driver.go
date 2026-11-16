@@ -796,11 +796,12 @@ type Telemetry interface {
 	Sample() (Sample, error)
 }
 
-// ButtonEvent is one hardware-button press. Kind names the button in device
-// data terms; the daemon decides what an event means (single versus double
-// press, which client event to emit).
+// ButtonEvent is one hardware-button press. ID is the button's id from device
+// data; the daemon decides what a press means (whether this is the button the
+// user chose to open voltaire, single versus double press, which client event
+// to emit).
 type ButtonEvent struct {
-	Kind string // "armoury-crate" on the Z13
+	ID string // "armoury-crate" on the Z13
 }
 
 // Buttons watches a device's extra hardware buttons.

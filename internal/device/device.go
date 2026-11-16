@@ -12,9 +12,11 @@
 package device
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -53,10 +55,24 @@ type Device struct {
 	Telemetry driver.Telemetry
 	Buttons   driver.Buttons
 
-	// ButtonLabel is the hardware button's name from device data (button.label),
-	// "" when the device gives none. Data, not a driver: nothing reads hardware
-	// to learn it.
+	// ButtonLabel is the default button's name from device data, "" when the
+	// device declares no default. Data, not a driver: nothing reads hardware
+	// to learn it. Served as device-get's button_label for older clients.
 	ButtonLabel string
+
+	// ButtonList is every button the device declares, in file order: the
+	// choices a user has for opening voltaire. Buttons watches all of them,
+	// each press carrying its ID.
+	ButtonList []ButtonInfo
+
+	// DefaultButton is the ID of the button marked default, "" for none.
+	DefaultButton string
+}
+
+// ButtonInfo names one declared hardware button.
+type ButtonInfo struct {
+	ID    string
+	Label string
 }
 
 // ReleaseFans hands the fans back to firmware auto and leaves keep in force. It
@@ -275,15 +291,51 @@ func Assemble(c Config) (*Device, error) {
 			return nil, fmt.Errorf("telemetry (%s): %w", c.Telemetry.Method, err)
 		}
 	}
-	if c.Button != nil {
-		f, err := lookup("buttons", buttonsFactories, c.Button.Method)
+	var watchers mergedButtons
+	for _, b := range c.Buttons {
+		f, err := lookup("buttons", buttonsFactories, b.Method)
 		if err != nil {
 			return nil, err
 		}
-		if d.Buttons, err = f(*c.Button); err != nil {
-			return nil, fmt.Errorf("buttons (%s): %w", c.Button.Method, err)
+		w, err := f(b)
+		if err != nil {
+			return nil, fmt.Errorf("button %q (%s): %w", b.ID, b.Method, err)
 		}
-		d.ButtonLabel = c.Button.Label
+		watchers = append(watchers, w)
+		d.ButtonList = append(d.ButtonList, ButtonInfo{ID: b.ID, Label: b.Label})
+		if b.Default {
+			d.DefaultButton, d.ButtonLabel = b.ID, b.Label
+		}
+	}
+	switch len(watchers) {
+	case 0:
+	case 1:
+		d.Buttons = watchers[0]
+	default:
+		d.Buttons = watchers
 	}
 	return d, nil
+}
+
+// mergedButtons watches several buttons as one driver.Buttons, so the daemon
+// keeps a single watcher however many buttons a device declares. Each press
+// carries its button's ID.
+type mergedButtons []driver.Buttons
+
+// Watch runs every watcher until ctx is done. One that stops early — a node
+// the keyboard guard refused, say — is logged and does not take the others
+// with it; Watch returns once all have stopped.
+func (m mergedButtons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error {
+	var wg sync.WaitGroup
+	for _, w := range m {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := w.Watch(ctx, ch); err != nil {
+				slog.Warn("button watcher stopped", "err", err)
+			}
+		}()
+	}
+	wg.Wait()
+	return nil
 }

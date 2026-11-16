@@ -164,7 +164,8 @@ render controls against, instead of hardcoding one device's numbers:
   "battery":{"charge_limit":true,"charge_limit_min":40,"charge_limit_max":100,"health":true},
   "telemetry":{"power_draw":"rapl","gpu":"amdgpu","cpu_stats":"procfs","npu":"amdxdna","net":"procfs",
                "history_seconds":3600,"clock_max_mhz":5187,"temp_limit_c":100},
-  "buttons":true,"button_label":"Armoury Crate button"}}
+  "buttons":true,"button_label":"Armoury Crate button",
+  "hardware_buttons":[{"id":"armoury-crate","label":"Armoury Crate button","default":true}]}}
 ```
 
 `cpu.boost` says the machine has a global CPU boost switch, so the
@@ -195,8 +196,11 @@ absent; fall back to your own wording.
 when the levels are only numbers. It always has `brightness_max`+1 entries.
 
 `buttons` says the daemon watches a hardware button (and emits the button
-events); `button_label` is what that button is called on this machine, written
+events); `button_label` is what the device's default button is called, written
 to sit mid-sentence, and is absent when the device names none.
+`hardware_buttons` lists every button a user may choose to open voltaire with,
+in the device's order, the default marked; `button-set` picks one. The list is
+the device file's: voltaire never reads a keyboard to learn a key.
 
 Capability discovery is **by absence**: a section that is missing means the
 device does not have that capability — never an error — and a client hides the
@@ -355,6 +359,7 @@ Each mode in `lighting.modes` says which inputs it uses — `color`, `color2`,
 | Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
 | Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
 | Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
+| Choose the button that opens voltaire | `{"cmd":"button-set","set":"armoury-crate"}` | `ok` |
 | Set CPU boost | `{"cmd":"cpuboost","set":"0"}` | `ok` |
 | Get CPU boost | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
 | Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
@@ -504,7 +509,7 @@ Each streamed event is a full response object with an `event` field:
 
 | Event | Emitted when |
 |---|---|
-| `gui-toggle` | the hardware button is pressed (the Armoury Crate button on the Z13; `device-get` names it as `button_label`) |
+| `gui-toggle` | the button that opens voltaire is pressed (the Armoury Crate button on the Z13 by default; get-state's `drawer_button` says which). Presses of the device's other buttons emit nothing |
 | `gui-open-full` | the button is pressed twice in quick succession — sent **in addition to** the second `gui-toggle` |
 | `power-source` | the machine moves between mains and battery power |
 | `state-changed` | the active profile, its settings, the saved profiles, the autoswitch configuration, or a firmware toggle change |
@@ -608,6 +613,8 @@ The file is written atomically after every successful command. It stores:
 - `cpu_boost` — present only once boost has been switched off or on through
   voltaire; a stored `false` is replayed at every daemon start, because cpufreq
   comes up boosting on every boot
+- `drawer_button` — the user's choice of button (`button-set`): a button id or
+  `none`; absent means the device's default
 - `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit
   of clients and daemons from before named profiles existed. They carry the
   active custom profile's settings, or `custom`'s when a firmware profile is
@@ -632,6 +639,7 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `battery_power_w` | battery flow in watts, **positive discharging**, negative charging |
 | `features` | every firmware toggle's current value, keyed by id; a toggle that could not be read is **absent**, not zero |
 | `cpu_boost` | whether CPU boost is on, read from the kernel; **absent** when unreadable or on a machine without the switch |
+| `drawer_button` | the id of the button that opens voltaire, resolved (the user's choice, else the device default), or `none`; **absent** on a device with no buttons |
 | `telemetry` | the newest sample, in the same shape as a `telemetry-history` entry: the live edge of the series. Absent when the sampler has nothing recent |
 | `battery_level` | the pack's current charge, percent |
 | `battery_state` | `charging`, `discharging`, `full`, `not-charging` |

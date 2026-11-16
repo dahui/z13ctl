@@ -165,6 +165,10 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	info.Buttons = hw.Buttons != nil
 	if info.Buttons {
 		info.ButtonLabel = hw.ButtonLabel
+		for _, b := range hw.ButtonList {
+			info.HardwareButtons = append(info.HardwareButtons,
+				api.ButtonInfo{ID: b.ID, Label: b.Label, Default: b.ID == hw.DefaultButton})
+		}
 	}
 	return info
 }

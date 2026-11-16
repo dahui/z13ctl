@@ -337,6 +337,21 @@ func SendPanelOverdriveSet(value int) (bool, error) {
 	return true, nil
 }
 
+// SendButtonSet chooses which hardware button opens voltaire: a button id
+// from DeviceInfo.HardwareButtons, DrawerButtonNone, or DrawerButtonDefault to
+// go back to the device's default. The daemon stores the choice; no hardware
+// is touched. An older daemon answers "unknown command".
+func SendButtonSet(choice string) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "button-set", Set: choice})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, respErr(resp)
+	}
+	return true, nil
+}
+
 // SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off.
 // Returns (false, nil) if the daemon is not running.
 //

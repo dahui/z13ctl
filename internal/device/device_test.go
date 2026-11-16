@@ -351,6 +351,44 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 			no := false
 			c.Battery = &BatteryConfig{Method: "m", ChargeLimit: &no, Health: true, ChargeLimitMin: 50}
 		}, "charge_limit = false"},
+		{"lighting zone with no interface", func(c *Config) {
+			c.Lighting = &LightingConfig{Method: "m", Zones: []LightingZoneConfig{{Name: "kbd", Label: "Keyboard", USB: "0b05:1a30"}}}
+		}, "needs interface"},
+		{"button with no id", func(c *Config) {
+			c.Buttons = []ButtonConfig{{Label: "B", Method: "evdev-key", Device: "d", Keycode: 1}}
+		}, "id is required"},
+		{"button id with capitals", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "Armoury", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1}}
+		}, "lowercase"},
+		{"button id twice", func(c *Config) {
+			b := ButtonConfig{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1}
+			c.Buttons = []ButtonConfig{b, b}
+		}, "duplicate id"},
+		{"button with no label", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Method: "evdev-key", Device: "d", Keycode: 1}}
+		}, "label is required"},
+		{"evdev-key with no keycode", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d"}}
+		}, "positive keycode"},
+		{"chord of one key", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-chord", Device: "d", Keys: []int{29}}}
+		}, "at least two distinct"},
+		{"chord naming a key twice", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-chord", Device: "d", Keys: []int{29, 29}}}
+		}, "at least two distinct"},
+		{"two default buttons", func(c *Config) {
+			c.Buttons = []ButtonConfig{
+				{ID: "a", Label: "A", Default: true, Method: "evdev-key", Device: "d", Keycode: 1},
+				{ID: "b", Label: "B", Default: true, Method: "evdev-key", Device: "d", Keycode: 2},
+			}
+		}, "at most one button"},
+		{"keyboard node on a non-evdev method", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", KeyboardNode: "why"}}
+		}, "only to evdev methods"},
+		{"keyboard node with a glob in the DMI match", func(c *Config) {
+			c.Device.Match = []Match{{Vendor: "V", ProductPrefix: "X2*"}}
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1, KeyboardNode: "why"}}
+		}, "glob"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -506,6 +544,52 @@ func (fakeTelemetry) Sample() (driver.Sample, error) { return driver.Sample{}, n
 type fakeButtons struct{}
 
 func (fakeButtons) Watch(context.Context, chan<- driver.ButtonEvent) error { return nil }
+
+// pressButton delivers one press for id, then waits for cancellation.
+type pressButton string
+
+func (p pressButton) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error {
+	ch <- driver.ButtonEvent{ID: string(p)}
+	<-ctx.Done()
+	return nil
+}
+
+// TestEveryDeclaredButtonIsWatched: a device with several buttons still gives
+// the daemon one watcher, and a press on any of them arrives carrying its id.
+func TestEveryDeclaredButtonIsWatched(t *testing.T) {
+	buttonsFactories["test-press"] = func(c ButtonConfig) (driver.Buttons, error) { return pressButton(c.ID), nil }
+	t.Cleanup(func() { delete(buttonsFactories, "test-press") })
+	c := Config{
+		Device: Meta{ID: "x", Model: "X", Match: []Match{{Vendor: "V", Product: "P"}}},
+		Buttons: []ButtonConfig{
+			{ID: "home", Label: "Home button", Method: "test-press"},
+			{ID: "oxp", Label: "OneXPlayer button", Default: true, Method: "test-press"},
+		},
+	}
+	d, err := Assemble(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.DefaultButton != "oxp" || d.ButtonLabel != "OneXPlayer button" {
+		t.Errorf("default = %q (%q), want oxp (OneXPlayer button)", d.DefaultButton, d.ButtonLabel)
+	}
+	if len(d.ButtonList) != 2 || d.ButtonList[0].ID != "home" || d.ButtonList[1].ID != "oxp" {
+		t.Errorf("ButtonList = %+v, want home then oxp", d.ButtonList)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan driver.ButtonEvent, 2)
+	done := make(chan struct{})
+	go func() { _ = d.Buttons.Watch(ctx, ch); close(done) }()
+	got := map[string]bool{}
+	for range 2 {
+		got[(<-ch).ID] = true
+	}
+	cancel()
+	<-done
+	if !got["home"] || !got["oxp"] {
+		t.Errorf("presses seen = %v, want both buttons", got)
+	}
+}
 
 // TestBatteryChargeLimitRange pins where the range comes from: the device data
 // when it declares one, the pre-existing 40–100 when it does not, and nothing

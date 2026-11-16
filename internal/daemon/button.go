@@ -11,7 +11,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -104,7 +106,13 @@ func (d *Daemon) watchButtons(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-events:
+			case ev := <-events:
+				// Only the button that opens voltaire drives the drawer; a
+				// device may declare others for the user to choose instead.
+				if ev.ID != d.drawerButton() {
+					slog.Debug("button press ignored: not the button that opens voltaire", "button", ev.ID)
+					continue
+				}
 				select {
 				case d.buttonCh <- time.Now():
 				default: // non-blocking: discard if nobody consuming
@@ -130,4 +138,72 @@ func (d *Daemon) emitPress(act pressAction) {
 		d.broadcast(response{OK: true, Event: api.EventGUIOpenFull})
 	}
 	slog.Debug("button", "reason", act.Reason, "openFull", act.OpenFull)
+}
+
+// drawerButton is the ID of the button whose presses open voltaire, "" when
+// none does. Callers must not hold d.mu.
+func (d *Daemon) drawerButton() string {
+	d.mu.Lock()
+	choice := d.state.DrawerButton
+	d.mu.Unlock()
+	return d.resolveDrawerButton(choice)
+}
+
+// resolveDrawerButton turns the user's stored choice into the button that
+// opens voltaire: the choice itself when the device declares it, nothing for
+// DrawerButtonNone, and otherwise — no choice, or one this device file no
+// longer declares — the device's default. A stale id is resolved rather than
+// cleared, so a choice survives a device file that drops and later restores
+// a button.
+func (d *Daemon) resolveDrawerButton(choice string) string {
+	if d.hw == nil || choice == api.DrawerButtonNone {
+		return ""
+	}
+	if d.declaresButton(choice) {
+		return choice
+	}
+	return d.hw.DefaultButton
+}
+
+// declaresButton reports whether id names one of the device's buttons.
+func (d *Daemon) declaresButton(id string) bool {
+	if d.hw == nil || id == "" {
+		return false
+	}
+	for _, b := range d.hw.ButtonList {
+		if b.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// handleButtonSet stores which button opens voltaire: a declared button id,
+// DrawerButtonNone, or DrawerButtonDefault to go back to the device's default.
+// It touches no hardware — the watcher reads every declared button already,
+// and the press path consults the choice per press — so it takes d.mu alone.
+func (d *Daemon) handleButtonSet(req request) response {
+	if d.hw == nil || len(d.hw.ButtonList) == 0 {
+		return response{OK: false, Error: "button-set: this device declares no hardware buttons"}
+	}
+	choice := strings.TrimSpace(req.Set)
+	switch {
+	case choice == api.DrawerButtonDefault:
+		choice = ""
+	case choice == api.DrawerButtonNone, d.declaresButton(choice):
+	default:
+		ids := make([]string, 0, len(d.hw.ButtonList)+2)
+		for _, b := range d.hw.ButtonList {
+			ids = append(ids, b.ID)
+		}
+		ids = append(ids, api.DrawerButtonNone, api.DrawerButtonDefault)
+		return response{OK: false, Error: fmt.Sprintf("button-set: %q is not one of %s", req.Set, strings.Join(ids, ", "))}
+	}
+	d.mu.Lock()
+	d.state.DrawerButton = choice
+	snapshot := cloneState(d.state)
+	d.mu.Unlock()
+	slog.Info("button that opens voltaire changed", "choice", req.Set, "resolved", d.resolveDrawerButton(choice))
+	d.saveAndNotify(snapshot)
+	return response{OK: true}
 }

@@ -16,12 +16,15 @@
 package register
 
 import (
+	"errors"
+
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/amd"
 	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/drivers/aurahid"
 	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
+	"github.com/dahui/voltaire/v2/internal/drivers/hidrawbtn"
 	"github.com/dahui/voltaire/v2/internal/drivers/linux"
 )
 
@@ -98,6 +101,17 @@ func init() {
 		return aurahid.New(cfg)
 	})
 	device.RegisterButtons("evdev-key", func(c device.ButtonConfig) (driver.Buttons, error) {
-		return evdevkey.New(c.Device, c.Keycode, c.Kind), nil
+		return evdevkey.New(c.Device, c.Keycode, c.ID, c.KeyboardNode != ""), nil
+	})
+	device.RegisterButtons("evdev-chord", func(c device.ButtonConfig) (driver.Buttons, error) {
+		return evdevkey.NewChord(c.Device, c.Keys, c.ID, c.KeyboardNode != ""), nil
+	})
+	device.RegisterButtons("hidraw-report", func(c device.ButtonConfig) (driver.Buttons, error) {
+		v, p, err := c.USBIDs()
+		if err != nil || c.Interface == nil {
+			return nil, errors.New("hidraw-report needs usb and interface")
+		}
+		return hidrawbtn.New(hidrawbtn.Spec{ID: c.ID, Vendor: v, Product: p, Interface: *c.Interface,
+			ReportID: c.ReportID, Byte: c.Byte, Value: byte(c.Value)}), nil
 	})
 }

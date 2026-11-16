@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,11 +24,11 @@ import (
 const (
 	testDeviceName = "Asus WMI hotkeys"
 	testKeycode    = 202 // KEY_PROG3
-	testKind       = "armoury-crate"
+	testID         = "armoury-crate"
 )
 
 // testButtons returns a watcher configured as the Z13 device file configures it.
-func testButtons() *Buttons { return New(testDeviceName, testKeycode, testKind) }
+func testButtons() *Buttons { return New(testDeviceName, testKeycode, testID, false) }
 
 // fakeInputSysfs builds a /sys/class/input stand-in and points inputClassDir at it.
 func fakeInputSysfs(t *testing.T) string {
@@ -39,15 +40,41 @@ func fakeInputSysfs(t *testing.T) string {
 	return root
 }
 
-// addInputNode creates <root>/<node>/device/name containing name.
+// Real key capability bitmaps, read from a GZ302EA on 2026-11-15.
+const (
+	// hotkeysCaps is "Asus WMI hotkeys": vendor and media keys, no typing
+	// keys. udev sets ID_INPUT_KEY on it but not ID_INPUT_KEYBOARD.
+	hotkeysCaps = "400000000000000 10000000c0000 400400000 800000000000 0 0 181606f00900c00 380027801701000 e000000000000 0"
+	// atKeyboardCaps is "AT Translated Set 2 keyboard", a typing keyboard by
+	// udev's test (ID_INPUT_KEYBOARD=1).
+	atKeyboardCaps = "402000007 ff803078f800d001 feffffdfffcfffff fffffffffffffffe"
+	// coverConsumerCaps is the detachable cover's consumer-key interface: a
+	// lot of keys, but not the typing block, and udev agrees.
+	coverConsumerCaps = "733eff 0 20000 483ffff17aff32d bfd4444600000000 1 1b30c730b17cc00 9fa67bfad9715fed 9e168000004400 10000002"
+)
+
+// addInputNode creates <root>/<node>/device/name containing name, with the
+// hotkey node's key capabilities (not a typing keyboard).
 func addInputNode(t *testing.T, root, node, name string) {
 	t.Helper()
+	addInputNodeCaps(t, root, node, name, hotkeysCaps)
+}
+
+// addInputNodeCaps is addInputNode with the key capability bitmap given; ""
+// writes none, which makes the bitmap unreadable.
+func addInputNodeCaps(t *testing.T, root, node, name, caps string) {
+	t.Helper()
 	dir := root + "/" + node + "/device"
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir+"/capabilities", 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if err := os.WriteFile(dir+"/name", []byte(name+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
+	}
+	if caps != "" {
+		if err := os.WriteFile(dir+"/capabilities/key", []byte(caps+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
 	}
 }
 
@@ -170,8 +197,8 @@ func TestRunLoopForwardsOnlyButtonKeyDown(t *testing.T) {
 				t.Errorf("notified = %v, want %v", got, tt.want)
 			}
 			if got && tt.want {
-				if ev := <-ch; ev.Kind != testKind {
-					t.Errorf("event kind = %q, want %q", ev.Kind, testKind)
+				if ev := <-ch; ev.ID != testID {
+					t.Errorf("event id = %q, want %q", ev.ID, testID)
 				}
 			}
 		})
@@ -405,8 +432,8 @@ func TestWatchForwardsPressThroughWatcher(t *testing.T) {
 
 	select {
 	case ev := <-ch:
-		if ev.Kind != testKind {
-			t.Errorf("event kind = %q, want %q", ev.Kind, testKind)
+		if ev.ID != testID {
+			t.Errorf("event id = %q, want %q", ev.ID, testID)
 		}
 	case <-time.After(3 * time.Second):
 		cancel()
@@ -450,5 +477,133 @@ func TestBitmapHas(t *testing.T) {
 	}
 	if _, err := bitmapHas("zz", 1); err == nil {
 		t.Error("non-hex word: want an error")
+	}
+}
+
+// The keyboard guard, runtime half: udev's own test on the static bitmap,
+// against the real nodes of a GZ302EA.
+func TestIsTypingKeyboardAgreesWithUdev(t *testing.T) {
+	root := fakeInputSysfs(t)
+	for node, c := range map[string]struct {
+		caps string
+		want bool
+	}{
+		// udev classes event2 as a typing keyboard and the other two only as
+		// having keys; the test must agree on all three.
+		"event2": {atKeyboardCaps, true},
+		"event4": {hotkeysCaps, false},
+		"event5": {coverConsumerCaps, false},
+	} {
+		addInputNodeCaps(t, root, node, node, c.caps)
+		got, err := isTypingKeyboard(node)
+		if err != nil {
+			t.Fatalf("%s: %v", node, err)
+		}
+		if got != c.want {
+			t.Errorf("isTypingKeyboard(%s) = %v, want %v", node, got, c.want)
+		}
+	}
+}
+
+// watchOnce runs b.Watch until it returns or the timeout passes, and reports
+// how many times the device was opened and its error.
+func watchOnce(t *testing.T, b *Buttons) (int32, error) {
+	t.Helper()
+	fastRetries(t)
+	calls := stubOpener(t, func(string) (eventDevice, error) {
+		return &fakeEvdev{readErr: errors.New("closed")}, nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := b.Watch(ctx, make(chan driver.ButtonEvent, 1))
+	return atomic.LoadInt32(calls), err
+}
+
+func TestWatchRefusesATypingKeyboard(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNodeCaps(t, root, "event2", testDeviceName, atKeyboardCaps)
+	opens, err := watchOnce(t, testButtons())
+	if err == nil || !strings.Contains(err.Error(), "typing keyboard") {
+		t.Errorf("Watch on a typing keyboard = %v, want a refusal naming it", err)
+	}
+	if opens != 0 {
+		t.Errorf("the keyboard was opened %d times, want 0", opens)
+	}
+}
+
+func TestWatchRefusesWhenTheBitmapIsUnreadable(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNodeCaps(t, root, "event3", testDeviceName, "")
+	opens, err := watchOnce(t, testButtons())
+	if err == nil || opens != 0 {
+		t.Errorf("Watch with no readable bitmap = %v after %d opens, want a refusal before any open", err, opens)
+	}
+}
+
+// keyboard_node is the opt-in: device data has said this keyboard carries only
+// button chords on its model.
+func TestWatchReadsAKeyboardNodeWhenOptedIn(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNodeCaps(t, root, "event2", testDeviceName, atKeyboardCaps)
+	b := New(testDeviceName, testKeycode, testID, true)
+	if opens, _ := watchOnce(t, b); opens == 0 {
+		t.Error("an opted-in keyboard node was never opened")
+	}
+}
+
+// The OneXPlayer button as HHD and Jeff's own notes record it: Ctrl+Alt+Meta
+// in one ~10 ms pulse on the AT keyboard.
+var oxpChord = []int{int(evdev.KEY_LEFTCTRL), int(evdev.KEY_LEFTALT), int(evdev.KEY_LEFTMETA)}
+
+// chordPresses feeds events through press and counts the presses reported.
+func chordPresses(b *Buttons, events ...evdev.InputEvent) int {
+	held, fired, n := map[evdev.EvCode]bool{}, false, 0
+	for _, e := range events {
+		if b.press(held, &fired, e.Code, e.Value) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestChordFiresOnceOnTheKeyThatCompletesIt(t *testing.T) {
+	b := NewChord(testDeviceName, oxpChord, "oxp", true)
+	down := func(c evdev.EvCode) evdev.InputEvent { return keyEvent(c, 1) }
+	up := func(c evdev.EvCode) evdev.InputEvent { return keyEvent(c, 0) }
+	ctrl, alt, meta, o := evdev.EvCode(evdev.KEY_LEFTCTRL), evdev.EvCode(evdev.KEY_LEFTALT), evdev.EvCode(evdev.KEY_LEFTMETA), evdev.EvCode(evdev.KEY_O)
+	for _, c := range []struct {
+		desc   string
+		events []evdev.InputEvent
+		want   int
+	}{
+		{"one pulse", []evdev.InputEvent{down(ctrl), down(alt), down(meta), up(meta), up(alt), up(ctrl)}, 1},
+		{"in any order", []evdev.InputEvent{down(meta), down(ctrl), down(alt)}, 1},
+		{"two pulses", []evdev.InputEvent{
+			down(ctrl), down(alt), down(meta), up(ctrl), up(alt), up(meta),
+			down(ctrl), down(alt), down(meta), up(ctrl), up(alt), up(meta)}, 2},
+		{"auto-repeat while held", []evdev.InputEvent{down(ctrl), down(alt), down(meta), keyEvent(meta, 2), keyEvent(alt, 2)}, 1},
+		{"re-armed by releasing one key", []evdev.InputEvent{down(ctrl), down(alt), down(meta), up(alt), down(alt)}, 2},
+		{"incomplete: the Keyboard button's Ctrl+Meta+O", []evdev.InputEvent{down(ctrl), down(meta), down(o)}, 0},
+		{"one key of it typed alone", []evdev.InputEvent{down(alt), up(alt)}, 0},
+	} {
+		if got := chordPresses(b, c.events...); got != c.want {
+			t.Errorf("%s: %d presses, want %d", c.desc, got, c.want)
+		}
+	}
+}
+
+func TestChordReachesTheChannelThroughTheReadLoop(t *testing.T) {
+	b := NewChord(testDeviceName, oxpChord, "oxp", true)
+	dev := &fakeEvdev{readErr: errors.New("done"), events: []evdev.InputEvent{
+		keyEvent(evdev.KEY_LEFTCTRL, 1), keyEvent(evdev.KEY_LEFTALT, 1), keyEvent(evdev.KEY_LEFTMETA, 1),
+		keyEvent(evdev.KEY_LEFTMETA, 0), keyEvent(evdev.KEY_LEFTALT, 0), keyEvent(evdev.KEY_LEFTCTRL, 0),
+	}}
+	ch := make(chan driver.ButtonEvent, 4)
+	_ = b.runLoop(context.Background(), dev, ch)
+	if len(ch) != 1 {
+		t.Fatalf("%d presses reached the channel, want 1", len(ch))
+	}
+	if ev := <-ch; ev.ID != "oxp" {
+		t.Errorf("press id = %q, want oxp", ev.ID)
 	}
 }

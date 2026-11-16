@@ -108,7 +108,17 @@ re-apply its own limits. The default profile's `pl1` must be within
 
 Each `[[lighting.zones]]` has a `name` (the wire name, which must not start
 with `/`), a `label`, the `usb` `vendor:product` of the HID device that carries
-it, and its protocol `zone` byte.
+it, the `interface` on that device carrying the lighting reports, and its
+protocol `zone` byte.
+
+`interface` is the USB `bInterfaceNumber`, and it is required because it is
+the only interface `voltaire setup` grants. A keyboard exposes several, one of
+which is how it types: granting the whole device by `vendor:product` hands
+every process in the group its raw keystrokes over hidraw. Find it with
+`cat /sys/class/hidraw/hidraw*/device/../bInterfaceNumber` beside each node's
+`report_descriptor`, and pick the one that carries the lighting report (on the
+Aura protocol, report ID `0x5d`). The Z13's is interface `0` on both devices;
+the cover's interface `2` is its typing keyboard.
 
 ## `[toggles]`: firmware switches
 
@@ -161,15 +171,60 @@ behind it draws a chart flat at zero, which reads as a measurement; the daemon's
 declaration guards fail in both directions. A declared source whose hardware is
 absent at runtime is dropped from `device-get`.
 
-## `[button]`: the hardware button
+## `[[buttons]]`: the hardware buttons
+
+The buttons a user may open voltaire with, one block per button. The user
+picks among them (Settings, or `voltaire button --set`); nothing ever reads a
+keyboard to learn a key, so this list is the whole of what can be chosen.
+
+List only buttons you have captured on the machine itself (`evtest` on the
+node, pressing the button) and that do nothing else there. A node's capability
+bitmap is not evidence: the Z13's hotkey node advertises 38 keys, asus-wmi's
+keymap for every ASUS model, and the kernel acts on some of them itself. The
+watcher never grabs the node, so a key that already has a job would do both.
 
 | Key | Meaning |
 |---|---|
-| `method` | `evdev-key`. |
-| `device` | The input device's sysfs name (`Asus WMI hotkeys`). |
-| `keycode` | The key to watch (`202`, KEY_PROG3). |
-| `kind` | The event kind the daemon receives for a press. |
-| `label` | What the button is called, mid-sentence (`Armoury Crate button`). |
+| `id` | Stable name stored with the user's choice (`armoury-crate`): lowercase letters, digits, hyphens. Never rename one that has shipped. |
+| `label` | What the button is called, mid-sentence (`Armoury Crate button`). Required: the choice list shows it. |
+| `default` | `true` on the one button that opens voltaire out of the box. At most one; with none, no button opens it until the user picks one. |
+| `method` | `evdev-key` (one key on an input node), `evdev-chord` (several keys held together, as a handheld's buttons send key combinations), or `hidraw-report` (a byte in a vendor HID report, where a button never becomes an input event). |
+| `device` | `evdev-*`: the input device's sysfs name (`Asus WMI hotkeys`). |
+| `keycode` | `evdev-key`: the key to watch (`202`, KEY_PROG3). |
+| `keys` | `evdev-chord`: every key of the chord (`[29, 56, 125]`, Ctrl+Alt+Meta). A press is the key-down that completes the chord; it re-arms when any key is released. All must be held, so one of them typed alone is not a press. |
+| `usb` | `hidraw-report`: the HID device's `vendor:product`. |
+| `interface` | `hidraw-report`: its USB interface number, the only one granted (as for lighting zones; see `[lighting]`). |
+| `report_id` | `hidraw-report`: the report's first byte, or `0` for a device with unnumbered reports. |
+| `byte`, `value` | `hidraw-report`: the offset in the report as read (report ID included) and the value there that means this button. Each matching report is one press. |
+| `keyboard_node` | Only for a button that arrives on a node udev classes as a typing keyboard, such as a handheld whose buttons send key chords on its AT keyboard. The value says why that node is safe on this model. See below. |
+
+### Typing keyboards are refused
+
+`voltaire setup` grants the group read access to each button's input node, and
+read access to a typing keyboard would let any process in the group see every
+keystroke. Two guards refuse that:
+
+- **The udev grant** carries `ENV{ID_INPUT_KEYBOARD}!="1"`, udev's own
+  classification of a typing keyboard. A name that matches a keyboard grants
+  nothing. Grants are read-only (`0640`): a writable input node accepts
+  injected events.
+- **The watcher** applies the same test to the node's key bitmap before it
+  opens it, and refuses a keyboard. A grant widened by hand still does not
+  make voltaire read one.
+- **hidraw** has its own form of the hole, since a keyboard's hidraw node
+  carries its raw keystrokes. A `hidraw-report` button names one interface,
+  and the watcher reads that node's report descriptor first and refuses a
+  top-level Keyboard or Keypad collection. `voltaire setup` checks the same on
+  the machine it runs on and removes the group from any granted interface that
+  turns out to be a keyboard.
+
+`keyboard_node = "<why>"` opts one button's node out of both, for a machine
+whose keyboard node carries nothing but button chords. Its grant is then
+written scoped to this file's `[[device.match]]` DMI patterns
+(`ATTR{[dmi/id]sys_vendor}`, `ATTR{[dmi/id]product_name}`), so it can never
+apply on another machine, and those patterns may not contain udev glob
+characters (`*?[|`). Validation refuses the key on anything but an evdev
+method.
 
 ## A complete example
 
@@ -247,6 +302,7 @@ name  = "sticks"
 label = "Stick rings"
 usb   = "0b05:1abe"
 zone  = 0
+interface = 0
 
 [toggles]
 method = "asus-armoury"
@@ -286,12 +342,31 @@ npu             = "amdxdna"
 net             = "procfs"
 history_seconds = 1800
 
-[button]
+[[buttons]]
+id      = "command-center"
+label   = "Command Center button"
+default = true
 method  = "evdev-key"
 device  = "Asus WMI hotkeys"
 keycode = 202
-kind    = "armoury-crate"
-label   = "Command Center button"
+
+[[buttons]]
+id        = "armoury-crate"
+label     = "Armoury Crate button"
+method    = "hidraw-report"
+usb       = "0b05:1abe"
+interface = 2
+report_id = 0x5a
+byte      = 1
+value     = 0xa6
+
+[[buttons]]
+id            = "quick-access"
+label         = "Quick Access button"
+method        = "evdev-chord"
+device        = "AT Translated Set 2 keyboard"
+keys          = [29, 56, 125]
+keyboard_node = "on the EX1 the AT keyboard carries only the button chords"
 ```
 <!-- example-device:end -->
 

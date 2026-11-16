@@ -960,6 +960,37 @@ For a detailed explanation of what `setup` installs and why the battery limit
 requires a separate systemd service, see
 [Installation](/voltaire/installation/#what-setup-does).
 
+## button
+
+Choose which hardware button opens voltaire: one press opens the quickbar, a
+quick second press the full window (the window's Settings tab swaps the two).
+
+The choices are the buttons this machine's device file declares, plus `none`
+and `default`. They are fixed on purpose: voltaire never reads a keyboard to
+learn a key, so it cannot see what you type. On the Z13 the one choice is the
+Armoury Crate button.
+
+```
+voltaire button [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--list` | List the buttons this device offers, marking the one that opens voltaire |
+| `--get` | Print the button that opens voltaire |
+| `--set <choice>` | A button id from `--list`, `none` (no button opens voltaire), or `default` |
+
+```sh
+voltaire button --list
+voltaire button --set none      # open voltaire from the desktop entry only
+voltaire button --set default
+```
+
+The daemon keeps the choice, so `--set` needs it running; `--list` and `--get`
+fall back to the device file's default without it. The same choice is the
+**Open voltaire with** row on the full window's Settings tab. `--no-button` on
+the daemon still turns the watcher off entirely.
+
 ## daemon
 
 Start the voltaire daemon. Normally started automatically via the systemd
@@ -979,8 +1010,8 @@ When the daemon is running, all other commands (`apply`, `brightness`, `off`,
 `profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `feature`, `cpuboost`,
 `fancurve`, `tdp`, `undervolt`, `tuning`, `status`) route through the daemon
 socket automatically. If the daemon is not running they fall back to direct
-hardware or sysfs access. `autoswitch` is the exception: it needs the daemon,
-which is what watches the power source.
+hardware or sysfs access. `autoswitch` and `button --set` are the exceptions:
+the daemon is what watches the power source and the buttons.
 
 ## Colors
 

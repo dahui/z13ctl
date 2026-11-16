@@ -1267,6 +1267,27 @@ is achieved is load-bearing:
 - A row whose value the daemon could not read is **insensitive, not off**, and
   the focus grid already skips insensitive widgets — so a controller cannot
   land on a switch that could not be operated.
+- **The VOLTAIRE card's first row picks which button opens voltaire**
+  (`buildChooser`; 2026-11-15). A dropdown of the device's `hardware_buttons`
+  plus "No button" — the G-Helper model, the root CLAUDE.md has the decision —
+  built only when the daemon lists buttons (`buttonpref.ShowChooser`), since an
+  older daemon could not take the choice. It sends `button-set` and does
+  nothing else: the daemon's `state-changed` resyncs the page, so the row shows
+  the daemon's answer, not the click, and `sync` now calls `syncPress` for
+  exactly that reason (the card used to have no daemon state at all). The
+  quickbar/full-window row below it hides while no button opens voltaire, and
+  its label follows the chosen button (`Window.buttonLabel` →
+  `buttonpref.Drawer`). `full:settings` re-baselined 24 → 25 (`0:0:voltaire`),
+  every other focus line byte-identical.
+  **It exposed a popup bug every dropdown had**: the popup's scroller did not
+  propagate its child's natural width, and a `ScrolledWindow` with no
+  horizontal scrolling then reports its child's *minimum* as natural — a glyph
+  or two for an ellipsizing row — so every list was exactly as wide as its
+  trigger. Invisible while triggers sat in wide form rows; with this
+  right-aligned one reading "No button", "Armoury Crate button" opened as
+  "Arm…". `newPopupScroll` sets `SetPropagateNaturalWidth(true)`; popupgeom
+  still caps the box at the surface, and the colour picker came out
+  pixel-identical.
 - **`.setting-name` / `.setting-desc` exist because the row has a heading and a
   caption, and reusing the nearest classes got it backwards** (Jeff,
   2026-08-14): the name went in `.scale-name` — 10px bold *dim*, made for a

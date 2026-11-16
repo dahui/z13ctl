@@ -243,6 +243,19 @@ func (w *Window) sendCPUBoostSet(on bool) {
 	}()
 }
 
+// sendButtonSet asks the daemon to make choice — a button id or "none" — the
+// button that opens voltaire. The daemon's state-changed broadcast resyncs the
+// Settings card, so there is nothing to update here on success.
+func (w *Window) sendButtonSet(choice string) {
+	go func() {
+		if err := apiresult.Err(api.SendButtonSet(choice)); err != nil {
+			w.reportError("Choose the button that opens voltaire", err)
+			return
+		}
+		w.clearErrorAsync()
+	}()
+}
+
 func (w *Window) sendFeatureSet(id string, value int) {
 	go func() {
 		slog.Debug("sendFeatureSet: calling daemon", "id", id, "value", value)

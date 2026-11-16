@@ -40,7 +40,28 @@ type DeviceInfo struct {
 	// sit mid-sentence ("Armoury Crate button"). Absent when the device names
 	// none; a client then says "hardware button".
 	ButtonLabel string `json:"button_label,omitempty"`
+
+	// HardwareButtons lists the buttons a user may choose to open voltaire
+	// with (SendButtonSet), in the device's order; ButtonLabel is the default
+	// one's label. Absent on a device that declares none, or from an older
+	// daemon, which offers no choice.
+	HardwareButtons []ButtonInfo `json:"hardware_buttons,omitempty"`
 }
+
+// ButtonInfo is one hardware button a user may open voltaire with.
+type ButtonInfo struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"` // mid-sentence: "Armoury Crate button"
+	Default bool   `json:"default,omitempty"`
+}
+
+// DrawerButtonNone is the State.DrawerButton value, and the SendButtonSet
+// choice, for "no button opens voltaire".
+const DrawerButtonNone = "none"
+
+// DrawerButtonDefault is the SendButtonSet choice that drops the user's choice
+// and goes back to the device's default button.
+const DrawerButtonDefault = "default"
 
 // FanInfo is the device's fan-curve shape: how many points a curve holds and
 // the axes an editor should draw. TempMin/TempMax are the editor's temperature

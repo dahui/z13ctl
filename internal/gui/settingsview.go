@@ -39,6 +39,7 @@ package gui
 // and both stay in step because both sync from the same get-state.
 
 import (
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
@@ -67,6 +68,11 @@ type settingsView struct {
 	pressBtns map[buttonpref.Surface]*gtk.Button
 	pressDesc *gtk.Label
 	pressLbl  *gtk.Label
+	pressRow  *gtk.Box // hidden while no button opens voltaire: nothing to arrange
+
+	// chooser picks which of the device's buttons opens voltaire, or none;
+	// nil when the daemon lists no buttons to choose from.
+	chooser *dropdown
 
 	// The QUICKBAR card (quickbar.go): the editor's rows in order, the widgets
 	// per control ID, and whether gui.toml has locked the layout. qbSyncing
@@ -179,8 +185,13 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 	heading.AddCSSClass("section-label")
 	card.Append(heading)
 
+	if buttonpref.ShowChooser(s.w.device) {
+		card.Append(s.buildChooser())
+	}
+
 	line := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	line.SetMarginTop(4)
+	s.pressRow = line
 
 	text := gtk.NewBox(gtk.OrientationVertical, 2)
 	text.SetHExpand(true)
@@ -226,6 +237,51 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 	return card
 }
 
+// buildChooser builds the "Open voltaire with" row: the device's buttons and
+// "no button", in a dropdown drawn in the popup layer. The list is device data
+// (buttonpref.Choices) — the G-Helper model, never a key learned from a
+// keyboard. Choosing sends; the daemon's state-changed broadcast then syncs
+// the label, so the row always shows the daemon's answer, not the click.
+func (s *settingsView) buildChooser() *gtk.Box {
+	line := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	line.SetMarginTop(4)
+
+	text := gtk.NewBox(gtk.OrientationVertical, 2)
+	text.SetHExpand(true)
+	label := gtk.NewLabel(buttonpref.ChooserRowLabel)
+	label.SetHAlign(gtk.AlignStart)
+	label.AddCSSClass("setting-name")
+	text.Append(label)
+	desc := gtk.NewLabel(buttonpref.ChooserDescription)
+	desc.SetHAlign(gtk.AlignStart)
+	desc.SetXAlign(0)
+	desc.SetWrap(true)
+	desc.AddCSSClass("setting-desc")
+	text.Append(desc)
+	line.Append(text)
+
+	s.chooser = s.w.newDropdown(dropdownConfig{
+		options: func() []dropdownOption {
+			current := api.DrawerButtonNone
+			if id, _, ok := buttonpref.Drawer(s.w.device, s.w.state); ok {
+				current = id
+			}
+			var opts []dropdownOption
+			for _, c := range buttonpref.Choices(s.w.device) {
+				opts = append(opts, dropdownOption{value: c.ID, label: c.Label, selected: c.ID == current})
+			}
+			return opts
+		},
+		onSelect: func(value string) { s.w.sendButtonSet(value) },
+	})
+	s.chooser.btn.SetHExpand(false)
+	s.chooser.btn.SetVAlign(gtk.AlignCenter)
+	trigger := formDropdown(s.chooser.btn)
+	trigger.SetVAlign(gtk.AlignCenter)
+	line.Append(trigger)
+	return line
+}
+
 // selectPress applies a choice. It takes effect immediately — the dispatcher
 // reads the preference at press time — so there is nothing to restart and
 // nothing to save separately.
@@ -250,6 +306,13 @@ func (s *settingsView) syncPress() {
 	}
 	if s.pressLbl != nil {
 		s.pressLbl.SetLabel(buttonpref.RowLabel(s.w.buttonLabel()))
+	}
+	if s.chooser != nil {
+		s.chooser.setLabel(buttonpref.ChooserText(s.w.device, s.w.state))
+	}
+	if s.pressRow != nil {
+		_, _, active := buttonpref.Drawer(s.w.device, s.w.state)
+		s.pressRow.SetVisible(active)
 	}
 }
 
@@ -336,6 +399,9 @@ func (s *settingsView) buildRow(r settingsui.Row) *gtk.Box {
 // widget is one the gamepad grid skips, so a controller cannot land on a
 // control it could not operate anyway.
 func (s *settingsView) sync() {
+	// Which button opens voltaire is daemon state now, so the VOLTAIRE card
+	// follows get-state like the rows below it.
+	s.syncPress()
 	// Before the no-rows return: the flag is reported for the firmware interface
 	// as a whole, so it can be set on a device whose toggles this build cannot
 	// render — and that is exactly the user who most needs telling why the
@@ -373,8 +439,18 @@ func (s *settingsView) buildFocusList() {
 	// profile row on the dashboard was written the wrong way round first.
 	// No card, no section: a device without a hardware button builds no
 	// preference buttons (pressBtns stays empty).
-	if opts := buttonpref.Options(); len(s.pressBtns) > 0 {
+	if s.chooser != nil || len(s.pressBtns) > 0 {
 		b.Section("voltaire")
+	}
+	if s.chooser != nil {
+		c := b.One()
+		btn := s.chooser.btn
+		items = append(items, focusItem{
+			widget: btn, row: c.Row, col: c.Col, section: c.Section,
+			onActivate: func() { btn.Activate() },
+		})
+	}
+	if opts := buttonpref.Options(); len(s.pressBtns) > 0 {
 		for i, c := range b.Line(len(opts)) {
 			btn := s.pressBtns[opts[i]]
 			if btn == nil {

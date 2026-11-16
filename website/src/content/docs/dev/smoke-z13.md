@@ -29,6 +29,21 @@ their extracted form**:
 Every unchecked box blocks the merge. A failed box gets a note (what happened,
 journal lines) rather than a workaround.
 
+:::note[Last run: 2026-11-15, `feat/v2-refactor` at 1517879 plus the findings fix]
+Every box passed on the desktop (KDE Plasma, Linux 7.3.4, asus-armoury). The
+GUI boxes were driven with a uinput virtual gamepad and pointer, and the focus
+dump matched the baseline (41/73/11/75/23/24). Still open, because they need a
+Gaming Mode session: the four gamescope boxes in "The full window" and the
+colour picker's Gaming Mode box.
+
+Fixed during the run, each verified on the machine: the drawer opening on the
+full window's focus list; oversized text from file capabilities (the portal
+refuses a non-dumpable process); a firmware profile reporting a custom
+profile's leftover armoury value (35 W shown, 47 W in force); a WARN on every
+charger edge with a custom profile active; Adwaita showing through voltaire's
+theme on GNOME.
+:::
+
 ## Conventions
 
 Run everything as your ordinary user. Helpers used throughout:
@@ -62,136 +77,142 @@ output.
 
 ## 0. Build and preconditions
 
-- [ ] `make build && make test && make lint` — all green, 0 issues, on the
+- [x] `make build && make test && make lint` — all green, 0 issues, on the
       exact commit under test (plus `cd api && go test ./... && golangci-lint
       run ./...`).
-- [ ] `./voltaire --version` prints the expected version.
-- [ ] `sudo ./voltaire setup` succeeds (rules written, perms applied).
-- [ ] Daemon units installed but **stopped** for the first sections:
+- [x] `./voltaire --version` prints the expected version.
+- [x] `sudo ./voltaire setup` succeeds (rules written, perms applied).
+- [x] Only the lighting interface is granted: `for h in /sys/class/hidraw/hidraw*; do
+      echo "$h $(cat $h/device/../bInterfaceNumber) $(stat -c '%A %G' /dev/${h##*/})"; done`
+      shows group access on interface 00 of `0b05:1a30` and `0b05:18c6` only; the
+      cover's interface 02 (its typing keyboard) is `root` and `crw-------`. The
+      hotkey node is `crw-r-----` (read-only), and setup printed "Removed group
+      users from …" for any interface an older setup had granted.
+- [x] Daemon units installed but **stopped** for the first sections:
       `systemctl --user stop voltaire.service voltaire.socket`
 
 ## 1. Detection and assembly
 
-- [ ] `./voltaire list` shows both Aura devices (keyboard `0b05:1a30`, lightbar
+- [x] `./voltaire list` shows both Aura devices (keyboard `0b05:1a30`, lightbar
       `0b05:18c6`).
-- [ ] `./voltaire status` prints CPU temperature, fan RPM + mode, profile, TDP,
+- [x] `./voltaire status` prints CPU temperature, fan RPM + mode, profile, TDP,
       and battery — and **no** `note: no device data matches this machine` on
       stderr. That note means DMI matching failed and everything below is
       running on the fallback assumption; stop and fix the device file first.
 
 ## 2. Lighting, no daemon (aura-hid driver)
 
-- [ ] `./voltaire apply --mode static --color red` — keyboard and lightbar both
+- [x] `./voltaire apply --mode static --color red` — keyboard and lightbar both
       light red.
-- [ ] `./voltaire apply --mode cycle --speed fast` — both animate.
-- [ ] `./voltaire apply --mode static --color 00FF88 --device lightbar` — only
+- [x] `./voltaire apply --mode cycle --speed fast` — both animate.
+- [x] `./voltaire apply --mode static --color 00FF88 --device lightbar` — only
       the lightbar changes; the keyboard keeps cycling.
-- [ ] `./voltaire brightness low`, then `./voltaire brightness high` — brightness
+- [x] `./voltaire brightness low`, then `./voltaire brightness high` — brightness
       changes without restarting the effect's animation.
-- [ ] `./voltaire brightness off` — both zones dark; `./voltaire brightness high`
+- [x] `./voltaire brightness off` — both zones dark; `./voltaire brightness high`
       brings them back.
-- [ ] `./voltaire off` — everything off.
-- [ ] `./voltaire apply --mode static --color red --dry-run` — prints the packet
+- [x] `./voltaire off` — everything off.
+- [x] `./voltaire apply --mode static --color red --dry-run` — prints the packet
       hex, changes nothing.
 
 ## 3. Fan curves, no daemon
 
-- [ ] `./voltaire fancurve --get` shows the mode and an 8-point curve.
-- [ ] `./voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"`
+- [x] `./voltaire fancurve --get` shows the mode and an 8-point curve.
+- [x] `./voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"`
       succeeds; `cat $CURVE/pwm1_enable $CURVE/pwm2_enable` → `1` / `1`, and the
       point files hold the values as written.
-- [ ] `./voltaire fancurve --reset` — both `pwm*_enable` back to `2`.
+- [x] `./voltaire fancurve --reset` — both `pwm*_enable` back to `2`.
 
 ## 4. TDP and the fan floor, no daemon
 
 The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 
-- [ ] `./voltaire tdp --get` matches `cat $PPT/ppt_pl{1_spl,2_sppt,3_fppt}/current_value`,
+- [x] `./voltaire tdp --get` matches `cat $PPT/ppt_pl{1_spl,2_sppt,3_fppt}/current_value`,
       prints no APU/Platform lines, and names `asus-armoury` with PL1 28–80W,
       PL2 32–92W, PL3 45–93W. (On a kernel without armoury PPT it names
       `asus-nb-wmi` and reads `$OLDPPT/ppt_*`; check against those instead.)
-- [ ] `./voltaire tdp --set 45` — armoury's three read 45; `$OLDPPT/ppt_*` are
+- [x] `./voltaire tdp --set 45` — armoury's three read 45; `$OLDPPT/ppt_*` are
       not written (note their values before, compare after).
-- [ ] `./voltaire tdp --set 30` — prints that PL2 and PL3 were raised; armoury
+- [x] `./voltaire tdp --set 30` — prints that PL2 and PL3 were raised; armoury
       reads 30/32/45.
-- [ ] `./voltaire tdp --set 80` (no `--force`) — refused, names the 75 W safe max
+- [x] `./voltaire tdp --set 80` (no `--force`) — refused, names the 75 W safe max
       and the 80 W ceiling. `ppt_pl1_spl` still 30.
-- [ ] `./voltaire tdp --set 80 --force` — succeeds, **and** `pwm*_enable` are `1`
+- [x] `./voltaire tdp --set 80 --force` — succeeds, **and** `pwm*_enable` are `1`
       with every curve point at or above the floor ramp (bottom 127). The
       warning about running without the daemon prints.
-- [ ] `./voltaire fancurve --reset` while at 80 W — refused (releasing to
+- [x] `./voltaire fancurve --reset` while at 80 W — refused (releasing to
       firmware auto above the safe max is exactly what the floor forbids).
-- [ ] `./voltaire tdp --reset` — `$PROFILE` reads `balanced`, armoury holds
+- [x] `./voltaire tdp --reset` — `$PROFILE` reads `balanced`, armoury holds
       balanced's stock row (52/71/70), `pwm*_enable` back to `2`.
 
 ## 5. Undervolt, toggles, battery — no daemon
 
-- [ ] `./voltaire undervolt --get` → `not set (daemon not running)` (or the
+- [x] `./voltaire undervolt --get` → `not set (daemon not running)` (or the
       module-missing message if ryzen_smu isn't installed — then skip CO boxes
       throughout).
-- [ ] `./voltaire undervolt --set -10` applies; `--set -41` and `--set 1` are
+- [x] `./voltaire undervolt --set -10` applies; `--set -41` and `--set 1` are
       refused with the range message. `./voltaire undervolt --reset` afterwards.
-- [ ] `./voltaire bootsound --get`, flip it with `--set`, confirm in
+- [x] `./voltaire bootsound --get`, flip it with `--set`, confirm in
       `/sys/class/firmware-attributes/asus-armoury/attributes/boot_sound/current_value`,
       restore it.
-- [ ] `./voltaire paneloverdrive --get` / `--set` — same round-trip, restored.
-- [ ] `./voltaire batterylimit --set 80` —
+- [x] `./voltaire paneloverdrive --get` / `--set` — same round-trip, restored.
+- [x] `./voltaire batterylimit --set 80` —
       `/sys/class/power_supply/BAT*/charge_control_end_threshold` reads 80.
       Restore your usual value.
 
 ## 6. Daemon start and state restore
 
-- [ ] `./voltaire apply --mode static --color blue`, then
+- [x] `./voltaire apply --mode static --color blue`, then
       `systemctl --user start voltaire.socket voltaire.service` — service reaches
       `active (running)`; journal shows the startup line and no errors.
-- [ ] Lighting reflects the daemon's **saved** state after the start — not
+- [x] Lighting reflects the daemon's **saved** state after the start — not
       darkness, and not a half-applied zone (state restore ran; the daemon
       opened its own HID handle). It will *not* be the blue you just applied:
       a no-daemon `apply` writes hardware without persisting, so startup
       restores what the state file holds. To see blue survive, apply it with
       the daemon already running.
-- [ ] Socket activation: `systemctl --user stop voltaire.service` (leave the
+- [x] Socket activation: `systemctl --user stop voltaire.service` (leave the
       socket), run `./voltaire profile --get` — the daemon auto-starts and
       answers.
-- [ ] `printf '{"cmd":"get-state"}\n' | timeout 5 nc -U "$SOCK"` — one JSON
+- [x] `printf '{"cmd":"get-state"}\n' | timeout 5 nc -U "$SOCK"` — one JSON
       line, `"ok":true`, with `undervolt_available` and `on_ac` present.
-- [ ] The same request against the **compat socket**
+- [x] The same request against the **compat socket**
       (`$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`) answers identically — this is
       what keeps the Decky plugin and pre-2.0 clients working, and it must
       hold under systemd (both `ListenStream=` fds) and under a hand-run
       `./voltaire daemon` (self-created sockets) alike.
-- [ ] `ask '{"cmd":"device-get"}'` returns the capability document, and its
+- [x] `ask '{"cmd":"device-get"}'` returns the capability document, and its
       numbers are the device file's, not defaults: fan shape, `tdp_max_safe`,
       the floor curve, profile names, lighting zones, the toggle list, and the
       undervolt range. The power ranges are the kernel's: on asus-armoury
       `interface` is `asus-armoury`, `tdp_min`/`tdp_max_forced` are 28/80, and
       `pl2`/`pl3` are 32–92 / 45–93. A capability the machine lacks is an
       **absent key**, never an error.
-- [ ] `./voltaire feature --list` names the same toggles as the document;
+- [x] `./voltaire feature --list` names the same toggles as the document;
       `--get <id>` reads hardware; `--set <id>=<v>` round-trips in sysfs; and
       an unknown id is refused by name. This is the generic path to the same
       attributes `bootsound` / `paneloverdrive` reach by name.
 
 ## 7. Profiles and custom profiles (daemon)
 
-- [ ] `./voltaire profile --set performance` — `$PROFILE` reads `performance`,
+- [x] `./voltaire profile --set performance` — `$PROFILE` reads `performance`,
       armoury holds performance's stock row (70/86/86): voltaire writes the row,
       then releases the fans, which makes the firmware re-apply its own limits.
-- [ ] `./voltaire tdp --set 40` while on a firmware profile — creates and
+- [x] `./voltaire tdp --set 40` while on a firmware profile — creates and
       activates `custom`; `./voltaire profile --get` says `custom`, sysfs PPT
       reads 40.
-- [ ] **Promotion starts fresh**: give `custom` a fan curve, return to
+- [x] **Promotion starts fresh**: give `custom` a fan curve, return to
       `balanced`, then `./voltaire tdp --set 40` — `custom` now holds only the
       TDP: `$CURVE/pwm1_enable` stays `2` (fans on firmware auto, the stored
       curve did **not** come back), and it stays `2` through at least two
       reconcile ticks (~5 s). `./voltaire fancurve --get` shows no stored
       curve for it.
-- [ ] `./voltaire profile --create gaming`, `./voltaire tdp --set 35 --profile
+- [x] `./voltaire profile --create gaming`, `./voltaire tdp --set 35 --profile
       gaming` — prints "stored… not applied", and sysfs PPT is **unchanged**
       (still 40).
-- [ ] `./voltaire profile --set gaming` — PPT now 35. `./voltaire profile --set
+- [x] `./voltaire profile --set gaming` — PPT now 35. `./voltaire profile --set
       custom` — PPT back to 40 (A→B→A gives the same machine).
-- [ ] **The limit survives other tools** (issue #22): with `custom` at 40 W and
+- [x] **The limit survives other tools** (issue #22): with `custom` at 40 W and
       no fan curve, `echo 2 | tee $CURVE/pwm1_enable` (fans already on auto) and
       `echo performance | tee /sys/class/platform-profile/*/profile` (the
       profile already set) each log `reconciling custom thermal settings` at
@@ -201,15 +222,15 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
       throughout — but that proves nothing on its own (the readback never
       moves); under load, RAPL `energy_uj` should show ~40 W, not the
       profile's ~70 W.
-- [ ] `./voltaire profile --set balanced` — stock row restored, fans auto, CO
+- [x] `./voltaire profile --set balanced` — stock row restored, fans auto, CO
       cleared; `./voltaire profile --list` still shows both custom profiles.
-- [ ] `./voltaire profile --create balanced` — refused (reserved name).
-- [ ] `./voltaire profile --set no-such-profile` — refused, not forwarded to
+- [x] `./voltaire profile --create balanced` — refused (reserved name).
+- [x] `./voltaire profile --set no-such-profile` — refused, not forwarded to
       `platform_profile`.
 
 ## 8. Reconcile watcher (issue #15)
 
-- [ ] `./voltaire profile --set custom` with a fan curve set (give `custom` one
+- [x] `./voltaire profile --set custom` with a fan curve set (give `custom` one
       via `./voltaire fancurve --set …` if needed). Then
       `powerprofilesctl set power-saver`: `$CURVE/pwm1_enable` drops to `2` and
       returns to `1` within ~4 s without any voltaire command. Restore with
@@ -225,16 +246,16 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 > whatever profile the section just set up — which silently invalidates the
 > sleep/resume setup. See the note at the end of this file.
 
-- [ ] `./voltaire autoswitch --on --ac balanced --battery gaming`, then unplug
+- [x] `./voltaire autoswitch --on --ac balanced --battery gaming`, then unplug
       the charger — after the ~4 s settle window the gaming profile is applied
       (PPT reads 35). Replug — balanced comes back, custom profiles intact.
-- [ ] A quick plug-bounce (unplug, replug within ~2 s) causes **no** profile
+- [x] A quick plug-bounce (unplug, replug within ~2 s) causes **no** profile
       churn.
-- [ ] `./voltaire autoswitch --clear` when done.
+- [x] `./voltaire autoswitch --clear` when done.
 
 ## 10. Armoury Crate button (evdev-key driver)
 
-- [ ] Subscribe and press the button:
+- [x] Subscribe and press the button:
 
       ```sh
       ( printf '{"cmd":"subscribe","events":["gui-toggle"]}\n'; sleep 20 ) | nc -U "$SOCK"
@@ -242,18 +263,24 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 
       Each press during the window prints `{"ok":true,"event":"gui-toggle"}` —
       note `"ok":true` on the streamed event (the v1.2.1 wire fix).
-- [ ] No grab regression (issue #10): with the session running, detach the
+- [x] No grab regression (issue #10): with the session running, detach the
       keyboard cover and reattach it — the desktop leaves tablet mode and the
       cover keyboard types. If it stays in tablet mode, something grabbed the
       hotkeys device exclusively.
-- [ ] `systemctl --user stop voltaire.service voltaire.socket`, run
+- [x] `systemctl --user stop voltaire.service voltaire.socket`, run
       `./voltaire daemon --no-button` in a terminal — button presses produce no
       events and the journal shows the watcher was never started. Ctrl-C, then
       `systemctl --user start voltaire.socket voltaire.service`.
+- [x] `voltaire button --list` marks `armoury-crate` as the default and the one
+      that opens voltaire; `--set nope` is refused and lists the valid choices.
+- [x] Settings → **Open voltaire with** → **No button**: the quickbar/full-window
+      row disappears and a press opens nothing. Back to **Armoury Crate button**:
+      the press opens the quickbar again. With "No button" chosen, the dropdown's
+      list shows "Armoury Crate button" in full (not ellipsized to its trigger).
 
 ## 11. Keyboard hotplug (aura-hid Reopen)
 
-- [ ] With the daemon running and a visible effect applied: detach the cover,
+- [x] With the daemon running and a visible effect applied: detach the cover,
       wait a few seconds, reattach — the keyboard's RGB effect comes back on
       its own within ~4 s (poll tick + udev chmod retry). Per-zone overrides
       survive: set the lightbar a different color first and confirm both zones
@@ -265,26 +292,26 @@ Set up the full volatile state first: `./voltaire profile --set custom` with a
 fan curve, a custom TDP (safe range, e.g. 40 W), and `./voltaire undervolt --set
 -10`.
 
-- [ ] Suspend (lid or `systemctl suspend`). While asleep: the fans spin down
+- [x] Suspend (lid or `systemctl suspend`). While asleep: the fans spin down
       and stay down, and the lightbar is dark (the pre-sleep release +
       lightbar-off hook).
-- [ ] Resume: lighting restored on both zones, `$CURVE/pwm1_enable` back to
+- [x] Resume: lighting restored on both zones, `$CURVE/pwm1_enable` back to
       `1`, PPT back to the custom value, and the journal shows the CO
       reapply. The machine **stays** asleep until woken — a suspend that
       aborts within seconds is a wakeup-source problem; read
       `/sys/power/pm_wakeup_irq` before blaming the hook.
-- [ ] The journal shows `sleep: held the suspend after the fan release held=3s`
+- [x] The journal shows `sleep: held the suspend after the fan release held=3s`
       before `handing the suspend to logind`, and the `resume: wake report`
       after it shows a full-length `slept` with most of it in `hw_sleep`. A
       `slept` of 1–2.5 s with `hw_sleep=200ms` is the issue #24 early wake.
       `sudo rtcwake -m no -s 20 && systemctl suspend` makes the suspend length
       known.
-- [ ] Suspend again within a second of a resume: the journal shows `restore
+- [x] Suspend again within a second of a resume: the journal shows `restore
       skipped`, then `wrote_fans_or_ppt=false` and no hold for that suspend.
-- [ ] High-TDP variant: `./voltaire tdp --set 80 --force`, suspend, resume — the
+- [x] High-TDP variant: `./voltaire tdp --set 80 --force`, suspend, resume — the
       journal shows power lowered *before* the fan release on the way down,
       and the floor curve re-applied with the limit on the way back.
-- [ ] Cleanup: `./voltaire tdp --reset`.
+- [x] Cleanup: `./voltaire tdp --reset`.
 
 ## 13. The drawer's profile UI (voltaire-gui, 2.0)
 
@@ -292,27 +319,27 @@ Run the voltaire-gui build under test against the daemon under test. These are
 the drawer paths that cannot run in the hermetic suite (the widget layer is
 cgo); the rules behind them are unit tested in `internal/profileui`.
 
-- [ ] The main view's PROFILE section is quiet/balanced/performance on one row
+- [x] The main view's PROFILE section is quiet/balanced/performance on one row
       plus a single Custom **dropdown**, and the **whole main view fits without
       scrolling** (profile through brightness). The trigger is labelled with the
       running custom profile's name, and highlighted, when one is active.
-- [ ] Open it: every saved custom profile is listed, the running one carries the
+- [x] Open it: every saved custom profile is listed, the running one carries the
       dot marker, and one with nothing saved in it is greyed and suffixed
       "(empty)". Pick a different profile — the machine switches to it
       (`voltaire profile --get` agrees) and the drawer stays on the main view.
       Picking the row already marked as running does nothing at all: no error
       bar, no daemon call.
-- [ ] The drawer has **no profile editor**. There is no way to reach power
+- [x] The drawer has **no profile editor**. There is no way to reach power
       limits, the fan curve or the undervolt from it, and gamepad B from the
       main view does not descend into one.
-- [ ] With no usable custom profile (delete them, or start from a fresh state
+- [x] With no usable custom profile (delete them, or start from a fresh state
       file), the Custom trigger is **greyed** and a note beneath it says how to
       open the profile editor — naming a *double* press with the default button
       preference, and a *single* press once Settings has them swapped.
-- [ ] The mouse wheel over any slider — battery, brightness, TDP, undervolt —
+- [x] The mouse wheel over any slider — battery, brightness, TDP, undervolt —
       scrolls the view and leaves the value alone (`batterylimit --get` and
       the PL readouts unchanged afterwards).
-- [ ] Profiles tab (full window): the selector dropdown names the profile being edited;
+- [x] Profiles tab (full window): the selector dropdown names the profile being edited;
       opening it dims the view behind a scrim, picking a name re-targets the
       editor and closes the list, and the running profile carries a dot
       marker distinct from the selected highlight. Tapping the scrim,
@@ -320,44 +347,44 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       profile from the CLI (`./voltaire profile --create smoke-gui`) while
       the view is open — it appears the next time the list opens; with the
       list **open**, the view behind it does not change until it closes.
-- [ ] Both autoswitch targets open as dropdowns the same way, by pointer,
+- [x] Both autoswitch targets open as dropdowns the same way, by pointer,
       touch, and gamepad; picking a target sends once after the debounce.
-- [ ] Selecting a profile does **not** activate it; Activate does. Activate is
+- [x] Selecting a profile does **not** activate it; Activate does. Activate is
       insensitive for the running profile and for one with no settings — and
       the reason appears as a note directly beneath the button row, readable
       by touch and on a controller (no hover anywhere).
-- [ ] The editor on a profile that is **not** running shows the "Not active —
+- [x] The editor on a profile that is **not** running shows the "Not active —
       changes are stored…" note, displays the profile's own stored values (not
       the live machine's), and Save TDP does not change `ppt_pl1_spl`.
       Activating the profile afterwards applies what was stored.
-- [ ] The editor on the **running** profile shows no note and committing moves
+- [x] The editor on the **running** profile shows no note and committing moves
       sysfs, exactly as 1.x did.
-- [ ] Advanced TDP view on asus-armoury: the PL2 slider spans 32–92 W and the PL3
+- [x] Advanced TDP view on asus-armoury: the PL2 slider spans 32–92 W and the PL3
       slider 45–93 W, while PL1 spans 28–80 W. A basic-view save of 30 W stores
       30/32/45 and the drawer stays in the basic view afterwards.
-- [ ] Fan floor in a stored edit follows the *profile's* TDP: store 80W in a
+- [x] Fan floor in a stored edit follows the *profile's* TDP: store 80W in a
       non-running profile — its editor draws the floor line even while the
       machine sits at stock limits, and Reset Fans is refused/insensitive
       there.
-- [ ] + New prefills a free name; OK on the prefill creates it (gamepad-only
+- [x] + New prefills a free name; OK on the prefill creates it (gamepad-only
       path). Save As is insensitive on a stock profile, works from a custom
       one.
-- [ ] Delete Profile needs two taps, is insensitive for the active profile
+- [x] Delete Profile needs two taps, is insensitive for the active profile
       and for autoswitch targets (the note beneath it names the reason), and
       leaves the editor pointed at another profile on success.
-- [ ] Hints: hovering the theme button (or any hinted control) for ~half a
+- [x] Hints: hovering the theme button (or any hinted control) for ~half a
       second shows its help text anchored to it, on KDE **and** in Gaming
       Mode; gamepad focus shows the same text immediately; it never appears
       over an open dropdown.
-- [ ] AUTOSWITCH section: switch + both targets mirror
+- [x] AUTOSWITCH section: switch + both targets mirror
       `./voltaire autoswitch --get`; picking a target and toggling the switch
       land in `autoswitch --get` after the debounce; targets offered exclude
       empty profiles and include "(don't change)".
-- [ ] The header shows `AC · <temp> · <rpm>` on mains and `Battery · …`
+- [x] The header shows `AC · <temp> · <rpm>` on mains and `Battery · …`
       unplugged, updating on plug/unplug without reopening (power-source
       event); on a daemon without `source_known` (pre-2.0) it shows no power
       label at all.
-- [ ] Gamepad: D-pad reaches the firmware buttons and the Custom picker in the
+- [x] Gamepad: D-pad reaches the firmware buttons and the Custom picker in the
       main view, and on the Profiles tab the selector, Activate/New/Save As, OK/Cancel,
       and Delete; the autoswitch dropdowns are reachable while enabled and
       skipped while not. Section jump (L1/R1) includes "profile" and
@@ -365,12 +392,12 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       picks, B dismisses — and a long list scrolls with focus. After closing
       a dropdown, focus is back on the drawer control that opened it (or its
       nearest visible neighbour if a selection just desensitized it).
-- [ ] Gamepad cannot reach a control the pointer cannot use: with a custom
+- [x] Gamepad cannot reach a control the pointer cannot use: with a custom
       profile **active**, its editor's Delete is skipped by D-pad navigation
       (focus wraps past it), as is an empty profile's activate button — the
       ✎ beside it stays reachable. `gtk_widget_activate()` ignores
       sensitivity, so this is a real path, not a theoretical one.
-- [ ] Cleanup: `./voltaire profile --delete smoke-gui`.
+- [x] Cleanup: `./voltaire profile --delete smoke-gui`.
 
 :::note[Driving this checklist without a physical controller]
 A uinput virtual gamepad plus an *absolute* pointer (the QEMU usb-tablet
@@ -391,154 +418,162 @@ outside.
       gamescope it opens inside the overlay surface.
 - [ ] Under gamescope there is no refresh-rate card on the Dashboard and no
       refresh-rate row in the Settings tab's Quickbar card.
-- [ ] Title row (desktop): VOLTAIRE plus minimize, maximize, close; no GTK
+- [x] Title row (desktop): VOLTAIRE plus minimize, maximize, close; no GTK
       header above it. Drag moves the window, double-click maximizes and the
       maximize icon turns into restore; the edges still resize.
-- [ ] Minimize: the log shows `full window: suspended by the compositor`, and a
+- [x] Minimize: the log shows `full window: suspended by the compositor`, and a
       connected controller is released to the desktop/game. Restore from the
       taskbar: `restored`, and the pad drives the window again. Double-press (or
       the expand button) while minimized: the window comes back
       (`rebuilt the toplevel`) on the tab it was on.
 - [ ] Title row (gamescope): minimize and close only, touch-sized; both return
       to the game by touch, and the controller is released.
-- [ ] Double-press the Armoury Crate button — the drawer flashes and the full
+- [ ] **In Gaming Mode, with a real controller and a game running**, open the
+      drawer: the game does not see the pad while it is open, and neither Steam
+      nor the game freezes (a freeze is the SIGSTOP fallback). `journalctl
+      --user -u voltaire-gui -b | grep -E 'CAP_|steam:|hidblocker|gamescope'`
+      shows `keeping CAP_BPF/CAP_PERFMON`, `hidblocker: BPF LSM attached` and
+      `steam: using BPF LSM hidraw blocker`. On the desktop the same grep shows
+      `dropped CAP_BPF/CAP_PERFMON` instead, and the GUI's text is its normal
+      size (a portal refusal makes it 1.5× too large).
+- [x] Double-press the Armoury Crate button — the drawer flashes and the full
       window replaces it. The **Dashboard** tab shows all eight cards
       *immediately* (framed charts, "—" readouts at worst for the first
       second), never a blank grid.
-- [ ] The expanded cards read sensibly: Temp shows CPU and GPU, Power shows
+- [x] The expanded cards read sensibly: Temp shows CPU and GPU, Power shows
       Pkg/GPU/NPU (NPU 0.0 W while nothing uses it — a reading, not a gap),
       Load shows all three utilisations, Clocks in GHz, Memory RAM+VRAM in
       GB. Run something GPU-heavy and the GPU load/clock/power traces move
       together; `voltaire status` and the Temp card's CPU figure agree.
-- [ ] The Net card reads `Down: 0.0 · Up: 0.0 MB/s` on a quiet machine (a real
+- [x] The Net card reads `Down: 0.0 · Up: 0.0 MB/s` on a quiet machine (a real
       reading, not a gap); start a large download and the Down trace and header
       move together, at roughly what Steam or the browser reports. Traffic over
       a VPN charts at its real size, not doubled.
-- [ ] The span selector offers **1m, 5m, 15m, 30m, 1h**. `ask
+- [x] The span selector offers **1m, 5m, 15m, 30m, 1h**. `ask
       '{"cmd":"device-get"}'` reports `history_seconds: 3600`; drop the device
       TOML back to a short retention and only the spans it can fill are built
       (never an empty strip). Switch to **1h** — the chart redraws roughly every
       twelve seconds, not every second (`-d` logs one `telemetry-history` round
       trip per redraw), while the card headers keep updating once a second.
-- [ ] Restart the daemon and open **1h** immediately: the traces sit in the
+- [x] Restart the daemon and open **1h** immediately: the traces sit in the
       right-hand sliver with the rest of the window blank, and fill leftwards as
       the machine runs. That is the ring being in memory, not a bug — the chart
       must not stretch a few minutes of samples across the full width.
-- [ ] The Battery card plots the charge percentage on a 0–100 frame, and its
+- [x] The Battery card plots the charge percentage on a 0–100 frame, and its
       header follows the pack: at rest above the limit on mains it reads
       `NN% · AC · not charging` (never a bare 0 W); unplug and it becomes
       `NN% · <rate> W · <time> to empty`; replug below the limit and the
       estimate says `to limit`. The estimate moves with the load — sanity-check
       one against `(battery_energy_wh / rate) × 60`.
-- [ ] Profiles tab: move only the TDP slider — the bottom bar reads
+- [x] Profiles tab: move only the TDP slider — the bottom bar reads
       "Unsaved: TDP" and **Apply Changes** enables. Apply: only the TDP
       changes (fans stay as they were); the bar clears and the button disables.
-- [ ] Drag the fan curve, touch nothing else — bar reads "Unsaved: fan curve";
+- [x] Drag the fan curve, touch nothing else — bar reads "Unsaved: fan curve";
       Apply sends only the curve.
-- [ ] Retarget the selector at a profile that is **not** running — the button
+- [x] Retarget the selector at a profile that is **not** running — the button
       reads **Save Changes** and an applied edit changes no sysfs.
-- [ ] Toggling Advanced with no value moved does **not** enable the commit
+- [x] Toggling Advanced with no value moved does **not** enable the commit
       button; moving PL2 in advanced then unchecking Advanced sends basic
       semantics (the PL2 edit is not applied).
-- [ ] There is **no** autoswitch card on the Profiles tab — it moved to the
+- [x] There is **no** autoswitch card on the Profiles tab — it moved to the
       Dashboard, with the other controls that change what the machine is doing
       rather than what a profile contains.
-- [ ] Reset TDP / Reset Fans sit right-aligned in their cards and still gate:
+- [x] Reset TDP / Reset Fans sit right-aligned in their cards and still gate:
       Reset Fans is refused above the safe sustained limit with the note under
       the fan card.
-- [ ] The **Settings** tab lists both firmware toggles under FIRMWARE, each
+- [x] The **Settings** tab lists both firmware toggles under FIRMWARE, each
       with its name leading and the device's own description beneath it (panel
       overdrive's says "may cause ghosting"), and each switch matching
       `./voltaire bootsound --get` / `paneloverdrive --get`.
-- [ ] Flip a switch there — the setting takes effect (`--get` agrees). Then
+- [x] Flip a switch there — the setting takes effect (`--get` agrees). Then
       change the same toggle from the CLI with the tab open: **the switch moves
       within a second**, which is the `state-changed` broadcast all three toggle
       write paths now emit. Set both back to preference afterwards.
-- [ ] The drawer's bottom bar holds the theme button and the expand button
+- [x] The drawer's bottom bar holds the theme button and the expand button
       only: the two firmware switches moved to this tab, and the drawer's
       gamepad footer is two items wide (`15:0:footer 15:1:footer`).
 
 ### The Dashboard's controls
 
-- [ ] Under the charts: a **POWER** card on the left (Profile, Charge limit,
+- [x] Under the charts: a **POWER** card on the left (Profile, Charge limit,
       Autoswitch) and **LIGHTING** then **DISPLAY** on the right. Every setting
       is one line — its name in a column on the left, its control filling the
       rest — and the names line up down each card. Nothing is a narrow column
       down one side, and the charts are not pushed below the fold.
-- [ ] The values are readable without touching anything: the charge limit shows
+- [x] The values are readable without touching anything: the charge limit shows
       `74%` beside its slider (not floating over the handle), and brightness
       reads `High` rather than `3`.
-- [ ] The Profile row is four buttons on one line, the last reading
+- [x] The Profile row is four buttons on one line, the last reading
       `<profile>…` — click it and the **Profiles** tab opens; it never applies a
       profile. Turn Autoswitch on: the two target rows appear *indented* beneath
       the switch.
-- [ ] Narrow the window towards its minimum: the chart grid reflows to fewer
+- [x] Narrow the window towards its minimum: the chart grid reflows to fewer
       per line, and nothing is clipped or horizontally scrolled.
-- [ ] The controls are a second copy, not a second setting: change the profile
+- [x] The controls are a second copy, not a second setting: change the profile
       here and the drawer follows within a second (and vice versa); the same
       for the charge limit and the autoswitch pair. `voltaire profile --get`
       agrees with both.
-- [ ] **Refresh rate** shows what `kscreen-doctor -o` reports for the panel
+- [x] **Refresh rate** shows what `kscreen-doctor -o` reports for the panel
       (180 Hz on the Z13). Open it — only the rates available at the *current*
       resolution are listed, no resolutions. Pick 60 Hz: the screen changes and
       the dropdown re-reads to `60 Hz`. Put it back to 180 Hz.
-- [ ] With a second screen attached, the card's title names the output it acts
+- [x] With a second screen attached, the card's title names the output it acts
       on (`REFRESH RATE · eDP-1`); with only the panel, it does not.
-- [ ] **Autoswitch** sits under it, off, with no target rows — the same shape as
+- [x] **Autoswitch** sits under it, off, with no target rows — the same shape as
       the Power card's autoswitch. Turn it on: two indented rows appear reading
       `180 Hz` (On AC, the rate already running) and `60 Hz` (On battery, the
       lowest offered), the screen does *not* change, and
       `~/.config/voltaire/config.toml` gains `refresh_autoswitch = "true"`,
       `refresh_ac = "180"`, `refresh_battery = "60"`.
-- [ ] **Unplug the charger.** The screen drops to 60 Hz within a couple of
+- [x] **Unplug the charger.** The screen drops to 60 Hz within a couple of
       seconds and the **Refresh rate** row re-reads to `60 Hz`; the journal has
       `refresh rate switched source=battery rate="60 Hz"`. Plug back in — it
       goes back to 180 Hz.
-- [ ] Turn the switch off: the two rows disappear but the config keeps both
+- [x] Turn the switch off: the two rows disappear but the config keeps both
       rates. Cycle the charger — nothing touches the screen and the journal logs
       no `refresh rate switched`. Turn it back on: the rows return at 180/60
       rather than being re-guessed.
-- [ ] Restart `voltaire-gui` while on battery with a rate configured: the screen
+- [x] Restart `voltaire-gui` while on battery with a rate configured: the screen
       is **left where it is** (the journal says `power source latched`, not
       `switched`) — a rate set by hand has to survive a restart.
-- [ ] Lighting is **two cards, KEYBOARD and LIGHTBAR**, side by side with no
+- [x] Lighting is **two cards, KEYBOARD and LIGHTBAR**, side by side with no
       zone selector, and each shows six effects in **one row**, not a 3×2 block.
       Set the two zones to different effects and colours — they stay independent,
       the hardware follows both, and each card hides the rows its effect does not
       use (so the two are different heights). The drawer still has *one* RGB
       section with Keyboard/Lightbar tabs; open it and confirm each tab shows
       what the matching card shows.
-- [ ] On a controller, D-pad **right** from Performance reaches `Custom…` (it is
+- [x] On a controller, D-pad **right** from Performance reaches `Custom…` (it is
       one line, not two), and right along the effect row reaches Off without
       dropping to another line. The drawer's own grids are unchanged — down from
       Performance still reaches Custom there.
-- [ ] **Custom…** under Colour 1 opens the HSL picker as a **popup anchored to
+- [x] **Custom…** under Colour 1 opens the HSL picker as a **popup anchored to
       the button**, not a page: the Dashboard stays behind it, dimmed. All three
       troughs are painted (hue spectrum, grey→colour, black→colour→white) and
       follow each other as you drag; the readouts and the hex update live and
       the LEDs follow. Dismiss with a click outside, `Escape`, or **B** — the
       window stays open in every case, and the tab highlight never goes blank.
-- [ ] The same **Custom** button in the *drawer's* RGB section opens the same
+- [x] The same **Custom** button in the *drawer's* RGB section opens the same
       picker there, sized to the 320px panel: nothing clipped at the right
       edge, the readout column and the hex fully visible.
-- [ ] The Dashboard reads as three headed bands — **TELEMETRY** (with the span
+- [x] The Dashboard reads as three headed bands — **TELEMETRY** (with the span
       buttons on its heading line), **SYSTEM**, **RGB** — each title over a full
       width rule that takes the theme's border colour. Switch themes with the
       window open and the rules follow.
-- [ ] Dashboard → **CPU boost**: turn it off and
+- [x] Dashboard → **CPU boost**: turn it off and
       `cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq` drops to
       the base clock (3000000 on this machine); turn it back on and it returns
       to 5187500. `voltaire cpuboost --get` agrees with the switch either way.
-- [ ] The choice is *replayed*, which is the whole reason it is not a firmware
+- [x] The choice is *replayed*, which is the whole reason it is not a firmware
       toggle: set it off, then
       `echo 1 | sudo tee /sys/devices/system/cpu/cpufreq/boost` (what a reboot
       does) and `systemctl --user restart voltaire` — the daemon puts it back to
       0 and logs `cpu boost restored`. With no stored preference it must write
       nothing at all.
-- [ ] On a machine that has not re-run `sudo voltaire setup`, the switch is
+- [x] On a machine that has not re-run `sudo voltaire setup`, the switch is
       present and every write fails with a permission error rather than
       silently doing nothing.
-- [ ] Settings → **Armoury Crate button**: the summary line under it names both
+- [x] Settings → **Armoury Crate button**: the summary line under it names both
       gestures and changes with the choice. Set it to **Full window**, then press
       the hardware button once — the full window opens, not the quickbar — and
       double-press it: the quickbar replaces the window. Set it back to
@@ -556,13 +591,13 @@ outside.
 
 ## 14. Cleanup
 
-- [ ] `./voltaire tdp --reset`, `./voltaire fancurve --reset` (if not already on
+- [x] `./voltaire tdp --reset`, `./voltaire fancurve --reset` (if not already on
       a stock profile), `./voltaire undervolt --reset`.
-- [ ] `./voltaire profile --delete gaming` (and any other test profiles),
+- [x] `./voltaire profile --delete gaming` (and any other test profiles),
       `./voltaire profile --set balanced`.
-- [ ] `./voltaire batterylimit --set <your usual>`, boot sound / panel overdrive
+- [x] `./voltaire batterylimit --set <your usual>`, boot sound / panel overdrive
       back to preference, lighting back to preference.
-- [ ] `systemctl --user status voltaire.service` — still healthy, journal free
+- [x] `systemctl --user status voltaire.service` — still healthy, journal free
       of errors from the whole run.
 
 ## Known behaviour: the enable one-shot fires again after a daemon restart

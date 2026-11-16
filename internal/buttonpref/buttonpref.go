@@ -155,12 +155,14 @@ func OpenGesture(single, want Surface, label string) string {
 	return "Press the " + Name(label) + " twice"
 }
 
-// OpenGestureFor is OpenGesture for a device: on one with no hardware button
-// the full window is reached only through the drawer's own expand button, and
-// telling the user to press a button the machine does not have would leave
-// them looking for it.
-func OpenGestureFor(info *api.DeviceInfo, single, want Surface, label string) string {
-	if !ShowPreference(info) {
+// OpenGestureFor is OpenGesture for a device and the user's choice of button:
+// with no button opening voltaire — the device has none, or the user chose
+// none — the full window is reached only through the drawer's own expand
+// button, and telling the user to press a button that does nothing would
+// leave them pressing it.
+func OpenGestureFor(info *api.DeviceInfo, st *api.State, single, want Surface) string {
+	_, label, ok := Drawer(info, st)
+	if !ok {
 		if want == Window {
 			return "Use the expand button at the foot of the quickbar"
 		}

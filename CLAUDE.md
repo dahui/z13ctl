@@ -53,6 +53,7 @@ cmd/                         Cobra subcommands
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs); --preset/--list-presets
                              resolve a named device curve into the same --set path
   cpuboost.go                get/set cpufreq boost clocks
+  button.go                  which hardware button opens voltaire (--list/--get/--set via the daemon)
   tdp.go                     get/set/reset TDP power limits (asus-armoury PPT, asus-nb-wmi fallback)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
   status.go                  display system status (temperature, fans, profile, TDP, battery)
@@ -78,9 +79,11 @@ internal/
   daemon/                    long-running daemon (socket server, state, button watcher)
     daemon.go                Package doc, Daemon struct, Options, Run(), getListeners() (socket activation)
     state.go                 XDG state file persistence (uses api.State/api.LightingState)
-    button.go                button watcher + pure pressTick seam: every press emits gui-toggle,
-                             a second within [50ms, 400ms] also emits gui-open-full
+    button.go                button watcher + pure pressTick seam: every press of the chosen
+                             button emits gui-toggle, a second within [50ms, 400ms] also emits
+                             gui-open-full; drawerButton/resolveDrawerButton + button-set
     button_test.go           pressTick decision table (no evdev device, no clock)
+    drawerbutton_test.go     the choice: resolution, button-set, the press filter, wire keys
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
                              stands down while d.suspending, with a tick-counted staleness ceiling
@@ -197,7 +200,12 @@ internal/
                              drift guards (the device-file example assembles; every schema
                              key is documented)
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
-    evdevkey/                driver.Buttons over one key on an evdev device ("evdev-key")
+    evdevkey/                driver.Buttons over one key ("evdev-key") or a chord of keys
+                             ("evdev-chord") on an evdev node; read-only, never grabbed, and
+                             refuses a typing keyboard unless keyboard_node opts it in
+    hidrawbtn/               driver.Buttons over a byte in a vendor HID report
+                             ("hidraw-report"; the Ally's buttons, the OXP's Home); refuses a
+                             keyboard interface by its report descriptor
   safety/                    the thermal-safety rules between handlers and drivers, pure and
                              parameterized by driver.PowerEnvelope
     safety.go                pure rules: FanCurveForTDP, FloorPWMAt, FloorAdjustsCurve,
@@ -233,6 +241,8 @@ internal/
     fonts/                   embedded Inter + fontconfig registration (see NOTICE)
   buttonpref/                which surface the hardware button opens: one value
                              (what a *single* press raises), its parse and its labels
+    chooser.go               which button opens voltaire: Choices, Drawer (the daemon's
+                             resolved answer), the Settings row's text
   theme/                     theme definitions, config persistence, CSS generation — pure Go
     migrate.go               ~/.config/z13gui → ~/.config/voltaire first-run copy shim
     css.go                   BuildThemeCSS — emits every token twice (@z13-* and
@@ -525,13 +535,82 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   machine. A grant for absent hardware matches nothing.
   `TestEveryDeviceFileTargetIsGranted` makes a new device file's zone or button
   fail CI until the packaged rules carry it.
-- **The hardware button's name is device data** (`button.label` →
-  `Device.ButtonLabel` → device-get `button_label`); `buttonpref` takes it and
-  falls back to "hardware button", so no surface names the Armoury Crate button
-  on a machine that has none. evdevkey checks the device's static
+- **The hardware button's name is device data** (the default `[[buttons]]`
+  entry's `label` → `Device.ButtonLabel` → device-get `button_label`, and the
+  chosen button's label via `buttonpref.Drawer`); `buttonpref` falls back to
+  "hardware button", so no surface names the Armoury Crate button on a machine
+  that has none. evdevkey checks the device's static
   `capabilities/key` bitmap for the keycode once per watch and only warns: the
   Z13's node reports KEY_PROG1 as well as KEY_PROG3, so the bitmap says what a
   node *can* send, not which key is the button.
+- **Which button opens voltaire is a choice among the device file's buttons,
+  never a key learned from a keyboard** (Jeff, 2026-11-15;
+  `.claude/plans/hardware-button-config.md`). Other devices have other buttons
+  (the Ally's arrive as a vendor HID report, the OXP's as key chords on its AT
+  keyboard) and a user may want a different one, so `[button]` became
+  `[[buttons]]`: each entry has an `id`, a `label`, a method (`evdev-key`,
+  `evdev-chord`, `hidraw-report`) and at most one is `default`. The daemon
+  watches all of them (one merged watcher, each press carrying its `ButtonEvent.ID`),
+  stores the user's choice as `State.DrawerButton` (`button-set`; `none` and
+  `default` too), and runs only the chosen button's presses through
+  `pressTick`. get-state reports the choice resolved; device-get lists
+  `hardware_buttons`. Events stay payload-free and mean what they always did,
+  so Decky and 1.x clients are unaffected. The GUI's Settings card has an
+  **Open voltaire with** dropdown, and the CLI `voltaire button`.
+  **This is the G-Helper model, and the alternatives were measured first.**
+  G-Helper binds a fixed list of named vendor keys to actions from dropdowns;
+  its one arbitrary key is a global hotkey set by hand in `config.json` and
+  registered with the OS (`RegisterHotKey`). HHD uses fixed lists too; on the
+  OXP it runs as root, EVIOCGRABs the AT keyboard and re-emits only volume.
+  The XDG GlobalShortcuts portal was spiked and works from a systemd service
+  (`host.portal.Registry.Register` needs a desktop file named after the app
+  id, then `CreateSession` succeeds), but binding goes through a KDE dialog
+  asking the user to assign keys, which Jeff judged too much for casual users.
+  It remains a possible later option; nothing of it shipped. **List only
+  buttons captured on the machine (evtest) that do nothing else there**: the
+  Z13's hotkey node advertises 38 keys (asus-wmi's keymap for every ASUS
+  model), the kernel acts on some itself (Fn+F5), and since nothing grabs, a
+  key with a job would do both. The Z13 lists only the Armoury Crate button
+  until a capture session finds more. A chord requires *every* key held, not
+  HHD's one distinguishing key, which would fire on that key typed alone.
+- **No button grant may reach a typing keyboard, and each kind of node has two
+  guards** (2026-11-15). Read access to a keyboard is read access to every
+  keystroke. **evdev:** the udev grant carries `ENV{ID_INPUT_KEYBOARD}!="1"`
+  (udev's own `input_id` classification; "Asus WMI hotkeys" has only
+  `ID_INPUT_KEY`) and is read-only `0640` — a writable evdev node accepts
+  injected events, and every release before this granted `0660`; the watcher
+  opens read-only and applies the same test to the node's `capabilities/key`
+  bitmap before opening (`evdevkey.IsTypingKeyboard`, fail-closed on an
+  unreadable bitmap), and setup's direct grant uses that test too, with
+  `g=r` so an old write bit is dropped. A device whose button chords arrive on
+  a keyboard node (the OXP's AT keyboard) opts it in with `keyboard_node =
+  "<why>"`, and its grant is then written scoped to the file's DMI match
+  (`ATTR{[dmi/id]sys_vendor}`, `ATTR{[dmi/id]product_name}`), with glob
+  characters refused in that match. **hidraw:** a `hidraw-report` button names
+  one `interface`, the watcher refuses a node whose report descriptor has a
+  top-level Keyboard/Keypad collection (`hidrawbtn.IsKeyboardDescriptor`), and
+  setup removes the group from any granted interface whose descriptor is a
+  keyboard (udev cannot read descriptors). Verified on the Z13 with
+  `udevadm test` against throwaway rules in `/run/udev/rules.d`: the guarded
+  rule did not match the AT keyboard while an unguarded control did, and the
+  DMI rule matched this machine and not an OXP pattern.
+  `TestButtonGrantsNeverReachATypingKeyboard`,
+  `TestKeyboardNodeGrantIsScopedToItsDevice`, `TestHidrawGrantsNameAnInterface`;
+  every negative control was run.
+- **Lighting's hidraw grant is one interface; it was every interface of the
+  device until 2026-11-15, the cover's typing interface included.** The rule
+  matched `idVendor`/`idProduct` alone, so all five hidraw nodes of the cover
+  (`0b05:1a30`) were group `users` read-write since z13ctl's initial commit:
+  interface 2 is Generic Desktop / Keyboard (raw keystrokes) and 3 the
+  touchpad. Only interface 0 carries the Aura report (`0x5d`) on both devices,
+  and the driver writes only there. Lighting zones now require `interface`
+  (`ATTRS{bInterfaceNumber}`), and setup's `revokeStaleHidrawGrants` resets a
+  lighting device's other interfaces that still carry setup's group to
+  `root:root 0600`, because udev leaves a node's permissions alone once no rule
+  sets them — re-running setup otherwise left the hole open until reboot.
+  Verified on the Z13: setup revoked hidraw2/3/4/6/9, lighting worked through
+  interface 0 alone. **The same fix still has to be ported to main as a z13ctl
+  1.4.4** (Open work).
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -632,6 +711,7 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | telemetry history | `{"cmd":"telemetry-history","seconds":60}` | `ok`, `history` (typed array; absent `seconds` = the whole window) |
   | feature set | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
   | feature get | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
+  | button that opens voltaire | `{"cmd":"button-set","set":"armoury-crate"}` (an id, `none`, or `default`) | `ok` |
   | cpu boost set | `{"cmd":"cpuboost","set":"0"}` | `ok` |
   | cpu boost get | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
   | panel overdrive set | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
@@ -3560,7 +3640,7 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done (capability absence hiding controls landed 2026-11-15) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls) — see Open work below. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls, the gamepad blocker with its capabilities now kept only there) — the five unticked boxes in `dev/smoke-z13.md`; see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -3613,6 +3693,11 @@ diff whenever a main release touches `api/`.
    (minimize/close under gamescope), which also fixed minimize leaving the
    controller grabbed. Entry in `internal/gui/CLAUDE.md`; plan in
    `.claude/plans/window-controls.md`. Needs the Gaming Mode re-check too.
+   Since then the GUI keeps CAP_BPF/CAP_PERFMON only under gamescope (the
+   caps-drop entry), so the same session must confirm the blocker still
+   attaches there with a real controller and a game running. All five checks
+   are the unticked boxes in `dev/smoke-z13.md`; they are the last thing
+   before the M3 release mechanics.
 3. **pm_table telemetry** — parser and fixtures done 2026-10-09; the sampler
    and card are deliberately not built (every read is an SMU message; see the
    pm_table entry). Revisit with M5, where the OXP reads the same table:
@@ -3655,11 +3740,15 @@ diff whenever a main release touches `api/`.
    - 80 W `--force` put the floor in place before the PPT write and held
      80.0 W at 94 °C.
    - `tdp --reset` landed on balanced at 52.0 W and skipped the SMU write.
-8. **Full hardware smoke of the final tree, before tagging.** The three M3
-   parity gates passed on 2026-08-09, before M4 and the device-values audit
-   reworked the drivers, the GUI and the lighting path; every change since was
-   verified piecemeal, but `dev/smoke-z13.md` has not been run end to end
-   against what will ship. Its suspend sections need asking first.
+8. ~~Full hardware smoke of the final tree~~ — run 2026-11-15 on
+   `feat/v2-refactor`; every desktop box passed (`dev/smoke-z13.md` is ticked
+   and carries a run note). It found five faults, all fixed and re-verified
+   the same day (1517879, 2967c14 and the findings commit): the drawer
+   reopening on the window's focus list, oversized text from the blocker's
+   file capabilities (the caps-drop entry), stale armoury values shown on
+   firmware profiles (`ReadDisplayed`), a WARN on every charger edge, and
+   Adwaita showing through on GNOME (`internal/gui/CLAUDE.md`). The checklist's
+   five Gaming Mode boxes are item 2's re-check.
 9. ~~Per-zone `off` discards the zone's lighting state~~ — fixed 2026-11-15
    (entry above; `lighting_off_test.go`). The same code is on main, where it
    is still live in every z13ctl 1.x release.
@@ -3670,6 +3759,13 @@ diff whenever a main release touches `api/`.
    **M6** (Ally + generic AMD TOMLs).
 12. **Ports from main**: none outstanding (1.4.3 ported 2026-11-15); after any
     new main release, `git log v1.4.3..main`.
+13. **Port the hidraw interface fix to main (z13ctl 1.4.4)** — the lighting
+    grant there still covers every interface of the cover keyboard, its typing
+    interface included (entry above). The port is the rule change plus setup's
+    revocation; Jeff tags and decides on disclosure.
+14. **Z13 button candidates**: an evtest capture on "Asus WMI hotkeys" while
+    pressing the Fn keys, keeping only keys that arrive there and do nothing
+    else, would give the Settings chooser more than the Armoury Crate button.
 
 ### The daemon — COMPLETE
 
