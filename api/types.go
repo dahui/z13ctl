@@ -129,6 +129,12 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool) {
 }
 
 // LightingState captures all parameters needed to reproduce one lighting zone.
+//
+// A disabled state (Enabled false) keeps the effect it had, so turning a zone
+// or the whole device back on can resume it. Daemons through v1.4.2 stored a
+// per-zone off as {Enabled: false} with every other field zeroed, so a client
+// that may talk to one must not trust the other fields of a disabled state —
+// in particular its Brightness, where 0 is the hardware's off level.
 type LightingState struct {
 	Enabled    bool   `json:"enabled"`
 	Mode       string `json:"mode"`

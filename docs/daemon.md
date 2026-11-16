@@ -329,7 +329,10 @@ The daemon persists state to:
 The file is written atomically after every successful command. It stores:
 
 - `lighting` — mode, color, color2, speed, brightness, enabled flag
-- `devices` — per-device overrides (keyboard/lightbar can have independent state)
+- `devices` — per-device overrides (keyboard/lightbar can have independent state).
+  Turning one zone off keeps its effect with `enabled` false, so
+  `z13ctl brightness <level> --device <zone>` brings back that zone's own
+  effect. (Through v1.4.2 a per-zone off cleared the rest of the entry.)
 - `profile` — the active profile: a firmware profile, or a custom profile name
 - `battery_limit` — last-set charge limit
 - `custom_profiles` — saved custom profiles keyed by name, each holding its own

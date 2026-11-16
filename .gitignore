@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+voltaire
+voltaire-gui/voltaire-gui
 z13ctl
 dist/
 
@@ -42,3 +44,8 @@ release-notes.md
 # Generated documentation artifacts
 docs/api-reference.md
 site/
+# The 2.x docs site's build output, left behind when switching here from a
+# branch that has website/ (which ignores it in its own website/.gitignore)
+website/node_modules/
+website/dist/
+website/.astro/

@@ -360,11 +360,11 @@ func (d *Daemon) handleOff(req request) response {
 	if req.Device != "" {
 		slog.Info("off", "device", req.Device)
 		if !strings.HasPrefix(req.Device, "/") {
-			// Named per-device off: save disabled state for this zone.
+			// Named per-device off: keep the zone's effect, disabled.
 			if d.state.Devices == nil {
 				d.state.Devices = make(map[string]api.LightingState)
 			}
-			d.state.Devices[req.Device] = api.LightingState{Enabled: false}
+			d.state.Devices[req.Device] = zoneOffState(d.state, req.Device)
 			if err := saveState(cloneState(d.state)); err != nil {
 				slog.Warn("failed to save state", "err", err)
 			}
@@ -378,6 +378,28 @@ func (d *Daemon) handleOff(req request) response {
 		}
 	}
 	return response{OK: true}
+}
+
+// zoneOffState is what a per-zone off stores for zone: the zone's effect with
+// Enabled cleared, as the all-device off does for the global state. A zone
+// with no entry of its own was showing the all-device state, so that is what
+// it keeps.
+//
+// It used to store a bare {Enabled: false}, discarding mode, colours, speed
+// and brightness. get-state then served a zone at brightness 0 — the
+// hardware's off level, which is how a GUI re-enabled a zone into darkness
+// while reporting success — and `brightness --device` could only bring the
+// zone back on the all-device effect, never its own. normalizeLightingState
+// repairs the strings of such an entry on load but cannot recover the zone's
+// own effect or its brightness.
+func zoneOffState(s api.State, zone string) api.LightingState {
+	ls, ok := s.Devices[zone]
+	if !ok {
+		ls = s.Lighting
+	}
+	ls = normalizeLightingState(ls, s.Lighting)
+	ls.Enabled = false
+	return ls
 }
 
 func (d *Daemon) handleBrightness(req request) response {
@@ -423,9 +445,10 @@ func (d *Daemon) handleBrightness(req request) response {
 		}
 		ls := d.state.Lighting // base: fall back to all-device state
 		if existing, ok := d.state.Devices[req.Device]; ok {
-			// Normalise: a zone turned off earlier is stored as
-			// {Enabled: false} with no mode or colour, and reusing it verbatim
-			// would persist an enabled state that cannot be re-applied.
+			// Normalise: a zone turned off before zoneOffState existed is
+			// stored as {Enabled: false} with no mode or colour, and reusing
+			// it verbatim would persist an enabled state that cannot be
+			// re-applied.
 			ls = normalizeLightingState(existing, d.state.Lighting)
 		}
 		ls.Brightness = req.Brightness
