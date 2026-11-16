@@ -13,6 +13,7 @@ import (
 
 	"github.com/dahui/voltaire/v2/internal/panelgeom"
 	"github.com/diamondburned/gotk4-layer-shell/pkg/gtk4layershell"
+	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -86,6 +87,7 @@ func (b *Backend) Configure(isVisible func() bool, onDismiss func()) {
 		margin := geo.Height() / marginFraction
 		gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeTop, margin)
 		gtk4layershell.SetMargin(b.gtkWin, gtk4layershell.LayerShellEdgeBottom, margin)
+		b.setInputRegion(false)
 	})
 
 	// Keep the window surface alive at all times; "hidden" = margin off-screen.
@@ -94,6 +96,9 @@ func (b *Backend) Configure(isVisible func() bool, onDismiss func()) {
 	// damage tracking) but invisible to the user. Show() sets opacity to 1.
 	b.appWin.SetVisible(true)
 	b.setOpacity(0)
+	// Start with an empty input region: the drawer is parked off-screen at
+	// startup, and the 1px still on-screen must not generate hover events.
+	b.setInputRegion(false)
 
 	// After the surface is mapped, poll until the compositor configures the
 	// actual width (which may exceed drawerWidth due to CSS borders/styling).
@@ -201,6 +206,7 @@ func (b *Backend) Scale() float64 { return 1.0 }
 func (b *Backend) Show() {
 	slog.Debug("backend.Show", "startMargin", b.margin, "neighborBeyondEdge", b.hasNeighborBeyondEdge())
 	b.showTime = time.Now()
+	b.setInputRegion(true)
 
 	gtk4layershell.SetKeyboardMode(b.gtkWin, gtk4layershell.LayerShellKeyboardModeOnDemand)
 	if b.hasNeighborBeyondEdge() {
@@ -220,6 +226,12 @@ func (b *Backend) Show() {
 // Hide starts the slide-out (or fade-out) animation.
 func (b *Backend) Hide() {
 	slog.Debug("backend.Hide", "startMargin", b.margin, "neighborBeyondEdge", b.hasNeighborBeyondEdge())
+	// Drop pointer input before the drawer leaves the screen. Otherwise the
+	// 1px strip kept on-screen at the monitor edge still receives hover events
+	// and shows hints and tooltips from the closed drawer — on the boundary
+	// with an adjacent display, where the user is aiming at the other monitor
+	// (z13gui PR #20).
+	b.setInputRegion(false)
 	if w := b.gtkWin.Width(); w > 0 {
 		b.hiddenMargin = -(w - 1)
 	}
@@ -375,6 +387,31 @@ func (b *Backend) hasNeighborBeyondEdge() bool {
 		others = append(others, panelgeom.Rect{X: mg.X(), Y: mg.Y(), W: mg.Width(), H: mg.Height()})
 	}
 	return panelgeom.HasNeighbor(selfRect, others, b.edge)
+}
+
+// setInputRegion makes the layer surface interactive (active=true) or
+// click-through (active=false). A nil region means the whole surface, while an
+// empty region means no pointer input at all — the same inversion the overlay
+// backend relies on while its drawer is hidden.
+func (b *Backend) setInputRegion(active bool) {
+	surfacer := b.appWin.Surface()
+	if surfacer == nil {
+		return
+	}
+	surface, ok := surfacer.(*gdk.Surface)
+	if !ok || surface == nil {
+		return
+	}
+	if active {
+		surface.SetInputRegion(nil)
+		return
+	}
+	region, err := cairo.RegionCreate()
+	if err != nil {
+		slog.Warn("layershell: could not create an empty input region", "err", err)
+		return
+	}
+	surface.SetInputRegion(region)
 }
 
 // invalidateSurface forces both widget-level and GDK surface-level

@@ -191,6 +191,11 @@ contrib/
   destroying/hiding the surface. This prevents the ghost-surface artifact that KDE Plasma
   shows when remapping a surface. The 1px margin keeps the surface in KWin's composited
   output for damage tracking; opacity 0 makes the sliver invisible to the user.
+  **Invisible is not inert**: the sliver still took pointer input, so hovering the
+  boundary with an adjacent monitor raised hints from the closed drawer. The
+  backend sets an empty input region at startup and in `Hide()` and restores the
+  full one in `Show()` (`setInputRegion`; z13gui PR #20, ported 2026-11-15) —
+  the same click-through the overlay backend already used while hidden.
 - **Width**: `SetSizeRequest(320, -1)`. Height is natural (content-driven, scrolled).
 - **Show/hide animation**: smoothstep easing via `AddTickCallback` (VSync-synced),
   with a shared `animGen` generation counter so a show cancels an in-flight hide
