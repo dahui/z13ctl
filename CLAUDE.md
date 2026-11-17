@@ -3782,6 +3782,12 @@ diff whenever a main release touches `api/`.
 14. **Z13 button candidates**: an evtest capture on "Asus WMI hotkeys" while
     pressing the Fn keys, keeping only keys that arrive there and do nothing
     else, would give the Settings chooser more than the Armoury Crate button.
+15. **Buttons through InputPlumber** (Jeff, 2026-11-16; handhelds first):
+    InputPlumber grabs and hides the button nodes on the OXP, Ally *and* Z13,
+    so a managed device's buttons reach voltaire only as a profile mapping to
+    a DBus action. To be built and tested on the OXP X2 Mini Pro, in a
+    session there; the plan opens with that session's kickoff:
+    `.claude/plans/inputplumber-buttons.md`.
 
 ### The daemon — COMPLETE
 
