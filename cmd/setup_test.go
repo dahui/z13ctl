@@ -71,7 +71,7 @@ func TestEveryDeviceFileTargetIsGranted(t *testing.T) {
 	var want []string
 	for _, g := range targets.hid {
 		v, p, _ := strings.Cut(g.usb, ":")
-		want = append(want, `ATTRS{idVendor}=="`+v+`", ATTRS{idProduct}=="`+p+`", ATTRS{bInterfaceNumber}=="`+fmt.Sprintf("%02x", g.iface)+`"`)
+		want = append(want, `ATTRS{idVendor}=="`+v+`", ATTRS{idProduct}=="`+p+`", ENV{ID_USB_INTERFACE_NUM}=="`+fmt.Sprintf("%02x", g.iface)+`"`)
 	}
 	for _, g := range targets.buttons {
 		want = append(want, `ATTRS{name}=="`+g.name+`"`)
@@ -416,8 +416,15 @@ func TestHidrawGrantsNameAnInterface(t *testing.T) {
 				continue
 			}
 			n++
-			if !strings.Contains(line, `ATTRS{bInterfaceNumber}==`) {
+			if !strings.Contains(line, `ENV{ID_USB_INTERFACE_NUM}==`) {
 				t.Errorf("%s grants every interface of a device:\n  %s", name, line)
+			}
+			// Every ATTRS key in a rule must match on one parent device, and
+			// bInterfaceNumber is on the USB interface while idVendor and
+			// idProduct are on the USB device above it: this form matches
+			// nothing, and shipped once, leaving the keyboard dark at boot.
+			if strings.Contains(line, `ATTRS{bInterfaceNumber}`) {
+				t.Errorf("%s matches the interface as ATTRS, which can never match beside idVendor:\n  %s", name, line)
 			}
 		}
 		if n == 0 {

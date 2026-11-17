@@ -87,7 +87,10 @@ output.
       shows group access on interface 00 of `0b05:1a30` and `0b05:18c6` only; the
       cover's interface 02 (its typing keyboard) is `root` and `crw-------`. The
       hotkey node is `crw-r-----` (read-only), and setup printed "Removed group
-      users from …" for any interface an older setup had granted.
+      users from …" for any interface an older setup had granted. **Check this
+      after a reboot**, or with `udevadm test --action=add` on each node: a grant
+      left from an older setup survives until the node is recreated, and once hid
+      a rule that matched nothing (2026-11-16).
 - [x] Daemon units installed but **stopped** for the first sections:
       `systemctl --user stop voltaire.service voltaire.socket`
 

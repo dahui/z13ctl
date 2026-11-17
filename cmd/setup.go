@@ -66,6 +66,13 @@ type hidGrant struct {
 	iface int    // bInterfaceNumber
 }
 
+// The interface is matched as ENV{ID_USB_INTERFACE_NUM}, which udev's usb_id
+// sets on the hidraw node itself, and never as ATTRS{bInterfaceNumber}: every
+// ATTRS key in one rule must match on the same parent, and bInterfaceNumber
+// lives on the USB interface while idVendor/idProduct live on the USB device
+// above it. The ATTRS form matched nothing, so the first boot after it shipped
+// (2026-11-15) left the lighting interfaces root-only and the keyboard dark.
+
 // buttonGrant is one input node a button reads. An ordinary grant (no
 // deviceID) is written so it can never match a typing keyboard; a
 // keyboard_node grant is written scoped to its device's DMI match instead, so
@@ -170,11 +177,11 @@ func buildRulesContent(group string) string {
 	var hid strings.Builder
 	for _, g := range targets.hid {
 		v, p, _ := strings.Cut(g.usb, ":")
-		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ATTRS{bInterfaceNumber}=="%02x", MODE="0660", GROUP="%s"`+"\n", v, p, g.iface, group)
+		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ENV{ID_USB_INTERFACE_NUM}=="%02x", MODE="0660", GROUP="%s"`+"\n", v, p, g.iface, group)
 	}
 	for _, g := range targets.hidButtons {
 		v, p, _ := strings.Cut(g.usb, ":")
-		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ATTRS{bInterfaceNumber}=="%02x", MODE="0640", GROUP="%s"`+"\n", v, p, g.iface, group)
+		fmt.Fprintf(&hid, `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", ATTRS{idProduct}=="%s", ENV{ID_USB_INTERFACE_NUM}=="%02x", MODE="0640", GROUP="%s"`+"\n", v, p, g.iface, group)
 	}
 	curves, readings := asus.FanHwmonNames()
 	return fmt.Sprintf(`# 99-voltaire.rules — voltaire device access

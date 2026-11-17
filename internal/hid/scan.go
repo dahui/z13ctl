@@ -87,13 +87,18 @@ func findAll(known []Known) (*Device, error) {
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
-			"no ASUS Aura devices found (%s); try sudo or add a udev rule:\n"+
-				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+			"no ASUS Aura devices found (%s); "+grantHint,
 			knownNames(known),
 		)
 	}
 	return &Device{nodes: nodes}, nil
 }
+
+// grantHint is how to fix a permission failure. It names voltaire setup and
+// deliberately no hand-written rule: the obvious one, a grant by vendor alone,
+// reaches every interface of the device, and on a keyboard one of those is
+// the interface it types through. Setup grants only the lighting interface.
+const grantHint = "run 'sudo voltaire setup' to grant access to the lighting interface"
 
 func findByName(want string, known []Known) (*Device, error) {
 	entries, _ := filepath.Glob(ueventGlob())
@@ -117,14 +122,12 @@ func findByName(want string, known []Known) (*Device, error) {
 	}
 	if nameFound {
 		return nil, fmt.Errorf(
-			"no Aura-capable node found for %q; try sudo or add a udev rule:\n"+
-				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+			"no Aura-capable node found for %q; "+grantHint,
 			want,
 		)
 	}
 	return nil, fmt.Errorf(
-		"%q device not found; try sudo or add a udev rule:\n"+
-			"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+		"%q device not found; "+grantHint,
 		want,
 	)
 }
