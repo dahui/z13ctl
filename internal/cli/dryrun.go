@@ -245,13 +245,15 @@ func DryRunFeature(id string, value int) {
 
 // DryRunFanCurve prints the sysfs writes for a fan curve set operation.
 // The same curve is written to every fan's curve channel.
-func DryRunFanCurve(points []api.FanCurvePoint) {
+//
+// curveDir and chans are the curve hwmon and its channel numbers, passed in
+// rather than discovered here for the reason DryRunTdp takes the live curve:
+// a dry run that reads hwmon makes its test depend on the machine running it.
+func DryRunFanCurve(curveDir string, chans []int, points []api.FanCurvePoint) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := asus.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	chans := asus.FanPWMIndices()
 	if len(chans) == 0 {
 		fmt.Printf("Would write the curve to every pwm*_auto_point* channel in %s and set each pwm*_enable to 1 (custom)\n", curveDir)
 	}
@@ -266,13 +268,12 @@ func DryRunFanCurve(points []api.FanCurvePoint) {
 }
 
 // DryRunFanCurveReset prints the sysfs writes for a fan curve reset (every fan).
-func DryRunFanCurveReset() {
+// curveDir and chans are passed in, as for DryRunFanCurve.
+func DryRunFanCurveReset(curveDir string, chans []int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	curveDir := asus.FindFanCurveHwmonPath()
 	if curveDir == "" {
 		curveDir = "<hwmon not found>"
 	}
-	chans := asus.FanPWMIndices()
 	if len(chans) == 0 {
 		fmt.Printf("Would write 2 (auto) to every pwm*_enable in %s\n", curveDir)
 	}

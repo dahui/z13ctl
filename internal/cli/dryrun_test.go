@@ -215,12 +215,16 @@ func TestDryRunApply_Breathe(t *testing.T) {
 	}
 }
 
+// fakeCurveDir stands in for the curve hwmon: the dry runs take the
+// directory and channels as arguments so these tests never read the machine's.
+const fakeCurveDir = "/sys/class/hwmon/hwmon9"
+
 func TestDryRunFanCurve(t *testing.T) {
 	points := []api.FanCurvePoint{
 		{Temp: 48, PWM: 2}, {Temp: 53, PWM: 22}, {Temp: 57, PWM: 30}, {Temp: 60, PWM: 43},
 		{Temp: 63, PWM: 56}, {Temp: 65, PWM: 68}, {Temp: 70, PWM: 89}, {Temp: 76, PWM: 102},
 	}
-	out := captureStdout(t, func() { cli.DryRunFanCurve(points) })
+	out := captureStdout(t, func() { cli.DryRunFanCurve(fakeCurveDir, []int{1, 2}, points) })
 
 	for _, want := range []string{
 		"DRY RUN",
@@ -239,7 +243,7 @@ func TestDryRunFanCurve(t *testing.T) {
 }
 
 func TestDryRunFanCurveReset(t *testing.T) {
-	out := captureStdout(t, func() { cli.DryRunFanCurveReset() })
+	out := captureStdout(t, func() { cli.DryRunFanCurveReset(fakeCurveDir, []int{1, 2}) })
 
 	for _, want := range []string{
 		"DRY RUN",

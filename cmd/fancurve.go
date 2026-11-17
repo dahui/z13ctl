@@ -14,6 +14,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
@@ -227,7 +228,7 @@ func runFanCurveSet() error {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "fan curve")
 			return nil
 		}
-		cli.DryRunFanCurve(points)
+		cli.DryRunFanCurve(asus.FindFanCurveHwmonPath(), asus.FanPWMIndices(), points)
 		return nil
 	}
 
@@ -299,7 +300,7 @@ func runFanCurveReset() error {
 			cli.DryRunProfileEdit(fanCurveProfileFlag, "cleared fan curve")
 			return nil
 		}
-		cli.DryRunFanCurveReset()
+		cli.DryRunFanCurveReset(asus.FindFanCurveHwmonPath(), asus.FanPWMIndices())
 		return nil
 	}
 

@@ -64,8 +64,21 @@ func TestZ13AssemblesWithRegisteredDrivers(t *testing.T) {
 	if got := d.Toggles.List(); len(got) != 2 || got[0].ID != "boot_sound" || got[1].ID != "panel_overdrive" {
 		t.Errorf("toggles = %+v, want boot_sound + panel_overdrive", got)
 	}
-	if names := d.Profiles.Names(); len(names) != 3 || names[0] != "quiet" {
-		t.Errorf("profile names = %v, want the three firmware profiles", names)
+	// Names is the kernel's choices filtered by the file, so its contents
+	// depend on the machine running the test (the linux package covers that
+	// rule against a fake tree). What holds everywhere: nothing outside the
+	// file's list, in the file's order.
+	names := d.Profiles.Names()
+	declared := c.Profiles.Names
+	i := 0
+	for _, n := range names {
+		for i < len(declared) && declared[i] != n {
+			i++
+		}
+		if i == len(declared) {
+			t.Errorf("profile names = %v, want a subset of the file's %v in its order", names, declared)
+			break
+		}
 	}
 }
 
