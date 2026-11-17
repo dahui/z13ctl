@@ -3788,6 +3788,11 @@ diff whenever a main release touches `api/`.
     a DBus action. To be built and tested on the OXP X2 Mini Pro, in a
     session there; the plan opens with that session's kickoff:
     `.claude/plans/inputplumber-buttons.md`.
+16. **OXP X2 Mini Pro power (M5)** (Jeff, 2026-11-16): real TDP through
+    ryzen_smu (amkillam fork) when present, `amd-pmf` platform profiles as the
+    fallback with an install note; no kernel module of ours. The lockup rules
+    learned in oxp-tdpd are requirements. Plan: `.claude/plans/oxp-power.md`;
+    platform state and evidence: `.claude/plans/oxp-x2-mini-pro-status.md`.
 
 ### The daemon — COMPLETE
 
