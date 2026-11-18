@@ -30,6 +30,11 @@ import (
 	"github.com/dahui/voltaire/v2/internal/drivers/linux"
 )
 
+// smuMissing says why a capability through the SMU cannot be offered ("" when
+// the ryzen_smu module is loaded). A variable so this package's tests decide
+// the answer: the module's presence is a fact about the machine running them.
+var smuMissing = amd.SMUMissingReasonFor
+
 func init() {
 	device.RegisterFans("asus-nb-wmi", func(c device.FansConfig) (driver.FanController, error) {
 		return asus.NewFanController(c.Shape()), nil
@@ -44,7 +49,7 @@ func init() {
 		// ryzen_smu is out of tree: without it the device has no power
 		// control, and says how to get one, rather than offering a slider
 		// whose every write fails.
-		if reason := amd.SMUMissingReason(); reason != "" {
+		if reason := smuMissing("TDP control"); reason != "" {
 			return nil, &device.UnavailableError{Reason: reason}
 		}
 		profile := ""
@@ -86,6 +91,12 @@ func init() {
 		return linux.NewBattery(c.Caps(), charger), nil
 	})
 	device.RegisterUndervolt("ryzen-smu-co", func(c device.UndervoltConfig) (driver.Undervolter, error) {
+		// As for amd-smu power: without the out-of-tree module there is no
+		// undervolt control, and the device says how to get one, rather than
+		// listing a section every client must then hide (2026-11-17).
+		if reason := smuMissing("Undervolting"); reason != "" {
+			return nil, &device.UnavailableError{Reason: reason}
+		}
 		return amd.NewUndervolter(c.Min, c.Max, c.Text()), nil
 	})
 	// Not an ASUS interface at all — cpufreq's boost switch is generic Linux,

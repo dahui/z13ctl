@@ -167,8 +167,9 @@ type Window struct {
 	profiles   *profileSection
 	autoswitch *autoswitchSection
 	battery    *batterySection
-	tdpSlider  *tdpSliderSection // nil off the one-slider model (tdpslider.go)
-	brightness *levelSlider      // the drawer's, when its layout has one (levels.go)
+	tdpSlider  *tdpSliderSection       // nil off the one-slider model (tdpslider.go)
+	uvSlider   *undervoltSliderSection // the drawer's undervolt setting, when its layout has one (undervoltslider.go)
+	brightness *levelSlider            // the drawer's, when its layout has one (levels.go)
 	volume     *levelSlider
 	rumble     *rumbleSection // the drawer's vibration slider (rumbleview.go)
 

@@ -70,10 +70,16 @@ func setPPT(stapm, fast, slow int) error {
 // SMU. The fork a CPU needs is named where it is known (ForkNote), since
 // installing the wrong one looks like success until the first write.
 func SMUMissingReason() string {
+	return SMUMissingReasonFor("TDP control")
+}
+
+// SMUMissingReasonFor is SMUMissingReason for any capability that goes
+// through the SMU, named by what ("Undervolting").
+func SMUMissingReasonFor(what string) string {
 	if SMUAvailable() {
 		return ""
 	}
-	reason := "TDP control needs the ryzen_smu kernel module, which is not loaded"
+	reason := what + " needs the ryzen_smu kernel module, which is not loaded"
 	if p, err := coPlatformFor(); err == nil && p.ForkNote != "" {
 		reason += "; " + p.ForkNote
 	}

@@ -12,6 +12,7 @@ package daemon
 import (
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/drivers/amd"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	// Registers the Z13 driver factories, as the voltaire binary does.
@@ -53,6 +54,19 @@ func assembleForTest(c device.Config) *device.Device {
 		// serves while the EC is not answering.
 		d.Power.Power = deviceFileEnvelope{Power: d.Power.Power,
 			env: d.Power.Power.(driver.DeviceEnvelope).DeviceEnvelope()}
+	}
+	if c.Undervolt != nil && d.Undervolt == nil {
+		// The ryzen-smu-co factory reports the capability unavailable when
+		// the out-of-tree ryzen_smu module is not loaded, which is a fact
+		// about the machine running the test. The document is what is tested.
+		d.Undervolt = amd.NewUndervolter(c.Undervolt.Min, c.Undervolt.Max, c.Undervolt.Text())
+		kept := d.Unavailable[:0]
+		for _, u := range d.Unavailable {
+			if u.Capability != "undervolt" {
+				kept = append(kept, u)
+			}
+		}
+		d.Unavailable = kept
 	}
 	if d.Profiles != nil {
 		// The driver offers the kernel's choices filtered by the device data,

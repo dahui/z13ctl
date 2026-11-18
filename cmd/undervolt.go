@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -44,6 +45,11 @@ range this machine accepts.
 
 Offsets are volatile — they reset on reboot and sleep. The daemon reapplies
 them automatically on startup and resume when a custom profile is active.
+
+On a device with a single TDP slider (the OneXPlayer X2 Mini Pro), an offset
+set without --profile is a device setting, like the slider: it stays in force
+on the firmware profile and under any custom profile that has no offset of its
+own, is reapplied at startup and resume, and leaves a running custom profile.
 
 On AMD processors the offset is the Curve Optimizer (CO), written through the
 ryzen_smu kernel module (ryzen_smu-dkms-git on Arch/AUR); the amkillam fork is
@@ -91,7 +97,7 @@ func runUndervoltGet() error {
 		return err
 	}
 	if hw.Undervolt == nil {
-		return fmt.Errorf("no undervolt control on this device")
+		return errors.New(hw.Missing("undervolt", "no undervolt control on this device"))
 	}
 	if !hw.Undervolt.Present() {
 		return fmt.Errorf("ryzen_smu kernel module not detected\n  Install: ryzen_smu-dkms-git (AUR) or equivalent for your distro")
@@ -131,7 +137,7 @@ func runUndervoltSet() error {
 		return err
 	}
 	if hw.Undervolt == nil {
-		return fmt.Errorf("no undervolt control on this device")
+		return errors.New(hw.Missing("undervolt", "no undervolt control on this device"))
 	}
 	// The bounds come from device data; the message matches the daemon's, which
 	// validates the same request the same way.
@@ -184,7 +190,7 @@ func runUndervoltReset() error {
 			return err
 		}
 		if hw.Undervolt == nil {
-			return fmt.Errorf("no undervolt control on this device")
+			return errors.New(hw.Missing("undervolt", "no undervolt control on this device"))
 		}
 		command, err := undervoltCommand(hw.Undervolt)
 		if err != nil {
@@ -213,7 +219,7 @@ func runUndervoltReset() error {
 		return err
 	}
 	if hw.Undervolt == nil {
-		return fmt.Errorf("no undervolt control on this device")
+		return errors.New(hw.Missing("undervolt", "no undervolt control on this device"))
 	}
 	// Asked for explicitly — but if no offset is applied there is nothing to
 	// clear, and the write would be the speculative MP1 message with a known

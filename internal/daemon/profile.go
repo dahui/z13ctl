@@ -154,7 +154,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 		}
 	}
 
-	uvActive := false
+	uvActive, deviceUV := false, false
 	if uv := p.Undervolt; uv != nil {
 		// The probe only where an offset is about to be written: its first run
 		// is a CO reset, so probing for a profile with no offset would be the
@@ -166,6 +166,14 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 				uvActive = true
 			}
 		}
+	} else if _, _, want := d.wantDeviceUndervolt(); want {
+		// The profile sets no offset, so a slider device's undervolt setting
+		// runs under it, as its remembered TDP does under a profile with no
+		// TDP (handBack).
+		var err error
+		if deviceUV, err = d.applyDeviceUndervolt("profile " + p.Name); err != nil {
+			slog.Warn("failed to apply the undervolt setting", "profile", p.Name, "err", err)
+		}
 	} else if d.uvApplied() {
 		// Only when something is actually applied — see uvApplied. A profile
 		// that sets no offset, activated on a machine that has none applied,
@@ -176,13 +184,17 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	d.mu.Lock()
-	// Active describes hardware, so it is set here and nowhere else — and only
-	// when the SMU write actually succeeded.
+	// Active describes hardware, so it is set here (and by
+	// applyDeviceUndervolt) and nowhere else — and only when the SMU write
+	// actually succeeded.
 	setUndervoltActive(d.state, false)
 	if uvActive {
 		if cur, ok := d.state.CustomProfiles[p.Name]; ok && cur.Undervolt != nil {
 			cur.Undervolt.Active = true
 		}
+	}
+	if deviceUV && d.state.DeviceUndervolt != nil {
+		d.state.DeviceUndervolt.Active = true
 	}
 	s := cloneState(d.state)
 	d.mu.Unlock()
@@ -199,7 +211,16 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 // re-applies the profile's own limits — tighter than the row's, so the row must
 // not be the last write.
 func (d *Daemon) applyStockHW(profile string) error {
-	if d.uvApplied() {
+	// A slider device's undervolt setting is what runs on its firmware
+	// profile, as its remembered TDP is (deviceundervolt.go); it replaces a
+	// custom profile's offset rather than following a reset with a write.
+	deviceUV := false
+	if _, _, want := d.wantDeviceUndervolt(); want {
+		var err error
+		if deviceUV, err = d.applyDeviceUndervolt("firmware profile " + profile); err != nil {
+			slog.Warn("failed to apply the undervolt setting", "err", err)
+		}
+	} else if d.uvApplied() {
 		if err := d.hw.Undervolt.Reset(); err != nil {
 			slog.Warn("failed to reset undervolt", "err", err)
 		}
@@ -217,6 +238,9 @@ func (d *Daemon) applyStockHW(profile string) error {
 	d.mu.Lock()
 	d.state.Profile = profile
 	setUndervoltActive(d.state, false)
+	if deviceUV && d.state.DeviceUndervolt != nil {
+		d.state.DeviceUndervolt.Active = true
+	}
 	s := cloneState(d.state)
 	d.mu.Unlock()
 	d.saveAndNotify(s)
@@ -234,27 +258,34 @@ func (d *Daemon) handBack(profile string) error {
 	return d.hw.HandBackToFirmware(profile)
 }
 
-// setUndervoltActive stamps the Active flag across every saved profile. Curve
-// Optimizer is global hardware state, so at most one profile's offset can be
-// applied; clearing all of them is both correct and immune to the active
-// profile having changed underneath. Caller must hold d.mu.
+// setUndervoltActive stamps the Active flag across every saved profile and the
+// slider device's remembered offset. Curve Optimizer is global hardware state,
+// so at most one of them can be applied; clearing all of them is both correct
+// and immune to the active profile having changed underneath. Caller must hold
+// d.mu.
 func setUndervoltActive(s api.State, active bool) {
 	for _, p := range s.CustomProfiles {
 		if p.Undervolt != nil {
 			p.Undervolt.Active = active
 		}
 	}
+	if s.DeviceUndervolt != nil {
+		s.DeviceUndervolt.Active = active
+	}
 }
 
-// undervoltActive reports whether any saved profile claims its Curve Optimizer
-// offset is applied in hardware.
+// undervoltActive reports whether any saved profile, or the slider device's
+// remembered offset, claims its Curve Optimizer offset is applied in hardware.
 //
 // It walks exactly what setUndervoltActive stamps, and deliberately so: the two
 // are the write and the read of one fact, and a getter that consulted a
 // different field would drift from the setter silently. CO is global hardware
-// and at most one profile's offset can be applied, so "any profile says active"
-// is the whole question.
+// and at most one offset can be applied, so "anything says active" is the
+// whole question.
 func undervoltActive(s api.State) bool {
+	if s.DeviceUndervolt != nil && s.DeviceUndervolt.Active {
+		return true
+	}
 	for _, p := range s.CustomProfiles {
 		if p.Undervolt != nil && p.Undervolt.Active {
 			return true
@@ -491,11 +522,15 @@ func (d *Daemon) handleProfileSave(req request) response {
 		// slider position into a profile to load back later (Jeff,
 		// 2026-11-17). Before anything was set the firmware's preset is in
 		// force, and a profile holding it would be a copy of the firmware.
-		if d.state.DeviceTDP == nil {
+		var uv *api.UndervoltState
+		if cur := d.state.DeviceUndervolt; cur != nil && cur.CPUCO != 0 {
+			uv = &api.UndervoltState{CPUCO: cur.CPUCO} // not applied as the copy's
+		}
+		if d.state.DeviceTDP == nil && uv == nil {
 			d.mu.Unlock()
 			return response{OK: false, Error: "profile-save: the TDP is at the firmware's preset; set one first"}
 		}
-		src, ok = api.CustomProfile{Name: "the TDP setting", TDP: d.state.DeviceTDP}, true
+		src, ok = api.CustomProfile{Name: "the TDP setting", TDP: d.state.DeviceTDP, Undervolt: uv}, true
 	}
 	if !ok {
 		d.mu.Unlock()

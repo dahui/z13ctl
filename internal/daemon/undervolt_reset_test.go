@@ -32,6 +32,7 @@ type uvRecorder struct {
 	probes    int
 	resets    int
 	applies   int
+	values    []int // every offset Apply was given, in order
 }
 
 func (u *uvRecorder) Present() bool   { return u.available }
@@ -41,8 +42,9 @@ func (u *uvRecorder) ProbeAvailable() bool {
 	return u.probeOK
 }
 func (u *uvRecorder) Range() (lo, hi int) { return -40, 0 }
-func (u *uvRecorder) Apply(int) error {
+func (u *uvRecorder) Apply(co int) error {
 	u.applies++
+	u.values = append(u.values, co)
 	return nil
 }
 func (u *uvRecorder) Reset() error {

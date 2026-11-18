@@ -112,6 +112,9 @@ type dashboardView struct {
 	// tdpSlider is the plain TDP control of a slider device, under the
 	// profile row as in the drawer; nil on any other.
 	tdpSlider *tdpSliderSection
+	// uvSlider is the undervolt setting beside it, on a slider device with a
+	// Curve Optimizer.
+	uvSlider *undervoltSliderSection
 
 	// lightings is one RGB block per lighting zone, where the drawer has one
 	// block and a pair of zone tabs. Empty on a device with no lighting.
@@ -246,6 +249,11 @@ func (d *dashboardView) buildControls() *gtk.Box {
 		s, row := w.newTDPSliderSection(true)
 		d.tdpSlider = s
 		powerRows = append(powerRows, row)
+		if has(controls.CapUndervolt) {
+			u, uvRow := w.newUndervoltSliderSection(true)
+			d.uvSlider = u
+			powerRows = append(powerRows, uvRow)
+		}
 	} else if note := controls.UnavailableNote(w.device, "power"); note != "" {
 		// The device has a TDP control this machine cannot offer (ryzen_smu
 		// not installed on the OXP): say what to install where the slider
@@ -1034,6 +1042,7 @@ func (d *dashboardView) buildFocusList() {
 	if d.tdpSlider != nil {
 		d.tdpSlider.appendFocus(b, &items)
 	}
+	d.uvSlider.appendFocus(b, &items) // nil-safe
 	if d.profiles != nil {
 		d.profiles.appendFocus(b, &items)
 	}

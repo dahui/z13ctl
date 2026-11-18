@@ -16,10 +16,10 @@ kernel or BIOS may behave differently.
 |---|---|---|
 | **TDP** | Yes | One slider, like OneXConsole's: 10–85 W on AC and at most 55 W on battery. Needs the `ryzen_smu` module ([below](#tdp-needs-ryzen-smu)). |
 | **Firmware power profiles** | Without ryzen_smu | Low power, balanced and performance, offered only when there is no TDP slider ([below](#tdp-needs-ryzen-smu)). |
-| **Saved custom profiles** | Yes | Save the current TDP under a name and load it back. Moving the slider never changes a saved profile. |
+| **Saved custom profiles** | Yes | Save the current TDP and undervolt under a name and load them back. Moving the sliders never changes a saved profile. |
 | **AC / battery autoswitch** | Yes | A profile for each power source; in the drawer once switched on in Settings → Quickbar. |
 | **CPU boost** | Yes | Put back at every boot. |
-| **CPU undervolt** | No | Not enabled yet ([why](#undervolt)). |
+| **CPU undervolt** | Yes | Curve Optimizer, 0 to −40, a setting like the TDP slider ([below](#undervolt)). Needs the `ryzen_smu` module. |
 | **Fan speed** | Yes | Shown in the GUI and in `voltaire status`. |
 | **Fan curves** | No | The embedded controller keeps its own fan curve ([why](#fan-control)). |
 | **RGB lighting** | No | The joystick rings are not supported yet ([why](#joystick-lighting)). |
@@ -45,7 +45,7 @@ until setup grants it.
 ## TDP needs ryzen_smu
 
 Linux has no power-limit interface for this machine yet. voltaire sets the
-limits through the SMU, using the out-of-tree
+limits (and the [undervolt](#undervolt)) through the SMU, using the out-of-tree
 [`ryzen_smu`](https://github.com/amkillam/ryzen_smu) module: amkillam's fork,
 since the original does not support Strix Halo. It is the same module that
 undervolting uses on other machines.
@@ -61,9 +61,9 @@ The module loads by itself at boot once installed. Reboot, or load it with
 `sudo modprobe ryzen_smu` and restart voltaire (`systemctl --user restart
 voltaire`): the daemon checks for the module when it starts.
 
-**Without the module** there is no TDP slider. voltaire says what to install
-where the slider would be, in the Dashboard, `voltaire status` and `voltaire
-tdp`. The machine's three firmware power profiles are offered instead, and are
+**Without the module** there is no TDP slider and no undervolt. voltaire says
+what to install where the slider would be, in the Dashboard, `voltaire status`,
+`voltaire tdp` and `voltaire undervolt`. The machine's three firmware power profiles are offered instead, and are
 the only power control left. Measured under a full CPU load:
 
 | Profile | Sustained power |
@@ -96,6 +96,30 @@ the only power control left. Measured under a full CPU load:
 
 From the command line, `voltaire tdp --set 30` is the slider, and
 `voltaire tdp --get` shows what is in force.
+
+## Undervolt
+
+The Curve Optimizer undervolt works as on the ROG Flow Z13, through the same
+`ryzen_smu` module the TDP slider needs, and on this machine it behaves like
+the slider: **one setting**, not part of a profile. Set it on the Dashboard's
+POWER card, in the drawer (switch it on in Settings → Quickbar) or with
+`voltaire undervolt --set -10`.
+
+- **Nothing is written until you set one**, and `0` or `voltaire undervolt
+  --reset` clears it.
+- **It stays when the TDP moves.** The setting runs on the firmware profile
+  and under any saved profile that has no undervolt of its own.
+- **A saved profile can carry its own**, edited on the Profiles tab; it wins
+  while that profile runs, and leaving the profile puts your setting back.
+  Moving the undervolt slider while a saved profile runs leaves the profile,
+  as the TDP slider does.
+- **It is put back** at every boot and after a suspend, since the chip forgets
+  it at both.
+- `voltaire tdp --reset` leaves it alone; `voltaire tuning --reset` clears it
+  along with everything else.
+
+Start small. Too large an offset makes the machine unstable or crash, and the
+point where that happens differs from chip to chip.
 
 ## Buttons and InputPlumber
 
@@ -142,14 +166,6 @@ uses the embedded-controller registers of an older OneXPlayer model; Linux 7.4
 gives the OneXPlayer APEX, which uses the same system board, registers of its
 own, and this machine may need the same. voltaire offers no charge limit until a kernel's threshold is shown
 to work, because a limit that is not enforced is worse than none.
-
-### Undervolt
-
-The X2 Mini Pro has the same chip as the ROG Flow Z13, where voltaire's Curve
-Optimizer undervolt works through the same `ryzen_smu` module. It is not
-enabled here because it has not been tested on this machine yet. A write to
-the chip's management unit that goes wrong can freeze the whole system, so it
-is switched on per device only after it has been checked on that device.
 
 ### Firmware settings
 

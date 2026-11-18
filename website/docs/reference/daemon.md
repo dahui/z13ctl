@@ -498,6 +498,16 @@ The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
 value to all three. `force` is required for a sustained limit (PL1) above the
 device's `power.tdp_max_safe`.
 
+On a device with `power.slider` (the OneXPlayer X2 Mini Pro), `undervolt` and
+`undervolt-reset` with no `profile` field set the **undervolt setting**
+(`device_undervolt`), the counterpart of the TDP slider's value: it is applied
+and remembered, `"set":"0"` clears it, and made while a custom profile runs it
+leaves that profile for the firmware profile, as a bare `tdp` set does. The
+setting is in force on the firmware profile and under any custom profile that
+carries no offset of its own; a profile with its own offset wins while it runs.
+`undervolt-get` reports the setting. `tdp-reset` leaves it in force and
+`tuning-reset` clears it.
+
 On a device with `power.slider`, a `tdp` set with no `profile` is the device's
 TDP setting rather than an edit to the active profile, and with a custom
 profile running it switches back to the pinned firmware profile, leaving the
@@ -671,6 +681,11 @@ The file is written atomically after every successful command. It stores:
 - `device_tdp` — on a device with `power.slider`, the TDP setting (one value
   for every limit); absent until a TDP has first been set, so the firmware's
   own limits stand untouched until then. Cleared by `tdp-reset`
+- `device_undervolt` — on a device with `power.slider` and an undervolt
+  control, the undervolt setting (`cpu_co`, and `active` when it is in hardware
+  now); absent until one is set, so nothing is written to the CPU until then.
+  Re-applied at startup and after a suspend. Cleared by `undervolt-reset`,
+  `"set":"0"` and `tuning-reset`
 - `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit
   of clients and daemons from before named profiles existed. They carry the
   active custom profile's settings, or `custom`'s when a firmware profile is
@@ -922,6 +937,8 @@ On `PrepareForSleep(false)` the daemon restores lighting (regardless of
 profile) and all custom-profile volatile settings from its saved state. Fan
 curves, TDP, and undervolt are only restored when a custom profile is active;
 under a stock profile the firmware manages the fans and power limits itself.
+On a slider device the TDP and undervolt settings are restored too, since they
+are what runs when no custom profile does.
 The curve goes on before the TDP, so the high-TDP floor is written last and
 wins.
 

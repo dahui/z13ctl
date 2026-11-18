@@ -237,10 +237,11 @@ func TestOnlyWritersProbeTheSMU(t *testing.T) {
 
 	allowed := map[string][]string{
 		"uvProbe()": {
-			"func (d *Daemon) handleUndervolt(", // writes the requested offset
-			"func (d *Daemon) applyCustomHW(",   // writes the profile's offset
-			"func (d *Daemon) reconcileOnce(",   // re-applies after a lost resume
-			"func (d *Daemon) uvApplied(",       // only once state says applied
+			"func (d *Daemon) handleUndervolt(",      // writes the requested offset
+			"func (d *Daemon) applyCustomHW(",        // writes the profile's offset
+			"func (d *Daemon) reconcileOnce(",        // re-applies after a lost resume
+			"func (d *Daemon) uvApplied(",            // only once state says applied
+			"func (d *Daemon) applyDeviceUndervolt(", // writes the slider device's offset
 		},
 		"ProbeAvailable()": {"func (d *Daemon) uvProbe("},
 	}

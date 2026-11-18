@@ -348,8 +348,15 @@ func Assemble(c Config) (*Device, error) {
 		if err != nil {
 			return nil, err
 		}
-		if d.Undervolt, err = f(*c.Undervolt); err != nil {
+		uv, err := f(*c.Undervolt)
+		var missing *UnavailableError
+		switch {
+		case errors.As(err, &missing):
+			d.Unavailable = append(d.Unavailable, Unavailable{Capability: "undervolt", Reason: missing.Reason})
+		case err != nil:
 			return nil, fmt.Errorf("undervolt (%s): %w", c.Undervolt.Method, err)
+		default:
+			d.Undervolt = uv
 		}
 	}
 	if c.CPU != nil && c.CPU.Boost != "" {

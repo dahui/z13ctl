@@ -1278,7 +1278,16 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	// so it says which branch it took either way. The daemon does not configure
 	// slog, so this is Info or it is invisible; one line per explicit reset is
 	// not a cadence worth economising on.
-	if d.uvApplied() {
+	// On a slider device tdp-reset leaves the undervolt setting in force (it
+	// is a setting of its own, like the TDP it does forget); tuning-reset,
+	// which discards everything, clears it.
+	keepDeviceUV := false
+	if _, _, want := d.wantDeviceUndervolt(); want && !clearAll {
+		var uvErr error
+		if keepDeviceUV, uvErr = d.applyDeviceUndervolt(cmd); uvErr != nil {
+			slog.Warn("failed to apply the undervolt setting", "cmd", cmd, "err", uvErr)
+		}
+	} else if d.uvApplied() {
 		slog.Info(cmd+": clearing the Curve Optimizer offset", "profile", target.Name)
 		if err := d.hw.Undervolt.Reset(); err != nil {
 			slog.Warn("failed to reset undervolt", "cmd", cmd, "err", err)
@@ -1316,8 +1325,14 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	// back at the next boot or charger edge.
 	if d.hw.PowerSlider {
 		d.state.DeviceTDP = nil
+		if clearAll {
+			d.state.DeviceUndervolt = nil
+		}
 	}
 	setUndervoltActive(d.state, false)
+	if keepDeviceUV && d.state.DeviceUndervolt != nil {
+		d.state.DeviceUndervolt.Active = true
+	}
 	s := cloneState(d.state)
 	d.mu.Unlock()
 	d.saveAndNotify(s)
@@ -1336,6 +1351,10 @@ func (d *Daemon) handleUndervoltGet() response {
 	// recalled; Active is what says whether they are in hardware right now.
 	target, _ := d.resolveEditTargetLocked("")
 	uv := target.Profile.Undervolt
+	if d.deviceUndervoltModel() {
+		// A slider device's bare set replaces the device setting instead.
+		uv = cloneUndervolt(d.state.DeviceUndervolt)
+	}
 	d.mu.Unlock()
 
 	uvState := api.UndervoltState{}
@@ -1373,6 +1392,12 @@ func (d *Daemon) handleUndervolt(req request) response {
 
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	// On a slider device a bare set is the device setting, like the TDP
+	// slider's (deviceundervolt.go); a profile's own offset takes --profile.
+	if d.deviceUndervoltModel() && req.Profile == "" {
+		return d.setDeviceUndervolt("undervolt", cpuOffset)
+	}
 
 	d.mu.Lock()
 	target, err := d.resolveEditTargetLocked(req.Profile)
@@ -1414,6 +1439,12 @@ func (d *Daemon) handleUndervoltReset(req request) response {
 
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	// A bare reset on a slider device forgets the device setting; the
+	// hardware half still goes through uvApplied.
+	if d.deviceUndervoltModel() && req.Profile == "" {
+		return d.setDeviceUndervolt("undervolt-reset", 0)
+	}
 
 	d.mu.Lock()
 	target, err := d.resolveEditTargetLocked(req.Profile)

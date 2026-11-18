@@ -733,6 +733,11 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// consult it, and the first two take hwMu first. A later resume that finds
 	// the EC answering clears it again.
 	d.ecWedged = ec == ecWedged
+	// The Curve Optimizer offset does not survive a suspend; a slider device's
+	// setting is written again below rather than trusted as still applied.
+	if d.state.DeviceUndervolt != nil {
+		d.state.DeviceUndervolt.Active = false
+	}
 	state := cloneState(d.state)
 	if d.hw != nil && d.hw.Lighting != nil {
 		// USB re-enumerates across suspend, so the handle opened at startup (or
@@ -778,9 +783,15 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	if !ok || active.Empty() {
 		// A slider device's remembered TDP is volatile state too.
 		if ec != ecWedged {
-			if wrote, err := d.applyDeviceTDP("resume"); err != nil {
+			wroteTDP, err := d.applyDeviceTDP("resume")
+			if err != nil {
 				slog.Warn("resume: failed to re-apply the remembered TDP", "err", err)
-			} else if wrote {
+			}
+			wroteUV, uvErr := d.applyDeviceUndervolt("resume")
+			if uvErr != nil {
+				slog.Warn("resume: failed to re-apply the undervolt setting", "err", uvErr)
+			}
+			if wroteTDP || wroteUV {
 				return
 			}
 		}

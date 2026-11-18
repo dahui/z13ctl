@@ -269,7 +269,7 @@ func newCustomView(w *Window, host viewHost) *customView {
 
 			c.uvBox.Append(sectionLabel("UNDERVOLT"))
 
-			uvWarn := gtk.NewLabel(profileui.UndervoltNote())
+			uvWarn := gtk.NewLabel(profileui.UndervoltNoteOn(w.limits.Slider))
 			uvWarn.SetWrap(true)
 			uvWarn.SetHAlign(gtk.AlignStart)
 			uvWarn.AddCSSClass("tdp-warning")

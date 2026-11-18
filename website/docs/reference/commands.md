@@ -808,6 +808,14 @@ CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
 them automatically on startup and resume when a custom profile with an offset is
 active.
 
+On a device with a single TDP slider (the OneXPlayer X2 Mini Pro), an offset
+set without `--profile` is a **device setting**, like the slider: it stays in
+force on the firmware profile and under any custom profile without an offset
+of its own, is reapplied at startup and resume, and moving it while a custom
+profile runs leaves that profile. `--set 0` and `--reset` clear it. A saved
+profile can still carry its own offset (`--profile <name>`), which wins while
+that profile runs.
+
 voltaire only talks to the SMU when an offset is about to be applied, or when
 one is applied and has to be cleared. Switching to a firmware profile,
 `tdp --reset` and `undervolt --reset` send nothing when no offset is applied:

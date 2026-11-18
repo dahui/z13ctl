@@ -188,6 +188,10 @@ func TestSMUMissingReason(t *testing.T) {
 		t.Errorf("Phoenix without the module: %q, want the module named and no fork", got)
 	}
 
+	if got := SMUMissingReasonFor("Undervolting"); !strings.HasPrefix(got, "Undervolting needs the ryzen_smu") {
+		t.Errorf("the undervolt reason: %q, want it to name undervolting", got)
+	}
+
 	f.writeFile(t, f.smu+"/rsmu_cmd", "")
 	if got := SMUMissingReason(); got != "" {
 		t.Errorf("module loaded: %q, want no reason", got)

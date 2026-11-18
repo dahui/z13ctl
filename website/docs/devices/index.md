@@ -26,10 +26,10 @@ kernel, not in voltaire, and close when a kernel with the support ships.
 | **Power** | | |
 | TDP (power limits) | Yes: three limits, 28–80 W sustained | Yes: one slider, 10–85 W ([needs ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu)) |
 | Firmware power profiles | Yes: quiet, balanced, performance | [Only without ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu) |
-| Saved custom profiles | Yes: fan curve, TDP and undervolt | Yes: TDP |
+| Saved custom profiles | Yes: fan curve, TDP and undervolt | Yes: TDP and undervolt |
 | Switch profile on AC / battery | Yes | Yes |
 | CPU boost on/off | Yes | Yes |
-| CPU undervolt (Curve Optimizer) | Yes ([needs ryzen_smu](/installation#optional-ryzen_smu-kernel-module)) | [No, not yet](/devices/onexplayer-x2-mini-pro#undervolt) |
+| CPU undervolt (Curve Optimizer) | Yes ([needs ryzen_smu](/installation#optional-ryzen_smu-kernel-module)) | Yes: [a setting like the TDP slider](/devices/onexplayer-x2-mini-pro#undervolt) (needs ryzen_smu) |
 | **Cooling** | | |
 | Fan speed readout | Yes: two fans | Yes |
 | Custom fan curves | Yes, with presets | [No](/devices/onexplayer-x2-mini-pro#fan-control) |

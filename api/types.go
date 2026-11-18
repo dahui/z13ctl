@@ -66,6 +66,14 @@ type State struct {
 	// firmware's own limits stand and voltaire writes nothing.
 	DeviceTDP *TDPState `json:"device_tdp,omitempty"`
 
+	// DeviceUndervolt is the remembered Curve Optimizer offset on a
+	// one-slider device, the undervolt counterpart of DeviceTDP: set by an
+	// undervolt command naming no profile, and in force whenever no running
+	// custom profile carries an offset of its own (re-applied at boot and on
+	// resume, since the offset does not survive either). Active says whether
+	// it is in hardware right now. Absent until one is set; setting 0 clears it.
+	DeviceUndervolt *UndervoltState `json:"device_undervolt,omitempty"`
+
 	OnAC        bool `json:"on_ac"`                  // true when running on mains power
 	SourceKnown bool `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
 	Temperature int  `json:"temperature,omitempty"`  // CPU temperature (Tctl), degrees Celsius

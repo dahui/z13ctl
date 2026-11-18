@@ -1,5 +1,5 @@
-# OneXPlayer X2 Mini Pro (Strix Halo). Power limits through ryzen_smu,
-# profiles (pinned), battery, CPU boost, telemetry and buttons. Fan control is
+# OneXPlayer X2 Mini Pro (Strix Halo). Power limits and undervolt through
+# ryzen_smu, profiles (pinned), battery, CPU boost, telemetry and buttons. Fan control is
 # left to the EC's own curve (.claude/plans/oxp-power.md).
 #
 # Every value here was captured on this machine (2026-11-17, Linux 7.3.4,
@@ -92,6 +92,16 @@ charge_limit = false
 
 [cpu]
 boost = "cpufreq"
+
+# CPU Curve Optimizer via ryzen_smu, the same module and command as the Z13
+# (Strix Halo, MP1 0x4C; amkillam's fork). On this slider device it is a
+# device setting like the TDP: a bare undervolt command is remembered and runs
+# whenever no custom profile carries an offset of its own (State.DeviceUndervolt),
+# so moving the TDP slider does not drop it. The range is the Z13's.
+[undervolt]
+method = "ryzen-smu-co"
+min    = -40
+max    = 0
 
 # Strix Halo, like the Z13: package power from RAPL (granted by voltaire
 # setup), the APU temperature from k10temp, the iGPU from amdgpu. The NPU is

@@ -268,6 +268,7 @@ func cloneState(s api.State) api.State {
 	}
 	c.TDP = cloneTDP(s.TDP)
 	c.DeviceTDP = cloneTDP(s.DeviceTDP)
+	c.DeviceUndervolt = cloneUndervolt(s.DeviceUndervolt)
 	c.Undervolt = cloneUndervolt(s.Undervolt)
 	c.FanCurve = cloneFanCurve(s.FanCurve)
 	c.Telemetry = cloneTelemetrySample(s.Telemetry)

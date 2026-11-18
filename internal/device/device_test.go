@@ -790,3 +790,33 @@ func TestPowerFactoryFailureStillFailsTheDevice(t *testing.T) {
 		t.Fatal("a failing power factory assembled a device")
 	}
 }
+
+// TestUnavailableUndervoltIsRecorded: the undervolt factory reports a missing
+// out-of-tree module the way the power factory does, so the device carries no
+// undervolt capability and says why; any other factory error still fails it.
+func TestUnavailableUndervoltIsRecorded(t *testing.T) {
+	c := Config{
+		Device:    Meta{ID: "uv", Model: "U", Name: "UV", Match: []Match{{Vendor: "V", Product: "U"}}},
+		Undervolt: &UndervoltConfig{Method: "test-uv", Min: -40, Max: 0},
+	}
+	t.Cleanup(func() { delete(undervoltFactories, "test-uv") })
+
+	undervoltFactories["test-uv"] = func(UndervoltConfig) (driver.Undervolter, error) {
+		return nil, &UnavailableError{Reason: "needs ryzen_smu"}
+	}
+	d, err := Assemble(c)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if d.Undervolt != nil {
+		t.Error("an unavailable undervolt method assembled an undervolt capability")
+	}
+	if got := d.Missing("undervolt", "none"); got != "needs ryzen_smu" {
+		t.Errorf("Missing(undervolt) = %q, want the factory's reason", got)
+	}
+
+	undervoltFactories["test-uv"] = func(UndervoltConfig) (driver.Undervolter, error) { return nil, fmt.Errorf("broken") }
+	if _, err := Assemble(c); err == nil {
+		t.Error("a failing undervolt factory assembled a device")
+	}
+}

@@ -259,6 +259,14 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 			}
 			act.Routine = st.sourceGrace > 0 // a charger edge: the firmware's preset, expected
 		}
+		// A slider device's undervolt setting, on the same evidence as the
+		// custom-profile arm below: only a resume signal that never came.
+		if staleResume && obs.WantCO != nil {
+			act.Undervolt = obs.WantCO
+			if act.Reason == "" {
+				act.Reason = "no resume signal arrived, so volatile settings may have been lost"
+			}
+		}
 		if act.none() {
 			st.failures = 0
 			st.quiet = false
@@ -495,6 +503,12 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			obs.WantCO = &co
 		}
 	}
+	// A slider device's undervolt setting runs wherever no custom profile
+	// carries an offset of its own (deviceundervolt.go).
+	if uv := s.DeviceUndervolt; obs.WantCO == nil && d.deviceUndervoltModel() && uv != nil && uv.CPUCO != 0 {
+		co := uv.CPUCO
+		obs.WantCO = &co
+	}
 
 	// The fan mode and platform_profile are driver caches, cheap enough to read
 	// unconditionally, and reading them even when the profile is stock keeps
@@ -594,6 +608,9 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	msg := "reconciling custom thermal settings"
 	if !obs.Custom {
 		msg = "re-applying the remembered TDP"
+		if act.TDP == nil {
+			msg = "re-applying the undervolt setting"
+		}
 	}
 	logf(msg,
 		"reason", act.Reason,

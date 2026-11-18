@@ -59,6 +59,16 @@ func TestSaveAsBlock(t *testing.T) {
 	if got := profileui.SaveAsBlock(s, false); got != "" {
 		t.Errorf("active profile with settings blocked: %q", got)
 	}
+	// A slider device copies its settings: blocked until one is set, and an
+	// undervolt setting alone is enough.
+	if got := profileui.SaveAsBlock(stateWith("balanced"), true); got == "" {
+		t.Error("slider device with nothing set must block Save As")
+	}
+	uv := stateWith("balanced")
+	uv.DeviceUndervolt = &api.UndervoltState{CPUCO: -10}
+	if got := profileui.SaveAsBlock(uv, true); got != "" {
+		t.Errorf("slider device with an undervolt setting blocked: %q", got)
+	}
 }
 
 func TestSuggestName(t *testing.T) {

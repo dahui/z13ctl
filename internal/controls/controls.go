@@ -189,6 +189,11 @@ var defaultOrder = []Control{
 		Requires: []Capability{CapChargeLimit}, Default: true},
 	{ID: "cpu-boost", Label: "CPU boost", Group: GroupPower,
 		Requires: []Capability{CapCPUBoost}},
+	// The undervolt setting of a slider device, beside its TDP slider: a
+	// device setting there, where elsewhere the offset lives in custom
+	// profiles and is edited on the Profiles page. Opt-in.
+	{ID: "undervolt", Label: "Undervolt", Group: GroupPower,
+		Requires: []Capability{CapPowerSlider, CapUndervolt}},
 	// Brightness and volume are opt-in on a laptop, whose keyboard has keys
 	// for both, and in a handheld's device default (the OXP's).
 	{ID: "brightness", Label: "Screen brightness", Group: GroupDisplay,

@@ -392,6 +392,11 @@ func (d *Daemon) restoreHardwareAtStartup() {
 			slog.Warn("failed to reset undervolt leaving the custom profile", "err", uvErr)
 		}
 	}
+	// A slider device's undervolt setting is written again below (or by
+	// applyCustomHW under a profile with no offset of its own): after a reboot
+	// it is gone, and after a daemon restart writing the same offset again is
+	// harmless, so the Active flag the state file carried is not trusted.
+	d.deviceUndervoltLost()
 
 	// Restore stock profile if saved, but only if it differs from the
 	// kernel's current profile. Writing the same value to platform_profile
@@ -438,6 +443,10 @@ func (d *Daemon) restoreHardwareAtStartup() {
 			// speculative SMU write at startup.
 			if _, err := d.applyDeviceTDP("startup"); err != nil {
 				slog.Warn("failed to re-apply the remembered TDP", "err", err)
+			}
+			// Likewise only an offset the user set: none, no SMU write.
+			if _, err := d.applyDeviceUndervolt("startup"); err != nil {
+				slog.Warn("failed to re-apply the undervolt setting", "err", err)
 			}
 		case owned:
 			if err := d.handBack(d.state.Profile); err != nil {
