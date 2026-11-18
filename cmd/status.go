@@ -83,13 +83,14 @@ func statusReport(out io.Writer) error {
 	// kernel value rather than an EC read, so it is read here either way; it is
 	// folded across every readable fan, as the daemon reports it: "custom" only
 	// when all of them honour the curve.
-	modeStr := ""
+	// A device with no fans block has no line: N/A would read as a fault.
 	if hw.Fans != nil {
+		modeStr := ""
 		if mode, mErr := hw.Fans.ReadMode(); mErr == nil {
 			modeStr = ", mode: " + driver.FanModeName(mode)
 		}
+		outf("Fans:    %s%s\n", formatRPM(live.RPM), modeStr)
 	}
-	outf("Fans:    %s%s\n", formatRPM(live.RPM), modeStr)
 
 	// Performance profile. platform_profile is never a custom profile name, so
 	// the effective profile comes from the daemon when it is running; show the
@@ -112,37 +113,41 @@ func statusReport(out io.Writer) error {
 	// TDP power limits: the daemon's reading when it is running, since it
 	// withholds the read while the EC is not answering (on asus-armoury each
 	// limit read is a live ACPI call). A refused read prints N/A.
-	tdpShown := false
+	// A device with no power block has no line, and the daemon is not asked:
+	// the refusal would be logged there as a failed command on every status.
 	ecWithheld := false
-	// On a firmware profile both paths show its stock row (ReadDisplayed), and
-	// the line says so.
-	env := powerEnvFor(hw)
-	stock := stockRowFor(hw, env, profile)
-	stockNote := ""
-	if stock != "" {
-		stockNote = " (" + stock + " stock)"
-	}
-	if handled, value, err := api.SendTdpGet(); handled {
-		var tdp api.TDPState
-		// The daemon refuses EC-backed reads while the EC is not answering;
-		// say so once at the end, rather than leaving the N/As unexplained.
-		ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
-		if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
-			outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
-			tdpShown = true
-		}
-	} else if hw.Power != nil {
-		key := profile
+	if hw.Power != nil {
+		tdpShown := false
+		// On a firmware profile both paths show its stock row (ReadDisplayed), and
+		// the line says so.
+		env := powerEnvFor(hw)
+		stock := stockRowFor(hw, env, profile)
+		stockNote := ""
 		if stock != "" {
-			key = stock
+			stockNote = " (" + stock + " stock)"
 		}
-		if tdp, tErr := hw.Power.ReadDisplayed(env, key); tErr == nil {
-			outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
-			tdpShown = true
+		if handled, value, err := api.SendTdpGet(); handled {
+			var tdp api.TDPState
+			// The daemon refuses EC-backed reads while the EC is not answering;
+			// say so once at the end, rather than leaving the N/As unexplained.
+			ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
+			if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
+				outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
+				tdpShown = true
+			}
+		} else {
+			key := profile
+			if stock != "" {
+				key = stock
+			}
+			if tdp, tErr := hw.Power.ReadDisplayed(env, key); tErr == nil {
+				outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
+				tdpShown = true
+			}
 		}
-	}
-	if !tdpShown {
-		outln("TDP:     N/A")
+		if !tdpShown {
+			outln("TDP:     N/A")
+		}
 	}
 
 	// Undervolt (Curve Optimizer). Ask the daemon: module presence until an

@@ -1,5 +1,6 @@
-# OneXPlayer X2 Mini Pro (Strix Halo). Buttons only for now: fans, power,
-# battery and the rest land with M5 (.claude/plans/oxp-power.md).
+# OneXPlayer X2 Mini Pro (Strix Halo). Profiles, battery, CPU boost,
+# telemetry and buttons; fans (oxpec, manual PWM only) and power limits
+# (ryzen_smu) land with M5 (.claude/plans/oxp-power.md).
 #
 # Every value here was captured on this machine (2026-11-17, Linux 7.3.4,
 # hid-oxp bound); the captures are in
@@ -14,6 +15,43 @@ name  = "OneXPlayer X2 Mini Pro"
 [[device.match]]
 vendor  = "ONE-NETBOOK"
 product = "ONEXPLAYER X2Mini PRO"
+
+# amd-pmf is the only platform-profile handler (no vendor WMI). Measured under
+# load (2026-11-16): low-power holds ~33 W sustained, balanced and performance
+# ~61 W, which is the thermal ceiling of this chassis. The EC re-applies its own
+# power presets on every charger edge, under whichever profile is selected.
+[profiles]
+method  = "platform-profile"
+names   = ["low-power", "balanced", "performance"]
+handler = "amd-pmf"
+default = "balanced"
+
+# The charge limit is deliberately not offered yet. oxpec (7.3) exposes
+# BATT/charge_control_end_threshold on this board through the OneXPlayer X1's
+# EC registers, and it does not hold: on 2026-11-17 the pack read 96 %,
+# "Charging", with the threshold at 62. 7.4 gives the APEX (same system board)
+# registers of its own (0xE5/0xE6), so this one may need the same.
+[battery]
+method       = "power-supply"
+health       = true
+charge_limit = false
+
+[cpu]
+boost = "cpufreq"
+
+# Strix Halo, like the Z13: package power from RAPL (granted by voltaire
+# setup), the APU temperature from k10temp, the iGPU from amdgpu. The NPU is
+# declared but absent while amdxdna cannot probe, which it cannot under
+# amd_iommu=off (required for suspend on this BIOS); the daemon offers only
+# what is present. No fan RPM until the fans block lands.
+[telemetry]
+method          = "hwmon-rapl"
+power_draw      = "rapl"
+gpu             = "amdgpu"
+cpu_stats       = "procfs"
+npu             = "amdxdna"
+net             = "procfs"
+history_seconds = 3600
 
 # The three buttons above the screen. None of them is an ordinary input event
 # of its own: the controller (1a86:fe00) sends two as key chords on its
