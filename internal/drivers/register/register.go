@@ -25,6 +25,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/drivers/aurahid"
 	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
 	"github.com/dahui/voltaire/v2/internal/drivers/hidrawbtn"
+	"github.com/dahui/voltaire/v2/internal/drivers/inputplumber"
 	"github.com/dahui/voltaire/v2/internal/drivers/linux"
 )
 
@@ -106,6 +107,7 @@ func init() {
 	device.RegisterButtons("evdev-chord", func(c device.ButtonConfig) (driver.Buttons, error) {
 		return withUSBNode(evdevkey.NewChord(c.Device, c.Keys, c.ID, c.KeyboardNode != ""), c)
 	})
+	device.RegisterInputPlumberButtons(func() driver.Buttons { return inputplumber.NewButtons() })
 	device.RegisterButtons("hidraw-report", func(c device.ButtonConfig) (driver.Buttons, error) {
 		v, p, err := c.USBIDs()
 		if err != nil || c.Interface == nil {

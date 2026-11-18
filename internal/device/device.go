@@ -73,6 +73,12 @@ type Device struct {
 type ButtonInfo struct {
 	ID    string
 	Label string
+	// InputPlumber is the capability InputPlumber gives the button, "" when
+	// the device data names none (see ButtonConfig.InputPlumber).
+	InputPlumber string
+	// Node is the node the button's own driver would open now, "" when it is
+	// absent or the driver does not read one node. Sysfs only.
+	Node func() string
 }
 
 // ReleaseFans hands the fans back to firmware auto and leaves keep in force. It
@@ -292,6 +298,7 @@ func Assemble(c Config) (*Device, error) {
 		}
 	}
 	var watchers mergedButtons
+	viaInputPlumber := false
 	for _, b := range c.Buttons {
 		f, err := lookup("buttons", buttonsFactories, b.Method)
 		if err != nil {
@@ -302,10 +309,22 @@ func Assemble(c Config) (*Device, error) {
 			return nil, fmt.Errorf("button %q (%s): %w", b.ID, b.Method, err)
 		}
 		watchers = append(watchers, w)
-		d.ButtonList = append(d.ButtonList, ButtonInfo{ID: b.ID, Label: b.Label})
+		info := ButtonInfo{ID: b.ID, Label: b.Label, InputPlumber: b.InputPlumber, Node: func() string { return "" }}
+		if n, ok := w.(driver.ButtonNoder); ok {
+			info.Node = n.Node
+		}
+		d.ButtonList = append(d.ButtonList, info)
+		if b.InputPlumber != "" {
+			viaInputPlumber = true
+		}
 		if b.Default {
 			d.DefaultButton, d.ButtonLabel = b.ID, b.Label
 		}
+	}
+	// One watcher for every button InputPlumber may carry: presses arrive on
+	// the system bus however many buttons there are.
+	if viaInputPlumber && routeButtons != nil {
+		watchers = append(watchers, routeButtons())
 	}
 	switch len(watchers) {
 	case 0:
@@ -316,6 +335,14 @@ func Assemble(c Config) (*Device, error) {
 	}
 	return d, nil
 }
+
+// routeButtons builds the watcher for presses that arrive through
+// InputPlumber, registered by the drivers package (device imports no driver).
+var routeButtons func() driver.Buttons
+
+// RegisterInputPlumberButtons sets the factory for the InputPlumber button
+// watcher, added to a device whose buttons name an InputPlumber capability.
+func RegisterInputPlumberButtons(f func() driver.Buttons) { routeButtons = f }
 
 // mergedButtons watches several buttons as one driver.Buttons, so the daemon
 // keeps a single watcher however many buttons a device declares. Each press

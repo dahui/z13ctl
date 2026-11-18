@@ -181,6 +181,10 @@ func (b *Buttons) findDevice() string {
 	return ""
 }
 
+// Node is the input node the watcher would open now, "" when none is present
+// (driver.ButtonNoder). Sysfs only.
+func (b *Buttons) Node() string { return b.findDevice() }
+
 // NodeUSB reports the USB interface an input node belongs to, from sysfs
 // alone: the input device's id/vendor and id/product, and the
 // bInterfaceNumber of the nearest USB interface above it (directly above for
@@ -222,6 +226,7 @@ func readHex(path string) (uint64, error) {
 // non-blocking: a consumer that has stopped reading loses presses rather than
 // stalling the watcher.
 func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error {
+	lastOpenErr := ""
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -245,7 +250,14 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 		}
 		dev, err := openEventDevice(path)
 		if err != nil {
-			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)
+			// Once per distinct error: InputPlumber keeps a node it manages at
+			// mode 0000 for as long as it runs, and a line a second for that
+			// would bury everything else.
+			lvl := slog.LevelDebug
+			if msg := err.Error(); msg != lastOpenErr {
+				lvl, lastOpenErr = slog.LevelInfo, msg
+			}
+			slog.Log(ctx, lvl, "button node cannot be opened; retrying", "path", path, "button", b.id, "err", err, "delay", buttonRetryDelay)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -260,6 +272,7 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 			b.checked = true
 			b.checkKey(filepath.Base(path))
 		}
+		lastOpenErr = ""
 		slog.Info("watching hardware button (shared, read-only)", "path", path, "button", b.id)
 		if err := b.runLoop(ctx, dev, ch); err != nil {
 			slog.Info("button watcher stopped; retrying", "err", err, "delay", buttonRetryDelay)

@@ -480,6 +480,14 @@ type ButtonConfig struct {
 	// wherever a device reports both, or every tap counts twice.
 	Match [][]int `toml:"match"`
 
+	// InputPlumber is the gamepad button capability InputPlumber gives this
+	// button on this machine ("QuickAccess2"), for when InputPlumber manages
+	// the device: it grabs and hides the node the method reads, and the
+	// button then reaches voltaire only through a profile mapping that
+	// capability to voltaire's DBus action, which the daemon loads. Empty: no
+	// such route, and the button is silent while InputPlumber manages it.
+	InputPlumber string `toml:"inputplumber"`
+
 	// KeyboardNode opts a node that udev classes as a typing keyboard in, and
 	// says why it is safe on this model ("the AT keyboard carries only the
 	// button chords on the X2 Mini Pro"). Without it neither the udev grant
@@ -488,6 +496,11 @@ type ButtonConfig struct {
 	// machine, and the match may not contain udev glob characters.
 	KeyboardNode string `toml:"keyboard_node"`
 }
+
+// inputPlumberCapability is the shape of an InputPlumber GamepadButton name
+// ("QuickAccess2", "LeftPaddle1"). The shape only: the list is InputPlumber's
+// and grows, and a name it does not know fails loudly there.
+var inputPlumberCapability = regexp.MustCompile(`^[A-Z][A-Za-z0-9]*$`)
 
 // MaxHIDReport is the longest input report a hidraw-report button reads: a
 // full-speed interrupt report. A match offset beyond it could never hold.
@@ -828,6 +841,9 @@ func (c Config) Validate() error {
 			if b.Interface == nil || *b.Interface < 0 || *b.Interface > 255 {
 				fail("%s: usb on an evdev button needs interface too (0–255): the two together name the node", name)
 			}
+		}
+		if b.InputPlumber != "" && !inputPlumberCapability.MatchString(b.InputPlumber) {
+			fail("%s: inputplumber must be an InputPlumber gamepad button name such as QuickAccess2 (got %q)", name, b.InputPlumber)
 		}
 		if b.Method == "evdev-chord" {
 			distinct := map[int]bool{}

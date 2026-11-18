@@ -85,6 +85,9 @@ internal/
     button_test.go           pressTick decision table (no evdev device, no clock)
     drawerbutton_test.go     the choice: resolution, button-set, the press filter, wire keys
     hotplug.go               detachable-keyboard reattach watcher (polls sysfs, reopens HID + restores lighting)
+    inputplumber.go          the InputPlumber button route: keeps voltaire's mapping in the
+                             profile of the composite device holding the chosen button's
+                             node (pure ipTarget/ipReconcile over an ipClient), pressRoute
     reconcile.go             custom fan curve / high-TDP floor watcher; pure reconcileTick seam + reconcileOnce;
                              stands down while d.suspending, with a tick-counted staleness ceiling
     policywatch.go           poll(POLLPRI) on the attributes the profile driver names (driver.PolicyWriteNotifier):
@@ -201,11 +204,15 @@ internal/
                              key is documented)
     aurahid/                 driver.Lighting over the Aura HID protocol ("aura-hid")
     evdevkey/                driver.Buttons over one key ("evdev-key") or a chord of keys
-                             ("evdev-chord") on an evdev node; read-only, never grabbed, and
+                             ("evdev-chord") on an evdev node, found by name and optionally
+                             USB interface (NodeUSB); read-only, never grabbed, and
                              refuses a typing keyboard unless keyboard_node opts it in
-    hidrawbtn/               driver.Buttons over a byte in a vendor HID report
-                             ("hidraw-report"; the Ally's buttons, the OXP's Home); refuses a
+    hidrawbtn/               driver.Buttons over vendor HID report bytes ("hidraw-report",
+                             `match` pairs; the Ally's buttons, the OXP's Home); refuses a
                              keyboard interface by its report descriptor
+    inputplumber/            the InputPlumber route: pure profile merge (SetMapping, YAML),
+                             a DBus client (composite devices, Get/LoadProfile, change
+                             signals) and the driver.Buttons for voltaire_<id> InputEvents
   safety/                    the thermal-safety rules between handlers and drivers, pure and
                              parameterized by driver.PowerEnvelope
     safety.go                pure rules: FanCurveForTDP, FloorPWMAt, FloorAdjustsCurve,
@@ -627,6 +634,68 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   replaced, and now names `voltaire setup` (`hid.grantHint`).
   **The same fix still has to be ported to main as a z13ctl 1.4.4** (Open
   work), in the ENV form.
+- **A button InputPlumber manages reaches voltaire through InputPlumber's
+  profile, loaded over DBus, never a file** (Jeff, 2026-11-16/17;
+  `.claude/plans/inputplumber-buttons.md`, built and verified on the OXP X2
+  Mini Pro 2026-11-17). InputPlumber EVIOCGRABs the evdev nodes of a device it
+  manages and sets them and its hidraw nodes to 0000 (udev `MODE:=` + chmod),
+  so no direct watcher can coexist. A button's device data names its
+  InputPlumber capability (`inputplumber = "QuickAccess2"`); the daemon's
+  route watcher (`internal/daemon/inputplumber.go`) finds the composite device
+  whose `SourceDevicePaths` hold the chosen button's node (`ButtonInfo.Node`,
+  the direct driver's sysfs lookup), and merges one mapping — capability →
+  `dbus: voltaire_<id>` — into its running profile (`GetProfileYaml` →
+  `inputplumber.SetMapping` → `LoadProfileFromYaml`; wheel/inputplumber polkit).
+  A mapping already on that capability is **replaced, not joined** (both would
+  fire: the OXP's Keyboard button would also screenshot) and kept in voltaire's
+  mapping's `name` in YAML flow style, so removal restores it even after a
+  daemon restart. Re-applied on InputPlumber's NameOwnerChanged and any
+  PropertiesChanged under its tree (profile loaded, composite added — it has no
+  ObjectManager), a button-set, and a 30 s backstop; a pass that finds the
+  mapping in place loads nothing, so it cannot fight. Removed on button-set to
+  another button or none, and on shutdown (`Run` waits up to 2 s). The first
+  pass after start also clears a mapping a crashed daemon left on any device.
+  **One press, one route**: `ButtonEvent.Via` marks InputPlumber presses and
+  `pressRoute` counts them only while InputPlumber carries the chosen button,
+  direct presses only while it does not — a hidraw fd opened before
+  InputPlumber hid the node keeps delivering (hidraw has no grab), and
+  pressTick's 50 ms floor still toggles. Presses are accepted only from the
+  current owner of `org.shadowblip.InputPlumber`, so another local process
+  cannot fake one. Verified: Keyboard single/double through InputPlumber;
+  moving between buttons, none, and back; another client's `LoadProfilePath`
+  and an InputPlumber restart both re-mapped; stopping InputPlumber flipped to
+  the direct route (nodes reappear) and starting it flipped back; stopping the
+  daemon restored Screenshot. Rejected alternatives, checked: an
+  `/etc/inputplumber` override (whole files only, no profiles directory);
+  watching the virtual pad (the default sends QuickAccess as Guide+A, so it is
+  indistinguishable from a user's chord, and Steam acts on it too).
+- **What the OXP's captures changed in the button drivers** (2026-11-17).
+  `hidraw-report` matches `match = [[offset, value], …]`, all of which must
+  hold: the OXP's Home sends a press frame and a release frame that differ only
+  in a state byte, and the old single `byte`/`value` read every tap as a double
+  press (`TestOXPHomeReleaseIsNotAPress`). Evdev buttons may name `usb` +
+  `interface`: the OXP controller registers `HID 1a86:fe00` on interfaces 0
+  *and* 1, sysfs lists 1 first, and only 0 carries the chords; the watcher
+  matches the node's USB identity and the udev grant adds
+  `ENV{ID_VENDOR_ID}`/`ENV{ID_MODEL_ID}`/`ENV{ID_USB_INTERFACE_NUM}` — ENV,
+  because `ATTRS{idVendor}` lives on a different parent from `ATTRS{name}` and
+  the rule would match nothing (the lighting lesson again). Checked with
+  `udevadm test` against a throwaway /run rule: event13 and hidraw4 matched,
+  event10, the AT keyboard and the other hidraw interfaces did not.
+- **Setup leaves a node at mode 0000 alone** (`hiddenNode`). No kernel creates
+  one; InputPlumber hides the nodes it manages that way, and setup's direct
+  `chmod g=r` would have undone that for the whole group until the next udev
+  event. The udev rule cannot (InputPlumber's assignment is `MODE:=`, final).
+- **Every `voltaire-perms.service` loop skips a missing file with `|| continue`**
+  (2026-11-17). `[ -e f ] && chgrp …` leaves the loop's status at 1 when the
+  last file is absent, so the unit failed at every boot on any machine without
+  asus-armoury's `boot_sound` or asus-nb-wmi's deprecated `ppt_*` — the OXP,
+  and a Z13 on a kernel without `CONFIG_ASUS_WMI_DEPRECATED_ATTRS`. Only the
+  ryzen_smu line had been patched (25ef8a9). `TestPermsUnitToleratesMissingFiles`
+  covers both copies; negative control run. Found by the same OXP session, as
+  was a false "a device file grants … which is a keyboard" warning setup printed
+  for any HID keyboard no grant names (`staleHidrawInterface` now returns
+  `granted` instead of letting the caller infer it).
 - **Daemon socket fallback**: CLI commands try the Unix socket first (1 s timeout);
   fall back to direct HID/sysfs if the daemon is not running. Detection is implicit:
   connection refused → fall back.
@@ -3782,12 +3851,13 @@ diff whenever a main release touches `api/`.
 14. **Z13 button candidates**: an evtest capture on "Asus WMI hotkeys" while
     pressing the Fn keys, keeping only keys that arrive there and do nothing
     else, would give the Settings chooser more than the Armoury Crate button.
-15. **Buttons through InputPlumber** (Jeff, 2026-11-16; handhelds first):
-    InputPlumber grabs and hides the button nodes on the OXP, Ally *and* Z13,
-    so a managed device's buttons reach voltaire only as a profile mapping to
-    a DBus action. To be built and tested on the OXP X2 Mini Pro, in a
-    session there; the plan opens with that session's kickoff:
-    `.claude/plans/inputplumber-buttons.md`.
+15. **Buttons through InputPlumber** (Jeff, 2026-11-16) — **built and verified
+    on the OXP X2 Mini Pro 2026-11-17** (decision entries above), with the
+    buttons-only OXP device file. Remaining: the Z13 under InputPlumber (the
+    plan's phase 0: does the grab of "Asus WMI hotkeys" break tablet mode, and
+    add `inputplumber = "QuickAccess"` to `armoury-crate` once seen working),
+    the GUI chooser's wording about taking the button from Steam, and the Ally
+    with M6. Plan: `.claude/plans/inputplumber-buttons.md`.
 16. **OXP X2 Mini Pro power (M5)** (Jeff, 2026-11-16): real TDP through
     ryzen_smu (amkillam fork) when present, `amd-pmf` platform profiles as the
     fallback with an install note; no kernel module of ours. The lockup rules

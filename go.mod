@@ -15,6 +15,7 @@ require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/diamondburned/gotk4-layer-shell/pkg v0.0.0-20240109211357-6efa9f6dc438
 	github.com/diamondburned/gotk4/pkg v0.4.1
+	go.yaml.in/yaml/v3 v3.0.4
 )
 
 require golang.org/x/sync v0.25.0 // indirect

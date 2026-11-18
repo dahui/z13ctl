@@ -63,6 +63,14 @@ type Daemon struct {
 	mu    sync.Mutex
 	state api.State
 
+	// ipCarried is the button InputPlumber currently carries to us over DBus,
+	// "" when none (inputplumber.go). Guarded by mu. ipKick asks the route
+	// watcher to re-check; ipDone closes once it has taken its mapping out on
+	// shutdown. Both nil when the watcher is not running.
+	ipCarried string
+	ipKick    chan struct{}
+	ipDone    chan struct{}
+
 	// suspending is set by releaseVolatileState and cleared by
 	// restoreVolatileState. It stands the reconcile watcher down for the window
 	// between PrepareForSleep(true) and the freeze, where re-enabling the custom
@@ -265,6 +273,10 @@ func Run(ctx context.Context, opts Options) error {
 		slog.Info("no hardware button on this device")
 	default:
 		go d.watchButtons(ctx)
+		if d.usesInputPlumber() {
+			d.ipKick, d.ipDone = make(chan struct{}, 1), make(chan struct{})
+			go d.watchInputPlumber(ctx)
+		}
 	}
 
 	go d.watchResume(ctx)
@@ -335,6 +347,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	err = <-errc
 	if ctx.Err() != nil {
+		d.waitInputPlumberCleanup()
 		return nil
 	}
 	return fmt.Errorf("accept: %w", err)

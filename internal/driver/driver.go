@@ -802,6 +802,10 @@ type Telemetry interface {
 // to emit).
 type ButtonEvent struct {
 	ID string // "armoury-crate" on the Z13
+	// Via names the route a press came by when it was not the button's own
+	// driver: "inputplumber" for one InputPlumber delivered over DBus. The
+	// daemon counts a press from one route only, so a button never fires twice.
+	Via string
 }
 
 // Buttons watches a device's extra hardware buttons.
@@ -813,4 +817,13 @@ type ButtonEvent struct {
 // deliberately offers no way to express a grab.
 type Buttons interface {
 	Watch(ctx context.Context, ch chan<- ButtonEvent) error
+}
+
+// ButtonNoder is implemented by a button driver that reads one device node.
+// Node is the node it would open now ("/dev/input/event13"), "" when absent,
+// found from sysfs alone without opening anything. The daemon compares it with
+// the nodes InputPlumber has taken over, to know which route a press will
+// come by.
+type ButtonNoder interface {
+	Node() string
 }

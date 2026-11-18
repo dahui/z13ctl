@@ -403,6 +403,9 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 		{"evdev interface with no usb", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1, Interface: intp(0)}}
 		}, "vvvv:pppp"},
+		{"inputplumber capability that is not a button name", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1, InputPlumber: "Gamepad:Button:Guide"}}
+		}, "gamepad button name"},
 		{"keyboard node on a non-evdev method", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", KeyboardNode: "why"}}
 		}, "only to evdev methods"},

@@ -37,6 +37,7 @@ export default defineConfig({
 						{ label: 'Installation', slug: 'installation' },
 						{ label: 'Quick Start', slug: 'quick-start' },
 						{ label: 'Migrating from z13ctl', slug: 'migrating-from-z13ctl' },
+						{ label: 'Using InputPlumber', slug: 'inputplumber' },
 					],
 				},
 				{

@@ -113,6 +113,15 @@ func (b *Buttons) findNode() string {
 	return ""
 }
 
+// Node is the hidraw node the watcher would open now, "" when none is present
+// (driver.ButtonNoder). Sysfs only.
+func (b *Buttons) Node() string {
+	if n := b.findNode(); n != "" {
+		return "/dev/" + n
+	}
+	return ""
+}
+
 // hidIDMatches reports whether a HID uevent's HID_ID names vendor:product,
 // on any bus.
 func hidIDMatches(uevent string, vendor, product uint16) bool {
@@ -131,6 +140,7 @@ func hidIDMatches(uevent string, vendor, product uint16) bool {
 // node that is a typing keyboard ends the watch with an error instead: that
 // is a property of the node, and retrying would not change it.
 func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error {
+	lastOpenErr := ""
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -153,12 +163,19 @@ func (b *Buttons) Watch(ctx context.Context, ch chan<- driver.ButtonEvent) error
 		}
 		f, err := openNode("/dev/" + node)
 		if err != nil {
-			slog.Info("button hidraw open failed; retrying", "button", b.spec.ID, "err", err, "delay", retryDelay)
+			// Once per distinct error: InputPlumber keeps a node it manages at
+			// mode 0000 for as long as it runs.
+			lvl := slog.LevelDebug
+			if msg := err.Error(); msg != lastOpenErr {
+				lvl, lastOpenErr = slog.LevelInfo, msg
+			}
+			slog.Log(ctx, lvl, "button hidraw open failed; retrying", "button", b.spec.ID, "err", err, "delay", retryDelay)
 			if !sleep(ctx, retryDelay) {
 				return nil
 			}
 			continue
 		}
+		lastOpenErr = ""
 		slog.Info("watching hardware button (hidraw, shared, read-only)", "path", "/dev/"+node, "button", b.spec.ID)
 		if err := b.readLoop(ctx, f, ch); err != nil {
 			slog.Info("button hidraw watcher stopped; retrying", "button", b.spec.ID, "err", err, "delay", retryDelay)

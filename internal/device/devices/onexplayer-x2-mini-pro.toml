@@ -33,7 +33,11 @@ product = "ONEXPLAYER X2Mini PRO"
 #
 # When InputPlumber manages the controller (it auto-starts once installed) it
 # grabs this node and the hidraw interfaces, and the buttons reach voltaire
-# only through it (.claude/plans/inputplumber-buttons.md).
+# only through it: inputplumber names each button's capability in
+# InputPlumber 0.84.0's oxp9 map, confirmed by mapping each to a DBus action on
+# this machine (2026-11-17). Its default profile sends QuickAccess2 to
+# Screenshot and Keyboard to Guide+North (Steam's on-screen keyboard), and
+# passes QuickAccess (Steam's Quick Access menu) through.
 [[buttons]]
 id            = "keyboard"
 label         = "Keyboard button"
@@ -43,6 +47,7 @@ device        = "HID 1a86:fe00"
 usb           = "1a86:fe00"
 interface     = 0
 keys          = [29, 125, 24] # KEY_LEFTCTRL, KEY_LEFTMETA, KEY_O
+inputplumber  = "QuickAccess2"
 keyboard_node = "the X2 Mini Pro controller's interface-0 keyboard sends only the button chords"
 
 [[buttons]]
@@ -53,6 +58,7 @@ device        = "HID 1a86:fe00"
 usb           = "1a86:fe00"
 interface     = 0
 keys          = [29, 125, 56] # KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTALT
+inputplumber  = "QuickAccess"
 keyboard_node = "the X2 Mini Pro controller's interface-0 keyboard sends only the button chords"
 
 # Home: a 64-byte unnumbered B2 frame on the controller's vendor interface,
@@ -60,11 +66,14 @@ keyboard_node = "the X2 Mini Pro controller's interface-0 keyboard sends only th
 # The two frames of a tap differ only in that byte, so it is part of the
 # match, or one tap would count as a double press. Reports on 7.3.4 without
 # the onexplayer-x2mini watcher (on 7.2 hid-oxp's button map silenced it).
+# InputPlumber's oxp_hid driver calls button 0x24 "Keyboard" (it was written
+# for the OXP X1).
 [[buttons]]
-id        = "home"
-label     = "Home button"
-method    = "hidraw-report"
-usb       = "1a86:fe00"
-interface = 2
-report_id = 0xb2
-match     = [[6, 0x24], [12, 0x01]]
+id           = "home"
+label        = "Home button"
+method       = "hidraw-report"
+usb          = "1a86:fe00"
+interface    = 2
+report_id    = 0xb2
+match        = [[6, 0x24], [12, 0x01]]
+inputplumber = "Keyboard"
