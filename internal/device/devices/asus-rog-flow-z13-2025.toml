@@ -2,7 +2,7 @@
 #
 # Every number here is measured or verified on hardware; sources are noted per
 # block. The format is documented key by key in the developer docs
-# (website/src/content/docs/dev/device-files.md).
+# (website/docs/dev/device-files.md).
 
 [device]
 id    = "asus-rog-flow-z13-2025"

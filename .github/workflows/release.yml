@@ -128,5 +128,5 @@ jobs:
           echo "All push attempts failed"
           exit 1
 
-# Docs deploy moved to docs.yml: the site lives in website/ (Astro Starlight)
+# Docs deploy moved to docs.yml: the site lives in website/ (VitePress)
 # and deploys via GitHub Pages actions on pushes to main, not on release.

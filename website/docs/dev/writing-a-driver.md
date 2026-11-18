@@ -3,12 +3,14 @@ title: Writing a driver
 description: Adding a driver for a new kernel interface — the contract, a worked example, registration, hermetic tests, and the hardware check.
 ---
 
+# Writing a driver
+
 You need a driver when a machine drives a capability through a kernel
 interface voltaire does not speak yet. If an existing method already fits
 (another ASUS laptop's `asus-nb-wmi` fans, another machine's `power_supply`
-battery), you need only a [device file](/voltaire/dev/device-files/).
+battery), you need only a [device file](/dev/device-files).
 
-Read [Architecture](/voltaire/dev/architecture/) first for where drivers sit.
+Read [Architecture](/dev/architecture) first for where drivers sit.
 The contract below is also the package comment of `internal/driver`
 (`doc.go`), which is the authoritative copy.
 
@@ -107,7 +109,7 @@ policy paths are the existing examples.
 A new capability *kind*, rather than a new method for an existing one, also
 needs a block in `internal/device/config.go`, a field on `device.Device`, a
 `Register*` function, and a section in the `device-get` document. Write the
-block's keys into [Device files](/voltaire/dev/device-files/): a test fails
+block's keys into [Device files](/dev/device-files): a test fails
 until every schema key is documented there.
 
 ### 5. Name the method by its interface
@@ -169,7 +171,7 @@ that changes power, fan or sleep handling needs a run on the machine:
   limit's own readback, which does not move when firmware resets it.
 - Restore the state file and restart the installed units afterwards.
 
-The [Z13 hardware smoke test](/voltaire/dev/smoke-z13/) is the full checklist
+The [Z13 hardware smoke test](/dev/smoke-z13) is the full checklist
 for one machine; a new device wants its own.
 
 ## Checklist

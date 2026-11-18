@@ -3,6 +3,8 @@ title: Theming
 description: Built-in themes, custom theme.toml files, accent variants, and full CSS overrides for voltaire-gui.
 ---
 
+# Theming
+
 voltaire-gui supports custom color themes through a simple TOML configuration
 file. You can also select from 15 built-in themes using the in-app theme
 picker.

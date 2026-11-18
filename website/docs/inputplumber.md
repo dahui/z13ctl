@@ -3,6 +3,8 @@ title: Using InputPlumber
 description: How voltaire's hardware button works on a handheld whose controller InputPlumber manages, what voltaire changes in InputPlumber, and what it needs.
 ---
 
+# Using InputPlumber
+
 [InputPlumber](https://github.com/ShadowBlip/InputPlumber) is the input daemon
 many handheld distributions ship (Bazzite, ChimeraOS, and others; on CachyOS it
 starts on its own once installed). It takes a handheld's controller over
@@ -64,5 +66,5 @@ InputPlumber.
 
 A device file lists the InputPlumber capability for each of its buttons
 (`inputplumber = "QuickAccess2"`; see
-[Device Files](/voltaire/dev/device-files/)). Today that is the OneXPlayer X2
+[Device Files](/dev/device-files)). Today that is the OneXPlayer X2
 Mini Pro.

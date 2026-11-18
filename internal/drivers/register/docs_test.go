@@ -16,7 +16,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/device"
 )
 
-const deviceFilesDoc = "../../../website/src/content/docs/dev/device-files.md"
+const deviceFilesDoc = "../../../website/docs/dev/device-files.md"
 
 func readDeviceFilesDoc(t *testing.T) string {
 	t.Helper()
@@ -89,6 +89,32 @@ func TestEveryDeviceFileKeyIsDocumented(t *testing.T) {
 		if !strings.Contains(doc, "`"+key+"`") && !strings.Contains(doc, "`["+key+"]`") &&
 			!strings.Contains(doc, "`[["+key+"]]`") {
 			t.Errorf("device-file key %q is not documented in %s", key, deviceFilesDoc)
+		}
+	}
+}
+
+// TestEveryDeviceHasACompatibilityPage holds the user guide's Devices section
+// to the device files: each embedded device file needs its own page at
+// devices/<id>.md, and the supported-devices page must link to it (its
+// compatibility matrix has a column per device). A new device file without
+// them fails here, so no machine ships with nothing saying what works on it.
+func TestEveryDeviceHasACompatibilityPage(t *testing.T) {
+	const devicesDir = "../../../website/docs/devices/"
+	index, err := os.ReadFile(devicesDir + "index.md")
+	if err != nil {
+		t.Fatalf("reading the supported-devices page: %v", err)
+	}
+	configs, err := device.Configs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range configs {
+		id := c.Device.ID
+		if _, err := os.Stat(devicesDir + id + ".md"); err != nil {
+			t.Errorf("device %q has no page at website/docs/devices/%s.md", id, id)
+		}
+		if !strings.Contains(string(index), "](/devices/"+id+")") {
+			t.Errorf("website/docs/devices/index.md does not link to device %q", id)
 		}
 	}
 }

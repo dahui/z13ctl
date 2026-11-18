@@ -328,9 +328,10 @@ contrib/
                              .claude/plans/voltaire-aur-playbook.md (Jeff executes).
   voltaire-gui.desktop       desktop entry
 examples/themes/             shipped theme TOMLs (catppuccin, gruvbox, nord, rog-*, …)
-website/                     the docs site (Astro Starlight; see Documentation)
-  astro.config.mjs           site config: base /voltaire, sidebar nav, links validator
-  src/content/docs/          page sources (.md/.mdx); reference/api-go.md is generated
+website/                     the docs site (VitePress; see Documentation)
+  docs/                      page sources (.md); reference/api-go.md is generated
+    .vitepress/config.mts    site config: base /voltaire/, cleanUrls, sidebar (the table of contents)
+    .vitepress/anchors.ts    post-build #fragment check (VitePress checks pages only)
 ```
 
 ## Where the hardware code lives
@@ -3717,7 +3718,7 @@ sudo make install-perms-service    # install system oneshot service for sysfs pe
 sudo make uninstall-perms-service  # remove system permissions service
 make snapshot           # goreleaser release --snapshot --clean  (no publish)
 make release            # goreleaser release --clean             (requires pushed v* tag)
-make docs               # serve the website locally (pnpm install + astro dev)
+make docs               # serve the website locally (pnpm install + vitepress dev)
 make docs-build         # build the website as CI does
 make docs-api           # regenerate website/.../reference/api-go.md from api/ doc comments
 make clean              # remove both binaries, dist/, coverage artifacts
@@ -3784,22 +3785,45 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
 
 - `README.md` — user-facing (installation, commands, colors, contributing);
   `voltaire-gui/README.md` — the GUI's own subdirectory readme.
-- `website/` — the docs site: Astro Starlight, built with **pnpm** (`pnpm-lock.yaml`
-  is committed; build scripts for esbuild/sharp are approved in
-  `website/pnpm-workspace.yaml`, which pnpm ≥11 reads instead of a package.json
-  `pnpm` field). `make docs` serves it locally, `make docs-build` builds it as CI
-  does. It replaced the mkdocs `docs/` tree at 2.0; page sources live in
-  `website/src/content/docs/`, nav in `astro.config.mjs` (`sidebar`), and the
-  site deploys from `.github/workflows/docs.yml` (withastro/action → GitHub
-  Pages) on pushes to main touching `website/**` — no longer from release.yml.
-  `site` is `https://dahui.github.io` with `base: '/voltaire'`, so internal
-  links are root-relative **including the base** (`/voltaire/reference/...`)
-  and `starlight-links-validator` fails the build on any that do not resolve.
-- **`website/src/content/docs/reference/api-go.md` is generated — do not
+- `website/` — the docs site: **VitePress** (Jeff, 2026-11-17: replaced Astro
+  Starlight, which had replaced the mkdocs `docs/` tree at 2.0), built with
+  **pnpm** (`pnpm-lock.yaml` is committed; esbuild's build script is approved
+  in `website/pnpm-workspace.yaml`, which pnpm ≥11 reads instead of a
+  package.json `pnpm` field, and which also sets `minimumReleaseAge` to two
+  weeks so no dependency, transitive ones included, is fresher than that).
+  VitePress is pinned to the stable 1.x line (1.6.4); 2.0 was still alpha.
+  `make docs` serves it locally, `make docs-build` builds it as CI does. Page
+  sources live in `website/docs/`, the sidebar in `docs/.vitepress/config.mts`,
+  and the site deploys from `.github/workflows/docs.yml` (pnpm build →
+  upload-pages-artifact → deploy-pages) on pushes to main touching
+  `website/**`. **There is no landing page** (Jeff: drop straight into the
+  overview and table of contents): `docs/index.md` is an ordinary doc page,
+  so the root shows the sidebar. Rules for writing pages:
+  - **Links are written without the base and without a trailing slash**
+    (`/reference/commands#setup`; `/gui/` only because it is a directory
+    index). `base: '/voltaire/'` is added by VitePress, and `cleanUrls`
+    serves `/voltaire/reference/commands` (GitHub Pages maps it to the
+    `.html`). The README, CONTRIBUTING, the GUI README, `cmd/legacyname.go`
+    and the AUR install script link to the site in the same form.
+  - **Every page carries its own `# Title`** after the frontmatter; VitePress
+    does not render `title:` as a heading (Starlight did).
+  - **Callouts are `::: info|tip|warning|danger Title`**, labelled Note / Tip /
+    Caution / Danger in the config to match Starlight's names.
+  - **Heading anchors are VitePress's slugs**, which differ from Starlight's:
+    `ryzen_smu` becomes `ryzen-smu`, and an em-dash survives into the id. Four
+    headings pin their old anchor with `{#id}` so existing links still work.
+    Pages are compiled as Vue templates, so a raw `<word>` or `{{` in prose
+    (outside backticks) breaks or vanishes.
+  - **Links are checked twice at build time**: VitePress fails on a link to a
+    missing page, and `docs/.vitepress/anchors.ts` (a `buildEnd` hook) fails
+    on any internal `#fragment` with no matching `id`/`name` on its target,
+    the coverage starlight-links-validator gave. Its negative control was run
+    (a misspelt fragment fails the build). It checks the generated API page
+    too: gomarkdoc's `<a name>` anchors count.
+- **`website/docs/reference/api-go.md` is generated — do not
   hand-edit it.** Regenerate with `make docs-api` whenever `api/` doc comments
-  change; the target prepends the frontmatter and strips the H1. The page is
-  excluded from link validation (its `#Symbol` fragments target gomarkdoc's raw
-  `<a name>` anchors, invisible to the validator); every other page is checked.
+  change; the target prepends the frontmatter and renames gomarkdoc's `# api`
+  heading to `# Go API Reference`.
   Each symbol links to its source line. gomarkdoc takes the repository from
   the git remote unless told otherwise, which here is `dahui/z13ctl`'s `main`
   — a different api with different line numbers — so the target passes
@@ -3819,6 +3843,18 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   `make test` until it is documented there. `plugins.md` describes the M5 tier
   and is marked planned until `plughost` exists; the package comment of
   `internal/driver` (`doc.go`) is the driver contract the guide restates.
+- `devices/` — the user-facing compatibility pages (Jeff, 2026-11-17: "users
+  will want to know [what a device does not support] and why"). `index.md`
+  holds the feature × device matrix, every "No" linking to a *why* section on
+  that device's page; each device file has a page at `devices/<id>.md` with
+  the same rows as a Compatibility table, what it needs installed, and a
+  "Not supported yet, and why" section. `register/docs_test.go`'s
+  `TestEveryDeviceHasACompatibilityPage` fails a device file with no page or
+  no link from the matrix (negative control run). A change to a device file's
+  capabilities, or a kernel that closes a gap, means updating both pages.
+  The OXP's RGB gap needs **two** things to close, which the page says: the
+  hid-oxp X2 series in a released kernel, and a voltaire lighting driver for
+  kernel LED devices (only `aura-hid` exists) plus an OXP `[lighting]` block.
 - `dev/smoke-z13.md` — the hardware smoke checklist (edited in place during
   smoke runs; it is a site page now, same content).
 - `migrating-from-z13ctl.md` — the 2.0 migration story, linked from the README,

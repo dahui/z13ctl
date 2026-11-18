@@ -1,3 +1,7 @@
 allowBuilds:
   esbuild: true
-  sharp: true
+
+# Refuse any package version published less than two weeks ago (minutes),
+# transitive dependencies included: a fresh release has had no time to be
+# found out if it is broken or compromised.
+minimumReleaseAge: 20160

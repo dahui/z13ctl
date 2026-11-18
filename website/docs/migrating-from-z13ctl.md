@@ -3,6 +3,8 @@ title: Migrating from z13ctl
 description: What the Voltaire 2.0 rename means for z13ctl and z13gui users — what carries over automatically, what changed, and the compatibility timeline.
 ---
 
+# Migrating from z13ctl
+
 **Voltaire 2.0 is z13ctl 2.0.** The z13ctl CLI/daemon and the z13gui overlay
 merged into one project and took one name. Nothing about the hardware support
 changed, the same people maintain it, and the version numbers continue where
@@ -72,7 +74,7 @@ rm -f ~/.config/systemd/user/z13ctl.socket \
 ```
 
 and install the voltaire units as described in
-[Installation](/voltaire/installation/).
+[Installation](/installation).
 
 ### If you enabled the old units for your user
 
@@ -142,7 +144,7 @@ honoured when the new `VOLTAIRE_GUI_*` names are unset.
 
 **Custom theme stylesheets.** A `theme.css` referencing the `@z13-*` color
 tokens keeps working — every token is defined under both its `@z13-*` and
-`@voltaire-*` names. See [Theming](/voltaire/gui/theming/#color-reference).
+`@voltaire-*` names. See [Theming](/gui/theming#color-reference).
 
 ## What you should update (eventually)
 

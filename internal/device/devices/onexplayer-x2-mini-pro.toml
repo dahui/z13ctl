@@ -5,7 +5,7 @@
 # Every value here was captured on this machine (2026-11-17, Linux 7.3.4,
 # hid-oxp bound); the captures are in
 # .claude/plans/fixtures/oxp-inputplumber-2026-11-17/. The format is
-# documented key by key in website/src/content/docs/dev/device-files.md.
+# documented key by key in website/docs/dev/device-files.md.
 
 [device]
 id    = "onexplayer-x2-mini-pro"

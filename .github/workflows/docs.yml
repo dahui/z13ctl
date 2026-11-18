@@ -6,7 +6,7 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/docs.yml'
-  # PRs build the site (link validation included) without deploying.
+  # PRs build the site (page and anchor link checks included) without deploying.
   pull_request:
     paths:
       - 'website/**'
@@ -26,13 +26,28 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
     steps:
       - uses: actions/checkout@v4
-      # Builds website/ (detects pnpm from packageManager + lockfile) and
-      # uploads the Pages artifact.
-      - uses: withastro/action@v3
+      # pnpm's version comes from packageManager in website/package.json.
+      - uses: pnpm/action-setup@v4
         with:
-          path: ./website
+          package_json_file: website/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # Fails on a link to a missing page (VitePress) or a missing #anchor
+      # (docs/.vitepress/anchors.ts).
+      - run: pnpm build
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: website/docs/.vitepress/dist
 
   deploy:
     needs: build

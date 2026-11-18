@@ -3,18 +3,20 @@ title: Quick Start
 description: First steps with the voltaire CLI — lighting, profiles, fan curves, TDP, undervolting, and custom profiles.
 ---
 
-These examples assume you have [installed voltaire](/voltaire/installation/)
+# Quick Start
+
+These examples assume you have [installed voltaire](/installation)
 and run `sudo voltaire setup`. The daemon does not need to be running —
 commands fall back to direct hardware access automatically. See
-[Daemon](/voltaire/reference/daemon/) for why you probably want the daemon
+[Daemon](/reference/daemon) for why you probably want the daemon
 running anyway.
 
-:::tip[Prefer not to use the command line? Use the GUI]
+::: tip Prefer not to use the command line? Use the GUI
 Everything below can be done from a graphical interface instead. If you're new
 to Linux or simply prefer not to type commands, use **voltaire-gui** — the
 touch-friendly overlay that drives all of these features (lighting, fan
 curves, TDP, undervolt, profiles) through the daemon. See the
-[GUI overview](/voltaire/gui/). The CLI examples here remain useful for
+[GUI overview](/gui/). The CLI examples here remain useful for
 scripting and advanced tuning.
 :::
 
@@ -85,7 +87,7 @@ a curve has 8 points.
 
 The kernel discards custom fan curves whenever the system power profile
 changes — which GNOME power modes and `power-profiles-daemon` do on every
-AC/battery transition. Run the [daemon](/voltaire/reference/daemon/) and it
+AC/battery transition. Run the [daemon](/reference/daemon) and it
 re-applies your curve automatically; otherwise re-run `--set` after any profile
 change.
 
@@ -120,7 +122,7 @@ Setting a custom TDP switches to the `custom` profile. Switching back to a
 stock profile hands the power limits back to the firmware, while keeping the
 custom values saved so `custom` stays re-selectable.
 
-Run the [daemon](/voltaire/reference/daemon/) to keep a custom TDP in force. The
+Run the [daemon](/reference/daemon) to keep a custom TDP in force. The
 firmware re-applies the power profile's own limits whenever anything writes the
 profile (GNOME power modes, plugging or unplugging the charger) or resets the
 fans to auto, and the daemon is what puts yours back. Sustaining more than the
@@ -152,7 +154,7 @@ voltaire tdp --reset
 Undervolting reduces CPU voltage via AMD Curve Optimizer (CO), lowering
 temperatures and power draw without reducing performance. Requires the
 `ryzen_smu` kernel module (optional — see
-[Installation](/voltaire/installation/#optional-ryzen_smu-kernel-module)).
+[Installation](/installation#optional-ryzen_smu-kernel-module)).
 
 CO values are volatile — they reset on reboot and sleep. The daemon reapplies
 them automatically on startup and resume when the custom profile is active.
@@ -268,9 +270,9 @@ This prints a live swatch table in your terminal. Any 6-digit hex value
 
 ## Next steps
 
-- [Commands](/voltaire/reference/commands/) — every flag and option for every
+- [Commands](/reference/commands) — every flag and option for every
   command
-- [Daemon](/voltaire/reference/daemon/) — set up the daemon for state
+- [Daemon](/reference/daemon) — set up the daemon for state
   persistence, boot restore, and sleep/resume recovery
-- [The GUI](/voltaire/gui/) — graphical interface for every feature
+- [The GUI](/gui/) — graphical interface for every feature
   (touch-friendly GTK4 overlay)

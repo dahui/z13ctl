@@ -3,6 +3,8 @@ title: Architecture
 description: How voltaire is put together — device files, the driver registry, the safety engine, and how capabilities reach the clients.
 ---
 
+# Architecture
+
 This page is for people adding support for a machine or changing how voltaire
 talks to hardware. It is a map: what each part does, and which other page
 covers it in depth.
@@ -62,7 +64,7 @@ them to one machine:
 | `[lighting]` | `aura-hid` | `aurahid` |
 | `[button]` | `evdev-key` | `evdevkey` |
 
-Every key of every block is documented in [Device files](/voltaire/dev/device-files/).
+Every key of every block is documented in [Device files](/dev/device-files).
 
 ## How drivers from different packages meet
 
@@ -128,8 +130,8 @@ declares on another, without knowing which it is.
 
 ## Further reading
 
-- [Device files](/voltaire/dev/device-files/): every key, with a complete example.
-- [Writing a driver](/voltaire/dev/writing-a-driver/): adding a method.
-- [Plugins](/voltaire/dev/plugins/): the planned external driver tier.
-- [Daemon & socket protocol](/voltaire/reference/daemon/#device-capabilities):
+- [Device files](/dev/device-files): every key, with a complete example.
+- [Writing a driver](/dev/writing-a-driver): adding a method.
+- [Plugins](/dev/plugins): the planned external driver tier.
+- [Daemon & socket protocol](/reference/daemon#device-capabilities):
   the `device-get` document clients read.

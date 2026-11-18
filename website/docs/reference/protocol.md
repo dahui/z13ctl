@@ -3,6 +3,8 @@ title: Aura HID Protocol Reference
 description: The reverse-engineered ASUS Aura HID protocol for the 2025 ROG Flow Z13 — packet formats, modes, and device discovery.
 ---
 
+# Aura HID Protocol Reference
+
 This document describes the HID protocol used by the 2025 ASUS ROG Flow Z13
 for RGB lighting control. It is intended for developers who want to understand
 or reimplement this functionality.

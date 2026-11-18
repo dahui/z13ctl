@@ -3,6 +3,8 @@ title: GUI Quick Start
 description: Open the drawer, learn the controls, and navigate with touch, mouse, or gamepad.
 ---
 
+# GUI Quick Start
+
 ## Opening the drawer
 
 Press the **Armoury Crate button** on your Z13. The drawer slides in from the
@@ -30,7 +32,7 @@ nothing extra: the drawer appears, and if a second press follows quickly it is
 swapped for the window. Presses more than about 400 ms apart are two separate
 toggles, not a double tap.
 
-:::note[Steam Gaming Mode]
+::: info Steam Gaming Mode
 Under gamescope the full window opens inside voltaire's own fullscreen surface
 rather than as a separate window — gamescope does not composite a second
 application window. The pages, tabs, and controls are the same; L1/R1 switch
@@ -70,7 +72,7 @@ are BIOS settings most people set once, and the drawer is for the controls you
 reach for in a hurry.
 
 The theme picker button at the bottom-left of the drawer opens the theme
-view. See [Theming](/voltaire/gui/theming/) for details.
+view. See [Theming](/gui/theming) for details.
 
 ## The Dashboard tab
 
@@ -324,7 +326,7 @@ The **Quickbar** card lists every drawer section your machine supports, each
 with a switch to show or hide it and ▲/▼ to move it; the drawer changes as you
 go, and **Reset to default** puts the standard layout back. CPU boost and the
 refresh rate are available here as extra sections, off by default. See
-[Choosing which sections appear](/voltaire/gui/configuration/#choosing-which-sections-appear)
+[Choosing which sections appear](/gui/configuration#choosing-which-sections-appear)
 for the details, including how to fix the layout by hand in `gui.toml`.
 
 ### Firmware switches

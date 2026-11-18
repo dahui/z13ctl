@@ -5,7 +5,7 @@
 // program against, so that device support is a set of implementations selected
 // by device data rather than calls into one device's sysfs layout.
 //
-// The developer guide (website/src/content/docs/dev/writing-a-driver.md) walks
+// The developer guide (website/docs/dev/writing-a-driver.md) walks
 // through writing one; this comment is the contract it relies on.
 //
 // # Classes, not devices

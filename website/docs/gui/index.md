@@ -3,10 +3,12 @@ title: The GUI — voltaire-gui
 description: The GTK4 overlay drawer for Voltaire on Wayland — features, display backends, GNOME support, and troubleshooting.
 ---
 
+# The GUI — voltaire-gui
+
 `voltaire-gui` is a GTK4 overlay drawer for **Voltaire** on Wayland —
 graphical controls for the 2025 ASUS ROG Flow Z13 on Linux. Press the Armoury
 Crate button and it slides in from the edge of the screen (the right, unless
-you [move it](/voltaire/gui/configuration/)); press it twice, or tap the drawer's
+you [move it](/gui/configuration)); press it twice, or tap the drawer's
 expand button, for the full window.
 
 ## What voltaire-gui does
@@ -84,7 +86,7 @@ GNOME supports Wayland perfectly well. What Mutter has never implemented is
 this one extension, on the long-standing position that panels and docks belong
 in GNOME Shell extensions rather than in a client-side protocol.
 
-:::caution[Installing `gtk4-layer-shell` does not help]
+::: warning Installing `gtk4-layer-shell` does not help
 `gtk4-layer-shell` is the **client** side of the protocol — it is what
 voltaire-gui uses to *speak* layer-shell, and the packages already depend on
 it. The protocol itself has to come from the compositor, and Mutter offers no
@@ -150,7 +152,7 @@ automatically.
 - A Wayland compositor (layer-shell is used when available; GNOME and others
   get the overlay backend), or gamescope (Steam Gaming Mode)
 - GTK 4 and gtk4-layer-shell libraries (see
-  [Installation](/voltaire/installation/#runtime-dependencies-gui-only) for
+  [Installation](/installation#runtime-dependencies-gui-only) for
   distro package names)
 - The voltaire daemon running
 
@@ -248,7 +250,7 @@ sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/voltaire-gui
 
 Without capabilities, voltaire-gui falls back to freezing Steam (SIGSTOP),
 which also pauses running games. See
-[Gamepad input blocking](/voltaire/installation/#gamepad-input-blocking-capabilities)
+[Gamepad input blocking](/installation#gamepad-input-blocking-capabilities)
 for what the capabilities do.
 
 **Gamescope: drawer doesn't show**
@@ -266,10 +268,10 @@ layer-shell where the compositor supports it, the overlay backend otherwise.
 
 ## Next steps
 
-- [**Installation**](/voltaire/installation/) — packages or build from source
-- [**Quick Start**](/voltaire/gui/quick-start/) — open the drawer and explore
+- [**Installation**](/installation) — packages or build from source
+- [**Quick Start**](/gui/quick-start) — open the drawer and explore
   the controls
-- [**Configuration**](/voltaire/gui/configuration/) — config file, environment
+- [**Configuration**](/gui/configuration) — config file, environment
   variables
-- [**Theming**](/voltaire/gui/theming/) — built-in themes and custom color
+- [**Theming**](/gui/theming) — built-in themes and custom color
   definitions

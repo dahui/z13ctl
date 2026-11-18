@@ -3,6 +3,8 @@ title: Device files
 description: The TOML that describes one family of machines — every key, what it means, and a complete annotated example.
 ---
 
+# Device files
+
 A device file describes one family of machines: how to recognise it, which
 kernel interface drives each capability, and the numbers the kernel cannot
 report. Device files live in `internal/device/devices/` and are embedded in the
@@ -11,7 +13,7 @@ machine's DMI identity.
 
 Adding a machine whose hardware an existing driver already speaks is a device
 file and nothing else. A new kernel interface also needs a driver:
-[Writing a driver](/voltaire/dev/writing-a-driver/).
+[Writing a driver](/dev/writing-a-driver).
 
 ## Ground rules
 
@@ -236,7 +238,7 @@ method.
 
 | Key | Meaning |
 |---|---|
-| `controls` | The drawer's sections for a user who has not customized it, in order: the control IDs [GUI configuration](/voltaire/gui/configuration/) lists (`tdp`, `profile`, `cpu-boost`, …), including the ones that are otherwise off by default. A section the device cannot offer is dropped, so listing `lighting` before the RGB driver exists is harmless. A user's own choice (Settings → Quickbar, or `gui.toml`) still wins. Omit the block for the built-in default. |
+| `controls` | The drawer's sections for a user who has not customized it, in order: the control IDs [GUI configuration](/gui/configuration) lists (`tdp`, `profile`, `cpu-boost`, …), including the ones that are otherwise off by default. A section the device cannot offer is dropped, so listing `lighting` before the RGB driver exists is harmless. A user's own choice (Settings → Quickbar, or `gui.toml`) still wins. Omit the block for the built-in default. |
 
 A handheld wants different quick controls from a laptop: the OneXPlayer X2 Mini
 Pro lists the TDP slider, CPU boost, the screen's brightness, the volume, the

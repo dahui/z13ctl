@@ -3,34 +3,35 @@ title: Installation
 description: Install the voltaire CLI/daemon and the voltaire-gui overlay on any Linux distribution.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+# Installation
 
 One package installs everything: **`voltaire`** — the CLI and daemon, which owns
 all hardware access — and **`voltaire-gui`** — the touch-friendly GTK4 overlay
 that drives it. They ship and version together, so there is nothing extra to
 find and no way for the two to fall out of step.
 
-:::tip[Upgrading from z13ctl or z13gui?]
+::: tip Upgrading from z13ctl or z13gui?
 Install the voltaire packages over them — settings, state, and config carry
 over automatically, and the old package names are superseded in place. See
-[Migrating from z13ctl](/voltaire/migrating-from-z13ctl/) for the details.
+[Migrating from z13ctl](/migrating-from-z13ctl) for the details.
 :::
 
 ## Prerequisites
 
 - Linux kernel with `hidraw` support (standard on all mainstream distributions)
-- 2025 ASUS ROG Flow Z13 (USB IDs `0b05:18c6` and `0b05:1a30`)
+- A [supported device](/devices/): the ASUS ROG Flow Z13 (2025) or the
+  OneXPlayer X2 Mini Pro
 - For `voltaire-gui`: a Wayland compositor or gamescope (Steam Gaming Mode).
   Compositors with layer-shell support (KDE Plasma, Hyprland, Sway) get the
   drawer as a true edge-anchored panel; GNOME gets the overlay backend — see
-  [GNOME support](/voltaire/gui/#gnome-support)
+  [GNOME support](/gui/#gnome-support)
 
-:::caution[InputPlumber conflict (Bazzite, ChimeraOS, Nobara)]
+::: warning InputPlumber conflict (Bazzite, ChimeraOS, Nobara)
 On gaming distributions that ship
 [InputPlumber](https://github.com/ShadowBlip/InputPlumber), the daemon's button
 watcher will fail to open the Armoury Crate button device. InputPlumber ships a
 built-in profile for the ROG Flow Z13 that grabs the device exclusively. See
-[InputPlumber compatibility](/voltaire/reference/daemon/#inputplumber-compatibility)
+[InputPlumber compatibility](/reference/daemon#inputplumber-compatibility)
 for the override instructions.
 :::
 
@@ -45,18 +46,18 @@ via your system package manager first:
 | GTK 4 | `gtk4` | `libgtk-4-1` | `gtk4` |
 | gtk4-layer-shell | `gtk4-layer-shell` | `libgtk4-layer-shell0` | `gtk4-layer-shell` |
 
-### Optional: ryzen_smu kernel module
+### Optional: ryzen_smu kernel module {#optional-ryzen_smu-kernel-module}
 
 CPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
 module. Without it, all other features work normally — undervolt commands
 return a helpful error explaining how to install the module.
 
-On the [OneXPlayer X2 Mini Pro](/voltaire/devices/onexplayer-x2-mini-pro/) the
+On the [OneXPlayer X2 Mini Pro](/devices/onexplayer-x2-mini-pro) the
 module is also what voltaire sets the TDP through, since that machine has no
 kernel power-limit interface. Without it, its firmware power profiles are the
 only power control.
 
-:::caution[Strix Halo requires the amkillam fork]
+::: warning Strix Halo requires the amkillam fork
 The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in the
 2025 Z13). You must use the
 [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork. Voltaire
@@ -83,9 +84,7 @@ sudo make install
 
 ## Install
 
-<Tabs>
-
-<TabItem label="Arch Linux (AUR)">
+### Arch Linux (AUR)
 
 Install the [voltaire-bin](https://aur.archlinux.org/packages/voltaire-bin)
 package with your preferred AUR helper — it carries both binaries:
@@ -115,11 +114,9 @@ sudo pacman -U voltaire_*.pkg.tar.zst
 ```
 
 If you had `z13ctl-bin` or `z13gui-bin` installed, this package replaces both —
-see [Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+see [Migrating from z13ctl](/migrating-from-z13ctl).
 
-</TabItem>
-
-<TabItem label="Debian / Ubuntu">
+### Debian / Ubuntu
 
 Download the `.deb` package from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then install:
@@ -140,9 +137,7 @@ sudo usermod -aG users $USER
 Then log out and back in — the daemon and the overlay both start
 automatically.
 
-</TabItem>
-
-<TabItem label="Fedora / RHEL">
+### Fedora / RHEL
 
 Download the `.rpm` package from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then install:
@@ -163,9 +158,7 @@ sudo usermod -aG users $USER
 Then log out and back in — the daemon and the overlay both start
 automatically.
 
-</TabItem>
-
-<TabItem label="Release binary">
+### Release binary
 
 Download the latest `linux_amd64` archive from the
 [Releases](https://github.com/dahui/voltaire/releases) page, then extract and
@@ -214,9 +207,7 @@ install -Dm644 contrib/voltaire-gui.desktop \
     ~/.local/share/applications/voltaire-gui.desktop
 ```
 
-</TabItem>
-
-<TabItem label="From source">
+### From source
 
 Requires Go 1.26 or later; the GUI additionally needs CGO and the GTK4
 development headers:
@@ -263,10 +254,6 @@ so you log in to a drawer nobody opened. Uninstalling the old package is the
 real fix; `systemctl --user unmask` reverses the mask if you want the old unit
 back, and so does `make uninstall-service`.
 
-</TabItem>
-
-</Tabs>
-
 ## Verify the installation
 
 ```sh
@@ -282,9 +269,9 @@ right edge of the screen.
 ## Next steps
 
 You're installed and ready to go. Head to the
-[Quick Start](/voltaire/quick-start/) to set your first lighting effect, fan
+[Quick Start](/quick-start) to set your first lighting effect, fan
 curve, and performance profile, or straight to the
-[GUI overview](/voltaire/gui/) if you'll be driving everything from the drawer.
+[GUI overview](/gui/) if you'll be driving everything from the drawer.
 
 ## What `setup` does
 
@@ -314,7 +301,7 @@ On a machine that previously ran `z13ctl setup`, it also removes the old
 `99-z13ctl.rules` file (after verifying z13ctl generated it) and disables the
 old `z13ctl-perms.service` unit.
 
-:::note[Why a separate oneshot service?]
+::: info Why a separate oneshot service?
 The `charge_control_end_threshold` and `ppt_*` attributes are added by the
 `asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
 observable udev child-device events have already fired. The firmware-attribute
@@ -468,7 +455,7 @@ Something else is managing the Armoury Crate button device and voltaire cannot
 open it. On gaming distributions,
 [InputPlumber](https://github.com/ShadowBlip/InputPlumber) is a common cause.
 See
-[InputPlumber compatibility](/voltaire/reference/daemon/#inputplumber-compatibility)
+[InputPlumber compatibility](/reference/daemon#inputplumber-compatibility)
 for the fix.
 
 **Armoury Crate button does nothing, and the log shows no error**
@@ -490,4 +477,4 @@ journalctl --user -u voltaire -n 50
 
 **The drawer doesn't appear**
 
-See the GUI's own [troubleshooting section](/voltaire/gui/#troubleshooting).
+See the GUI's own [troubleshooting section](/gui/#troubleshooting).

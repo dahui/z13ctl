@@ -3,6 +3,8 @@ title: GUI Configuration
 description: The voltaire-gui config file, theme priority, environment variables, and command-line flags.
 ---
 
+# GUI Configuration
+
 ## Config file
 
 voltaire-gui stores its configuration in `~/.config/voltaire/config.toml`.
@@ -22,7 +24,7 @@ quickbar_controls = "profile,battery,lighting,refresh-rate"
 
 | Key | Description |
 |-----|-------------|
-| `theme` | Built-in theme ID (see `voltaire-gui --list-themes` or [Theming](/voltaire/gui/theming/)) |
+| `theme` | Built-in theme ID (see `voltaire-gui --list-themes` or [Theming](/gui/theming)) |
 | `accent` | Accent color variant for themes that support it; `""` uses the theme default |
 | `button_press` | Which surface a **single** press of the hardware button opens: `quickbar` (the default) or `window`. A double press opens the other one |
 | `refresh_autoswitch` | `true` to change the screen's refresh rate when the power source changes; absent is off |
@@ -115,7 +117,7 @@ match wins):
 3. `~/.config/voltaire/config.toml` `theme = "id"` — built-in theme selection
 4. Compiled-in default (ROG Dark)
 
-See [Theming](/voltaire/gui/theming/) for the full theming guide.
+See [Theming](/gui/theming) for the full theming guide.
 
 ## Environment variables
 

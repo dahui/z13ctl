@@ -3,6 +3,8 @@ title: Daemon & Socket Protocol
 description: The voltaire daemon — persistence, sleep/resume recovery, fan curve reconciliation, autoswitch, and the JSON socket protocol.
 ---
 
+# Daemon & Socket Protocol
+
 The voltaire daemon is a long-running background process that provides things
 ordinary one-shot CLI invocations cannot:
 
@@ -23,7 +25,7 @@ ordinary one-shot CLI invocations cannot:
   commands arrive instantly rather than waiting to reopen the device each time.
 - **Armoury Crate button events** — captures `KEY_PROG3` (the dedicated Armoury
   Crate button) and broadcasts a `gui-toggle` event to any connected subscribers
-  (see [API](/voltaire/reference/api/)).
+  (see [API](/reference/api)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
 `bootsound`, `paneloverdrive`, `cpuboost`, `rumble`, `feature`, `fancurve`, `tdp`, `undervolt`,
@@ -433,7 +435,7 @@ api.ErrUnknownCommand)`, which preserves the daemon's wording; other clients
 should match the `unknown command` prefix. Probe for the error — never gate on
 a version number.
 
-:::caution[Unknown profile names are now rejected]
+::: warning Unknown profile names are now rejected
 Earlier daemons forwarded any string to `platform_profile`. A name that is
 neither one of this device's firmware profiles nor a saved custom profile is
 now an error, so a typo cannot reach the fan-curve reset on its way to failing.
@@ -511,7 +513,7 @@ hardware; the fan-curve floor is then checked against that profile's own TDP
 rather than against the running machine, so a profile can never be stored in a
 state that would be unsafe when activated.
 
-:::danger[The `profile` field is silently ignored by older daemons]
+::: danger The `profile` field is silently ignored by older daemons
 It is an additive field, so a daemon from before custom profiles unmarshals
 the request, drops the field, **applies the setting to the running machine**,
 and answers `ok`. A client that offers profile targeting must probe first —
@@ -519,7 +521,7 @@ and answers `ok`. A client that offers profile targeting must probe first —
 what `voltaire` itself does before sending any `--profile` edit.
 :::
 
-:::caution[Fan commands are restricted above the safe sustained TDP]
+::: warning Fan commands are restricted above the safe sustained TDP
 While PL1 is above `power.tdp_max_safe` (75 W on the GZ302EA), the fans are
 held to the device's `power.floor_curve`, measured at each point's own
 temperature. `fancurve` is rejected if any point falls below that floor, and
@@ -595,7 +597,7 @@ The `events` list is honoured: a client that subscribes to `gui-toggle` alone
 is never woken by the other two. Subscribing with an empty list receives
 everything.
 
-:::caution[Switch on the event name]
+::: warning Switch on the event name
 While `gui-toggle` was the only event, `for range ch { toggle() }` was a
 reasonable client loop. It is not any more — it would toggle the window on
 every power-source change. Dispatch on the name.
@@ -605,7 +607,7 @@ Discriminate on the presence of `event` — a command reply never carries it.
 (Events emitted by v1.2.0 and earlier carried `"ok":false`; clients that gate
 on `ok` dropped them.)
 
-:::note[Timeouts]
+::: info Timeouts
 The daemon closes a connection that does not send its request line within 30
 seconds, so a client cannot pin a goroutine by connecting and going silent.
 This deadline is cleared once a `subscribe` is acknowledged, since
@@ -631,7 +633,7 @@ async def send(req):
 asyncio.run(send({"cmd": "profile", "set": "quiet"}))
 ```
 
-Go callers should use the [`api` module](/voltaire/reference/api/) rather than
+Go callers should use the [`api` module](/reference/api) rather than
 speaking the protocol directly.
 
 ## State file
@@ -772,14 +774,14 @@ are written, then the fans are released to firmware auto, which makes the
 firmware re-apply the profile's own limits. (The release is skipped when a fan
 curve set by another tool is in force.)
 
-:::caution[Downgrading loses named profiles]
+::: warning Downgrading loses named profiles
 A daemon from before named profiles reads only the top-level fields and drops
 `custom_profiles` on its next save. The active profile's settings survive via
 the projection above; any other saved profile does not. Copy `state.json`
 aside before downgrading.
 :::
 
-:::note[A corrupt state file is kept, not discarded]
+::: info A corrupt state file is kept, not discarded
 If `state.json` exists but cannot be parsed, the daemon renames it to
 `state.json.corrupt`, logs a warning, and starts from defaults. Without that
 rename the next command would overwrite the damaged file, taking every saved
@@ -787,7 +789,7 @@ setting with it and leaving nothing to inspect. Repair the `.corrupt` copy and
 move it back to recover.
 :::
 
-:::note[Raw hidrawN paths are not persisted]
+::: info Raw hidrawN paths are not persisted
 Commands sent with `--device /dev/hidraw2` (a raw path) are applied but not
 saved — raw device numbers are transient and may change across reboots. Use
 `keyboard` or `lightbar` by name for persistent per-zone settings.
@@ -798,7 +800,7 @@ saved — raw device numbers are transient and may change across reboots. Use
 The daemon monitors D-Bus for `org.freedesktop.login1.Manager.PrepareForSleep`
 signals from systemd-logind and acts on both edges.
 
-### On sleep — the fans are handed back to the firmware
+### On sleep — the fans are handed back to the firmware {#on-sleep--the-fans-are-handed-back-to-the-firmware}
 
 On some machines a custom fan curve has to be *released* before the machine
 suspends, or the fans never stop.
@@ -811,7 +813,7 @@ on driving the fans from the curve's PWM values with no idea the machine is
 asleep. Any curve whose low-temperature points are above zero then keeps the
 fans turning all night, and a machine on a high sustained TDP is worse: every
 point of the high-TDP floor curve
-([`tdp`](/voltaire/reference/commands/#tdp) applies it above the safe
+([`tdp`](/reference/commands#tdp) applies it above the safe
 maximum) is at or above its bottom — 50% on the GZ302EA.
 
 "On some machines" is doing real work in that sentence. On kernels and
@@ -853,7 +855,7 @@ systemd-inhibit --list | grep voltaire
 If logind refuses the inhibitor the daemon carries on without it; the writes
 are then racing the freeze, which is how it behaved before v1.3.1.
 
-:::note[If your machine will not stay asleep]
+::: info If your machine will not stay asleep
 Releasing the fans makes the firmware re-apply its thermal policy, and a
 suspend that starts straight after that is often woken again by the embedded
 controller within a couple of seconds. With the lid closed, the machine is then
@@ -904,7 +906,7 @@ kernel log each wakeup as it happens. On the Z13 the touchscreen and the
 detachable cover are both wakeup-enabled and are the usual answers.
 :::
 
-### On resume — volatile settings are reapplied
+### On resume — volatile settings are reapplied {#on-resume--volatile-settings-are-reapplied}
 
 These are lost across a sleep cycle and must be rewritten:
 
@@ -973,7 +975,7 @@ journalctl --user -u voltaire -f
 # On reattach: keyboard reattached; lighting restored
 ```
 
-:::note[Daemon required]
+::: info Daemon required
 This recovery only happens while the daemon is running. Without it, re-run
 your `apply` command (or press the Armoury Crate button and use voltaire-gui)
 after reattaching the keyboard.
@@ -1039,7 +1041,7 @@ so it does not undo the
 in the window before userspace freezes. If a resume signal never arrives it
 starts defending the curve again after about two minutes of awake time.
 
-:::note[Daemon required]
+::: info Daemon required
 Without the daemon, a custom fan curve set with `voltaire fancurve --set`
 lasts only until the next power profile change. The CLI warns about this when
 it applies a curve directly. Since 1.2.2 the command also fails with an error,
@@ -1049,7 +1051,7 @@ just wrote.
 
 ## AC/battery autoswitch
 
-When [`voltaire autoswitch`](/voltaire/reference/commands/#autoswitch) is
+When [`voltaire autoswitch`](/reference/commands#autoswitch) is
 configured, the daemon applies the profile that matches the power source on
 every plug and unplug.
 
@@ -1089,7 +1091,7 @@ advance across suspend, so the watcher's armed timer fires promptly after
 resume and handles an unplug-during-sleep on its own; duplicating the logic
 would race it and apply twice for one event.
 
-:::note[GNOME's Automatic Power Saver]
+::: info GNOME's Automatic Power Saver
 That setting triggers on low battery rather than on unplugging, so it can
 still move a firmware profile after autoswitch has acted. Voltaire yields
 between transitions by design. Give a side an empty target to hand it to your
@@ -1114,7 +1116,7 @@ your desktop. No mainstream desktop binds `KEY_PROG3` by default, but if yours
 does, that binding will fire alongside the `gui-toggle` event — unbind it
 there, or run the daemon with `--no-button`.
 
-:::note[Silent failure if another process grabs the device]
+::: info Silent failure if another process grabs the device
 Because voltaire does not grab, a different process holding an exclusive grab
 will silently receive all events instead, and the watcher will sit idle with
 nothing to report. If button presses do nothing, check what else has the
@@ -1127,7 +1129,7 @@ External tools can subscribe to this event via the API:
 ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
 ```
 
-See the [API](/voltaire/reference/api/) page for details.
+See the [API](/reference/api) page for details.
 
 ### InputPlumber compatibility
 
@@ -1192,7 +1194,7 @@ target_devices:
 capability_map_id: flw1
 ```
 
-:::note
+::: info
 Always place overrides under `/etc/inputplumber/devices.d/` — never edit files
 under `/usr/share/inputplumber/devices/` directly, as those are owned by the
 package and will be overwritten on upgrades.

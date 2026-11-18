@@ -3,11 +3,13 @@ title: Commands
 description: The complete voltaire CLI reference — every command, flag, and option.
 ---
 
-:::tip[Beginners: consider the GUI instead]
+# Commands
+
+::: tip Beginners: consider the GUI instead
 This page is the complete CLI reference. Driving the more advanced features
 (custom fan curves, TDP, undervolting) from the command line makes sense for
 Linux veterans and scripting, but if you're newer to Linux you'll likely have
-an easier time with **[voltaire-gui](/voltaire/gui/)**, the touch-friendly
+an easier time with **[voltaire-gui](/gui/)**, the touch-friendly
 graphical frontend that exposes all of these commands as point-and-tap
 controls.
 :::
@@ -21,7 +23,7 @@ These flags apply to every command.
 | `--device <name\|path>` | Target one lighting zone (`keyboard` or `lightbar` on the Z13) or a `/dev/hidrawN` path. Without this flag all zones are targeted. |
 | `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
 | `--no-button` | Disable the hardware button watcher (the Armoury Crate button on the Z13; daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching voltaire at all. |
-| `--no-sleep-release` | Keep a custom fan curve in force through sleep instead of handing the fans back to the firmware (daemon only). See [sleep/resume recovery](/voltaire/reference/daemon/#on-sleep--the-fans-are-handed-back-to-the-firmware). |
+| `--no-sleep-release` | Keep a custom fan curve in force through sleep instead of handing the fans back to the firmware (daemon only). See [sleep/resume recovery](/reference/daemon#on-sleep--the-fans-are-handed-back-to-the-firmware). |
 
 ## apply
 
@@ -52,7 +54,7 @@ voltaire apply [flags]
 
 All modes accept `--brightness`.
 
-:::note[`--color 000000` means "pick a color", not black]
+::: info `--color 000000` means "pick a color", not black
 An all-zero primary color sets the Aura protocol's random-color flag, so the
 firmware chooses a color itself. This matches the reference implementation the
 protocol was derived from. To turn lighting off, use [`voltaire off`](#off) or
@@ -156,7 +158,7 @@ development builds the bare edit re-applied everything `custom` stored, so
 setting a TDP could silently bring back an old fan curve — or an old 93W power
 limit — you had long since stopped using.)
 
-:::note[`--reset` while a firmware profile is active does not touch your profiles]
+::: info `--reset` while a firmware profile is active does not touch your profiles
 Only `--set` creates and activates `custom`. `fancurve --reset`, `tdp --reset`
 and `undervolt --reset` run while a firmware profile is selected affect
 **hardware only**: the fans go to firmware auto, the power limits back to the
@@ -208,13 +210,13 @@ Profile names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, and `_`,
 and may not be `custom` or any kernel firmware profile name (see
 [Firmware profiles](#firmware-profiles)).
 
-:::note
+::: info
 When the daemon is running, setting a firmware profile also updates
 `power-profiles-daemon` (if installed) to the equivalent PPD profile. Custom
 profiles deliberately do not.
 :::
 
-:::caution[Deleting a profile]
+::: warning Deleting a profile
 Voltaire refuses to delete the active profile or one referenced by
 `autoswitch`. Switch away, or reconfigure autoswitch, then delete.
 :::
@@ -274,7 +276,7 @@ The daemon also resolves the right profile for the current power source at
 startup, so a machine that was on AC when the daemon stopped and is on battery
 when it starts lands on the battery profile directly.
 
-:::note[GNOME's Automatic Power Saver]
+::: info GNOME's Automatic Power Saver
 That setting triggers on *low battery*, not on unplugging, so it can still
 move a firmware profile after autoswitch has acted. Voltaire deliberately
 yields between transitions rather than fighting for the profile. If you want
@@ -502,7 +504,7 @@ $ voltaire fancurve --preset quiet
 ```
 
 Which presets exist is device data, served in the
-[`device-get` document](/voltaire/reference/daemon/#device-capabilities); a device
+[`device-get` document](/reference/daemon#device-capabilities); a device
 that declares none offers no presets rather than a fixed list. On the Flow Z13:
 
 - **Quiet** and **Balanced** hold 0 across the idle range deliberately. The
@@ -519,11 +521,11 @@ Profiles page. Choosing one loads its points into the editor without writing
 anything, so you can drag them before committing; the button stays highlighted
 only while the curve still matches it exactly.
 
-:::caution[A power profile change wipes your custom curve]
+::: warning A power profile change wipes your custom curve
 The kernel's `asus-wmi` driver disables custom fan curves on every
 `platform_profile` write, silently. GNOME power modes and
 `power-profiles-daemon` do that on each AC/battery transition, so does Fn+F5,
-and so does `asusctl`. Run the [daemon](/voltaire/reference/daemon/) and it
+and so does `asusctl`. Run the [daemon](/reference/daemon) and it
 puts your curve back within a couple of seconds; without it, re-run `--set`
 after any profile change. Since 1.2.2 the command errors out instead of
 reporting success when the kernel refuses the curve.
@@ -537,7 +539,7 @@ cat $curve/pwm1_enable
 ```
 :::
 
-:::caution[Fan control is restricted above the safe sustained TDP]
+::: warning Fan control is restricted above the safe sustained TDP
 While sustained TDP (PL1) is above the device's safe maximum (75 W on the
 GZ302EA; `tdp --get` prints it), `fancurve --set` requires every point
 to clear the built-in high-TDP curve — an up-front refusal so you can see why,
@@ -632,19 +634,19 @@ releases the fans to firmware auto, which makes the firmware re-apply the
 profile's own limits. The saved custom values are kept, so `custom` stays
 re-selectable.
 
-:::caution[Run the daemon to keep a custom TDP]
+::: warning Run the daemon to keep a custom TDP
 On the Flow Z13 the firmware re-applies the active power profile's own limits
 whenever anything writes `platform_profile` — even the profile already set, as
 power-profiles-daemon does on plugging or unplugging the charger — and whenever
 anything hands the fans back to firmware auto. `--get` and `status` cannot see
 it: the readback shows the last value written. The
-[daemon](/voltaire/reference/daemon/#custom-fan-curve-reconciliation) is told by
+[daemon](/reference/daemon#custom-fan-curve-reconciliation) is told by
 the kernel about these writes (with one exception, described there) and
 re-applies the custom limit within two seconds. Without it, the limit is lost
 until the next `tdp --set`, which says so when it applies a limit directly.
 :::
 
-:::note[PPT readback values]
+::: info PPT readback values
 On a **firmware profile** (`quiet`, `balanced`, `performance` on the Z13),
 `--get` and `status` show that profile's stock values from the device data,
 marked as such (`Set by: the balanced firmware profile`), and never the
@@ -713,13 +715,13 @@ ground-truth PPT readings.
 - `--reset` cannot drop to firmware auto while a high limit is in force, since
   firmware auto has no floor at all.
 
-:::danger[Run the daemon when sustaining above the safe maximum]
+::: danger Run the daemon when sustaining above the safe maximum
 Every `platform_profile` write — a GNOME power mode change, an AC/battery
 transition, Fn+F5 — releases custom fan curves, the high-TDP floor included.
 The firmware re-applies the profile's own power limits at the same time, but the
 limit reads back unchanged, so voltaire cannot confirm the high limit is gone
 and treats the floor as still required. The
-[daemon](/voltaire/reference/daemon/) restores the floor and then the limit
+[daemon](/reference/daemon) restores the floor and then the limit
 within a couple of seconds. Without it, both stay lost until you set them again.
 :::
 
@@ -833,7 +835,7 @@ defaults:
 - **Other distros:** build from
   [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) source
 
-:::caution[Strix Halo requires the amkillam fork]
+::: warning Strix Halo requires the amkillam fork
 The original `leogx9r/ryzen_smu` does not support Strix Halo. Use the
 [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork instead.
 :::
@@ -973,7 +975,7 @@ sudo voltaire setup [flags]
 
 On a machine that previously ran `z13ctl setup`, the old rules file and
 permissions unit are cleaned up automatically — see
-[Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+[Migrating from z13ctl](/migrating-from-z13ctl).
 
 Use `--dry-run` to preview exactly what would be written — no root required:
 
@@ -987,7 +989,7 @@ group membership to take effect in your current session.
 
 For a detailed explanation of what `setup` installs and why the battery limit
 requires a separate systemd service, see
-[Installation](/voltaire/installation/#what-setup-does).
+[Installation](/installation#what-setup-does).
 
 ## button
 
@@ -1023,7 +1025,7 @@ the daemon still turns the watcher off entirely.
 ## daemon
 
 Start the voltaire daemon. Normally started automatically via the systemd
-socket unit — see [Daemon](/voltaire/reference/daemon/). You can also start it
+socket unit — see [Daemon](/reference/daemon). You can also start it
 directly for testing.
 
 ```

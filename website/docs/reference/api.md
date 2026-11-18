@@ -3,6 +3,8 @@ title: Go API Module
 description: The stdlib-only Go client library for the voltaire daemon — connection model, custom profiles, and examples.
 ---
 
+# Go API Module
+
 The `api/` module is a standalone Go library for communicating with the
 voltaire daemon from external tools — GUI frontends, Decky plugins, shell
 integrations, or anything else that wants to control voltaire
@@ -20,7 +22,7 @@ inheriting the CLI's dependency tree.
 
 The pre-rename module, `github.com/dahui/z13ctl/api`, is frozen at its last
 1.x release and keeps resolving for existing importers — see
-[Migrating from z13ctl](/voltaire/migrating-from-z13ctl/).
+[Migrating from z13ctl](/migrating-from-z13ctl).
 
 It is a separate Go module at `./api` with its own `go.mod`. If you are
 working on both the main binary and the API library simultaneously, create a
@@ -68,7 +70,7 @@ for range ch {
 }
 ```
 
-:::note[Timeouts]
+::: info Timeouts
 Connecting is bounded at 1 second and the whole request/response exchange at
 10 seconds, so a wedged daemon returns an error rather than hanging your
 process. `Subscribe` bounds only its handshake — the stream itself is
@@ -109,7 +111,7 @@ api.SendTdpSetFor("battery-uv", "35", "", "", "", false)
 api.SendAutoswitchSet(true, "balanced", "battery-uv")
 ```
 
-:::danger[Probe before offering profile targeting]
+::: danger Probe before offering profile targeting
 The wire field behind the `…For` variants is additive, so a daemon from before
 custom profiles drops it, **applies the setting to the running machine**, and
 answers `ok`. Call `SendProfileList` first: an older daemon answers
@@ -225,5 +227,5 @@ for event := range ch {
 
 ## Full API reference
 
-See the [Go API Reference](/voltaire/reference/api-go/) page for full
+See the [Go API Reference](/reference/api-go) page for full
 documentation of all exported types and functions.

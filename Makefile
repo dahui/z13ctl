@@ -236,7 +236,7 @@ uninstall-perms-service:
 	systemctl daemon-reload
 	@echo "Permissions service removed."
 
-API_GO_PAGE := website/src/content/docs/reference/api-go.md
+API_GO_PAGE := website/docs/reference/api-go.md
 # gomarkdoc links each symbol to its source line, and left to itself it takes
 # the repository from the git remote and its default branch — on this tree
 # github.com/dahui/z13ctl's main, a different api with different line
@@ -250,7 +250,7 @@ API_REPO_BRANCH ?= main
 docs-api:
 	printf -- '---\ntitle: Go API Reference\ndescription: Generated reference for every exported type and function in the voltaire api module.\n---\n\n' > $(API_GO_PAGE)
 	go run $(GOMARKDOC) --repository.url $(API_REPO_URL) --repository.default-branch $(API_REPO_BRANCH) \
-		./api/... | sed '/^# api$$/d' >> $(API_GO_PAGE)
+		./api/... | sed 's/^# api$$/# Go API Reference/' >> $(API_GO_PAGE)
 
 ## docs: serve the website locally (run docs-api first if api/ changed)
 docs:

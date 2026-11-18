@@ -36,7 +36,7 @@ func warnIfLegacyName(argv0 string, w io.Writer) {
 	// A failed write to stderr is not worth reporting through: the notice is
 	// advisory, and the command it precedes must run either way.
 	_, _ = fmt.Fprintf(w, "note: %s is now voltaire; this name is a compatibility symlink and is removed in 3.0.\n"+
-		"      Update scripts to call 'voltaire'. See https://dahui.github.io/voltaire/migrating-from-z13ctl/\n",
+		"      Update scripts to call 'voltaire'. See https://dahui.github.io/voltaire/migrating-from-z13ctl\n",
 		legacyCommandName)
 }
 

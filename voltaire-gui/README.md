@@ -37,7 +37,7 @@ sudo install -Dm755 voltaire-gui /usr/local/bin/voltaire-gui
 sudo voltaire setup
 ```
 
-See the [Installation guide](https://dahui.github.io/voltaire/installation/)
+See the [Installation guide](https://dahui.github.io/voltaire/installation)
 for systemd service setup, source builds, and uninstall instructions.
 
 ## Quick Start
@@ -61,13 +61,13 @@ and persist across reboots.
 
 Full documentation at **<https://dahui.github.io/voltaire>**
 
-- [Installation](https://dahui.github.io/voltaire/installation/)
+- [Installation](https://dahui.github.io/voltaire/installation)
 - [GUI Overview](https://dahui.github.io/voltaire/gui/)
-- [Quick Start](https://dahui.github.io/voltaire/gui/quick-start/)
-- [Configuration](https://dahui.github.io/voltaire/gui/configuration/)
-- [Theming](https://dahui.github.io/voltaire/gui/theming/)
-- [Migrating from z13gui](https://dahui.github.io/voltaire/migrating-from-z13ctl/)
-- [Contributing](https://dahui.github.io/voltaire/contributing/)
+- [Quick Start](https://dahui.github.io/voltaire/gui/quick-start)
+- [Configuration](https://dahui.github.io/voltaire/gui/configuration)
+- [Theming](https://dahui.github.io/voltaire/gui/theming)
+- [Migrating from z13gui](https://dahui.github.io/voltaire/migrating-from-z13ctl)
+- [Contributing](https://dahui.github.io/voltaire/contributing)
 
 ## License
 

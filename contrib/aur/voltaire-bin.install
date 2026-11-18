@@ -27,7 +27,7 @@ post_install() {
     echo ">>>   systemctl --user start voltaire.socket voltaire-gui.service"
     echo ">>> Or log out and back in — both start automatically."
     echo ">>> Upgrading from z13ctl/z13gui? Settings carry over on first run:"
-    echo ">>>   https://dahui.github.io/voltaire/migrating-from-z13ctl/"
+    echo ">>>   https://dahui.github.io/voltaire/migrating-from-z13ctl"
 }
 
 post_upgrade() {

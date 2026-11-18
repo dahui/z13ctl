@@ -3,6 +3,8 @@ title: Z13 Hardware Smoke Test
 description: The manual on-hardware verification checklist run before each release.
 ---
 
+# Z13 Hardware Smoke Test
+
 The hardware parity gate for the 2.0 refactor — the driver registry, the
 safety engine, the capability protocol, and the voltaire rename. The hermetic
 suite proves the wiring, the safety rules, and the wire protocol; it cannot
@@ -29,7 +31,7 @@ their extracted form**:
 Every unchecked box blocks the merge. A failed box gets a note (what happened,
 journal lines) rather than a workaround.
 
-:::note[Last run: 2026-11-15, `feat/v2-refactor` at 1517879 plus the findings fix]
+::: info Last run: 2026-11-15, `feat/v2-refactor` at 1517879 plus the findings fix
 Every box passed on the desktop (KDE Plasma, Linux 7.3.4, asus-armoury). The
 GUI boxes were driven with a uinput virtual gamepad and pointer, and the focus
 dump matched the baseline (41/73/11/75/23/24). Still open, because they need a
@@ -148,7 +150,7 @@ The engine's fail-closed ordering, on real sysfs. Keep the high-TDP step brief.
 - [x] `./voltaire tdp --reset` — `$PROFILE` reads `balanced`, armoury holds
       balanced's stock row (52/71/70), `pwm*_enable` back to `2`.
 
-## 5. Undervolt, toggles, battery — no daemon
+## 5. Undervolt, toggles, battery — no daemon {#5-undervolt-toggles-battery--no-daemon}
 
 - [x] `./voltaire undervolt --get` → `not set (daemon not running)` (or the
       module-missing message if ryzen_smu isn't installed — then skip CO boxes
@@ -402,7 +404,7 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
       sensitivity, so this is a real path, not a theoretical one.
 - [x] Cleanup: `./voltaire profile --delete smoke-gui`.
 
-:::note[Driving this checklist without a physical controller]
+::: info Driving this checklist without a physical controller
 A uinput virtual gamepad plus an *absolute* pointer (the QEMU usb-tablet
 shape: `ABS_X`/`ABS_Y` over 0–65535 with `BTN_LEFT` and no `BTN_TOUCH`, which
 udev tags `ID_INPUT_MOUSE`) drives the whole of this section with screenshots

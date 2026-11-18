@@ -3,12 +3,14 @@ title: Plugins (planned)
 description: The design for out-of-process drivers — discovery, the manifest, lifecycle, the socket protocol, permissions and safety. Not yet loaded by the daemon.
 ---
 
-:::caution[Planned: not yet loaded by the daemon]
+# Plugins (planned)
+
+::: warning Planned: not yet loaded by the daemon
 This page is the design for voltaire's external plugin tier, scheduled
 alongside the first non-ASUS device. Nothing below is implemented: the daemon
 does not discover, start or talk to plugins today. The one piece already on the
 wire is each firmware toggle's `source` field in `device-get` (`"core"` today,
-`"plugin:<id>"` once plugins exist). Write a [compiled-in driver](/voltaire/dev/writing-a-driver/)
+`"plugin:<id>"` once plugins exist). Write a [compiled-in driver](/dev/writing-a-driver)
 for anything you need now. The design may still change before it ships.
 :::
 
