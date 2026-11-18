@@ -64,6 +64,14 @@ type profileSection struct {
 
 	// desktop selects the window's form row over the drawer's stacked block.
 	desktop bool
+
+	// pin is the device's pinned firmware profile (profiles.pin), or "".
+	// When set the section is the Saved profile control (newSavedSection):
+	// no firmware buttons, one dropdown whose first row is "No profile".
+	pin string
+	// manageBtn is the window's "Profiles…" button beside that dropdown;
+	// nil everywhere else.
+	manageBtn *gtk.Button
 }
 
 // buildProfileSection creates the drawer main view's PROFILE section and
@@ -104,6 +112,11 @@ func (w *Window) buildProfileSection() *gtk.Box {
 func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSection, *gtk.Box) {
 	p := &profileSection{
 		w: w, btns: make(map[string]*gtk.Button), onCustom: onCustom, desktop: desktop,
+	}
+	if w.device != nil && w.device.Profiles != nil && w.device.Profiles.Pin != "" {
+		p.pin = w.device.Profiles.Pin
+		box := p.buildSaved()
+		return p, box
 	}
 
 	// The device's firmware profiles, from its document (the Z13's three only
@@ -201,6 +214,81 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 	return p, box
 }
 
+// buildSaved builds the Saved profile control, the section's shape on a
+// device with a pinned profile (Jeff, 2026-11-17: performance-profile buttons
+// mean nothing where the firmware profile is not a choice). One dropdown:
+// "No profile" goes back to the TDP setting, a profile loads what it saved.
+// The window adds a button to the Profiles tab beside it, as its Custom…
+// button does on other devices; the drawer has no editor to open, so it says
+// in a note where profiles come from when there are none.
+func (p *profileSection) buildSaved() *gtk.Box {
+	w := p.w
+	p.customDD = w.newDropdown(dropdownConfig{
+		options: func() []dropdownOption {
+			rows := profileui.SavedRows(w.state, p.pin)
+			opts := make([]dropdownOption, len(rows))
+			for i, r := range rows {
+				opts[i] = dropdownOption{
+					value: r.Name, label: r.Label,
+					disabled: r.Disabled, selected: r.Active, running: r.Active,
+				}
+			}
+			return opts
+		},
+		onSelect: func(name string) {
+			for _, r := range profileui.SavedRows(w.state, p.pin) {
+				if r.Name == name && r.Active {
+					return // already running: a no-op, as in the picker
+				}
+			}
+			w.sendProfileSet(name)
+		},
+	})
+	p.customBtn = p.customDD.btn
+	w.setHint(p.customBtn, "Load a saved profile, or go back to the TDP setting")
+
+	if p.desktop {
+		p.manageBtn = gtk.NewButtonWithLabel("Profiles…")
+		p.manageBtn.ConnectClicked(func() { p.openCustom() })
+		w.setHint(p.manageBtn, "Save, edit and delete profiles")
+		row := gtk.NewBox(gtk.OrientationHorizontal, 4)
+		row.AddCSSClass("btn-group")
+		row.Append(p.customBtn)
+		row.Append(p.manageBtn)
+		return formRow("Saved profile", row)
+	}
+
+	box := gtk.NewBox(gtk.OrientationVertical, 4)
+	box.Append(sectionLabel("SAVED PROFILE"))
+	row := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	row.AddCSSClass("btn-group")
+	row.Append(p.customBtn)
+	box.Append(row)
+	p.customNote = blockNote()
+	box.Append(p.customNote)
+	return box
+}
+
+// syncSaved moves the Saved profile control to daemon state. Callers hold
+// w.syncing.
+func (p *profileSection) syncSaved() {
+	st := p.w.state
+	p.customDD.setLabel(profileui.SavedLabel(st))
+	if p.customNote == nil {
+		return
+	}
+	// "No profile" is always a row, so the list is never empty; it is worth
+	// opening only when a profile has something to load.
+	canPick := profileui.AnyCustomProfile(st)
+	p.customBtn.SetSensitive(canPick)
+	note := ""
+	if !canPick {
+		note = profileui.NoSavedProfilesNote(
+			buttonpref.OpenGestureFor(p.w.device, st, p.w.press, buttonpref.Window))
+	}
+	setBlockNote(p.customNote, note)
+}
+
 // customLabel is the window's Custom button text: the running custom profile's
 // name plus the trailing ellipsis marking it as a control that opens the editor
 // rather than one that selects a profile. The drawer's trigger takes the bare
@@ -227,6 +315,10 @@ func (p *profileSection) openCustom() {
 //
 // Callers must hold w.syncing (as syncState does).
 func (p *profileSection) sync() {
+	if p.pin != "" {
+		p.syncSaved()
+		return
+	}
 	st := p.w.state
 	if st != nil && st.Profile != "" {
 		setActiveButton(p.btns, st.Profile)
@@ -480,6 +572,9 @@ func (p *profileSection) appendFocus(b *focusgrid.Builder, items *[]focusItem) {
 	b.Section("profile")
 	if p.desktop && p.customBtn != nil {
 		btns = append(btns, p.customBtn)
+	}
+	if p.manageBtn != nil {
+		btns = append(btns, p.manageBtn)
 	}
 	// One Line per on-screen row: the window's single line, or the drawer's
 	// rows of drawerProfileColumns — the same split the builder above made.

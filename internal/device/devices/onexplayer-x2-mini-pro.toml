@@ -99,6 +99,10 @@ gpu             = "amdgpu"
 cpu_stats       = "procfs"
 npu             = "amdxdna"
 net             = "procfs"
+# Fan speed, read only: oxp_ec's fan1_input (world-readable; 2597 RPM at idle
+# on AC, 2026-11-17). Its pwm1 takes a fixed duty and has no curve, so voltaire
+# leaves the fan on the EC's own curve and declares no [fans] section.
+fans            = "oxp_ec"
 history_seconds = 3600
 
 # The three buttons above the screen. None of them is an ordinary input event
@@ -163,3 +167,15 @@ interface    = 2
 report_id    = 0xb2
 match        = [[6, 0x24], [12, 0x01]]
 inputplumber = "Keyboard"
+
+# The drawer a user who has not customized it gets. A handheld's quick
+# controls: the TDP slider and the saved profiles first, then CPU boost and the
+# refresh rate, which a laptop's drawer leaves to Settings → Quickbar. RGB is
+# listed for when the joystick rings have a lighting driver; a control the
+# device cannot offer is dropped until then. On 7.3.4 hid-oxp registers
+# oxp:rgb:joystick_rings but the controller ignores its writes (checked
+# 2026-11-17: effect and speed writes return success and read back unchanged,
+# with or without InputPlumber running). The X2 controllers use a newer RGB
+# protocol, which only the unmerged hid-oxp X2-family series speaks.
+[quickbar]
+controls = ["tdp", "profile", "cpu-boost", "autoswitch", "refresh-rate", "lighting"]

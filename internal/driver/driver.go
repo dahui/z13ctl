@@ -793,6 +793,7 @@ type TelemetryInfo struct {
 	CPUStats       string
 	NPU            string
 	Net            string
+	Fans           string // hwmon name of a read-only fan speed source
 	HistorySeconds int
 
 	// Axis hints for a chart, from the kernel where it can say; zero means no

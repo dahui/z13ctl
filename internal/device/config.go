@@ -33,6 +33,18 @@ type Config struct {
 	CPU       *CPUConfig       `toml:"cpu"`
 	Telemetry *TelemetryConfig `toml:"telemetry"`
 	Buttons   []ButtonConfig   `toml:"buttons"`
+	Quickbar  *QuickbarConfig  `toml:"quickbar"`
+}
+
+// QuickbarConfig is the drawer's default contents on this device: control IDs
+// (the GUI's internal/controls registry; the same names gui.toml's [quickbar]
+// controls takes), in order. Absent: the GUI's built-in default. A user's own
+// choice (the Settings page's Quickbar card, or gui.toml) still wins; this only
+// says what a drawer nobody has customized holds. A handheld wants different
+// quick controls from a laptop (the OXP: CPU boost and the refresh rate are
+// worth a place where the Z13's drawer has the charge limit and RGB).
+type QuickbarConfig struct {
+	Controls []string `toml:"controls"`
 }
 
 // Meta identifies the device family and how to recognize it.
@@ -439,6 +451,7 @@ type TelemetryConfig struct {
 	CPUStats       string `toml:"cpu_stats"`
 	NPU            string `toml:"npu"`
 	Net            string `toml:"net"`
+	Fans           string `toml:"fans"`
 	HistorySeconds int    `toml:"history_seconds"`
 }
 
@@ -477,6 +490,7 @@ func (c TelemetryConfig) Info() driver.TelemetryInfo {
 		CPUStats:       c.CPUStats,
 		NPU:            c.NPU,
 		Net:            c.Net,
+		Fans:           c.Fans,
 		HistorySeconds: secs,
 	}
 }
@@ -583,6 +597,19 @@ func (c Config) Validate() error {
 		}
 		if (m.Product == "") == (m.ProductPrefix == "") {
 			fail("device.match[%d]: exactly one of product or product_prefix is required", i)
+		}
+	}
+
+	if c.Quickbar != nil {
+		if len(c.Quickbar.Controls) == 0 {
+			fail("quickbar.controls is empty: drop the block for the built-in default")
+		}
+		seen := map[string]bool{}
+		for _, id := range c.Quickbar.Controls {
+			if id == "" || seen[id] {
+				fail("quickbar.controls: %q is empty or listed twice", id)
+			}
+			seen[id] = true
 		}
 	}
 

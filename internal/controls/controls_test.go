@@ -10,6 +10,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/controls"
+	"github.com/dahui/voltaire/v2/internal/device"
 )
 
 // z13 is the capability document of a fully-featured device.
@@ -64,7 +65,7 @@ func TestDefaultOrderIsTheShippedLayout(t *testing.T) {
 	}
 	// Defaults also holds the TDP slider (2026-11-17), which only a slider
 	// device has: the Z13's resolve above is still the four.
-	if got, all := ids(controls.Defaults()), []string{"profile", "tdp", "autoswitch", "battery", "lighting"}; !equal(got, all) {
+	if got, all := ids(controls.Defaults()), []string{"tdp", "profile", "autoswitch", "battery", "lighting"}; !equal(got, all) {
 		t.Errorf("Defaults() = %v, want %v", got, all)
 	}
 	// The opt-in controls must not reach a default drawer even where the
@@ -375,13 +376,60 @@ func TestSliderDeviceDrawer(t *testing.T) {
 		Battery:  &api.BatteryInfo{Health: true},
 	}
 	got, complaints := controls.Resolve(controls.Config{}, oxp)
-	if want := []string{"profile", "tdp", "autoswitch"}; !equal(ids(got), want) {
+	if want := []string{"tdp", "profile", "autoswitch"}; !equal(ids(got), want) {
 		t.Errorf("resolve = %v, want %v", ids(got), want)
 	}
 	if len(complaints) != 0 {
 		t.Errorf("complaints: %v", complaints)
 	}
-	if rows := controls.Layout(got); rows[1].Heading != "" || rows[1].Separator {
-		t.Errorf("the slider starts a group of its own: %+v", rows[1])
+	if rows := controls.Layout(got); rows[0].Heading != controls.GroupPower || rows[1].Heading != "" {
+		t.Errorf("the slider should open TDP AND POWER and the profile follow under it: %+v", rows[:2])
+	}
+}
+
+// A device's own default drawer (api.DeviceInfo.Quickbar) replaces the
+// built-in one, opt-in controls included, and stays capability-filtered; a
+// user's list still wins over it.
+func TestDeviceQuickbarDefaults(t *testing.T) {
+	oxp := &api.DeviceInfo{
+		Power:    &api.PowerInfo{TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, Slider: true},
+		Profiles: &api.ProfileInfo{Names: []string{"balanced"}, Pin: "balanced"},
+		Battery:  &api.BatteryInfo{Health: true},
+		CPU:      &api.CPUInfo{Boost: true},
+		Quickbar: []string{"tdp", "profile", "cpu-boost", "autoswitch", "refresh-rate", "lighting", "from-a-newer-daemon"},
+	}
+	got, complaints := controls.Resolve(controls.Config{}, oxp, controls.CapRefreshRate)
+	if want := []string{"tdp", "profile", "cpu-boost", "autoswitch", "refresh-rate"}; !equal(ids(got), want) {
+		t.Errorf("resolve = %v, want %v", ids(got), want)
+	}
+	if len(complaints) != 0 {
+		t.Errorf("a device's list produced complaints: %v", complaints)
+	}
+	mine := []string{"tdp"}
+	if got, _ := controls.Resolve(controls.Config{Quickbar: controls.QuickbarConfig{Controls: &mine}}, oxp); !equal(ids(got), mine) {
+		t.Errorf("user list = %v, want it to win", ids(got))
+	}
+	// The editor saves nothing when the drawer is the device's default.
+	rows := controls.EditorRows(nil, oxp, controls.CapRefreshRate)
+	if controls.SavedList(rows, nil, oxp, controls.CapRefreshRate) != nil {
+		t.Error("an untouched editor saved the device's defaults")
+	}
+}
+
+// Every embedded device file names only controls this build knows.
+func TestDeviceFileQuickbarIDsAreKnown(t *testing.T) {
+	cfgs, err := device.Configs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cfgs {
+		if c.Quickbar == nil {
+			continue
+		}
+		for _, id := range c.Quickbar.Controls {
+			if _, ok := controls.Lookup(id); !ok {
+				t.Errorf("%s: quickbar.controls names unknown control %q (known: %v)", c.Device.ID, id, controls.IDs())
+			}
+		}
 	}
 }

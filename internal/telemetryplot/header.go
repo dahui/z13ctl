@@ -29,7 +29,7 @@ func (g Group) HeaderValue() string {
 	}
 	if len(g.Series) == 1 {
 		s := g.Series[0]
-		return FormatValue(s.Kind, s.Latest) + s.Unit
+		return withUnit(FormatValue(s.Kind, s.Latest), s.Unit)
 	}
 	var b strings.Builder
 	for i, s := range g.Series {
@@ -43,6 +43,17 @@ func (g Group) HeaderValue() string {
 	b.WriteString(" ")
 	b.WriteString(g.Unit)
 	return b.String()
+}
+
+// withUnit joins a value and its unit as they are written: "52°C" and "40%"
+// close up, a word-like unit takes a space ("2597 RPM", "7.6 W"). A single-fan
+// device (the OXP) was the first to put RPM on the one-series path, and read
+// "2597RPM".
+func withUnit(v, unit string) string {
+	if unit == "" || strings.HasPrefix(unit, "°") || unit == "%" {
+		return v + unit
+	}
+	return v + " " + unit
 }
 
 // FormatValue renders a reading. Temperature, RPM and percentages are whole

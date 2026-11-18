@@ -90,6 +90,9 @@ func statusReport(out io.Writer) error {
 			modeStr = ", mode: " + driver.FanModeName(mode)
 		}
 		outf("Fans:    %s%s\n", formatRPM(live.RPM), modeStr)
+	} else if len(live.RPM) > 0 {
+		// A read-only fan source (telemetry.fans): the speed, no mode to name.
+		outf("Fans:    %s (firmware curve)\n", formatRPM(live.RPM))
 	}
 
 	// Performance profile. platform_profile is never a custom profile name, so

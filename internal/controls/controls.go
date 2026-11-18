@@ -153,13 +153,14 @@ type Control struct {
 // this order is also where the customization editor offers a hidden control,
 // and so where it lands when the user switches it on.
 var defaultOrder = []Control{
-	{ID: "profile", Label: "Performance profile", Group: GroupPower,
-		Requires: []Capability{CapProfiles}, Default: true},
-	// The TDP slider sits under the profile it is the default mode of: on a
-	// slider device the profile row is "Default" plus the saved profiles, and
-	// Default means "this slider". A device on the usual model never has it.
+	// The TDP slider leads where it exists: on a slider device it is the
+	// control, and the profile section below it is the Saved profile picker.
+	// A device on the usual model never has it, so the Z13's order is the
+	// four it always was.
 	{ID: "tdp", Label: "TDP", Group: GroupPower,
 		Requires: []Capability{CapPowerSlider}, Default: true},
+	{ID: "profile", Label: "Performance profile", Group: GroupPower,
+		Requires: []Capability{CapProfiles}, Default: true},
 	{ID: "autoswitch", Label: "AC/battery autoswitch", Group: GroupPower,
 		Requires: []Capability{CapProfiles, CapBattery}, Default: true},
 	{ID: "battery", Label: "Charge limit", Group: GroupPower,
@@ -230,6 +231,26 @@ func Defaults() []Control {
 	var out []Control
 	for _, c := range All() {
 		if c.Default {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// DefaultsFor returns the drawer a user who has not chosen gets on the device
+// info describes: the device's own list (api.DeviceInfo.Quickbar) where it
+// declares one, else Defaults. A device's list may name the opt-in controls —
+// that is what it is for: the OXP's drawer holds CPU boost and the refresh
+// rate. An ID this build does not know is skipped; the device file's test
+// keeps the embedded ones honest, and a newer daemon may name a control an
+// older GUI lacks.
+func DefaultsFor(info *api.DeviceInfo) []Control {
+	if info == nil || len(info.Quickbar) == 0 {
+		return Defaults()
+	}
+	var out []Control
+	for _, id := range info.Quickbar {
+		if c, ok := Lookup(id); ok {
 			out = append(out, c)
 		}
 	}

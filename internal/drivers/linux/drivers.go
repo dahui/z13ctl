@@ -241,6 +241,7 @@ func resolveTelemetry(d driver.TelemetryInfo, src TelemetrySources) driver.Telem
 	out.CPUStats = present("cpu_stats", d.CPUStats, fileExists(procStatPath))
 	out.NPU = present("npu", d.NPU, src.NPU != nil && src.NPU.Present())
 	out.Net = present("net", d.Net, fileExists(procNetDevPath))
+	out.Fans = present("fans", d.Fans, d.Fans != "" && findFanHwmon(d.Fans) != "")
 
 	// The clock axis spans every clock a chart shows: the CPU's boost ceiling
 	// and the GPU's top P-state.
@@ -280,8 +281,14 @@ func (t *telemetry) Sample() (driver.Sample, error) {
 		return s, err
 	}
 	s.TempC = temp
-	// Fan speed is not read here: the daemon fills RPM from the fan
-	// controller (driver.Sample), so this driver needs no fan vendor.
+	// Fan speed is read here only from a declared read-only source
+	// (telemetry.fans): where voltaire controls the fans, the daemon fills RPM
+	// from the fan controller (driver.Sample) instead.
+	if info.Fans != "" {
+		if rpm, err := ReadHwmonFanRPM(info.Fans); err == nil {
+			s.RPM = rpm
+		}
+	}
 	// The counter, not a power figure: converting needs the previous reading,
 	// and this driver holds no state (see driver.Sample).
 	if energy, maxUJ, err := ReadPackageEnergy(); err == nil {

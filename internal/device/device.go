@@ -73,6 +73,11 @@ type Device struct {
 	// none.
 	ProfilePin string
 
+	// Quickbar is quickbar.controls: the drawer's default controls on this
+	// device, in order; nil for the GUI's built-in default. Data for clients
+	// only, served as device-get's quickbar.
+	Quickbar []string
+
 	// ButtonList is every button the device declares, in file order: the
 	// choices a user has for opening voltaire. Buttons watches all of them,
 	// each press carrying its ID.
@@ -225,6 +230,9 @@ func Detect() (*Device, error) {
 // client.
 func Assemble(c Config) (*Device, error) {
 	d := &Device{ID: c.Device.ID, Model: c.Device.Model, Name: c.Device.Name}
+	if c.Quickbar != nil {
+		d.Quickbar = append([]string(nil), c.Quickbar.Controls...)
+	}
 
 	if c.Fans != nil {
 		f, err := lookup("fans", fansFactories, c.Fans.Method)

@@ -46,6 +46,11 @@ type DeviceInfo struct {
 	// one's label. Absent on a device that declares none, or from an older
 	// daemon, which offers no choice.
 	HardwareButtons []ButtonInfo `json:"hardware_buttons,omitempty"`
+
+	// Quickbar is the drawer's default contents on this device: control IDs
+	// in order, as voltaire-gui's gui.toml [quickbar] controls names them. A
+	// user's own choice wins; absent means the client's built-in default.
+	Quickbar []string `json:"quickbar,omitempty"`
 }
 
 // ButtonInfo is one hardware button a user may open voltaire with.
@@ -353,11 +358,15 @@ type BatteryInfo struct {
 // usefully ask for; zero means the daemon keeps no history for this device
 // and only live readings are available.
 type TelemetryInfo struct {
-	PowerDraw      string `json:"power_draw,omitempty"`
-	GPU            string `json:"gpu,omitempty"`
-	CPUStats       string `json:"cpu_stats,omitempty"`
-	NPU            string `json:"npu,omitempty"`
-	Net            string `json:"net,omitempty"`
+	PowerDraw string `json:"power_draw,omitempty"`
+	GPU       string `json:"gpu,omitempty"`
+	CPUStats  string `json:"cpu_stats,omitempty"`
+	NPU       string `json:"npu,omitempty"`
+	Net       string `json:"net,omitempty"`
+	// Fans names a read-only fan speed source (an hwmon device, "oxp_ec"):
+	// samples carry RPM though the device has no fans section, because
+	// voltaire reads its fans without controlling them.
+	Fans           string `json:"fans,omitempty"`
 	HistorySeconds int    `json:"history_seconds,omitempty"`
 
 	// Chart hints, from the kernel where the daemon can read them; absent

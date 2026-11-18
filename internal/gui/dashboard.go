@@ -235,17 +235,19 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	right.SetVAlign(gtk.AlignStart)
 
 	var powerRows []gtk.Widgetter
+	// The TDP slider leads on a slider device, as in the drawer: it is the
+	// control there, and the profile row below it is the Saved profile picker.
+	if has(controls.CapPowerSlider) {
+		s, row := w.newTDPSliderSection(true)
+		d.tdpSlider = s
+		powerRows = append(powerRows, row)
+	}
 	if has(controls.CapProfiles) {
 		// Custom goes to the Profiles tab rather than to a view of its own:
 		// this surface already has that page, and two routes to one editor is
 		// how they come to disagree about which profile is being edited.
 		p, row := w.newProfileSection(true, func() { d.openProfilesTab() })
 		d.profiles = p
-		powerRows = append(powerRows, row)
-	}
-	if has(controls.CapPowerSlider) {
-		s, row := w.newTDPSliderSection(true)
-		d.tdpSlider = s
 		powerRows = append(powerRows, row)
 	}
 	if has(controls.CapChargeLimit) {
@@ -657,6 +659,8 @@ func (d *dashboardView) showPlaceholder() {
 			caps.CPUStats = t.CPUStats != ""
 			caps.NPU = t.NPU != ""
 			caps.Net = t.Net != ""
+			// A read-only fan source charts fans too (the OXP's oxp_ec).
+			caps.Fans = caps.Fans || t.Fans != ""
 		}
 	}
 	kinds := telemetryplot.PlaceholderKinds(caps)
@@ -993,11 +997,11 @@ func (d *dashboardView) buildFocusList() {
 	// and the settings buttons' One()-each — a coordinate that disagrees with
 	// the widgets is the failure nobody notices with a mouse in their hand, and
 	// this one predated all of them.
-	if d.profiles != nil {
-		d.profiles.appendFocus(b, &items)
-	}
 	if d.tdpSlider != nil {
 		d.tdpSlider.appendFocus(b, &items)
+	}
+	if d.profiles != nil {
+		d.profiles.appendFocus(b, &items)
 	}
 	if d.battery != nil {
 		d.battery.appendFocus(b, &items)

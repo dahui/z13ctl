@@ -45,4 +45,9 @@ var (
 	// class directory that says which interfaces are physical.
 	procNetDevPath = "/proc/net/dev"
 	sysNetDir      = "/sys/class/net"
+
+	// sysHwmonDir holds the hwmon devices, found by name: the read-only fan
+	// speed source (telemetry.fans) on a device whose fans voltaire does not
+	// control.
+	sysHwmonDir = "/sys/class/hwmon"
 )

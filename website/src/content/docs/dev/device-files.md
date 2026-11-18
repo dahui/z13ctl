@@ -168,6 +168,7 @@ black-screen a machine. The file supplies the words.
 | `method` | `hwmon-rapl`. |
 | `power_draw` | The package-power source: `rapl`. |
 | `gpu`, `cpu_stats`, `npu`, `net` | The expanded sources: `amdgpu`, `procfs`, `amdxdna`, `procfs`. |
+| `fans` | A read-only fan speed source: the hwmon device's `name` (`oxp_ec`), whose `fanN_input` files are charted. For a device whose fans voltaire reads but does not control; with a `[fans]` section the fan driver reports the speed instead. |
 | `history_seconds` | How much history the daemon keeps (default 3600, one hour at 1 Hz). |
 
 Declare a source only if the driver reads it. A declared source with nothing
@@ -230,6 +231,15 @@ written scoped to this file's `[[device.match]]` DMI patterns
 apply on another machine, and those patterns may not contain udev glob
 characters (`*?[|`). Validation refuses the key on anything but an evdev
 method.
+
+## `[quickbar]`: the default drawer
+
+| Key | Meaning |
+|---|---|
+| `controls` | The drawer's sections for a user who has not customized it, in order: the control IDs [GUI configuration](/voltaire/gui/configuration/) lists (`tdp`, `profile`, `cpu-boost`, …), including the ones that are otherwise off by default. A section the device cannot offer is dropped, so listing `lighting` before the RGB driver exists is harmless. A user's own choice (Settings → Quickbar, or `gui.toml`) still wins. Omit the block for the built-in default. |
+
+A handheld wants different quick controls from a laptop: the OneXPlayer X2 Mini
+Pro lists the TDP slider, the saved profiles, CPU boost and the refresh rate.
 
 ## A complete example
 

@@ -19,7 +19,7 @@ package telemetryplot
 // field true — the keep-everything posture limits.FromDevice takes, for the
 // same reason.
 type PlaceholderCaps struct {
-	Fans     bool // a fans section
+	Fans     bool // a fans section, or a read-only fan source (telemetry.fans)
 	Power    bool // telemetry.power_draw
 	Battery  bool // a battery section
 	GPU      bool // telemetry.gpu

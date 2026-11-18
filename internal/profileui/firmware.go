@@ -31,7 +31,9 @@ func FirmwareFrom(info *api.DeviceInfo) Firmware {
 		// A pinned profile is not a choice: the daemon puts it back whatever
 		// selects another. What remains is the one row that means "no saved
 		// profile" — on a slider device, the TDP setting — so it is named for
-		// that rather than for a firmware profile there is no alternative to.
+		// that rather than for a firmware profile there is no alternative to,
+		// and the drawer offers it inside the Saved profile control (SavedRows)
+		// rather than as a button of its own.
 		return Firmware{{Name: p.Pin, Label: PinnedLabel}}
 	}
 	labels := make(map[string]string, len(p.Entries))
@@ -50,8 +52,9 @@ func FirmwareFrom(info *api.DeviceInfo) Firmware {
 }
 
 // PinnedLabel names the pinned firmware profile's row (api.ProfileInfo.Pin):
-// the machine's default mode, with no saved profile running.
-const PinnedLabel = "Default"
+// no saved profile running, so the TDP setting is what is in force. The Saved
+// profile control offers it first, and the autoswitch targets name it too.
+const PinnedLabel = "No profile"
 
 // defaultFirmware is the 2025 ROG Flow Z13's list, used only when there is no
 // device document to read.

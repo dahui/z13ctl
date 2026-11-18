@@ -692,7 +692,14 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   `limits.TDPSliderMax` (the safe max, which get-state's `tdp_limits` move to
   55 W on battery); the note under it is `profileui.TDPSliderNote` (firmware
   preset, value above the battery cap, or "set by <profile>, moving the
-  slider leaves it"). **The slider never edits a profile** (Jeff,
+  slider leaves it"). On a pinned device the profile section is one
+  **Saved profile** dropdown (`profileui.SavedRows`: "No profile" = the pin,
+  then the saved profiles; the window adds "Profiles…"), with the slider
+  above it: performance-profile buttons mean nothing there (Jeff). A device
+  file may set the drawer's default contents (`[quickbar] controls`, served
+  as `device-get.quickbar`, `controls.DefaultsFor`; a user's saved list
+  still wins), and a read-only fan source (`telemetry.fans = "oxp_ec"`)
+  charts RPM without a `[fans]` section. **The slider never edits a profile** (Jeff,
   2026-11-17: "A user should actively update it if they want"): a bare
   `tdp` set on a slider device, from the GUI or the CLI, leaves a running
   custom profile unchanged (`leaveProfileForSlider`: DeviceTDP set first, then

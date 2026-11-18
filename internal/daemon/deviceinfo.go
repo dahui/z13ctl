@@ -42,7 +42,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw == nil {
 		return &api.DeviceInfo{}
 	}
-	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model, Name: hw.Name}
+	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model, Name: hw.Name, Quickbar: slices.Clone(hw.Quickbar)}
 	if hw.Fans != nil {
 		s := hw.Fans.Shape()
 		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax,
@@ -158,6 +158,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 			CPUStats:       t.CPUStats,
 			NPU:            t.NPU,
 			Net:            t.Net,
+			Fans:           t.Fans,
 			HistorySeconds: t.HistorySeconds,
 			ClockMaxMHz:    t.ClockMaxMHz,
 			TempLimitC:     t.TempLimitC,

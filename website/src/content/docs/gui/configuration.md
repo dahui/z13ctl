@@ -71,8 +71,8 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 
 | ID | Section |
 |----|---------|
-| `profile` | The device's firmware profiles plus the Custom profile picker. On a device with a pinned profile (the OneXPlayer X2 Mini Pro) the firmware profiles are one **Default** button: the TDP slider, with no saved profile running |
-| `tdp` | The TDP slider, on a device whose TDP is one setting rather than part of a profile (the OneXPlayer X2 Mini Pro). It sets the machine's TDP and is remembered across reboots. With a custom profile running, moving it leaves the profile (unchanged) for the TDP setting; change a profile's TDP on the Profiles page |
+| `profile` | The device's firmware profiles plus the Custom profile picker. On a device with a pinned profile (the OneXPlayer X2 Mini Pro) it is one **Saved profile** dropdown instead: **No profile** runs on the TDP slider, and a saved profile loads what it saved |
+| `tdp` | The TDP slider (first in the drawer where it exists), on a device whose TDP is one setting rather than part of a profile (the OneXPlayer X2 Mini Pro). It sets the machine's TDP and is remembered across reboots. With a custom profile running, moving it leaves the profile (unchanged) for the TDP setting; change a profile's TDP on the Profiles page |
 | `autoswitch` | The AC/battery autoswitch row and its two targets |
 | `battery` | The charge-limit slider, where the device has a charge limit to set |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |

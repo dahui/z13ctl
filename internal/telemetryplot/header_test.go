@@ -57,7 +57,7 @@ func TestHeaderTitleAndValue(t *testing.T) {
 				{Kind: telemetryplot.KindPower, Label: "Pkg", Unit: "W", Latest: 27.4},
 			}},
 			wantTitle: "Power",
-			wantValue: "27.4W",
+			wantValue: "27.4 W",
 		},
 		{
 			// Two fans on one chart: the series labels repeat the heading, so
@@ -77,7 +77,7 @@ func TestHeaderTitleAndValue(t *testing.T) {
 				{Kind: telemetryplot.KindFan, Label: "Fan", Unit: "RPM", Latest: 2400},
 			}},
 			wantTitle: "Fan",
-			wantValue: "2400RPM",
+			wantValue: "2400 RPM",
 		},
 		{
 			name:      "an empty group claims nothing",
