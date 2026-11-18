@@ -103,7 +103,12 @@ type dashboardView struct {
 	// work — the charge limit and autoswitch below it are about the battery.
 	boostSw *gtk.Switch
 	dsp     *displaySection
-	battery *batterySection
+
+	// brightness leads the DISPLAY card and volume is the SOUND card's one
+	// row (levels.go); nil where the session offers neither.
+	brightness *levelSlider
+	volume     *levelSlider
+	battery    *batterySection
 	// tdpSlider is the plain TDP control of a slider device, under the
 	// profile row as in the drawer; nil on any other.
 	tdpSlider *tdpSliderSection
@@ -287,9 +292,28 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	// its own, which reads as a column against POWER's rather than the single
 	// stranded row it was before that block joined it. It used to sit below
 	// LIGHTING for that reason, and LIGHTING has left this row.
+	// The screen's brightness leads it, above the refresh rate: the setting
+	// reached for more often. Either may be absent (no backend in this
+	// session); the card goes only when both are.
+	var displayRows []gtk.Widgetter
+	if w.hasBrightness {
+		l, row := w.newLevelSlider(brightnessConfig(), true)
+		d.brightness = l
+		displayRows = append(displayRows, row)
+	}
 	if dsp, row := w.newDisplaySection(false); dsp != nil {
 		d.dsp = dsp
-		right.Append(sectionCard("DISPLAY", row))
+		displayRows = append(displayRows, row)
+	}
+	if len(displayRows) > 0 {
+		right.Append(sectionCard("DISPLAY", displayRows...))
+	}
+	// SOUND under DISPLAY, in the same column: one row, and the right column
+	// is the one with room.
+	if w.hasVolume {
+		l, row := w.newLevelSlider(volumeConfig(), true)
+		d.volume = l
+		right.Append(sectionCard("SOUND", row))
 	}
 
 	region := gtk.NewBox(gtk.OrientationVertical, 12)
@@ -424,6 +448,8 @@ func (d *dashboardView) openProfilesTab() {
 // control with a source of its own.
 func (d *dashboardView) syncControls() {
 	d.dsp.sync() // nil-safe: the method guards its own receiver
+	d.brightness.sync()
+	d.volume.sync()
 	d.syncBoost()
 }
 
@@ -1025,7 +1051,9 @@ func (d *dashboardView) buildFocusList() {
 	if d.autos != nil {
 		d.autos.appendFocus(b, &items)
 	}
-	d.dsp.appendFocus(b, &items) // nil-safe
+	d.brightness.appendFocus(b, &items) // nil-safe; above the refresh rate, as on screen
+	d.dsp.appendFocus(b, &items)        // nil-safe
+	d.volume.appendFocus(b, &items)     // nil-safe; the SOUND card, under DISPLAY
 	for _, l := range d.lightings {
 		l.appendFocus(b, &items)
 	}

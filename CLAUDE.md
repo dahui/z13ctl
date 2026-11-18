@@ -53,6 +53,7 @@ cmd/                         Cobra subcommands
   fancurve.go                get/set/reset custom fan curves (hwmon sysfs); --preset/--list-presets
                              resolve a named device curve into the same --set path
   cpuboost.go                get/set cpufreq boost clocks
+  rumble.go                  get/set the controller's vibration strength (hid-oxp)
   button.go                  which hardware button opens voltaire (--list/--get/--set via the daemon)
   tdp.go                     get/set/reset TDP power limits (asus-armoury PPT, asus-nb-wmi fallback)
   undervolt.go               get/set/reset CPU Curve Optimizer offsets via ryzen_smu
@@ -210,6 +211,8 @@ internal/
     hidrawbtn/               driver.Buttons over vendor HID report bytes ("hidraw-report",
                              `match` pairs; the Ally's buttons, the OXP's Home); refuses a
                              keyboard interface by its report descriptor
+    hidoxp/                  driver.Rumble over hid-oxp's rumble_intensity (the OneXPlayer
+                             controller's vibration strength; range from rumble_intensity_range)
     inputplumber/            the InputPlumber route: pure profile merge (SetMapping, YAML),
                              a DBus client (composite devices, Get/LoadProfile, change
                              signals) and the driver.Buttons for voltaire_<id> InputEvents
@@ -271,6 +274,8 @@ internal/
                              WithDefaults (what the switch fills in), PrefOptions, Match
                              (exact on the rounded rate; no nearest-neighbour) and
                              PrefNote — the two cautions the controls cannot show
+  audio/                     the GUI's volume slider: wpctl on @DEFAULT_AUDIO_SINK@, pactl
+                             fallback; pure reply parsing, exec seam. Session-owned, like display
   settingsui/                the full window's Settings page: which firmware-toggle rows a
                              device offers (from the document, never a written list), each
                              row's value from State.Features — absent means *unknown*, not
@@ -745,6 +750,56 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   note with no Custom button; back on the normal build, the slider, the pin
   and the remembered 35 W returned. `TestUnavailablePowerDropsThePin`
   (negative control run: the unconditional pin fails it).
+- **Brightness and volume are the GUI's, and DE-agnostic; HDR was dropped**
+  (Jeff, 2026-11-17: "make sure the controls work in gamescope and gnome as
+  well"; `.claude/plans/handheld-controls.md`). Both are session-owned like
+  the refresh rate, so no daemon and no grant. **Brightness** has two
+  backends (`internal/display/brightness.go`): KWin (kscreen-doctor's output
+  brightness) on a KDE session, logind's `Session.SetBrightness` everywhere
+  else, gamescope included. KWin is not optional on KDE: measured on Plasma
+  6.8, a logind write moved the backlight to 50 % while KWin kept reporting
+  75 %, so Plasma's slider/OSD go stale. The logind session is resolved
+  through `Manager.GetUser` → `User.Display`, because voltaire-gui.service is
+  in no session and logind refuses a seatless one (seen from ssh). Range
+  1–100 %, never 0 (a black handheld screen hides the control that undoes
+  it); the backlight is chosen firmware > platform > raw. **Volume**:
+  `internal/audio`, wpctl then pactl, identical on every desktop; a set
+  unmutes. Both are session capabilities (`CapBrightness`, `CapVolume`, a PATH,
+  environment and sysfs check at startup), off by default and in the OXP's
+  device quickbar (DISPLAY / new SOUND group), plus Dashboard rows (brightness
+  heads DISPLAY, volume a SOUND card). One `levelSlider` type
+  (`gui/levels.go`), read on show and after each set, never on the poll.
+  **HDR was dropped** because only the compositor can switch it: one backend
+  per compositor (KDE, GNOME's DisplayConfig, Hyprland, gamescope), with no
+  runtime switch at all on others. Verified on the OXP: both brightness paths
+  (KWin 75→55→75 with the backlight following; logind the same), wpctl, the
+  drawer and Dashboard; Z13 focus dump `main` identical, `full:dashboard`
+  75→77, `full:settings` 25→31 (the editor's two rows).
+- **Controller vibration strength is a daemon setting like CPU boost**
+  (`driver.Rumble`, `internal/drivers/hidoxp`, `[rumble]` in the device file,
+  `rumble`/`rumble-get`, `State.Rumble`, device-get `rumble {min,max}`).
+  Checked first, because hid-oxp's RGB writes are ignored by the X2: 5, 1, 5, 1
+  written between identical FF rumble effects (python EVIOCSFF on InputPlumber's
+  virtual pad, as root) were felt as strong, weak, strong, weak (Jeff). The
+  range is the kernel's `rumble_intensity_range`; device-get offers the
+  section only while the controller answers. The stored value is replayed at
+  startup and resume, only when set and only when the controller lost it
+  (`restoreRumble`). Grant: udev on `ACTION=="bind", SUBSYSTEM=="hid",
+  DRIVER=="hid-oxp"` (the attribute appears at bind, not add), the perms-unit
+  glob over the driver directory, and setup's direct grant; drift guard
+  updated. Verified with `udevadm test --action=bind` on the OXP: the rule
+  matched the controller's vendor interface and resolved to its attribute; a
+  hid-multitouch device matched nothing. hid-oxp binds three of the
+  controller's HID devices and only one has the attribute, so the loop is
+  `|| continue` (`TestRumbleRuleToleratesTheOtherInterfaces`, negative
+  control run), or udev logs a failed RUN for the other two at every boot.
+  GUI: a `rumbleSection` built twice, the Settings tab's CONTROLLER card and a
+  `rumble` drawer control (CONTROLLER heading, `CapRumble`, in the OXP's device
+  default), rules in `settingsui/rumble.go`. After `sudo voltaire setup` the
+  daemon set 4 then 5 on the OXP. **The OXP's default drawer is Jeff's own
+  arrangement** (2026-11-17): tdp, cpu-boost, brightness, volume, rumble,
+  refresh-rate, with lighting listed for when the rings work; the Saved
+  profile picker and autoswitch are opt-in there.
 - **Setup leaves a node at mode 0000 alone** (`hiddenNode`). No kernel creates
   one; InputPlumber hides the nodes it manages that way, and setup's direct
   `chmod g=r` would have undone that for the whole group until the next udev
@@ -862,6 +917,8 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   | button that opens voltaire | `{"cmd":"button-set","set":"armoury-crate"}` (an id, `none`, or `default`) | `ok` |
   | cpu boost set | `{"cmd":"cpuboost","set":"0"}` | `ok` |
   | cpu boost get | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
+  | controller vibration set | `{"cmd":"rumble","set":"2"}` | `ok` |
+  | controller vibration get | `{"cmd":"rumble-get"}` | `ok`, `value` |
   | panel overdrive set | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
   | panel overdrive get | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
   | fan curve get | `{"cmd":"fancurve-get"}` | `ok`, `value` (JSON) |

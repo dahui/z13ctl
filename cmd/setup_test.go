@@ -53,6 +53,10 @@ var sysfsGrants = []struct {
 	// the package-0 domain and the unit globs, because the counter can exist
 	// before any udev event this rule could hang off.
 	{name: "powercap energy counter", match: "energy_uj", rules: true, service: true},
+	// The OneXPlayer controller's vibration strength. The rule hangs off the
+	// driver's bind event, when the attribute appears; the unit covers a
+	// controller bound before the rule was installed.
+	{name: "hid-oxp rumble strength", match: "rumble_intensity", rules: true, service: true},
 }
 
 // TestEveryDeviceFileTargetIsGranted: the HID ids and button devices come from
@@ -569,6 +573,32 @@ func TestHiddenNode(t *testing.T) {
 // ppt_* (the OneXPlayer, or a Z13 kernel built without
 // CONFIG_ASUS_WMI_DEPRECATED_ATTRS). Found on the OXP 2026-11-17; the
 // ryzen_smu line had been patched alone (25ef8a9), the rest never were.
+// TestRumbleRuleToleratesTheOtherInterfaces: hid-oxp binds several of the
+// controller's HID devices and only one carries rumble_intensity, so the bind
+// rule's loop must skip a missing file rather than exit non-zero, or udev logs
+// a failed RUN for every other interface at every boot (issue #25's class).
+func TestRumbleRuleToleratesTheOtherInterfaces(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{
+		"buildRulesContent": buildRulesContent("users"),
+		packagedRulesPath:   readPackaged(t, packagedRulesPath),
+	} {
+		found := false
+		for _, line := range strings.Split(content, "\n") {
+			if !strings.Contains(line, "rumble_intensity") || !strings.HasPrefix(line, "ACTION") {
+				continue
+			}
+			found = true
+			if !strings.Contains(line, `[ -e \"$$f\" ] || continue;`) {
+				t.Errorf("%s: the rumble rule fails on an interface without the attribute:\n  %s", name, line)
+			}
+		}
+		if !found {
+			t.Errorf("%s: no rumble rule", name)
+		}
+	}
+}
+
 func TestPermsUnitToleratesMissingFiles(t *testing.T) {
 	t.Parallel()
 	for name, content := range map[string]string{

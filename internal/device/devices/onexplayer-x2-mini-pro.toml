@@ -174,9 +174,19 @@ report_id    = 0xb2
 match        = [[6, 0x24], [12, 0x01]]
 inputplumber = "Keyboard"
 
-# The drawer a user who has not customized it gets. A handheld's quick
-# controls: the TDP slider and the saved profiles first, then CPU boost and the
-# refresh rate, which a laptop's drawer leaves to Settings → Quickbar. RGB is
+# The controller's vibration strength: hid-oxp's rumble_intensity on its
+# vendor interface (0003:1A86:FE00.*), 0–5 from rumble_intensity_range.
+# Checked 2026-11-17: 5, 1, 5, 1 between identical rumble effects were felt
+# as strong, weak, strong, weak, so the X2 obeys it.
+[rumble]
+method = "hid-oxp"
+usb    = "1a86:fe00"
+
+# The drawer a user who has not customized it gets: Jeff's own arrangement on
+# this machine (2026-11-17). The TDP slider and CPU boost, the screen's
+# brightness, the volume and the controller's vibration strength, then the
+# refresh rate. The saved-profile picker and autoswitch are left to Settings →
+# Quickbar: on a one-slider device the slider is the power control. RGB is
 # listed for when the joystick rings have a lighting driver; a control the
 # device cannot offer is dropped until then. On 7.3.4 hid-oxp registers
 # oxp:rgb:joystick_rings but the controller ignores its writes (checked
@@ -184,4 +194,4 @@ inputplumber = "Keyboard"
 # with or without InputPlumber running). The X2 controllers use a newer RGB
 # protocol, which only the unmerged hid-oxp X2-family series speaks.
 [quickbar]
-controls = ["tdp", "profile", "cpu-boost", "autoswitch", "refresh-rate", "lighting"]
+controls = ["tdp", "cpu-boost", "brightness", "volume", "rumble", "refresh-rate", "lighting"]

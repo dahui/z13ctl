@@ -48,6 +48,8 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [func SendProfileList\(\) \(handled bool, value string, err error\)](<#SendProfileList>)
 - [func SendProfileSave\(name string\) \(bool, error\)](<#SendProfileSave>)
 - [func SendProfileSet\(profile string\) \(bool, error\)](<#SendProfileSet>)
+- [func SendRumbleGet\(\) \(handled bool, strength int, err error\)](<#SendRumbleGet>)
+- [func SendRumbleSet\(strength int\) \(bool, error\)](<#SendRumbleSet>)
 - [func SendTdpGet\(\) \(handled bool, value string, err error\)](<#SendTdpGet>)
 - [func SendTdpReset\(\) \(bool, error\)](<#SendTdpReset>)
 - [func SendTdpResetFor\(profile string\) \(bool, error\)](<#SendTdpResetFor>)
@@ -85,6 +87,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type PowerRange](<#PowerRange>)
 - [type ProfileEntry](<#ProfileEntry>)
 - [type ProfileInfo](<#ProfileInfo>)
+- [type RumbleInfo](<#RumbleInfo>)
 - [type State](<#State>)
   - [func SendGetState\(\) \(bool, \*State, error\)](<#SendGetState>)
   - [func \(s State\) ActiveCustomProfile\(\) \(CustomProfile, bool\)](<#State.ActiveCustomProfile>)
@@ -97,6 +100,7 @@ Package api provides the public client interface for the voltaire daemon. It con
 - [type TelemetrySample](<#TelemetrySample>)
   - [func SendTelemetryHistory\(seconds int\) \(handled bool, samples \[\]TelemetrySample, err error\)](<#SendTelemetryHistory>)
 - [type ToggleInfo](<#ToggleInfo>)
+- [type UnavailableInfo](<#UnavailableInfo>)
 - [type UndervoltInfo](<#UndervoltInfo>)
 - [type UndervoltState](<#UndervoltState>)
 
@@ -213,7 +217,7 @@ var StockProfiles = []string{"quiet", "balanced", "performance"}
 ```
 
 <a name="FormatFanCurve"></a>
-## func [FormatFanCurve](<https://github.com/dahui/voltaire/blob/main/api/types.go#L432>)
+## func [FormatFanCurve](<https://github.com/dahui/voltaire/blob/main/api/types.go#L446>)
 
 ```go
 func FormatFanCurve(points []FanCurvePoint) string
@@ -222,7 +226,7 @@ func FormatFanCurve(points []FanCurvePoint) string
 FormatFanCurve renders points in the "temp:pwm,temp:pwm,..." form that SendFanCurveSet and the fancurve command take. It is the inverse of the daemon's own parser and lives here so that a client holding a curve — a FanPreset's, or one it built — never has to restate the wire format.
 
 <a name="IsKernelProfileName"></a>
-## func [IsKernelProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L281>)
+## func [IsKernelProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L295>)
 
 ```go
 func IsKernelProfileName(name string) bool
@@ -231,7 +235,7 @@ func IsKernelProfileName(name string) bool
 IsKernelProfileName reports whether name is in the kernel's firmware profile vocabulary. It says nothing about whether this device offers it.
 
 <a name="IsReservedProfileName"></a>
-## func [IsReservedProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L292>)
+## func [IsReservedProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L306>)
 
 ```go
 func IsReservedProfileName(name string) bool
@@ -240,7 +244,7 @@ func IsReservedProfileName(name string) bool
 IsReservedProfileName reports whether a custom profile may never take name: any kernel firmware profile name, and DefaultCustomProfile.
 
 <a name="IsStockProfileName"></a>
-## func [IsStockProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L302>)
+## func [IsStockProfileName](<https://github.com/dahui/voltaire/blob/main/api/types.go#L316>)
 
 ```go
 func IsStockProfileName(name string) bool
@@ -251,7 +255,7 @@ IsStockProfileName reports whether name is one of the Z13's firmware profile nam
 Deprecated: use DeviceInfo.Profiles.Names to ask whether a device offers a firmware profile, or IsReservedProfileName to ask whether a custom profile may take a name.
 
 <a name="ProfileLabel"></a>
-## func [ProfileLabel](<https://github.com/dahui/voltaire/blob/main/api/types.go#L316>)
+## func [ProfileLabel](<https://github.com/dahui/voltaire/blob/main/api/types.go#L330>)
 
 ```go
 func ProfileLabel(name string) string
@@ -301,7 +305,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchGet"></a>
-## func [SendAutoswitchGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L706>)
+## func [SendAutoswitchGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L739>)
 
 ```go
 func SendAutoswitchGet() (handled bool, value string, err error)
@@ -350,7 +354,7 @@ func main() {
 </details>
 
 <a name="SendAutoswitchSet"></a>
-## func [SendAutoswitchSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L687>)
+## func [SendAutoswitchSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L720>)
 
 ```go
 func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error)
@@ -474,7 +478,7 @@ func main() {
 </details>
 
 <a name="SendBootSoundGet"></a>
-## func [SendBootSoundGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L397>)
+## func [SendBootSoundGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L430>)
 
 ```go
 func SendBootSoundGet() (handled bool, value int, err error)
@@ -626,7 +630,7 @@ SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off. Returns \(
 Unlike the firmware toggles this looks like, the setting is not kept by the machine: cpufreq comes back with boost enabled on every boot, so the daemon records the choice and restores it at startup.
 
 <a name="SendFanCurveGet"></a>
-## func [SendFanCurveGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L433>)
+## func [SendFanCurveGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L466>)
 
 ```go
 func SendFanCurveGet() (handled bool, value string, err error)
@@ -667,7 +671,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveReset"></a>
-## func [SendFanCurveReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L466>)
+## func [SendFanCurveReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L499>)
 
 ```go
 func SendFanCurveReset() (bool, error)
@@ -708,7 +712,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveResetFor"></a>
-## func [SendFanCurveResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L473>)
+## func [SendFanCurveResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L506>)
 
 ```go
 func SendFanCurveResetFor(profile string) (bool, error)
@@ -749,7 +753,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSet"></a>
-## func [SendFanCurveSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L447>)
+## func [SendFanCurveSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L480>)
 
 ```go
 func SendFanCurveSet(curve string) (bool, error)
@@ -790,7 +794,7 @@ func main() {
 </details>
 
 <a name="SendFanCurveSetFor"></a>
-## func [SendFanCurveSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L454>)
+## func [SendFanCurveSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L487>)
 
 ```go
 func SendFanCurveSetFor(profile, curve string) (bool, error)
@@ -832,7 +836,7 @@ func main() {
 </details>
 
 <a name="SendFeatureGet"></a>
-## func [SendFeatureGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L770>)
+## func [SendFeatureGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L803>)
 
 ```go
 func SendFeatureGet(id string) (handled bool, value int, err error)
@@ -873,7 +877,7 @@ func main() {
 </details>
 
 <a name="SendFeatureSet"></a>
-## func [SendFeatureSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L787>)
+## func [SendFeatureSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L820>)
 
 ```go
 func SendFeatureSet(id string, value int) (bool, error)
@@ -955,7 +959,7 @@ func main() {
 </details>
 
 <a name="SendPanelOverdriveGet"></a>
-## func [SendPanelOverdriveGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L415>)
+## func [SendPanelOverdriveGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L448>)
 
 ```go
 func SendPanelOverdriveGet() (handled bool, value int, err error)
@@ -1037,7 +1041,7 @@ func main() {
 </details>
 
 <a name="SendProfileCreate"></a>
-## func [SendProfileCreate](<https://github.com/dahui/voltaire/blob/main/api/client.go#L633>)
+## func [SendProfileCreate](<https://github.com/dahui/voltaire/blob/main/api/client.go#L666>)
 
 ```go
 func SendProfileCreate(name string) (bool, error)
@@ -1079,7 +1083,7 @@ func main() {
 </details>
 
 <a name="SendProfileDelete"></a>
-## func [SendProfileDelete](<https://github.com/dahui/voltaire/blob/main/api/client.go#L659>)
+## func [SendProfileDelete](<https://github.com/dahui/voltaire/blob/main/api/client.go#L692>)
 
 ```go
 func SendProfileDelete(name string) (bool, error)
@@ -1162,7 +1166,7 @@ func main() {
 </details>
 
 <a name="SendProfileList"></a>
-## func [SendProfileList](<https://github.com/dahui/voltaire/blob/main/api/client.go#L673>)
+## func [SendProfileList](<https://github.com/dahui/voltaire/blob/main/api/client.go#L706>)
 
 ```go
 func SendProfileList() (handled bool, value string, err error)
@@ -1213,7 +1217,7 @@ func main() {
 </details>
 
 <a name="SendProfileSave"></a>
-## func [SendProfileSave](<https://github.com/dahui/voltaire/blob/main/api/client.go#L646>)
+## func [SendProfileSave](<https://github.com/dahui/voltaire/blob/main/api/client.go#L679>)
 
 ```go
 func SendProfileSave(name string) (bool, error)
@@ -1295,8 +1299,26 @@ func main() {
 </p>
 </details>
 
+<a name="SendRumbleGet"></a>
+## func [SendRumbleGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L412>)
+
+```go
+func SendRumbleGet() (handled bool, strength int, err error)
+```
+
+SendRumbleGet reads the controller's vibration strength from the hardware. Returns \(false, 0, nil\) if the daemon is not running.
+
+<a name="SendRumbleSet"></a>
+## func [SendRumbleSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L399>)
+
+```go
+func SendRumbleSet(strength int) (bool, error)
+```
+
+SendRumbleSet sets the game controller's vibration strength, on device\-get's rumble.min..max scale. Returns \(false, nil\) if the daemon is not running. The daemon records the value and puts it back at startup and after a suspend.
+
 <a name="SendTdpGet"></a>
-## func [SendTdpGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L486>)
+## func [SendTdpGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L519>)
 
 ```go
 func SendTdpGet() (handled bool, value string, err error)
@@ -1337,7 +1359,7 @@ func main() {
 </details>
 
 <a name="SendTdpReset"></a>
-## func [SendTdpReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L530>)
+## func [SendTdpReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L563>)
 
 ```go
 func SendTdpReset() (bool, error)
@@ -1378,7 +1400,7 @@ func main() {
 </details>
 
 <a name="SendTdpResetFor"></a>
-## func [SendTdpResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L537>)
+## func [SendTdpResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L570>)
 
 ```go
 func SendTdpResetFor(profile string) (bool, error)
@@ -1418,7 +1440,7 @@ func main() {
 </details>
 
 <a name="SendTdpSet"></a>
-## func [SendTdpSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L500>)
+## func [SendTdpSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L533>)
 
 ```go
 func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error)
@@ -1459,7 +1481,7 @@ func main() {
 </details>
 
 <a name="SendTdpSetFor"></a>
-## func [SendTdpSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L510>)
+## func [SendTdpSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L543>)
 
 ```go
 func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error)
@@ -1502,7 +1524,7 @@ func main() {
 </details>
 
 <a name="SendTuningReset"></a>
-## func [SendTuningReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L560>)
+## func [SendTuningReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L593>)
 
 ```go
 func SendTuningReset() (bool, error)
@@ -1515,7 +1537,7 @@ It is not the same as issuing the three resets in sequence. Each of those has to
 Returns \(false, nil\) if the daemon is not running. A daemon older than this command answers "unknown command", so a client offering it should be prepared to fall back to the three individual resets.
 
 <a name="SendTuningResetFor"></a>
-## func [SendTuningResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L567>)
+## func [SendTuningResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L600>)
 
 ```go
 func SendTuningResetFor(profile string) (bool, error)
@@ -1524,7 +1546,7 @@ func SendTuningResetFor(profile string) (bool, error)
 SendTuningResetFor clears every tuning override from the named custom profile. An empty profile means the active one, which also writes hardware; naming a profile that is not running stores the change only.
 
 <a name="SendUndervoltGet"></a>
-## func [SendUndervoltGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L580>)
+## func [SendUndervoltGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L613>)
 
 ```go
 func SendUndervoltGet() (handled bool, value string, err error)
@@ -1565,7 +1587,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltReset"></a>
-## func [SendUndervoltReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L614>)
+## func [SendUndervoltReset](<https://github.com/dahui/voltaire/blob/main/api/client.go#L647>)
 
 ```go
 func SendUndervoltReset() (bool, error)
@@ -1606,7 +1628,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltResetFor"></a>
-## func [SendUndervoltResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L621>)
+## func [SendUndervoltResetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L654>)
 
 ```go
 func SendUndervoltResetFor(profile string) (bool, error)
@@ -1646,7 +1668,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSet"></a>
-## func [SendUndervoltSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L595>)
+## func [SendUndervoltSet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L628>)
 
 ```go
 func SendUndervoltSet(cpu string) (bool, error)
@@ -1687,7 +1709,7 @@ func main() {
 </details>
 
 <a name="SendUndervoltSetFor"></a>
-## func [SendUndervoltSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L602>)
+## func [SendUndervoltSetFor](<https://github.com/dahui/voltaire/blob/main/api/client.go#L635>)
 
 ```go
 func SendUndervoltSetFor(profile, cpu string) (bool, error)
@@ -1747,7 +1769,7 @@ SocketPaths returns every socket path the daemon serves, canonical first.
 The second entry is the pre\-rename z13ctl path. The daemon listens on both through the whole 2.x line so clients that hardcode the old path — the Decky plugin speaks it directly, and pre\-2.0 Go clients compiled it in — keep working across the rename; it is removed at 3.0. Clients dial in order and use the first that answers, which also covers the upgrade window where a pre\-2.0 daemon is still running on the old path only.
 
 <a name="Subscribe"></a>
-## func [Subscribe](<https://github.com/dahui/voltaire/blob/main/api/client.go#L820>)
+## func [Subscribe](<https://github.com/dahui/voltaire/blob/main/api/client.go#L853>)
 
 ```go
 func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error)
@@ -1819,7 +1841,7 @@ Every kernel firmware profile name is reserved \(KernelProfileNames — the whol
 Validation is strict on write — "Gaming" is rejected rather than folded to "gaming", or the user looks for a profile under a name that is not there. Lookups \(profile selection, edit targeting\) fold case instead.
 
 <a name="AutoswitchState"></a>
-## type [AutoswitchState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L350-L354>)
+## type [AutoswitchState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L364-L368>)
 
 AutoswitchState configures automatic profile selection by power source. An empty AC or Battery target means "leave the profile alone on that source", which is how a caller hands one side back to power\-profiles\-daemon.
 
@@ -1832,7 +1854,7 @@ type AutoswitchState struct {
 ```
 
 <a name="AutoswitchState.Target"></a>
-### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/voltaire/blob/main/api/types.go#L358>)
+### func \(\*AutoswitchState\) [Target](<https://github.com/dahui/voltaire/blob/main/api/types.go#L372>)
 
 ```go
 func (a *AutoswitchState) Target(onAC bool) string
@@ -1841,7 +1863,7 @@ func (a *AutoswitchState) Target(onAC bool) string
 Target returns the profile to apply for the given power source, or "" when autoswitch is disabled or that side is unconfigured.
 
 <a name="BatteryInfo"></a>
-## type [BatteryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L321-L326>)
+## type [BatteryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L360-L365>)
 
 BatteryInfo says what the device's battery interface offers. The section being present means there is a battery to report on at all; the two fields are independently absent, so a machine can report state of health while exposing no charge\-limit attribute, or the reverse.
 
@@ -1857,7 +1879,7 @@ type BatteryInfo struct {
 ```
 
 <a name="ButtonInfo"></a>
-## type [ButtonInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L52-L56>)
+## type [ButtonInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L68-L72>)
 
 ButtonInfo is one hardware button a user may open voltaire with.
 
@@ -1870,7 +1892,7 @@ type ButtonInfo struct {
 ```
 
 <a name="CPUInfo"></a>
-## type [CPUInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L303-L309>)
+## type [CPUInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L332-L338>)
 
 CPUInfo says what CPU\-level controls the device offers. A section rather than a bool for the same reason BatteryInfo is one: its contents are independently absent, so a machine that gains a second CPU control later can say so without this field having meant two things.
 
@@ -1885,7 +1907,7 @@ type CPUInfo struct {
 ```
 
 <a name="CustomProfile"></a>
-## type [CustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L334-L339>)
+## type [CustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L348-L353>)
 
 CustomProfile is a named set of custom hardware settings. Each subsystem is a pointer so that nil means "this profile does not control that subsystem", which is what lets a profile stay loadable as new subsystems are added.
 
@@ -1899,7 +1921,7 @@ type CustomProfile struct {
 ```
 
 <a name="CustomProfile.Empty"></a>
-### func \(CustomProfile\) [Empty](<https://github.com/dahui/voltaire/blob/main/api/types.go#L343>)
+### func \(CustomProfile\) [Empty](<https://github.com/dahui/voltaire/blob/main/api/types.go#L357>)
 
 ```go
 func (p CustomProfile) Empty() bool
@@ -1908,7 +1930,7 @@ func (p CustomProfile) Empty() bool
 Empty reports whether the profile controls no subsystem at all. An empty profile cannot be activated: there would be nothing to apply.
 
 <a name="DeviceInfo"></a>
-## type [DeviceInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L16-L49>)
+## type [DeviceInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L16-L65>)
 
 DeviceInfo describes the assembled device: its identity, the capabilities it has, and the limits that go with them. Returned by SendDeviceGet.
 
@@ -1929,6 +1951,9 @@ type DeviceInfo struct {
     Toggles   []ToggleInfo   `json:"toggles,omitempty"`
     Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
     CPU       *CPUInfo       `json:"cpu,omitempty"`
+
+    // Rumble is the controller's vibration strength, when it has one.
+    Rumble    *RumbleInfo    `json:"rumble,omitempty"`
     Battery   *BatteryInfo   `json:"battery,omitempty"`
     Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
@@ -1946,11 +1971,24 @@ type DeviceInfo struct {
     // one's label. Absent on a device that declares none, or from an older
     // daemon, which offers no choice.
     HardwareButtons []ButtonInfo `json:"hardware_buttons,omitempty"`
+
+    // Quickbar is the drawer's default contents on this device: control IDs
+    // in order, as voltaire-gui's gui.toml [quickbar] controls names them. A
+    // user's own choice wins; absent means the client's built-in default.
+    Quickbar []string `json:"quickbar,omitempty"`
+
+    // Unavailable lists the capabilities this device has but this machine
+    // cannot offer, each with the reason: an optional kernel module not
+    // installed (ryzen_smu for TDP on the OXP X2 Mini Pro). The capability's
+    // own section is absent, as for one the device does not have; this is
+    // what a client says in its place. Absent when nothing is missing, and
+    // from an older daemon.
+    Unavailable []UnavailableInfo `json:"unavailable,omitempty"`
 }
 ```
 
 <a name="SendDeviceGet"></a>
-### func [SendDeviceGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L737>)
+### func [SendDeviceGet](<https://github.com/dahui/voltaire/blob/main/api/client.go#L770>)
 
 ```go
 func SendDeviceGet() (handled bool, info *DeviceInfo, err error)
@@ -1998,7 +2036,7 @@ func main() {
 </details>
 
 <a name="FanCurvePoint"></a>
-## type [FanCurvePoint](<https://github.com/dahui/voltaire/blob/main/api/types.go#L423-L426>)
+## type [FanCurvePoint](<https://github.com/dahui/voltaire/blob/main/api/types.go#L437-L440>)
 
 FanCurvePoint represents one point on an 8\-point fan curve.
 
@@ -2010,7 +2048,7 @@ type FanCurvePoint struct {
 ```
 
 <a name="FanCurveState"></a>
-## type [FanCurveState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L441-L444>)
+## type [FanCurveState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L455-L458>)
 
 FanCurveState captures the fan curve and mode applied to both fans.
 
@@ -2022,7 +2060,7 @@ type FanCurveState struct {
 ```
 
 <a name="FanInfo"></a>
-## type [FanInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L71-L98>)
+## type [FanInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L87-L114>)
 
 FanInfo is the device's fan\-curve shape: how many points a curve holds and the axes an editor should draw. TempMin/TempMax are the editor's temperature axis, not validation bounds — the hardware tolerates points outside them. Points is the kernel's count where the daemon can read it; size an editor from it, never from a constant.
 
@@ -2058,7 +2096,7 @@ type FanInfo struct {
 ```
 
 <a name="FanPreset"></a>
-## type [FanPreset](<https://github.com/dahui/voltaire/blob/main/api/device.go#L109-L114>)
+## type [FanPreset](<https://github.com/dahui/voltaire/blob/main/api/device.go#L125-L130>)
 
 FanPreset is one named fan curve offered as a starting point. Name is the wire/CLI identifier \(lowercase, matched case\-insensitively\); Label is what to show; Description is optional prose for a tooltip.
 
@@ -2074,7 +2112,7 @@ type FanPreset struct {
 ```
 
 <a name="LightingInfo"></a>
-## type [LightingInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L203-L220>)
+## type [LightingInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L232-L249>)
 
 LightingInfo describes the device's lighting: its zones, the effects it offers and the inputs each takes, the speeds, and the brightness scale. Build lighting controls from it rather than from a list of your own — the fields beyond Zones are absent from a daemon older than them, and a client then falls back to what it knew before.
 
@@ -2100,7 +2138,7 @@ type LightingInfo struct {
 ```
 
 <a name="LightingMode"></a>
-## type [LightingMode](<https://github.com/dahui/voltaire/blob/main/api/device.go#L224-L230>)
+## type [LightingMode](<https://github.com/dahui/voltaire/blob/main/api/device.go#L253-L259>)
 
 LightingMode is one effect: its wire name, a label, and the inputs it takes — the primary colour, the second colour, and an animation speed.
 
@@ -2115,7 +2153,7 @@ type LightingMode struct {
 ```
 
 <a name="LightingState"></a>
-## type [LightingState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L413-L420>)
+## type [LightingState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L427-L434>)
 
 LightingState captures all parameters needed to reproduce one lighting zone.
 
@@ -2133,7 +2171,7 @@ type LightingState struct {
 ```
 
 <a name="PowerInfo"></a>
-## type [PowerInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L126-L157>)
+## type [PowerInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L142-L181>)
 
 PowerInfo is the device's power\-limit envelope. Sustained limits above TDPMaxSafe require the caller's explicit force flag and put the fans on FloorCurve; TDPMaxForced is the absolute ceiling. An empty FloorCurve means the device imposes no floor.
 
@@ -2171,11 +2209,19 @@ type PowerInfo struct {
     // fields above. Absent from a daemon older than the field; a client then
     // offers its built-in three.
     Limits []PowerLimit `json:"limits,omitempty"`
+
+    // Slider says a TDP set while no custom profile is active is a remembered
+    // device setting rather than a profile (OneXConsole's one-slider model):
+    // such a set does not create or activate the "custom" profile, and the
+    // daemon re-applies the value at boot, on resume and after a charger edge.
+    // A client offers the TDP as a plain control and keeps profiles for saving
+    // and loading. Absent: the usual model.
+    Slider bool `json:"slider,omitempty"`
 }
 ```
 
 <a name="PowerLimit"></a>
-## type [PowerLimit](<https://github.com/dahui/voltaire/blob/main/api/device.go#L161-L165>)
+## type [PowerLimit](<https://github.com/dahui/voltaire/blob/main/api/device.go#L185-L189>)
 
 PowerLimit is one settable power limit. ID is "pl1", "pl2" or "pl3" — the tdp command's pl1/pl2/pl3 fields and TDPState's PL1SPL/PL2SPPT/FPPT.
 
@@ -2188,7 +2234,7 @@ type PowerLimit struct {
 ```
 
 <a name="PowerRange"></a>
-## type [PowerRange](<https://github.com/dahui/voltaire/blob/main/api/device.go#L168-L171>)
+## type [PowerRange](<https://github.com/dahui/voltaire/blob/main/api/device.go#L192-L195>)
 
 PowerRange is an inclusive range in watts.
 
@@ -2200,7 +2246,7 @@ type PowerRange struct {
 ```
 
 <a name="ProfileEntry"></a>
-## type [ProfileEntry](<https://github.com/dahui/voltaire/blob/main/api/device.go#L193-L196>)
+## type [ProfileEntry](<https://github.com/dahui/voltaire/blob/main/api/device.go#L222-L225>)
 
 ProfileEntry is one firmware profile's display label.
 
@@ -2212,7 +2258,7 @@ type ProfileEntry struct {
 ```
 
 <a name="ProfileInfo"></a>
-## type [ProfileInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L186-L190>)
+## type [ProfileInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L210-L219>)
 
 ProfileInfo lists the firmware performance profiles this device offers, in the order to present them \(the kernel's: least to most power\).
 
@@ -2225,11 +2271,28 @@ type ProfileInfo struct {
     Names   []string       `json:"names"`
     Default string         `json:"default,omitempty"`
     Entries []ProfileEntry `json:"entries,omitempty"`
+
+    // Pin is the one firmware profile the daemon holds, putting it back when
+    // anything selects another; a client offers no firmware profile choice
+    // when it is set. Absent: none pinned.
+    Pin string `json:"pin,omitempty"`
+}
+```
+
+<a name="RumbleInfo"></a>
+## type [RumbleInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L345-L348>)
+
+RumbleInfo says the device's game controller has a settable vibration strength \(the rumble commands\), on a Min..Max scale where Min is the weakest \(0: off\) — the controller firmware's own scale, 0–5 on the OneXPlayer X2. Absent when the device has none or the controller is not present.
+
+```go
+type RumbleInfo struct {
+    Min int `json:"min"`
+    Max int `json:"max"`
 }
 ```
 
 <a name="State"></a>
-## type [State](<https://github.com/dahui/voltaire/blob/main/api/types.go#L22-L188>)
+## type [State](<https://github.com/dahui/voltaire/blob/main/api/types.go#L22-L202>)
 
 State holds the last\-applied settings for all controllable subsystems. It is returned by SendGetState and broadcast as part of daemon responses.
 
@@ -2261,6 +2324,13 @@ type State struct {
     // control on absence is right on both counts.
     CPUBoost *bool `json:"cpu_boost,omitempty"`
 
+    // Rumble is the game controller's vibration strength, on device-get's
+    // rumble.min..max scale (0 is off). Like CPUBoost, get-state reads it live
+    // and the stored value is the instruction the daemon replays at startup
+    // and resume. Absent when the device has no such control, when the
+    // controller cannot be read, and in the state file until it is first set.
+    Rumble *int `json:"rumble,omitempty"`
+
     // DrawerButton is the hardware button whose presses open voltaire, by the
     // id device-get's hardware_buttons gives it. get-state reports it
     // resolved: the user's choice, else the device's default, and
@@ -2268,6 +2338,13 @@ type State struct {
     // declares no buttons, or from a daemon that predates the choice. In the
     // state file it is the user's choice alone, "" meaning the device default.
     DrawerButton string `json:"drawer_button,omitempty"`
+
+    // DeviceTDP is the remembered TDP on a device using the one-slider model
+    // (DeviceInfo.Power.Slider): the last value set while no custom profile
+    // was active, which the daemon re-applies at boot, on resume and after a
+    // charger edge. Absent until the user first sets one — until then the
+    // firmware's own limits stand and voltaire writes nothing.
+    DeviceTDP *TDPState `json:"device_tdp,omitempty"`
 
     OnAC        bool `json:"on_ac"`                  // true when running on mains power
     SourceKnown bool `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
@@ -2406,7 +2483,7 @@ type State struct {
 ```
 
 <a name="SendGetState"></a>
-### func [SendGetState](<https://github.com/dahui/voltaire/blob/main/api/client.go#L720>)
+### func [SendGetState](<https://github.com/dahui/voltaire/blob/main/api/client.go#L753>)
 
 ```go
 func SendGetState() (bool, *State, error)
@@ -2447,7 +2524,7 @@ func main() {
 </details>
 
 <a name="State.ActiveCustomProfile"></a>
-### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L393>)
+### func \(State\) [ActiveCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L407>)
 
 ```go
 func (s State) ActiveCustomProfile() (CustomProfile, bool)
@@ -2456,7 +2533,7 @@ func (s State) ActiveCustomProfile() (CustomProfile, bool)
 ActiveCustomProfile returns the active custom profile and true, or the zero value and false when a stock profile is active.
 
 <a name="State.InCustomProfile"></a>
-### func \(State\) [InCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L389>)
+### func \(State\) [InCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L403>)
 
 ```go
 func (s State) InCustomProfile() bool
@@ -2465,7 +2542,7 @@ func (s State) InCustomProfile() bool
 InCustomProfile reports whether the active profile is a custom one.
 
 <a name="State.IsCustomProfile"></a>
-### func \(State\) [IsCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L377>)
+### func \(State\) [IsCustomProfile](<https://github.com/dahui/voltaire/blob/main/api/types.go#L391>)
 
 ```go
 func (s State) IsCustomProfile(name string) bool
@@ -2478,7 +2555,7 @@ Clients that check Profile == "custom" to decide whether custom controls apply m
 A reserved firmware profile name is never custom, whatever the map contains. The check is deliberately ahead of the lookup so that a hand\-edited state file cannot make a stock profile look custom to the fan curve reconciler.
 
 <a name="TDPLimits"></a>
-## type [TDPLimits](<https://github.com/dahui/voltaire/blob/main/api/types.go#L482-L488>)
+## type [TDPLimits](<https://github.com/dahui/voltaire/blob/main/api/types.go#L496-L502>)
 
 TDPLimits describes the power limits the running kernel accepts, so a client can bound its controls instead of discovering the range from an error. It is reported by get\-state and never stored.
 
@@ -2497,7 +2574,7 @@ type TDPLimits struct {
 ```
 
 <a name="TDPRange"></a>
-## type [TDPRange](<https://github.com/dahui/voltaire/blob/main/api/types.go#L491-L494>)
+## type [TDPRange](<https://github.com/dahui/voltaire/blob/main/api/types.go#L505-L508>)
 
 TDPRange is an inclusive range in watts.
 
@@ -2509,7 +2586,7 @@ type TDPRange struct {
 ```
 
 <a name="TDPState"></a>
-## type [TDPState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L455-L461>)
+## type [TDPState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L469-L475>)
 
 TDPState captures all PPT \(Package Power Tracking\) values in watts.
 
@@ -2524,7 +2601,7 @@ type TDPState struct {
 ```
 
 <a name="TelemetryInfo"></a>
-## type [TelemetryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L342-L358>)
+## type [TelemetryInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L381-L401>)
 
 TelemetryInfo describes what the device's telemetry source reports, so a dashboard knows which graphs to draw before it has asked for a single sample.
 
@@ -2532,11 +2609,15 @@ PowerDraw names the package\-power source \("rapl" today; "pm\-table" is reserve
 
 ```go
 type TelemetryInfo struct {
-    PowerDraw      string `json:"power_draw,omitempty"`
-    GPU            string `json:"gpu,omitempty"`
-    CPUStats       string `json:"cpu_stats,omitempty"`
-    NPU            string `json:"npu,omitempty"`
-    Net            string `json:"net,omitempty"`
+    PowerDraw string `json:"power_draw,omitempty"`
+    GPU       string `json:"gpu,omitempty"`
+    CPUStats  string `json:"cpu_stats,omitempty"`
+    NPU       string `json:"npu,omitempty"`
+    Net       string `json:"net,omitempty"`
+    // Fans names a read-only fan speed source (an hwmon device, "oxp_ec"):
+    // samples carry RPM though the device has no fans section, because
+    // voltaire reads its fans without controlling them.
+    Fans           string `json:"fans,omitempty"`
     HistorySeconds int    `json:"history_seconds,omitempty"`
 
     // Chart hints, from the kernel where the daemon can read them; absent
@@ -2551,7 +2632,7 @@ type TelemetryInfo struct {
 ```
 
 <a name="TelemetrySample"></a>
-## type [TelemetrySample](<https://github.com/dahui/voltaire/blob/main/api/types.go#L203-L252>)
+## type [TelemetrySample](<https://github.com/dahui/voltaire/blob/main/api/types.go#L217-L266>)
 
 TelemetrySample is one reading from the daemon's sample history, as returned by SendTelemetryHistory. The daemon samples at 1 Hz.
 
@@ -2613,7 +2694,7 @@ type TelemetrySample struct {
 ```
 
 <a name="SendTelemetryHistory"></a>
-### func [SendTelemetryHistory](<https://github.com/dahui/voltaire/blob/main/api/client.go#L756>)
+### func [SendTelemetryHistory](<https://github.com/dahui/voltaire/blob/main/api/client.go#L789>)
 
 ```go
 func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample, err error)
@@ -2663,7 +2744,7 @@ func main() {
 </details>
 
 <a name="ToggleInfo"></a>
-## type [ToggleInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L236-L261>)
+## type [ToggleInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L265-L290>)
 
 ToggleInfo describes one firmware toggle the device offers. ID is the wire identifier for the feature/feature\-get commands; Label is a human\-readable fallback for clients with no nicer name of their own. Kind says how the value is shaped — "bool" toggles take 0 or 1.
 
@@ -2696,8 +2777,22 @@ type ToggleInfo struct {
 }
 ```
 
+<a name="UnavailableInfo"></a>
+## type [UnavailableInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L404-L409>)
+
+UnavailableInfo is one capability the machine cannot offer, and why.
+
+```go
+type UnavailableInfo struct {
+    // Capability names the document section that is absent ("power").
+    Capability string `json:"capability"`
+    // Reason says what is missing and, where known, how to get it.
+    Reason string `json:"reason"`
+}
+```
+
 <a name="UndervoltInfo"></a>
-## type [UndervoltInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L284-L297>)
+## type [UndervoltInfo](<https://github.com/dahui/voltaire/blob/main/api/device.go#L313-L326>)
 
 UndervoltInfo is the legal Curve Optimizer offset range \(Min ≤ value ≤ Max; on the Z13, \-40 to 0\).
 
@@ -2719,7 +2814,7 @@ type UndervoltInfo struct {
 ```
 
 <a name="UndervoltState"></a>
-## type [UndervoltState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L449-L452>)
+## type [UndervoltState](<https://github.com/dahui/voltaire/blob/main/api/types.go#L463-L466>)
 
 UndervoltState captures the AMD Curve Optimizer offset applied to the CPU. Values are non\-positive integers \(0 = stock, negative = undervolt\). Active indicates whether the offset is currently applied to hardware.
 

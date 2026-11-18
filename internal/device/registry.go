@@ -36,6 +36,8 @@ type (
 	TelemetryFactory func(TelemetryConfig) (driver.Telemetry, error)
 	// ButtonsFactory builds a hardware-buttons watcher.
 	ButtonsFactory func(ButtonConfig) (driver.Buttons, error)
+	// RumbleFactory builds a controller vibration-strength control.
+	RumbleFactory func(RumbleConfig) (driver.Rumble, error)
 )
 
 // The registries. Written only from init() functions (RegisterX panics on a
@@ -52,6 +54,7 @@ var (
 	cpuBoostFactories  = map[string]CPUBoostFactory{}
 	telemetryFactories = map[string]TelemetryFactory{}
 	buttonsFactories   = map[string]ButtonsFactory{}
+	rumbleFactories    = map[string]RumbleFactory{}
 )
 
 func register[F any](kind string, m map[string]F, method string, f F) {
@@ -120,4 +123,9 @@ func lookup[F any](kind string, m map[string]F, method string) (F, error) {
 		return f, fmt.Errorf("%s method %q is not compiled into this binary", kind, method)
 	}
 	return f, nil
+}
+
+// RegisterRumble registers a vibration-strength factory under a method name.
+func RegisterRumble(method string, f RumbleFactory) {
+	register("rumble", rumbleFactories, method, f)
 }

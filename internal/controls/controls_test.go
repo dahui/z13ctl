@@ -474,3 +474,40 @@ func TestResetDiscardsTheSavedList(t *testing.T) {
 		t.Errorf("reset saved %v, want no list (the device's defaults)", *got)
 	}
 }
+
+// Brightness and volume are session capabilities: the device's default may
+// list them (the OXP's does), but they appear only where the client says the
+// session can drive them, and never from the document alone.
+func TestBrightnessAndVolumeNeedTheSession(t *testing.T) {
+	oxp := &api.DeviceInfo{
+		Power:    &api.PowerInfo{TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, Slider: true},
+		Profiles: &api.ProfileInfo{Names: []string{"balanced"}, Pin: "balanced"},
+		Battery:  &api.BatteryInfo{Health: true},
+		Quickbar: []string{"tdp", "profile", "brightness", "refresh-rate", "volume"},
+	}
+	all := []controls.Capability{controls.CapRefreshRate, controls.CapBrightness, controls.CapVolume}
+	got, _ := controls.Resolve(controls.Config{}, oxp, all...)
+	if want := []string{"tdp", "profile", "brightness", "refresh-rate", "volume"}; !equal(ids(got), want) {
+		t.Errorf("with the session's capabilities: %v, want %v", ids(got), want)
+	}
+	got, _ = controls.Resolve(controls.Config{}, oxp)
+	if want := []string{"tdp", "profile"}; !equal(ids(got), want) {
+		t.Errorf("without them: %v, want %v", ids(got), want)
+	}
+	// Off by default on a laptop: the built-in default never lists them.
+	for _, c := range controls.Defaults() {
+		if c.ID == "brightness" || c.ID == "volume" {
+			t.Errorf("%s is on by default", c.ID)
+		}
+	}
+	// Headings: brightness under DISPLAY, volume under a SOUND heading of its own.
+	full, _ := controls.Resolve(controls.Config{}, oxp, all...)
+	for _, r := range controls.Layout(full) {
+		if r.Control.ID == "volume" && r.Heading != controls.GroupSound {
+			t.Errorf("volume heading %q, want %q", r.Heading, controls.GroupSound)
+		}
+		if r.Control.ID == "brightness" && r.Heading != controls.GroupDisplay {
+			t.Errorf("brightness heading %q, want %q", r.Heading, controls.GroupDisplay)
+		}
+	}
+}

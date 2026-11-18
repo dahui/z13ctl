@@ -24,6 +24,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/drivers/aurahid"
 	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
+	"github.com/dahui/voltaire/v2/internal/drivers/hidoxp"
 	"github.com/dahui/voltaire/v2/internal/drivers/hidrawbtn"
 	"github.com/dahui/voltaire/v2/internal/drivers/inputplumber"
 	"github.com/dahui/voltaire/v2/internal/drivers/linux"
@@ -92,6 +93,15 @@ func init() {
 	// its own config. It lives here because this is the only binary that drives
 	// hardware today; when a second device wants it, the factory moves to a
 	// shared package rather than being copied.
+	// The OneXPlayer controller's vibration strength, through the kernel's
+	// hid-oxp driver; USB names which controller.
+	device.RegisterRumble("hid-oxp", func(c device.RumbleConfig) (driver.Rumble, error) {
+		v, p, err := device.ParseUSB(c.USB)
+		if err != nil {
+			return nil, err
+		}
+		return hidoxp.NewRumble(v, p), nil
+	})
 	device.RegisterCPUBoost("cpufreq", func(device.CPUConfig) (driver.CPUBoost, error) {
 		return linux.NewCPUBoost(), nil
 	})

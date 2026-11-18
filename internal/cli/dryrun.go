@@ -225,6 +225,18 @@ func DryRunCPUBoost(on bool) {
 	fmt.Println("  (this moves every cpufreq policy at once)")
 }
 
+// DryRunRumble prints the controller write that would be performed for a
+// vibration-strength change. rangeErr is the range read's failure, when the
+// controller could not be found to bound the value.
+func DryRunRumble(v, lo, hi int, rangeErr error) {
+	fmt.Println("=== DRY RUN (no sysfs write) ===")
+	if rangeErr != nil {
+		fmt.Printf("Would write %d to hid-oxp's rumble_intensity, but: %v\n", v, rangeErr)
+		return
+	}
+	fmt.Printf("Would write %d (range %d–%d) to hid-oxp's rumble_intensity\n", v, lo, hi)
+}
+
 // DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
 func DryRunPanelOverdrive(value int) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")

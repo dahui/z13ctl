@@ -84,6 +84,10 @@ type settingsView struct {
 	qbNote    *gtk.Label
 	qbLocked  bool
 	qbSyncing bool
+
+	// rumble is the CONTROLLER card (rumbleview.go), nil when the device
+	// offers no vibration control.
+	rumble *rumbleSection
 }
 
 // settingsRow is one toggle: its label and prose, and the switch that writes it.
@@ -118,6 +122,11 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 		inner.Append(s.buildAppCard())
 	}
 	inner.Append(s.buildQuickbarCard())
+	// The controller's vibration strength, above FIRMWARE: a setting of this
+	// machine's hardware, but one voltaire keeps rather than the BIOS.
+	if card := s.buildRumbleCard(); card != nil {
+		inner.Append(card)
+	}
 
 	s.card = gtk.NewBox(gtk.OrientationVertical, 6)
 	s.card.AddCSSClass("section-card")
@@ -402,6 +411,7 @@ func (s *settingsView) sync() {
 	// Which button opens voltaire is daemon state now, so the VOLTAIRE card
 	// follows get-state like the rows below it.
 	s.syncPress()
+	s.rumble.sync()
 	// Before the no-rows return: the flag is reported for the firmware interface
 	// as a whole, so it can be set on a device whose toggles this build cannot
 	// render — and that is exactly the user who most needs telling why the
@@ -464,6 +474,7 @@ func (s *settingsView) buildFocusList() {
 	}
 
 	s.appendQuickbarFocus(b, &items)
+	s.rumble.appendFocus(b, &items)
 
 	b.Section("toggles")
 	for _, row := range s.rows {

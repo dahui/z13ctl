@@ -12,6 +12,7 @@
 #   - hwmon fan curve attributes (asus_custom_fan_curve + asus pwm_enable)
 #   - asus-armoury PPT power limit attributes for TDP control (asus-nb-wmi ppt_* as fallback)
 #   - powercap RAPL energy_uj for package-power telemetry (read only)
+#   - hid-oxp's rumble_intensity, the OneXPlayer controller's vibration strength
 #
 # Keep this in sync with buildRulesContent() in cmd/setup.go, which generates the
 # equivalent rules for "voltaire setup"; cmd/setup_test.go asserts they do not drift.
@@ -35,3 +36,7 @@ ACTION=="add", SUBSYSTEM=="hwmon", ATTR{name}=="asus", RUN+="/bin/sh -c 'for f i
 # which logged "failed with exit code 1" on every boot (issue #25).
 ACTION=="add", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", RUN+="/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e \"$$f\" ] || continue; chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"
 ACTION=="add", SUBSYSTEM=="powercap", ATTR{name}=="package-0", RUN+="/bin/sh -c 'for f in /sys%p/energy_uj; do [ -e \"$$f\" ] && chgrp users \"$$f\" && chmod g+r \"$$f\"; done'"
+# hid-oxp creates rumble_intensity when it binds, so the bind event (not add) is
+# the one that finds it. It binds several of the controller's HID devices and
+# only one has the attribute, so a missing file is skipped, not a failure.
+ACTION=="bind", SUBSYSTEM=="hid", DRIVER=="hid-oxp", RUN+="/bin/sh -c 'for f in /sys%p/rumble_intensity; do [ -e \"$$f\" ] || continue; chgrp users \"$$f\" && chmod g+w \"$$f\"; done'"

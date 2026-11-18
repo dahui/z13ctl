@@ -12,6 +12,9 @@ Description=voltaire sysfs permissions (battery + firmware-attributes + PPT + cp
 # ryzen_smu files are under /sys/kernel/, not a udev subsystem.
 # powercap energy_uj is 0400 root:root under the Platypus mitigation and is
 # granted READ only — write would hand out the package power caps themselves.
+# hid-oxp's rumble_intensity (OneXPlayer controller vibration strength) has a
+# udev rule on the driver's bind event; this loop covers a controller bound
+# before the rule existed.
 After=sysinit.target
 
 [Service]
@@ -24,6 +27,7 @@ ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e 
 ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] || continue; chgrp users "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] || continue; chgrp users "$$f" && chmod g+w "$$f" || true; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/powercap/*/energy_uj; do [ -e "$$f" ] || continue; chgrp users "$$f" && chmod g+r "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/bus/hid/drivers/hid-oxp/*/rumble_intensity; do [ -e "$$f" ] || continue; chgrp users "$$f" && chmod g+w "$$f"; done'
 
 [Install]
 WantedBy=multi-user.target

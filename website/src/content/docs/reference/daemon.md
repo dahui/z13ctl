@@ -26,7 +26,7 @@ ordinary one-shot CLI invocations cannot:
   (see [API](/voltaire/reference/api/)).
 
 All CLI commands (`apply`, `brightness`, `off`, `profile`, `batterylimit`,
-`bootsound`, `paneloverdrive`, `cpuboost`, `feature`, `fancurve`, `tdp`, `undervolt`,
+`bootsound`, `paneloverdrive`, `cpuboost`, `rumble`, `feature`, `fancurve`, `tdp`, `undervolt`,
 `status`) automatically route through the daemon socket when it is running. If
 the daemon is not running they fall back to direct hardware or sysfs access
 transparently — there is no user-visible difference other than persistence.
@@ -169,7 +169,11 @@ render controls against, instead of hardcoding one device's numbers:
 ```
 
 `cpu.boost` says the machine has a global CPU boost switch, so the
-`cpuboost`/`cpuboost-get` commands work; the section is absent otherwise. Each
+`cpuboost`/`cpuboost-get` commands work; the section is absent otherwise.
+`rumble` (`{"min":0,"max":5}` on the OneXPlayer X2 Mini Pro) says the built-in
+controller has a settable vibration strength on that scale, where `min` is the
+weakest (0: off); the `rumble`/`rumble-get` commands work. The range is the
+kernel's, and the section is absent while the controller is not present. Each
 toggle's `source` is `"core"` for one a compiled-in driver provides, or
 `"plugin:<id>"`, and is always present; `description` is prose to show beside
 the switch, absent when the device data has none.
@@ -398,6 +402,8 @@ Each mode in `lighting.modes` says which inputs it uses — `color`, `color2`,
 | Choose the button that opens voltaire | `{"cmd":"button-set","set":"armoury-crate"}` | `ok` |
 | Set CPU boost | `{"cmd":"cpuboost","set":"0"}` | `ok` |
 | Get CPU boost | `{"cmd":"cpuboost-get"}` | `ok`, `value` (`0`/`1`) |
+| Set controller vibration | `{"cmd":"rumble","set":"2"}` | `ok` |
+| Get controller vibration | `{"cmd":"rumble-get"}` | `ok`, `value` (the strength) |
 | Set panel overdrive | `{"cmd":"paneloverdrive","set":"1"}` | `ok` |
 | Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
 | Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
@@ -656,6 +662,8 @@ The file is written atomically after every successful command. It stores:
 - `cpu_boost` — present only once boost has been switched off or on through
   voltaire; a stored `false` is replayed at every daemon start, because cpufreq
   comes up boosting on every boot
+- `rumble` — the controller's vibration strength as last set through voltaire;
+  replayed at startup and after a suspend. Absent until first set
 - `drawer_button` — the user's choice of button (`button-set`): a button id or
   `none`; absent means the device's default
 - `device_tdp` — on a device with `power.slider`, the TDP setting (one value
@@ -685,6 +693,7 @@ On `get-state` requests the daemon also populates, from live sysfs reads:
 | `battery_power_w` | battery flow in watts, **positive discharging**, negative charging |
 | `features` | every firmware toggle's current value, keyed by id; a toggle that could not be read is **absent**, not zero |
 | `cpu_boost` | whether CPU boost is on, read from the kernel; **absent** when unreadable or on a machine without the switch |
+| `rumble` | the controller's vibration strength, read from the driver; **absent** when unreadable or on a machine without one |
 | `drawer_button` | the id of the button that opens voltaire, resolved (the user's choice, else the device default), or `none`; **absent** on a device with no buttons |
 | `telemetry` | the newest sample, in the same shape as a `telemetry-history` entry: the live edge of the series. Absent when the sampler has nothing recent |
 | `battery_level` | the pack's current charge, percent |

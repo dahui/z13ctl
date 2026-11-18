@@ -43,6 +43,7 @@ func (w *Window) syncState() {
 	w.syncAutoswitch()
 	w.syncBattery()
 	w.syncTDPSlider()
+	w.syncRumble()
 	w.syncSettings()
 	w.syncCustomView()
 	w.updateHeader()
@@ -114,6 +115,7 @@ func (w *Window) refreshState() {
 		// the page was built and never move again.
 		w.syncBattery()
 		w.syncTDPSlider()
+		w.syncRumble()
 		w.syncLightingSection()
 		// The dashboard's boost switch, for the same reason and with the
 		// same syncing guard: it is a gtk.Switch, and refreshState is the

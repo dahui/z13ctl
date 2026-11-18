@@ -376,6 +376,35 @@ voltaire cpuboost --set 0
 
 The same switch is on the full window's Dashboard, in the **Power** card.
 
+## rumble
+
+Get or set the built-in game controller's vibration (rumble) strength, on
+devices that have one (the OneXPlayer X2 Mini Pro, through the kernel's
+`hid-oxp` driver). Root or group access required; see [setup](#setup).
+
+The scale is the controller's own, as the kernel reports it: 0–5 on the X2
+Mini Pro, where 0 turns vibration off. It scales every rumble a game asks for.
+The daemon records the value and puts it back at startup and after a suspend;
+set with the daemon stopped, it changes the controller now but nothing will
+restore it.
+
+```
+voltaire rumble [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--get` | Print the vibration strength |
+| `--set <value>` | The strength, from 0 (off) to the controller's maximum |
+
+```sh
+voltaire rumble --get
+voltaire rumble --set 2
+```
+
+The same setting is on the full window's **Settings** tab, in the
+**Controller** card.
+
 ## feature
 
 Get or set the device's firmware toggles (BIOS switches) by their id — the
@@ -1008,7 +1037,7 @@ voltaire --no-button daemon   # without button watcher
 
 When the daemon is running, all other commands (`apply`, `brightness`, `off`,
 `profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `feature`, `cpuboost`,
-`fancurve`, `tdp`, `undervolt`, `tuning`, `status`) route through the daemon
+`rumble`, `fancurve`, `tdp`, `undervolt`, `tuning`, `status`) route through the daemon
 socket automatically. If the daemon is not running they fall back to direct
 hardware or sysfs access. `autoswitch` and `button --set` are the exceptions:
 the daemon is what watches the power source and the buttons.

@@ -29,6 +29,9 @@ type DeviceInfo struct {
 	Toggles   []ToggleInfo   `json:"toggles,omitempty"`
 	Undervolt *UndervoltInfo `json:"undervolt,omitempty"`
 	CPU       *CPUInfo       `json:"cpu,omitempty"`
+
+	// Rumble is the controller's vibration strength, when it has one.
+	Rumble    *RumbleInfo    `json:"rumble,omitempty"`
 	Battery   *BatteryInfo   `json:"battery,omitempty"`
 	Telemetry *TelemetryInfo `json:"telemetry,omitempty"`
 
@@ -332,6 +335,16 @@ type CPUInfo struct {
 	// boot — so unlike a toggle in Toggles the daemon persists and restores the
 	// user's choice.
 	Boost bool `json:"boost,omitempty"`
+}
+
+// RumbleInfo says the device's game controller has a settable vibration
+// strength (the rumble commands), on a Min..Max scale where Min is the
+// weakest (0: off) — the controller firmware's own scale, 0–5 on the
+// OneXPlayer X2. Absent when the device has none or the controller is not
+// present.
+type RumbleInfo struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
 }
 
 // BatteryInfo says what the device's battery interface offers. The section

@@ -239,7 +239,21 @@ method.
 | `controls` | The drawer's sections for a user who has not customized it, in order: the control IDs [GUI configuration](/voltaire/gui/configuration/) lists (`tdp`, `profile`, `cpu-boost`, …), including the ones that are otherwise off by default. A section the device cannot offer is dropped, so listing `lighting` before the RGB driver exists is harmless. A user's own choice (Settings → Quickbar, or `gui.toml`) still wins. Omit the block for the built-in default. |
 
 A handheld wants different quick controls from a laptop: the OneXPlayer X2 Mini
-Pro lists the TDP slider, the saved profiles, CPU boost and the refresh rate.
+Pro lists the TDP slider, CPU boost, the screen's brightness, the volume, the
+controller's vibration strength and the refresh rate.
+
+## `[rumble]`: controller vibration strength
+
+| Key | Meaning |
+|---|---|
+| `method` | The driver: `hid-oxp`, the kernel's OneXPlayer controller driver, whose HID device carries `rumble_intensity`. The scale is the kernel's (`rumble_intensity_range`, 0–5 on the X2 Mini Pro), where 0 is off. |
+| `usb` | The controller's USB identifier, `vvvv:pppp` in hex, so another device bound to the same driver is never the one written. |
+
+The daemon records the value the user sets and puts it back at startup and
+after a suspend. `voltaire setup` grants the attribute on every device hid-oxp
+binds. The control is offered only while the controller is present; check that
+the controller actually obeys the value (feel a rumble at two strengths)
+before declaring it.
 
 ## A complete example
 

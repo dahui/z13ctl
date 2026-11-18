@@ -34,6 +34,17 @@ type Config struct {
 	Telemetry *TelemetryConfig `toml:"telemetry"`
 	Buttons   []ButtonConfig   `toml:"buttons"`
 	Quickbar  *QuickbarConfig  `toml:"quickbar"`
+	Rumble    *RumbleConfig    `toml:"rumble"`
+}
+
+// RumbleConfig selects the game controller's vibration-strength driver.
+// Method "hid-oxp" is the kernel's OneXPlayer controller driver, whose HID
+// device carries rumble_intensity (0–5 on the X2, from rumble_intensity_range);
+// USB names the controller ("vvvv:pppp"), so a second hid-oxp device is never
+// the one written.
+type RumbleConfig struct {
+	Method string `toml:"method"`
+	USB    string `toml:"usb"`
 }
 
 // QuickbarConfig is the drawer's default contents on this device: control IDs
@@ -614,6 +625,15 @@ func (c Config) Validate() error {
 				fail("quickbar.controls: %q is empty or listed twice", id)
 			}
 			seen[id] = true
+		}
+	}
+
+	if c.Rumble != nil {
+		if c.Rumble.Method == "" {
+			fail("rumble.method is required")
+		}
+		if _, _, err := ParseUSB(c.Rumble.USB); err != nil {
+			fail("rumble.usb: %v", err)
 		}
 	}
 

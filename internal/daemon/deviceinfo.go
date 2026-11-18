@@ -135,6 +135,13 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 	if hw.CPUBoost != nil {
 		info.CPU = &api.CPUInfo{Boost: true}
 	}
+	// Offered only while the controller is there to answer: the range is the
+	// kernel's, and without it there is nothing to bound a control by.
+	if hw.Rumble != nil {
+		if lo, hi, err := hw.Rumble.Range(); err == nil {
+			info.Rumble = &api.RumbleInfo{Min: lo, Max: hi}
+		}
+	}
 	if hw.Undervolt != nil {
 		lo, hi := hw.Undervolt.Range()
 		info.Undervolt = &api.UndervoltInfo{Min: lo, Max: hi}

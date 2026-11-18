@@ -15,14 +15,22 @@ kernel or BIOS may behave differently.
 | **TDP** | One slider, like OneXConsole's: 10–85 W on AC and at most 55 W on battery. Needs the `ryzen_smu` module (below). |
 | **Saved profiles** | Save the current TDP under a name and load it back. Moving the slider never changes a saved profile. |
 | **CPU boost** | On or off; voltaire puts your choice back at every boot. |
+| **Brightness and volume** | Sliders in the drawer and on the Dashboard, on any desktop and in Steam Gaming Mode. |
 | **Refresh rate** | The panel's rate, and a rate per power source if you want one (KDE). |
+| **Controller vibration** | How strongly the controller rumbles, from off to 5, in the drawer, on the Settings tab or with `voltaire rumble`. Put back after a reboot or a suspend. |
 | **Fan speed** | Shown in the GUI and in `voltaire status`. Read-only: the embedded controller keeps its own fan curve. |
 | **Battery** | Charge level, charge and discharge rate, time estimate and pack health. |
 | **Telemetry** | Temperatures, package, GPU and battery power, CPU and GPU load and clocks, memory and network, with up to an hour of history. |
 | **Buttons** | The Keyboard button opens voltaire by default. The OneXPlayer and Home buttons can be chosen instead in Settings, or with `voltaire button`. |
 
-The drawer starts with the TDP slider, the saved profiles, CPU boost,
-autoswitch and the refresh rate. Rearrange it in Settings → Quickbar.
+The drawer starts with the TDP slider, CPU boost, the screen's brightness, the
+volume, the controller's vibration strength and the refresh rate. The saved
+profiles and autoswitch are a switch away in Settings → Quickbar, where you can
+also rearrange it.
+
+The vibration strength needs `sudo voltaire setup` (run again if you installed
+voltaire before this setting existed): the kernel's attribute is root-only
+until setup grants it.
 
 ## TDP needs ryzen_smu
 

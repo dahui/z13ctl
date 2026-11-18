@@ -392,6 +392,39 @@ func SendCPUBoostGet() (handled, on bool, err error) {
 	return true, v != 0, nil
 }
 
+// SendRumbleSet sets the game controller's vibration strength, on device-get's
+// rumble.min..max scale. Returns (false, nil) if the daemon is not running.
+// The daemon records the value and puts it back at startup and after a
+// suspend.
+func SendRumbleSet(strength int) (bool, error) {
+	handled, resp, err := sendCommand(request{Cmd: "rumble", Set: strconv.Itoa(strength)})
+	if !handled || err != nil {
+		return handled, err
+	}
+	if !resp.OK {
+		return true, respErr(resp)
+	}
+	return true, nil
+}
+
+// SendRumbleGet reads the controller's vibration strength from the hardware.
+// Returns (false, 0, nil) if the daemon is not running.
+func SendRumbleGet() (handled bool, strength int, err error) {
+	var resp *response
+	handled, resp, err = sendCommand(request{Cmd: "rumble-get"})
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	if !resp.OK {
+		return true, 0, respErr(resp)
+	}
+	v, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
+	if parseErr != nil {
+		return true, 0, fmt.Errorf("invalid rumble value %q: %w", resp.Value, parseErr)
+	}
+	return true, v, nil
+}
+
 // SendBootSoundGet queries the daemon for the current boot sound setting by
 // reading sysfs. Returns (false, 0, nil) if the daemon is not running.
 func SendBootSoundGet() (handled bool, value int, err error) {

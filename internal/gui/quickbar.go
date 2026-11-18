@@ -26,10 +26,17 @@ import (
 // is the compositor's, so whether one can be read here is not in the device
 // document. Checked once — display.Available is a PATH lookup.
 func (w *Window) sessionCaps() []controls.Capability {
+	var caps []controls.Capability
 	if w.hasDisplay {
-		return []controls.Capability{controls.CapRefreshRate}
+		caps = append(caps, controls.CapRefreshRate)
 	}
-	return nil
+	if w.hasBrightness {
+		caps = append(caps, controls.CapBrightness)
+	}
+	if w.hasVolume {
+		caps = append(caps, controls.CapVolume)
+	}
+	return caps
 }
 
 // layoutConfig is the drawer's effective layout source: gui.toml's controls
@@ -104,6 +111,8 @@ func (w *Window) rebuildDrawer() {
 	w.profiles, w.autoswitch, w.battery, w.lighting = nil, nil, nil, nil
 	w.tdpSlider = nil
 	w.boostSw, w.display = nil, nil
+	w.brightness, w.volume = nil, nil
+	w.rumble = nil
 
 	cfg, _ := w.layoutConfig()
 	w.controls = resolveControls(cfg, w.device, w.sessionCaps()...)
@@ -115,6 +124,10 @@ func (w *Window) rebuildDrawer() {
 	w.syncing = false
 	if w.display != nil && w.visible.Load() {
 		w.display.sync()
+	}
+	if w.visible.Load() {
+		w.brightness.sync()
+		w.volume.sync()
 	}
 
 	w.buildMainFocusList()

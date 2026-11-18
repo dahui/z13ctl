@@ -87,6 +87,10 @@ const (
 	// usual model edits its TDP inside a custom profile, in the full window.
 	CapPowerSlider Capability = "power-slider"
 
+	// CapRumble is the game controller's vibration strength (device-get's
+	// rumble section, present only while the controller answers).
+	CapRumble Capability = "rumble"
+
 	// CapChargeLimit is a settable charge limit. A battery section alone is
 	// not one: a device can report state of health with no threshold to set
 	// (the OXP), and a slider that every write fails on is a dead control.
@@ -98,12 +102,26 @@ const (
 	// caller passes it in as a session capability; the document never
 	// satisfies it, and neither does a nil document.
 	CapRefreshRate Capability = "refresh-rate"
+
+	// CapBrightness and CapVolume are session capabilities too: the screen's
+	// brightness belongs to the compositor or logind (internal/display) and the
+	// volume to the sound server (internal/audio), neither of which the daemon
+	// can see. The client passes them in; the document never satisfies them.
+	CapBrightness Capability = "brightness"
+	CapVolume     Capability = "volume"
 )
+
+// sessionCapability reports a capability only the client can answer.
+func sessionCapability(c Capability) bool {
+	return c == CapRefreshRate || c == CapBrightness || c == CapVolume
+}
 
 // The group headings the drawer prints, exactly as they are shown.
 const (
 	GroupPower   = "TDP AND POWER"
 	GroupDisplay = "DISPLAY"
+	GroupSound   = "SOUND"
+	GroupGamepad = "CONTROLLER"
 	GroupRGB     = "RGB"
 )
 
@@ -171,8 +189,19 @@ var defaultOrder = []Control{
 		Requires: []Capability{CapChargeLimit}, Default: true},
 	{ID: "cpu-boost", Label: "CPU boost", Group: GroupPower,
 		Requires: []Capability{CapCPUBoost}},
+	// Brightness and volume are opt-in on a laptop, whose keyboard has keys
+	// for both, and in a handheld's device default (the OXP's).
+	{ID: "brightness", Label: "Screen brightness", Group: GroupDisplay,
+		Requires: []Capability{CapBrightness}},
 	{ID: "refresh-rate", Label: "Refresh rate", Group: GroupDisplay,
 		Requires: []Capability{CapRefreshRate}},
+	{ID: "volume", Label: "Volume", Group: GroupSound,
+		Requires: []Capability{CapVolume}},
+	// The controller's vibration strength, also on the Settings tab. Opt-in:
+	// only a device with a built-in controller has it, and that device's
+	// default lists it (the OXP's).
+	{ID: "rumble", Label: "Controller vibration", Group: GroupGamepad,
+		Requires: []Capability{CapRumble}},
 	// The whole RGB block — zone tabs, effect modes, both colours, speed and
 	// brightness — is one control, because its parts are not independently
 	// meaningful: which of them are visible is already decided by the selected
@@ -304,7 +333,7 @@ func Supports(info *api.DeviceInfo, c Control, session ...Capability) bool {
 func SupportsHere(info *api.DeviceInfo, session, want []Capability) bool {
 	var fromDoc []Capability
 	for _, c := range want {
-		if c != CapRefreshRate {
+		if !sessionCapability(c) {
 			fromDoc = append(fromDoc, c)
 			continue
 		}
@@ -374,6 +403,8 @@ func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 		return info.Battery != nil && info.Battery.ChargeLimit
 	case CapCPUBoost:
 		return info.CPU != nil && info.CPU.Boost
+	case CapRumble:
+		return info.Rumble != nil && info.Rumble.Max > info.Rumble.Min
 	case CapToggles:
 		return len(info.Toggles) > 0
 	}

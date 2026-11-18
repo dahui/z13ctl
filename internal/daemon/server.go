@@ -201,6 +201,10 @@ func (d *Daemon) dispatch(req request) response {
 		return d.handleCPUBoost(req)
 	case "cpuboost-get":
 		return d.handleCPUBoostGet()
+	case "rumble":
+		return d.handleRumble(req)
+	case "rumble-get":
+		return d.handleRumbleGet()
 	case "paneloverdrive":
 		return d.handlePanelOverdrive(req)
 	case "paneloverdrive-get":
@@ -292,6 +296,8 @@ func (d *Daemon) dispatch(req request) response {
 		// Left nil when the read fails, which a client renders as unknown —
 		// false would say the CPU is not boosting.
 		s.CPUBoost = d.readCPUBoost()
+		// The controller's vibration strength, live, on the same terms.
+		s.Rumble = d.readRumble()
 		// The button that opens voltaire, resolved, so a client never applies
 		// the device default itself. Absent with no buttons to choose from.
 		if d.hw != nil && len(d.hw.ButtonList) > 0 {

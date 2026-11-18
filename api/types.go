@@ -44,6 +44,13 @@ type State struct {
 	// control on absence is right on both counts.
 	CPUBoost *bool `json:"cpu_boost,omitempty"`
 
+	// Rumble is the game controller's vibration strength, on device-get's
+	// rumble.min..max scale (0 is off). Like CPUBoost, get-state reads it live
+	// and the stored value is the instruction the daemon replays at startup
+	// and resume. Absent when the device has no such control, when the
+	// controller cannot be read, and in the state file until it is first set.
+	Rumble *int `json:"rumble,omitempty"`
+
 	// DrawerButton is the hardware button whose presses open voltaire, by the
 	// id device-get's hardware_buttons gives it. get-state reports it
 	// resolved: the user's choice, else the device's default, and

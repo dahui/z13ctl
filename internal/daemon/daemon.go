@@ -480,6 +480,9 @@ func (d *Daemon) restoreHardwareAtStartup() {
 		}
 	}
 
+	// The controller's vibration strength, if the user ever set one.
+	d.restoreRumble("startup")
+
 	// Restore fan curve + TDP + undervolt if the last profile was a custom one.
 	// This goes through the same helper the socket command and the autoswitch
 	// watcher use, so startup cannot drift from them — in particular it clears

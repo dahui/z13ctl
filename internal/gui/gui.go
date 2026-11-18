@@ -21,6 +21,7 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/apiresult"
+	"github.com/dahui/voltaire/v2/internal/audio"
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/controls"
 	"github.com/dahui/voltaire/v2/internal/display"
@@ -125,8 +126,12 @@ type Window struct {
 	guiFile controls.Config
 
 	// hasDisplay is whether a refresh rate can be read in this session — the
-	// one capability the device document cannot answer.
-	hasDisplay bool
+	// one capability the device document cannot answer. hasBrightness and
+	// hasVolume are the same kind of answer for the screen's brightness and
+	// the sound volume (levels.go).
+	hasDisplay    bool
+	hasBrightness bool
+	hasVolume     bool
 
 	// drawerInner is the drawer main view's scrolling box, kept so
 	// rebuildDrawer can replace its sections in place. drawerHints are the hint
@@ -163,6 +168,9 @@ type Window struct {
 	autoswitch *autoswitchSection
 	battery    *batterySection
 	tdpSlider  *tdpSliderSection // nil off the one-slider model (tdpslider.go)
+	brightness *levelSlider      // the drawer's, when its layout has one (levels.go)
+	volume     *levelSlider
+	rumble     *rumbleSection // the drawer's vibration slider (rumbleview.go)
 
 	// telemetryGen and telemetryBusy drive the get-state poll that keeps the
 	// header live. Window-level rather than per-view: it runs for as long as
@@ -364,15 +372,17 @@ func New(app *gtk.Application) *Window {
 	doc := deviceDocument()
 	guiFile := guiConfig()
 	w := &Window{
-		device:       doc,
-		limits:       deviceLimits(doc),
-		guiFile:      guiFile,
-		hasDisplay:   hasDisplayBackend(),
-		edge:         resolveEdge(guiFile),
-		press:        resolveButtonPress(),
-		refreshPrefs: resolveRefreshPrefs(),
-		colors:       theme.DefaultColors,
-		gamescope:    os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
+		device:        doc,
+		limits:        deviceLimits(doc),
+		guiFile:       guiFile,
+		hasDisplay:    hasDisplayBackend(),
+		hasBrightness: display.BrightnessAvailable(),
+		hasVolume:     audio.Available(),
+		edge:          resolveEdge(guiFile),
+		press:         resolveButtonPress(),
+		refreshPrefs:  resolveRefreshPrefs(),
+		colors:        theme.DefaultColors,
+		gamescope:     os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
 	}
 
 	layout, _ := w.layoutConfig()
@@ -714,6 +724,10 @@ func (w *Window) show() {
 	if w.display != nil {
 		w.display.sync()
 	}
+	// The brightness and volume sliders, likewise: a key press or Steam's
+	// slider may have moved either since the drawer was last open.
+	w.brightness.sync()
+	w.volume.sync()
 }
 
 // hide delegates to the display backend. Resets to main view so the drawer

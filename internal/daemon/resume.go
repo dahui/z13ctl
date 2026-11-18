@@ -755,6 +755,10 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	}
 	d.mu.Unlock()
 
+	// The controller's vibration strength: one HID report, no EC, so it is not
+	// held back by a wedged EC either.
+	d.restoreRumble("resume")
+
 	// The power source may have changed while the machine was asleep. There is
 	// deliberately no autoswitch hook here: Go timers use CLOCK_MONOTONIC and do
 	// not advance across suspend, so the power-source watcher's armed timer

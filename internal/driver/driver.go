@@ -458,6 +458,21 @@ type CPUBoost interface {
 	Set(on bool) error
 }
 
+// Rumble is a game controller's vibration strength: the scale the
+// controller's own firmware takes (hid-oxp's rumble_intensity, 0–5 on the
+// OneXPlayer X2), applied to every rumble a game asks for.
+//
+// Like CPUBoost it is a runtime setting the daemon persists and replays: the
+// controller is not known to keep it across a reboot or a suspend, and a
+// preference nobody restores is one the user sets again every day. Range is
+// the kernel's answer where the driver publishes one; an error from it means
+// the controller is not present, and the capability is then not offered.
+type Rumble interface {
+	Range() (lo, hi int, err error)
+	Get() (int, error)
+	Set(v int) error
+}
+
 // BatteryStatus is a point-in-time battery reading. Fields the hardware does
 // not report are zero.
 //

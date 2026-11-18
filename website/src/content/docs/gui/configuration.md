@@ -77,10 +77,13 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 | `battery` | The charge-limit slider, where the device has a charge limit to set |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
 | `cpu-boost` | The CPU boost switch (off by default) |
+| `brightness` | The screen's brightness: through KWin on KDE, and through logind on other desktops and in Steam Gaming Mode (off by default; on by default on the OneXPlayer X2 Mini Pro) |
 | `refresh-rate` | The screen's refresh rate, where the desktop can report one — not in Steam Gaming Mode, where Steam sets it (off by default) |
+| `volume` | The sound volume, through PipeWire (`wpctl`, or `pactl`); moving it unmutes (off by default; on by default on the OneXPlayer X2 Mini Pro) |
+| `rumble` | The built-in controller's vibration strength, where the device has one (on by default on the OneXPlayer X2 Mini Pro; also on the Settings tab) |
 
 The list is both the contents *and* the order, so moving an entry moves the
-section. Leaving one out hides it. The `TDP AND POWER`, `DISPLAY` and `RGB`
+section. Leaving one out hides it. The `TDP AND POWER`, `DISPLAY`, `SOUND`, `CONTROLLER` and `RGB`
 headings follow their sections rather than staying put, so a reordered drawer
 still reads correctly.
 

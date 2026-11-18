@@ -80,6 +80,10 @@ type Output struct {
 	// backend did not report one.
 	Priority int
 
+	// Brightness is KWin's brightness for the output, 0–1; nil when the
+	// compositor offers none for it.
+	Brightness *float64
+
 	Modes []Mode
 }
 
@@ -266,9 +270,13 @@ func Apply(outputName, modeID string) error {
 	if outputName == "" || modeID == "" {
 		return errors.New("display: output and mode are both required")
 	}
+	return runKScreen(fmt.Sprintf("output.%s.mode.%s", outputName, modeID))
+}
+
+// runKScreen runs one kscreen-doctor setting.
+func runKScreen(arg string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	arg := fmt.Sprintf("output.%s.mode.%s", outputName, modeID)
 	if _, err := runner(ctx, kscreenDoctor, arg); err != nil {
 		return fmt.Errorf("%s %s: %w", kscreenDoctor, arg, err)
 	}
@@ -280,11 +288,12 @@ func Apply(outputName, modeID string) error {
 // struct means a new KDE release adding keys cannot break the parse.
 type kscreenReply struct {
 	Outputs []struct {
-		Name          string `json:"name"`
-		Enabled       bool   `json:"enabled"`
-		Connected     bool   `json:"connected"`
-		CurrentModeID string `json:"currentModeId"`
-		Priority      int    `json:"priority"`
+		Name          string   `json:"name"`
+		Enabled       bool     `json:"enabled"`
+		Connected     bool     `json:"connected"`
+		CurrentModeID string   `json:"currentModeId"`
+		Priority      int      `json:"priority"`
+		Brightness    *float64 `json:"brightness"`
 		Modes         []struct {
 			ID          string  `json:"id"`
 			RefreshRate float64 `json:"refreshRate"`
@@ -311,6 +320,7 @@ func parseKScreen(data []byte) ([]Output, error) {
 			Connected:     o.Connected,
 			CurrentModeID: o.CurrentModeID,
 			Priority:      o.Priority,
+			Brightness:    o.Brightness,
 		}
 		for _, m := range o.Modes {
 			out.Modes = append(out.Modes, Mode{

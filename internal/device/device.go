@@ -52,6 +52,7 @@ type Device struct {
 	Battery   driver.Battery
 	Undervolt driver.Undervolter
 	CPUBoost  driver.CPUBoost
+	Rumble    driver.Rumble
 	Telemetry driver.Telemetry
 	Buttons   driver.Buttons
 
@@ -358,6 +359,15 @@ func Assemble(c Config) (*Device, error) {
 		}
 		if d.CPUBoost, err = f(*c.CPU); err != nil {
 			return nil, fmt.Errorf("cpu boost (%s): %w", c.CPU.Boost, err)
+		}
+	}
+	if c.Rumble != nil {
+		f, err := lookup("rumble", rumbleFactories, c.Rumble.Method)
+		if err != nil {
+			return nil, err
+		}
+		if d.Rumble, err = f(*c.Rumble); err != nil {
+			return nil, fmt.Errorf("rumble (%s): %w", c.Rumble.Method, err)
 		}
 	}
 	if c.Telemetry != nil {

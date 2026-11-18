@@ -108,6 +108,18 @@ func (w *Window) controlBuilders() map[string]controlBuilder {
 			build: w.buildDisplaySection,
 			focus: w.focusDisplaySection,
 		},
+		"brightness": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildBrightnessSection()) },
+			focus: w.focusBrightnessSection,
+		},
+		"volume": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildVolumeSection()) },
+			focus: w.focusVolumeSection,
+		},
+		"rumble": {
+			build: w.buildRumbleSection,
+			focus: w.focusRumbleSection,
+		},
 	}
 }
 
