@@ -269,7 +269,11 @@ type ProfilesConfig struct {
 	// selects another (power-profiles-daemon on low battery, a stray tool),
 	// the daemon puts this one back and logs it. For a device whose firmware
 	// profiles cap power below what its TDP control offers (the OXP's amd-pmf
-	// low-power holds ~33 W whatever the SMU limits say).
+	// low-power holds ~33 W whatever the SMU limits say). While pinned, the
+	// pin is the only profile offered; when the power method is unavailable
+	// on this machine (Device.Unavailable), the pin is dropped and every name
+	// in Names is offered, since the firmware profiles are then the only
+	// power control there is.
 	Pin string `toml:"pin"`
 }
 
@@ -728,7 +732,14 @@ func (c Config) Validate() error {
 		// released (HandBackToFirmware), and the row is what the PPT attributes
 		// then show.
 		if c.Profiles != nil {
-			for _, name := range c.Profiles.Names {
+			// With a pin, only the pin is selectable while this power control
+			// exists; the other names are offered only when it is unavailable
+			// (Assemble), and then there are no limits to hand back.
+			selectable := c.Profiles.Names
+			if c.Profiles.Pin != "" {
+				selectable = []string{c.Profiles.Pin}
+			}
+			for _, name := range selectable {
 				if _, ok := p.StockPPT[name]; !ok {
 					fail("power.stock_ppt is missing profile %q", name)
 				}
@@ -772,8 +783,13 @@ func (c Config) Validate() error {
 			fail("power.method amd-smu needs exactly one stock_ppt row, the firmware profile it runs under (got %d)", len(p.StockPPT))
 		}
 	}
-	if c.Profiles != nil && c.Profiles.Pin != "" && !slicesContains(c.Profiles.Names, c.Profiles.Pin) {
-		fail("profiles.pin %q is not in profiles.names", c.Profiles.Pin)
+	if c.Profiles != nil && c.Profiles.Pin != "" {
+		if !slicesContains(c.Profiles.Names, c.Profiles.Pin) {
+			fail("profiles.pin %q is not in profiles.names", c.Profiles.Pin)
+		}
+		if c.Power == nil {
+			fail("profiles.pin needs a power block: the pin protects the power control, and holds only while it exists")
+		}
 	}
 	if c.Profiles != nil {
 		if c.Profiles.Method == "" {

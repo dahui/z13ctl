@@ -667,3 +667,27 @@ func TestSyntheticFixtureIsADocumentTheDaemonProduces(t *testing.T) {
 		t.Errorf("the daemon's document for synthetic.toml differs from synthetic.json\ndaemon:\n%s\nfixture:\n%s", got, want)
 	}
 }
+
+// TestDeviceGetNamesUnavailableCapabilities: a capability the device declares
+// but this machine cannot offer (ryzen_smu missing on the OXP) has no section,
+// and the document says why, under the wire key clients read.
+func TestDeviceGetNamesUnavailableCapabilities(t *testing.T) {
+	hw := &device.Device{ID: "x", Unavailable: []device.Unavailable{{Capability: "power", Reason: "needs ryzen_smu"}}}
+	info := deviceInfoFor(hw)
+	if info.Power != nil {
+		t.Errorf("Power = %+v, want no section", info.Power)
+	}
+	if len(info.Unavailable) != 1 || info.Unavailable[0] != (api.UnavailableInfo{Capability: "power", Reason: "needs ryzen_smu"}) {
+		t.Fatalf("Unavailable = %+v", info.Unavailable)
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"unavailable":[{"capability":"power","reason":"needs ryzen_smu"}]`) {
+		t.Errorf("wire form %s lacks the unavailable list", raw)
+	}
+	if raw, _ := json.Marshal(deviceInfoFor(&device.Device{ID: "x"})); strings.Contains(string(raw), "unavailable") {
+		t.Errorf("nothing missing, but the key is on the wire: %s", raw)
+	}
+}

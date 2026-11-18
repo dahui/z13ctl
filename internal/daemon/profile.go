@@ -133,7 +133,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 		// the floor: ApplyTDPSafely honours it whenever it already satisfies the
 		// floor, and substitutes the envelope's floor curve only when it does not.
 		if d.hw == nil || d.hw.Power == nil {
-			slog.Warn("no power limit control on this device; profile TDP not applied", "profile", p.Name)
+			slog.Warn("profile TDP not applied", "profile", p.Name, "reason", d.hw.Missing("power", noPowerControl))
 		} else if err := d.hw.Power.ApplyTDPSafely(*t, wantCurve); err != nil {
 			slog.Warn("failed to apply TDP", "profile", p.Name, "err", err)
 		} else {

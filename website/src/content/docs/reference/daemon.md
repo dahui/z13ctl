@@ -249,6 +249,42 @@ and `profiles.entries` gives each a display label. A daemon older than those
 two fields omits them. The names a *custom* profile may never take are wider
 than `profiles.names`: every kernel profile name is reserved on every device.
 
+`profiles.pin` names the one firmware profile the daemon holds on this device;
+absent on most. The OneXPlayer X2 Mini Pro pins `balanced`, because its
+`low-power` caps power below anything the TDP control sets. While pinned,
+`profiles.names` lists the pin alone, and the daemon puts it back (and logs it)
+when another program selects a different one. Offer no firmware-profile
+choice there: the pin means "no saved profile", and voltaire's own GUI labels
+it **No profile** beside the saved custom profiles. The pin holds only while
+the device's TDP control exists. When that control is unavailable (see
+`unavailable` below) the pin is absent, and every firmware profile is offered
+as the only power control left.
+
+`power.slider` says a `tdp` set with no `profile` field is a **device
+setting**, not a profile edit: one remembered value, applied, re-applied at
+startup, on resume and after a charger edge, and capped on battery by
+`get-state`'s `tdp_limits`. With a custom profile running it leaves that
+profile, unchanged. Loading a profile recalls the TDP it saved, and changing
+a profile's TDP takes an explicit `profile` field. Absent on devices where a
+bare `tdp` set edits the active profile (creating `custom` from a firmware
+profile), which is everywhere else.
+
+`quickbar` is the drawer's default contents on this device, as control IDs in
+order; a user's own choice wins. Absent means the client's built-in default.
+
+`unavailable` lists capabilities the device has that this machine cannot
+offer, each with a `capability` (the section that is therefore absent:
+`"power"`) and a `reason` saying what is missing and how to get it. The
+OneXPlayer X2 Mini Pro's TDP control needs the out-of-tree `ryzen_smu` module.
+Without it the `power` section is absent as usual, and this list says why, so
+show the reason where the control would be. The daemon assembles the device
+at startup, so after the module is installed it needs a restart (or a
+reboot). Absent when nothing is missing, and from an older daemon.
+
+`telemetry.fans` names a read-only fan-speed source (an hwmon device name) on
+a device whose fans voltaire does not control: `get-state`'s `rpm` and the
+history's `rpm` carry its readings, and there is no `fans` section (no curve).
+
 `fans.presets` lists the device's named starting-point curves, in the order to
 offer them. There is **no preset command** — applying one is an ordinary
 `fancurve` set with the preset's points, so every rule that governs a
@@ -454,6 +490,13 @@ The `pl1`/`pl2`/`pl3` fields are optional overrides; `set` alone applies one
 value to all three. `force` is required for a sustained limit (PL1) above the
 device's `power.tdp_max_safe`.
 
+On a device with `power.slider`, a `tdp` set with no `profile` is the device's
+TDP setting rather than an edit to the active profile, and with a custom
+profile running it switches back to the pinned firmware profile, leaving the
+custom profile's saved TDP as it was. `tdp-reset` clears the setting and
+writes the firmware's own preset for the current power source. See
+`power.slider` above.
+
 All six commands accept an optional `profile` field naming the custom profile
 to edit. Absent or empty means the active profile — which is what every client
 written before this field existed sends, so their behaviour is unchanged.
@@ -615,6 +658,9 @@ The file is written atomically after every successful command. It stores:
   comes up boosting on every boot
 - `drawer_button` — the user's choice of button (`button-set`): a button id or
   `none`; absent means the device's default
+- `device_tdp` — on a device with `power.slider`, the TDP setting (one value
+  for every limit); absent until a TDP has first been set, so the firmware's
+  own limits stand untouched until then. Cleared by `tdp-reset`
 - `fan_curve`, `tdp`, `undervolt` — a **projection**, written for the benefit
   of clients and daemons from before named profiles existed. They carry the
   active custom profile's settings, or `custom`'s when a firmware profile is

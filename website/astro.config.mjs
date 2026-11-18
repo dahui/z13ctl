@@ -41,6 +41,12 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Devices',
+					items: [
+						{ label: 'OneXPlayer X2 Mini Pro', slug: 'devices/onexplayer-x2-mini-pro' },
+					],
+				},
+				{
 					label: 'The GUI',
 					items: [
 						{ label: 'Overview', slug: 'gui' },

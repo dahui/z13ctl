@@ -433,3 +433,22 @@ func TestDeviceFileQuickbarIDsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestUnavailableNote(t *testing.T) {
+	info := &api.DeviceInfo{Unavailable: []api.UnavailableInfo{{Capability: "power", Reason: "TDP control needs the ryzen_smu kernel module, which is not loaded"}}}
+	got := controls.UnavailableNote(info, "power")
+	want := "TDP control needs the ryzen_smu kernel module, which is not loaded. Once it is installed, restart voltaire or reboot."
+	if got != want {
+		t.Errorf("UnavailableNote = %q, want %q", got, want)
+	}
+	lower := &api.DeviceInfo{Unavailable: []api.UnavailableInfo{{Capability: "power", Reason: "needs x"}}}
+	if got := controls.UnavailableNote(lower, "power"); got != "Needs x. Once it is installed, restart voltaire or reboot." {
+		t.Errorf("not capitalised: %q", got)
+	}
+	if got := controls.UnavailableNote(info, "fans"); got != "" {
+		t.Errorf("unlisted capability: %q", got)
+	}
+	if got := controls.UnavailableNote(nil, "power"); got != "" {
+		t.Errorf("nil document: %q", got)
+	}
+}

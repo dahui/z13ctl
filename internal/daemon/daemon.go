@@ -216,6 +216,9 @@ func Run(ctx context.Context, opts Options) error {
 	d.hw = hw
 	d.telemetry = newTelemetryRing(hw)
 	slog.Info("device assembled", "id", hw.ID, "model", hw.Model)
+	for _, u := range hw.Unavailable {
+		slog.Warn("device capability unavailable on this machine", "capability", u.Capability, "reason", u.Reason)
+	}
 
 	d.state = loadState()
 	// Same class of 2.0 migration as loadState's own: the daemon is the only

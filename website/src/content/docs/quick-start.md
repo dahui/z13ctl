@@ -152,7 +152,7 @@ voltaire tdp --reset
 Undervolting reduces CPU voltage via AMD Curve Optimizer (CO), lowering
 temperatures and power draw without reducing performance. Requires the
 `ryzen_smu` kernel module (optional — see
-[Installation](/voltaire/installation/#optional-ryzen_smu-kernel-module-for-undervolting)).
+[Installation](/voltaire/installation/#optional-ryzen_smu-kernel-module)).
 
 CO values are volatile — they reset on reboot and sleep. The daemon reapplies
 them automatically on startup and resume when the custom profile is active.

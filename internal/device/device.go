@@ -85,6 +85,40 @@ type Device struct {
 
 	// DefaultButton is the ID of the button marked default, "" for none.
 	DefaultButton string
+
+	// Unavailable lists the capabilities the device data declares whose
+	// interface this machine does not have (a kernel module not installed),
+	// each with the reason. The capability's field is nil, as for one the
+	// device does not have, and the reason is what every surface says instead
+	// of "no such control".
+	Unavailable []Unavailable
+}
+
+// Unavailable is one declared capability this machine cannot offer.
+type Unavailable struct {
+	Capability string // the device-file section: "power"
+	Reason     string // a sentence fragment naming what is missing and how to get it
+}
+
+// UnavailableError is a factory's answer when the interface its driver needs
+// is missing on this machine but could be installed: an optional kernel
+// module, as ryzen_smu is for amd-smu. Assemble leaves the capability nil and
+// records the reason, where any other factory error fails the device.
+type UnavailableError struct{ Reason string }
+
+func (e *UnavailableError) Error() string { return e.Reason }
+
+// Missing returns why the capability is unavailable, or fallback when the
+// device data simply does not declare it.
+func (d *Device) Missing(capability, fallback string) string {
+	if d != nil {
+		for _, u := range d.Unavailable {
+			if u.Capability == capability {
+				return u.Reason
+			}
+		}
+	}
+	return fallback
 }
 
 // ButtonInfo names one declared hardware button.
@@ -249,21 +283,35 @@ func Assemble(c Config) (*Device, error) {
 			return nil, err
 		}
 		raw, err := f(*c.Power)
-		if err != nil {
+		var missing *UnavailableError
+		switch {
+		case errors.As(err, &missing):
+			d.Unavailable = append(d.Unavailable, Unavailable{Capability: "power", Reason: missing.Reason})
+		case err != nil:
 			return nil, fmt.Errorf("power (%s): %w", c.Power.Method, err)
+		default:
+			// The raw limiter goes into the engine and nowhere else.
+			d.Power = &safety.Engine{Fans: d.Fans, Power: raw}
+			d.PowerSlider = c.Power.Slider
+			d.PowerPerSource = c.Power.TDPMaxBattery > 0 || len(c.Power.StockPPTBattery) > 0
 		}
-		// The raw limiter goes into the engine and nowhere else.
-		d.Power = &safety.Engine{Fans: d.Fans, Power: raw}
-		d.PowerSlider = c.Power.Slider
-		d.PowerPerSource = c.Power.TDPMaxBattery > 0 || len(c.Power.StockPPTBattery) > 0
 	}
 	if c.Profiles != nil {
-		d.ProfilePin = c.Profiles.Pin
-		f, err := lookup("profiles", profilesFactories, c.Profiles.Method)
+		pc := *c.Profiles
+		// The pin holds only while the power control it protects exists: it
+		// keeps a firmware profile from capping power below the TDP slider.
+		// With the power method unavailable (ryzen_smu not installed on the
+		// OXP), the firmware profiles are the only power control left, so
+		// every listed one is offered instead.
+		if pc.Pin != "" && d.Power != nil {
+			d.ProfilePin = pc.Pin
+			pc.Names = []string{pc.Pin}
+		}
+		f, err := lookup("profiles", profilesFactories, pc.Method)
 		if err != nil {
 			return nil, err
 		}
-		if d.Profiles, err = f(*c.Profiles); err != nil {
+		if d.Profiles, err = f(pc); err != nil {
 			return nil, fmt.Errorf("profiles (%s): %w", c.Profiles.Method, err)
 		}
 	}

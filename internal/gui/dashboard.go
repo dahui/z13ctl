@@ -241,6 +241,14 @@ func (d *dashboardView) buildControls() *gtk.Box {
 		s, row := w.newTDPSliderSection(true)
 		d.tdpSlider = s
 		powerRows = append(powerRows, row)
+	} else if note := controls.UnavailableNote(w.device, "power"); note != "" {
+		// The device has a TDP control this machine cannot offer (ryzen_smu
+		// not installed on the OXP): say what to install where the slider
+		// would be, rather than leave the card to look complete. Read-only,
+		// so nothing for the focus grid.
+		l := blockNote()
+		setBlockNote(l, note)
+		powerRows = append(powerRows, formRow("TDP", l))
 	}
 	if has(controls.CapProfiles) {
 		// Custom goes to the Profiles tab rather than to a view of its own:

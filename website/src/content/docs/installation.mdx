@@ -45,11 +45,16 @@ via your system package manager first:
 | GTK 4 | `gtk4` | `libgtk-4-1` | `gtk4` |
 | gtk4-layer-shell | `gtk4-layer-shell` | `libgtk4-layer-shell0` | `gtk4-layer-shell` |
 
-### Optional: ryzen_smu kernel module (for undervolting)
+### Optional: ryzen_smu kernel module
 
 CPU undervolting via AMD Curve Optimizer requires the `ryzen_smu` kernel
 module. Without it, all other features work normally — undervolt commands
 return a helpful error explaining how to install the module.
+
+On the [OneXPlayer X2 Mini Pro](/voltaire/devices/onexplayer-x2-mini-pro/) the
+module is also what voltaire sets the TDP through, since that machine has no
+kernel power-limit interface. Without it, its firmware power profiles are the
+only power control.
 
 :::caution[Strix Halo requires the amkillam fork]
 The original `leogx9r/ryzen_smu` does not support Strix Halo (the SoC in the

@@ -121,7 +121,7 @@ func runTdpGet() error {
 		return err
 	}
 	if hw.Power == nil {
-		return fmt.Errorf("no power limit control on this device")
+		return fmt.Errorf("%s", hw.Missing("power", "no power limit control on this device"))
 	}
 	// The daemon when it is running: it refuses the read while the EC is not
 	// answering (on asus-armoury each limit read is a live ACPI call), where a
@@ -232,7 +232,7 @@ func runTdpSet() error {
 		return err
 	}
 	if hw.Power == nil {
-		return fmt.Errorf("no power limit control on this device")
+		return fmt.Errorf("%s", hw.Missing("power", "no power limit control on this device"))
 	}
 	env := powerEnvFor(hw)
 

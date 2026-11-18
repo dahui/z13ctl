@@ -24,6 +24,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/buttonpref"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
+	"github.com/dahui/voltaire/v2/internal/mainwin"
 	"github.com/dahui/voltaire/v2/internal/profileui"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -154,6 +155,21 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 		p.btns[r.Name] = btn
 		p.stock = append(p.stock, r.Name)
 		stockRow.Append(btn)
+	}
+
+	// Custom profiles need something to hold. Without it (the OXP without
+	// ryzen_smu: no power limits, fans or undervolt) the window has no
+	// Profiles tab, so neither surface offers the Custom control.
+	if !mainwin.Offers(w.device, mainwin.TabProfiles) {
+		if desktop {
+			return p, formRow("Profile", stockRow)
+		}
+		box := gtk.NewBox(gtk.OrientationVertical, 4)
+		box.Append(sectionLabel("PROFILE"))
+		for _, r := range stockRows {
+			box.Append(r)
+		}
+		return p, box
 	}
 
 	if desktop {

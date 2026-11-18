@@ -43,6 +43,9 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		return &api.DeviceInfo{}
 	}
 	info := &api.DeviceInfo{ID: hw.ID, Model: hw.Model, Name: hw.Name, Quickbar: slices.Clone(hw.Quickbar)}
+	for _, u := range hw.Unavailable {
+		info.Unavailable = append(info.Unavailable, api.UnavailableInfo{Capability: u.Capability, Reason: u.Reason})
+	}
 	if hw.Fans != nil {
 		s := hw.Fans.Shape()
 		info.Fans = &api.FanInfo{Points: s.Points, TempMin: s.TempMin, TempMax: s.TempMax, PWMMax: s.PWMMax,

@@ -65,6 +65,21 @@ func setPPT(stapm, fast, slow int) error {
 	return nil
 }
 
+// SMUMissingReason says why SMU power control is unavailable, or "" when the
+// ryzen_smu module is loaded. A stat and a cpuinfo read; nothing reaches the
+// SMU. The fork a CPU needs is named where it is known (ForkNote), since
+// installing the wrong one looks like success until the first write.
+func SMUMissingReason() string {
+	if SMUAvailable() {
+		return ""
+	}
+	reason := "TDP control needs the ryzen_smu kernel module, which is not loaded"
+	if p, err := coPlatformFor(); err == nil && p.ForkNote != "" {
+		reason += "; " + p.ForkNote
+	}
+	return reason
+}
+
 // SMUPower is driver.PowerLimiter over the SMU. PL1 is STAPM, PL2 the slow
 // PPT and PL3 (FPPT) the fast PPT; there are no APU/Platform sPPT mirrors.
 type SMUPower struct {

@@ -21,11 +21,17 @@ product = "ONEXPLAYER X2Mini PRO"
 # the PM table cannot show it (measured 2026-11-17: SMU 60/60/60 on low-power
 # held 32.8 W). Balanced does not cap: SMU 85 held the same 62–65 W at 95 °C
 # on balanced and performance, the chassis's thermal ceiling. OneXConsole has
-# no profiles either, only a TDP slider, so none is offered: the daemon holds
-# balanced and puts it back (logged) when anything else selects another.
+# no profiles either, only a TDP slider, so while the slider exists none is
+# offered: the daemon holds balanced and puts it back (logged) when anything
+# else selects another.
+#
+# Without ryzen_smu there is no slider (the power method is unavailable and
+# says why), and the pin is dropped: the three amd-pmf profiles are then the
+# only power control, measured 2026-11-16 under load at about 33 W
+# (low-power), 61 W (balanced) and 61 W (performance; the thermal ceiling).
 [profiles]
 method  = "platform-profile"
-names   = ["balanced"]
+names   = ["low-power", "balanced", "performance"]
 handler = "amd-pmf"
 default = "balanced"
 pin     = "balanced"

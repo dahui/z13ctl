@@ -135,6 +135,20 @@ func Resolve(info *api.DeviceInfo) []Tab {
 	return out
 }
 
+// Offers reports whether Resolve keeps the tab with the given ID on this
+// device. The profile section asks it before offering its Custom control: a
+// custom profile on a device with nothing for it to hold (no power limits,
+// fan curve or undervolt; the OXP without ryzen_smu) is a control that leads
+// to a tab that does not exist.
+func Offers(info *api.DeviceInfo, id string) bool {
+	for _, t := range Resolve(info) {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Lookup returns the tab with the given ID.
 func Lookup(id string) (Tab, bool) {
 	for _, t := range All() {

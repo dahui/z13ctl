@@ -579,7 +579,7 @@ func (d *Daemon) restoreStockPPT(profile string) {
 // answers, and only the second one makes a release safe.
 func (d *Daemon) restoreStockPPTErr(profile string) error {
 	if d.hw == nil || d.hw.Power == nil {
-		return fmt.Errorf("no power limit control on this device")
+		return fmt.Errorf("%s", d.hw.Missing("power", noPowerControl))
 	}
 	if err := d.hw.Power.RestoreStock(profile); err != nil {
 		return err
@@ -895,9 +895,14 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 	return response{OK: true}
 }
 
+// noPowerControl is the refusal on a device that declares no power control;
+// one whose power method is unavailable here says why instead
+// (device.Device.Missing).
+const noPowerControl = "no power limit control on this device"
+
 func (d *Daemon) handleTDPGet() response {
 	if d.hw == nil || d.hw.Power == nil {
-		return response{OK: false, Error: "reading TDP: no power limit control on this device"}
+		return response{OK: false, Error: "reading TDP: " + d.hw.Missing("power", noPowerControl)}
 	}
 	tdp, err := d.displayTDP()
 	if err != nil {
@@ -972,7 +977,7 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 
 	if d.hw == nil || d.hw.Power == nil {
-		return response{OK: false, Error: "tdp: no power limit control on this device"}
+		return response{OK: false, Error: "tdp: " + d.hw.Missing("power", noPowerControl)}
 	}
 	env := d.env()
 

@@ -172,3 +172,24 @@ func TestSetPPTStopsOnARefusal(t *testing.T) {
 		t.Errorf("commands after a refusal = %#x, want the sequence to stop at the first", got)
 	}
 }
+
+// TestSMUMissingReason: the device offers no power control without ryzen_smu,
+// and the reason names the module and, where one is known, the fork the CPU
+// needs. With the module loaded there is nothing to say.
+func TestSMUMissingReason(t *testing.T) {
+	f := newFakeSysfs(t)
+	got := SMUMissingReason()
+	if !strings.Contains(got, "ryzen_smu") || !strings.Contains(got, "amkillam") {
+		t.Errorf("Strix Halo without the module: %q, want the module and the amkillam fork named", got)
+	}
+
+	f.withCPU(t, "AuthenticAMD", 0x19, 116) // Phoenix: no fork note
+	if got := SMUMissingReason(); !strings.Contains(got, "ryzen_smu") || strings.Contains(got, "amkillam") {
+		t.Errorf("Phoenix without the module: %q, want the module named and no fork", got)
+	}
+
+	f.writeFile(t, f.smu+"/rsmu_cmd", "")
+	if got := SMUMissingReason(); got != "" {
+		t.Errorf("module loaded: %q, want no reason", got)
+	}
+}

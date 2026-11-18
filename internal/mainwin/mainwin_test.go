@@ -256,3 +256,23 @@ func TestControls(t *testing.T) {
 		}
 	}
 }
+
+// TestOffersFollowsResolve: the profile section's Custom control asks Offers,
+// so it must answer exactly what Resolve keeps — no Profiles tab on a device
+// with profiles but nothing for a custom profile to hold.
+func TestOffersFollowsResolve(t *testing.T) {
+	bare := &api.DeviceInfo{Profiles: &api.ProfileInfo{Names: []string{"low-power", "balanced", "performance"}}}
+	if mainwin.Offers(bare, mainwin.TabProfiles) {
+		t.Error("Profiles offered on a device with nothing for a custom profile to hold")
+	}
+	withPower := &api.DeviceInfo{Profiles: bare.Profiles, Power: &api.PowerInfo{TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85}}
+	if !mainwin.Offers(withPower, mainwin.TabProfiles) {
+		t.Error("Profiles not offered on a device with power limits")
+	}
+	if !mainwin.Offers(nil, mainwin.TabProfiles) {
+		t.Error("a nil document must keep every tab, as Resolve does")
+	}
+	if mainwin.Offers(withPower, "no-such-tab") {
+		t.Error("an unknown tab id is offered")
+	}
+}

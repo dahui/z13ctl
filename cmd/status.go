@@ -154,6 +154,10 @@ func statusReport(out io.Writer) error {
 		if !tdpShown {
 			outln("TDP:     N/A")
 		}
+	} else if reason := hw.Missing("power", ""); reason != "" {
+		// Declared but not installable from here (ryzen_smu missing): say so,
+		// where a device with no power control at all prints nothing.
+		outf("TDP:     unavailable (%s)\n", reason)
 	}
 
 	// Undervolt (Curve Optimizer). Ask the daemon: module presence until an

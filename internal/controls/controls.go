@@ -45,7 +45,11 @@
 // that "does this device have any" has one answer for every surface.
 package controls
 
-import "github.com/dahui/voltaire/api/v2"
+import (
+	"strings"
+
+	"github.com/dahui/voltaire/api/v2"
+)
 
 // Capability names a section of the device document a control depends on.
 // A control whose capabilities are not all present is dropped: the device
@@ -377,4 +381,22 @@ func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 	// written against a newer document than this build understands, and hiding
 	// that control is the conservative answer.
 	return false
+}
+
+// UnavailableNote is what a surface shows in place of a capability the device
+// has but this machine cannot offer (device-get's unavailable list: ryzen_smu
+// not installed for the OXP's TDP), or "" when the capability is not listed
+// there. A nil document says nothing. The daemon assembles the device once at
+// startup, so the note says what makes an installed module count.
+func UnavailableNote(info *api.DeviceInfo, capability string) string {
+	if info == nil {
+		return ""
+	}
+	for _, u := range info.Unavailable {
+		if u.Capability == capability && u.Reason != "" {
+			r := []rune(u.Reason)
+			return strings.ToUpper(string(r[0])) + string(r[1:]) + ". Once it is installed, restart voltaire or reboot."
+		}
+	}
+	return ""
 }

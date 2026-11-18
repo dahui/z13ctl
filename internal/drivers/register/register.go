@@ -40,6 +40,12 @@ func init() {
 	// with no vendor interface (the OXP). Its one stock row names the firmware
 	// profile it runs under (Config.Validate requires exactly one).
 	device.RegisterPower("amd-smu", func(c device.PowerConfig) (driver.PowerLimiter, error) {
+		// ryzen_smu is out of tree: without it the device has no power
+		// control, and says how to get one, rather than offering a slider
+		// whose every write fails.
+		if reason := amd.SMUMissingReason(); reason != "" {
+			return nil, &device.UnavailableError{Reason: reason}
+		}
 		profile := ""
 		for name := range c.StockPPT {
 			profile = name

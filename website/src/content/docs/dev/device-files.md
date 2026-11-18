@@ -65,7 +65,7 @@ only when a user picks it. No profile switch selects one.
 
 | Key | Meaning |
 |---|---|
-| `method` | The power-limit driver: `asus-nb-wmi-ppt` (uses asus-armoury's attributes where they are writable), or `amd-smu`, voltaire's generic AMD driver for machines with no vendor interface: STAPM (`pl1`), slow (`pl2`) and fast (`pl3`) PPT written to the SMU through the `ryzen_smu` module (ryzenadj's messages; a CPU without a known command is refused before any write). `amd-smu` needs exactly one `stock_ppt` row, the firmware profile it runs under, and reads nothing back from the SMU: it reports what it wrote, or the firmware's row after a power-source change. |
+| `method` | The power-limit driver: `asus-nb-wmi-ppt` (uses asus-armoury's attributes where they are writable), or `amd-smu`, voltaire's generic AMD driver for machines with no vendor interface: STAPM (`pl1`), slow (`pl2`) and fast (`pl3`) PPT written to the SMU through the `ryzen_smu` module (ryzenadj's messages; a CPU without a known command is refused before any write). `amd-smu` needs exactly one `stock_ppt` row, the firmware profile it runs under, and reads nothing back from the SMU: it reports what it wrote, or the firmware's row after a power-source change. Without `ryzen_smu` loaded the device has no power control, and `device-get`'s `unavailable` list says what to install (naming the fork the CPU needs, amkillam's for Strix Halo). |
 | `tdp_min`, `tdp_max_safe`, `tdp_max_forced` | The sustained limit's range, and the safe maximum above which a request needs `--force` and the fan floor. `0 < tdp_min < tdp_max_safe <= tdp_max_forced`. A kernel that reports its own bounds replaces `tdp_min`/`tdp_max_forced`. |
 | `tdp_default` | Optional starting value for a new custom TDP, within `tdp_min`..`tdp_max_safe`. |
 | `floor_curve` | `[temp, pwm]` pairs the fans must hold, per point, while the sustained limit exceeds `tdp_max_safe`. Needs a `[fans]` block. Leave it out on a device that needs no floor. |
@@ -100,7 +100,7 @@ re-apply its own limits. The default profile's `pl1` must be within
 | `handler` | The platform-profile class device that owns the profile, by its `name` (`asus-wmi`). Empty picks one heuristically. |
 | `default` | Where `tdp --reset` and `tuning --reset` land. Must be in `names`. |
 | `labels` | Display labels by name, overriding the built-in spellings. |
-| `pin` | Optional: the one firmware profile the daemon holds. When anything else selects another (power-profiles-daemon on low battery, a stray tool), the daemon puts it back and logs that it did. For a device whose firmware profiles cap power below what its TDP control offers. Must be in `names`. |
+| `pin` | Optional: the one firmware profile the daemon holds. When anything else selects another (power-profiles-daemon on low battery, a stray tool), the daemon puts it back and logs that it did. For a device whose firmware profiles cap power below what its TDP control offers. Must be in `names`, needs a `[power]` block, and only the pin needs a `stock_ppt` row. While the power control exists only the pin is offered. When it is unavailable on the machine (an `amd-smu` device without `ryzen_smu`), the pin is dropped and every name in `names` is offered, so list the profiles that are worth offering as the fallback there. |
 
 ## `[lighting]`: RGB
 

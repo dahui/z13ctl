@@ -421,6 +421,15 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 		{"profile pin not offered", func(c *Config) {
 			c.Profiles = &ProfilesConfig{Method: "m", Names: []string{"balanced"}, Pin: "low-power"}
 		}, "profiles.pin"},
+		{"profile pin with no power block", func(c *Config) {
+			c.Power = nil
+			c.Profiles = &ProfilesConfig{Method: "m", Names: []string{"balanced"}, Pin: "balanced"}
+		}, "profiles.pin needs a power block"},
+		{"pinned profile with no stock row", func(c *Config) {
+			c.Profiles = &ProfilesConfig{Method: "m", Names: []string{"balanced", "low-power"}, Default: "balanced", Pin: "low-power"}
+			c.Power = &PowerConfig{Method: "m", TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85,
+				StockPPT: map[string]StockRow{"balanced": {PL1: 80}}}
+		}, `stock_ppt is missing profile "low-power"`},
 		{"keyboard node on a non-evdev method", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", KeyboardNode: "why"}}
 		}, "only to evdev methods"},
@@ -689,3 +698,95 @@ tdp_max_forced = 40
 
 // intp is a pointer to v, for the optional interface fields.
 func intp(v int) *int { return &v }
+
+// pinnedTestConfig is the OXP's shape: three firmware profiles, one pinned,
+// and a power method whose factory the test supplies.
+func pinnedTestConfig() Config {
+	return Config{
+		Device: Meta{ID: "pinned", Model: "P", Name: "Pinned", Match: []Match{{Vendor: "V", Product: "P"}}},
+		Power: &PowerConfig{Method: "test-power", TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85,
+			StockPPT: map[string]StockRow{"balanced": {PL1: 80, PL2: 85, FPPT: 100}}},
+		Profiles: &ProfilesConfig{Method: "test-profiles", Names: []string{"low-power", "balanced", "performance"},
+			Default: "balanced", Pin: "balanced"},
+	}
+}
+
+// assemblePinned assembles pinnedTestConfig with a power factory answering
+// powerErr, and returns the device and the names the profile driver was given.
+func assemblePinned(t *testing.T, powerErr error) (d *Device, offered []string) {
+	t.Helper()
+	powerFactories["test-power"] = func(c PowerConfig) (driver.PowerLimiter, error) {
+		if powerErr != nil {
+			return nil, powerErr
+		}
+		return fakePower{env: c.Envelope()}, nil
+	}
+	profilesFactories["test-profiles"] = func(c ProfilesConfig) (driver.ProfileController, error) {
+		offered = c.Names
+		return fakeProfiles{}, nil
+	}
+	t.Cleanup(func() {
+		delete(powerFactories, "test-power")
+		delete(profilesFactories, "test-profiles")
+	})
+	c := pinnedTestConfig()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("the pinned shape must validate with one stock row: %v", err)
+	}
+	d, err := Assemble(c)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	return d, offered
+}
+
+// TestPinHoldsWhileThePowerControlExists: with the power method available,
+// the pin is the only profile offered and is held.
+func TestPinHoldsWhileThePowerControlExists(t *testing.T) {
+	d, offered := assemblePinned(t, nil)
+	if d.Power == nil || d.ProfilePin != "balanced" {
+		t.Fatalf("Power = %v, ProfilePin = %q; want power and the pin", d.Power, d.ProfilePin)
+	}
+	if fmt.Sprint(offered) != "[balanced]" {
+		t.Errorf("profile driver offered %v, want only the pin", offered)
+	}
+	if len(d.Unavailable) != 0 {
+		t.Errorf("Unavailable = %v, want none", d.Unavailable)
+	}
+}
+
+// TestUnavailablePowerDropsThePin: with ryzen_smu missing the OXP has no TDP
+// control, so the firmware profiles are its only power control: the pin goes,
+// every listed profile is offered, and the reason is recorded for clients.
+func TestUnavailablePowerDropsThePin(t *testing.T) {
+	d, offered := assemblePinned(t, &UnavailableError{Reason: "needs ryzen_smu"})
+	if d.Power != nil {
+		t.Fatal("an unavailable power method assembled a power capability")
+	}
+	if d.ProfilePin != "" || d.PowerSlider {
+		t.Errorf("ProfilePin = %q, PowerSlider = %v; want neither without power", d.ProfilePin, d.PowerSlider)
+	}
+	if fmt.Sprint(offered) != "[low-power balanced performance]" {
+		t.Errorf("profile driver offered %v, want every listed profile", offered)
+	}
+	if got := d.Missing("power", "none"); got != "needs ryzen_smu" {
+		t.Errorf("Missing(power) = %q, want the factory's reason", got)
+	}
+	if got := d.Missing("fans", "no fans"); got != "no fans" {
+		t.Errorf("Missing(fans) = %q, want the fallback", got)
+	}
+}
+
+// TestPowerFactoryFailureStillFailsTheDevice: only UnavailableError means
+// "not installed"; any other error is a broken device, as before.
+func TestPowerFactoryFailureStillFailsTheDevice(t *testing.T) {
+	powerFactories["test-power"] = func(PowerConfig) (driver.PowerLimiter, error) { return nil, fmt.Errorf("broken") }
+	profilesFactories["test-profiles"] = func(ProfilesConfig) (driver.ProfileController, error) { return fakeProfiles{}, nil }
+	t.Cleanup(func() {
+		delete(powerFactories, "test-power")
+		delete(profilesFactories, "test-profiles")
+	})
+	if _, err := Assemble(pinnedTestConfig()); err == nil {
+		t.Fatal("a failing power factory assembled a device")
+	}
+}

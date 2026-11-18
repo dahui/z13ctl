@@ -51,6 +51,14 @@ type DeviceInfo struct {
 	// in order, as voltaire-gui's gui.toml [quickbar] controls names them. A
 	// user's own choice wins; absent means the client's built-in default.
 	Quickbar []string `json:"quickbar,omitempty"`
+
+	// Unavailable lists the capabilities this device has but this machine
+	// cannot offer, each with the reason: an optional kernel module not
+	// installed (ryzen_smu for TDP on the OXP X2 Mini Pro). The capability's
+	// own section is absent, as for one the device does not have; this is
+	// what a client says in its place. Absent when nothing is missing, and
+	// from an older daemon.
+	Unavailable []UnavailableInfo `json:"unavailable,omitempty"`
 }
 
 // ButtonInfo is one hardware button a user may open voltaire with.
@@ -377,4 +385,12 @@ type TelemetryInfo struct {
 	// reading past either is real and should expand the frame.
 	ClockMaxMHz int `json:"clock_max_mhz,omitempty"`
 	TempLimitC  int `json:"temp_limit_c,omitempty"`
+}
+
+// UnavailableInfo is one capability the machine cannot offer, and why.
+type UnavailableInfo struct {
+	// Capability names the document section that is absent ("power").
+	Capability string `json:"capability"`
+	// Reason says what is missing and, where known, how to get it.
+	Reason string `json:"reason"`
 }
