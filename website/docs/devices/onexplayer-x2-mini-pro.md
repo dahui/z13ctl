@@ -160,12 +160,19 @@ speed.
 
 ### Charge limit
 
-The kernel offers a charge threshold on this board, but on Linux 7.3 it does
-not hold: with the threshold at 62 %, the pack charged to 96 %. The driver
-uses the embedded-controller registers of an older OneXPlayer model; Linux 7.4
-gives the OneXPlayer APEX, which uses the same system board, registers of its
-own, and this machine may need the same. voltaire offers no charge limit until a kernel's threshold is shown
-to work, because a limit that is not enforced is worse than none.
+The kernel offers a charge threshold on this board, but it does not hold: with
+the threshold at 62 %, the pack charged to 96 %. The kernel's `oxpec` driver
+writes the threshold and the charge bypass to the embedded-controller
+registers of older OneXPlayer models. This machine's controller, like the
+OneXPlayer APEX's (the same system board), reads them from registers of its
+own. The kernel already uses those for the APEX but not yet for this machine. With a driver built to use them, both
+the threshold and the bypass stopped and resumed charging within seconds,
+where the stock driver's had no effect.
+
+The fix is a one-line kernel change. voltaire will offer a charge limit on
+kernels that carry it, since a limit that is not enforced is worse than none.
+Note that the pack also has its own rule: once full, it does not start
+charging again until it falls below 90 %.
 
 ### Firmware settings
 

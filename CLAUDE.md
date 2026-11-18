@@ -4065,8 +4065,15 @@ diff whenever a main release touches `api/`.
     read-only fan RPM, the no-ryzen_smu fallback, undervolt as a device
     setting (verified on hardware) and the device page
     (`website/.../devices/onexplayer-x2-mini-pro.md`) built and verified
-    2026-11-17 (entries above). Left: the charge limit (after Jeff's
-    discharge test), joystick RGB (needs the unmerged hid-oxp X2 series).
+    2026-11-17 (entries above). Left: the charge limit, whose cause was
+    found and confirmed on hardware 2026-11-17: oxpec writes the X2 Mini
+    Pro's limit and bypass to 0xA3/0xA4 (`oxp_fly`) while its EC reads
+    0xE5/0xE6, as the APEX's does. A one-line kernel patch (X2 →
+    `oxp_apex`) is drafted in the OXP repo for Jeff to send. voltaire turns
+    on `charge_limit` only once a fixed kernel exists, gated by kernel
+    version: sysfs cannot tell the two drivers apart, and a functional
+    probe would have to stop the user's charging. Joystick RGB needs the
+    unmerged hid-oxp X2 series.
     Plan: `.claude/plans/oxp-power.md`;
     platform state and evidence: `.claude/plans/oxp-x2-mini-pro-status.md`.
 
