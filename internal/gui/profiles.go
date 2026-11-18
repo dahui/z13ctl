@@ -68,6 +68,21 @@ func (c *customView) buildProfileSelector() *gtk.Box {
 	selRow.Append(c.selDD.btn)
 	box.Append(selRow)
 
+	// Shown only for a stored edit — a target that is not running — where
+	// nothing on this page touches hardware. Without it, Save doing nothing
+	// observable reads as a dead button. Under the selector, inside the card,
+	// because it describes the profile chosen there; it used to sit above the
+	// columns as a loose line over the card it explained (Jeff, 2026-11-17).
+	c.editorNote = gtk.NewLabel("")
+	c.editorNote.SetWrap(true)
+	c.editorNote.SetXAlign(0)
+	c.editorNote.SetHAlign(gtk.AlignStart)
+	c.editorNote.AddCSSClass("setting-desc")
+	c.editorNote.SetMarginTop(2)
+	c.editorNote.SetMarginBottom(4)
+	c.editorNote.SetVisible(false)
+	box.Append(c.editorNote)
+
 	actions := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	actions.AddCSSClass("btn-group")
 	c.activateBtn = gtk.NewButtonWithLabel("Activate")

@@ -135,18 +135,6 @@ func newCustomView(w *Window, host viewHost) *customView {
 	c.root = gtk.NewBox(gtk.OrientationVertical, 0)
 	view := c.root
 
-	// Shown only for a stored edit — a target that is not running — where
-	// nothing on this view touches hardware. Without it, Save doing nothing
-	// observable reads as a dead button.
-	c.editorNote = gtk.NewLabel("")
-	c.editorNote.SetWrap(true)
-	c.editorNote.SetHAlign(gtk.AlignStart)
-	c.editorNote.AddCSSClass("scale-value")
-	c.editorNote.SetMarginStart(14)
-	c.editorNote.SetMarginEnd(14)
-	c.editorNote.SetVisible(false)
-	view.Append(c.editorNote)
-
 	content := gtk.NewBox(gtk.OrientationVertical, 8)
 	content.SetMarginTop(4)
 	content.SetMarginBottom(12)
