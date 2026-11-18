@@ -46,33 +46,51 @@ var openNode = func(path string) (io.ReadCloser, error) {
 	return os.OpenFile(path, os.O_RDONLY, 0)
 }
 
-// Spec is one button: which node, and which report byte means a press.
+// Spec is one button: which node, and which report bytes mean a press.
 type Spec struct {
 	ID              string // ButtonEvent.ID
 	Vendor, Product uint16
-	Interface       int // USB bInterfaceNumber
-	ReportID        int // first byte of the report; 0 for a device with unnumbered reports
-	Byte            int // offset in the report as read, report ID included
-	Value           byte
+	Interface       int         // USB bInterfaceNumber
+	ReportID        int         // first byte of the report; 0 for a device with unnumbered reports
+	Match           []ByteMatch // every one must hold; offsets count the report ID
 }
 
-// Buttons watches one report byte on one hidraw node.
+// ByteMatch is one byte of a press report: the value at an offset in the
+// report as read.
+type ByteMatch struct {
+	Offset int
+	Value  byte
+}
+
+// Buttons watches for one report shape on one hidraw node.
 type Buttons struct{ spec Spec }
 
 // New returns a watcher for spec. Pure: the node is located and opened only
 // once Watch runs.
 func New(spec Spec) *Buttons { return &Buttons{spec: spec} }
 
-// pressed reports whether one input report is this button's press. Each
-// matching report is a press: the reports seen from these buttons are sent
-// once per press, and a duplicate within the daemon's 50 ms floor is
-// swallowed there.
+// pressed reports whether one input report is this button's press: the
+// report ID (when the device numbers its reports) and every match byte agree.
+// Each matching report is one press, so the match has to tell a press from a
+// release wherever the device reports both. The OneXPlayer X2 Mini Pro's Home
+// button sends two frames per tap that differ only in a state byte (01 press,
+// 02 release, ~160 ms apart); matching the button id alone made every tap a
+// double press, which the daemon pairs into gui-open-full. No match at all is
+// never a press.
 func (b *Buttons) pressed(report []byte) bool {
 	s := b.spec
+	if len(s.Match) == 0 {
+		return false
+	}
 	if s.ReportID != 0 && (len(report) == 0 || int(report[0]) != s.ReportID) {
 		return false
 	}
-	return s.Byte >= 0 && s.Byte < len(report) && report[s.Byte] == s.Value
+	for _, m := range s.Match {
+		if m.Offset < 0 || m.Offset >= len(report) || report[m.Offset] != m.Value {
+			return false
+		}
+	}
+	return true
 }
 
 // findNode returns the hidraw node's name ("hidraw3") for the spec's device

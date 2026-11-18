@@ -192,10 +192,10 @@ watcher never grabs the node, so a key that already has a job would do both.
 | `device` | `evdev-*`: the input device's sysfs name (`Asus WMI hotkeys`). |
 | `keycode` | `evdev-key`: the key to watch (`202`, KEY_PROG3). |
 | `keys` | `evdev-chord`: every key of the chord (`[29, 56, 125]`, Ctrl+Alt+Meta). A press is the key-down that completes the chord; it re-arms when any key is released. All must be held, so one of them typed alone is not a press. |
-| `usb` | `hidraw-report`: the HID device's `vendor:product`. |
-| `interface` | `hidraw-report`: its USB interface number, the only one granted (as for lighting zones; see `[lighting]`). |
+| `usb` | `hidraw-report`: the HID device's `vendor:product`. `evdev-*`: optional, with `interface`, to name the node by its USB interface as well as its name, where one name is not unique (the OneXPlayer X2 Mini Pro's controller registers `HID 1a86:fe00` on interfaces 0 and 1). The grant is then written for that interface only. |
+| `interface` | `hidraw-report`: its USB interface number, the only one granted (as for lighting zones; see `[lighting]`). `evdev-*`: required with `usb`. |
 | `report_id` | `hidraw-report`: the report's first byte, or `0` for a device with unnumbered reports. |
-| `byte`, `value` | `hidraw-report`: the offset in the report as read (report ID included) and the value there that means this button. Each matching report is one press. |
+| `match` | `hidraw-report`: the bytes of a press report, as `[offset, value]` pairs that must all hold (offsets count the report ID; 0–63). Each matching report is one press, so where the device reports a release as well, include the byte that tells them apart: the OneXPlayer X2 Mini Pro's Home button sends `…24…01…` then `…24…02…` per tap, and matching the button id alone reads one tap as a double press. |
 | `keyboard_node` | Only for a button that arrives on a node udev classes as a typing keyboard, such as a handheld whose buttons send key chords on its AT keyboard. The value says why that node is safe on this model. See below. |
 
 ### Typing keyboards are refused
@@ -357,8 +357,7 @@ method    = "hidraw-report"
 usb       = "0b05:1abe"
 interface = 2
 report_id = 0x5a
-byte      = 1
-value     = 0xa6
+match     = [[1, 0xa6]]
 
 [[buttons]]
 id            = "quick-access"

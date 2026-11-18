@@ -8,6 +8,7 @@ package evdevkey
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -605,5 +606,92 @@ func TestChordReachesTheChannelThroughTheReadLoop(t *testing.T) {
 	}
 	if ev := <-ch; ev.ID != "oxp" {
 		t.Errorf("press id = %q, want oxp", ev.ID)
+	}
+}
+
+// oxpControllerKeyboardCaps is the OneXPlayer X2 Mini Pro controller's
+// interface-0 keyboard ("HID 1a86:fe00", usb-…-1.2/input0), read on
+// 2026-11-17: the button chords arrive here, and udev classes it as a typing
+// keyboard (ID_INPUT_KEYBOARD=1).
+const oxpControllerKeyboardCaps = "1000000000007 ff800000000007ff febeffdfffefffff fffffffffffffffe"
+
+// addUSBInputNode builds an input node the way sysfs lays out a USB HID one:
+// the class entry's device link points into the device tree at
+// <usb interface>/<hid device>/input/<inputN>, and the USB interface carries
+// bInterfaceNumber. ifaceDir "" puts the input device directly under the
+// interface, as xpad registers it.
+func addUSBInputNode(t *testing.T, root, event, name string, vendor, product uint16, iface int, hidDir, caps string) {
+	t.Helper()
+	ifDir := fmt.Sprintf("%s/devices/1-1.2:1.%d", root, iface)
+	parent := ifDir
+	if hidDir != "" {
+		parent = ifDir + "/" + hidDir
+	}
+	input := parent + "/input/" + event + "-input"
+	for _, d := range []string{input + "/id", input + "/capabilities", inputClassDir + "/" + event} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+	}
+	files := map[string]string{
+		ifDir + "/bInterfaceNumber": fmt.Sprintf("%02x", iface),
+		input + "/name":             name,
+		input + "/id/bustype":       "0003",
+		input + "/id/vendor":        fmt.Sprintf("%04x", vendor),
+		input + "/id/product":       fmt.Sprintf("%04x", product),
+		input + "/capabilities/key": caps,
+	}
+	for p, v := range files {
+		if err := os.WriteFile(p, []byte(v+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+	if err := os.Symlink(input, inputClassDir+"/"+event+"/device"); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+}
+
+// Two nodes share the OXP controller's name. Without the USB interface the
+// watcher takes the first in sysfs order — interface 1, which never sends the
+// chords; with it, interface 0.
+func TestFindDeviceByUSBInterface(t *testing.T) {
+	root := fakeInputSysfs(t)
+	inputClassDir = root + "/class"
+	const name = "HID 1a86:fe00"
+	addUSBInputNode(t, root, "event10", name, 0x1a86, 0xfe00, 1, "0003:1A86:FE00.0004", coverConsumerCaps)
+	addUSBInputNode(t, root, "event13", name, 0x1a86, 0xfe00, 0, "0003:1A86:FE00.0002", oxpControllerKeyboardCaps)
+	addUSBInputNode(t, root, "event5", "Microsoft X-Box 360 pad", 0x045e, 0x028e, 0, "", hotkeysCaps)
+
+	chord := NewChord(name, []int{29, 125, 56}, "oxp", true)
+	if got := chord.findDevice(); got != "/dev/input/event10" {
+		t.Errorf("negative control: by name alone findDevice() = %q, want the first in sysfs order", got)
+	}
+	chord.WithUSB(USBNode{Vendor: 0x1a86, Product: 0xfe00, Interface: 0})
+	if got, want := chord.findDevice(), "/dev/input/event13"; got != want {
+		t.Errorf("findDevice() = %q, want %q", got, want)
+	}
+	if n, ok := NodeUSB("event5"); !ok || n != (USBNode{Vendor: 0x045e, Product: 0x028e, Interface: 0}) {
+		t.Errorf("NodeUSB(xpad node) = %+v, %v; want the interface directly above it", n, ok)
+	}
+	chord.WithUSB(USBNode{Vendor: 0x1a86, Product: 0xfe00, Interface: 2})
+	if got := chord.findDevice(); got != "" {
+		t.Errorf("findDevice() for an interface with no input node = %q, want \"\"", got)
+	}
+}
+
+// A node that is not on USB never matches a USB interface.
+func TestNodeUSBOffUSB(t *testing.T) {
+	root := fakeInputSysfs(t)
+	addInputNodeCaps(t, root, "event2", "AT Translated Set 2 keyboard", atKeyboardCaps)
+	if err := os.MkdirAll(root+"/event2/device/id", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for f, v := range map[string]string{"bustype": "0011", "vendor": "0001", "product": "0001"} {
+		if err := os.WriteFile(root+"/event2/device/id/"+f, []byte(v+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, ok := NodeUSB("event2"); ok {
+		t.Errorf("NodeUSB(i8042 keyboard) = %+v, true; want not USB", n)
 	}
 }

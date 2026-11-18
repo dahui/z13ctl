@@ -467,12 +467,18 @@ type ButtonConfig struct {
 	Keys    []int  `toml:"keys"`    // keys held together (evdev-chord)
 
 	// hidraw-report: the node by USB vendor:product and interface (the grant
-	// is written from the same values), and the report byte meaning a press.
+	// is written from the same values), and the report bytes meaning a press.
+	// On the evdev methods usb and interface are optional, together, and
+	// narrow the node beyond its name: the OneXPlayer X2 Mini Pro's controller
+	// registers two nodes named "HID 1a86:fe00" (interfaces 0 and 1) and
+	// only interface 0 carries the button chords.
 	USB       string `toml:"usb"`
 	Interface *int   `toml:"interface"`
 	ReportID  int    `toml:"report_id"` // first report byte; 0 for unnumbered reports
-	Byte      int    `toml:"byte"`      // offset in the report as read, report ID included
-	Value     int    `toml:"value"`
+	// Match is [offset, value] pairs that must all hold in a press report
+	// (offsets count the report ID). It has to tell a press from a release
+	// wherever a device reports both, or every tap counts twice.
+	Match [][]int `toml:"match"`
 
 	// KeyboardNode opts a node that udev classes as a typing keyboard in, and
 	// says why it is safe on this model ("the AT keyboard carries only the
@@ -482,6 +488,10 @@ type ButtonConfig struct {
 	// machine, and the match may not contain udev glob characters.
 	KeyboardNode string `toml:"keyboard_node"`
 }
+
+// MaxHIDReport is the longest input report a hidraw-report button reads: a
+// full-speed interrupt report. A match offset beyond it could never hold.
+const MaxHIDReport = 64
 
 // USBIDs parses a hidraw-report button's "vvvv:pppp" USB identifier.
 func (b ButtonConfig) USBIDs() (vendor, product uint16, err error) {
@@ -798,8 +808,25 @@ func (c Config) Validate() error {
 			if b.Interface == nil || *b.Interface < 0 || *b.Interface > 255 {
 				fail("%s: hidraw-report needs interface, the USB interface number (0–255): only that interface is granted", name)
 			}
-			if b.ReportID < 0 || b.ReportID > 255 || b.Byte < 0 || b.Value < 0 || b.Value > 255 {
-				fail("%s: hidraw-report needs report_id and value in 0–255 and a byte offset of 0 or more", name)
+			if b.ReportID < 0 || b.ReportID > 255 {
+				fail("%s: hidraw-report needs report_id in 0–255 (0 for unnumbered reports)", name)
+			}
+			if len(b.Match) == 0 {
+				fail("%s: hidraw-report needs match, the [offset, value] pairs of a press report", name)
+			}
+			for _, m := range b.Match {
+				if len(m) != 2 || m[0] < 0 || m[0] >= MaxHIDReport || m[1] < 0 || m[1] > 255 {
+					fail("%s: each match entry is [offset, value]: offset 0–%d, value 0–255 (got %v)", name, MaxHIDReport-1, m)
+					break
+				}
+			}
+		}
+		if slicesContains(evdevMethods, b.Method) && (b.USB != "" || b.Interface != nil) {
+			if _, _, err := b.USBIDs(); err != nil {
+				fail("%s: %v", name, err)
+			}
+			if b.Interface == nil || *b.Interface < 0 || *b.Interface > 255 {
+				fail("%s: usb on an evdev button needs interface too (0–255): the two together name the node", name)
 			}
 		}
 		if b.Method == "evdev-chord" {

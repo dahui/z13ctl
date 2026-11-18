@@ -382,6 +382,27 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 				{ID: "b", Label: "B", Default: true, Method: "evdev-key", Device: "d", Keycode: 2},
 			}
 		}, "at most one button"},
+		{"hidraw report with no match", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", USB: "1a86:fe00", Interface: intp(2)}}
+		}, "needs match"},
+		{"hidraw match entry that is not a pair", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", USB: "1a86:fe00", Interface: intp(2),
+				Match: [][]int{{6, 0x24, 1}}}}
+		}, "[offset, value]"},
+		{"hidraw match offset past a report", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", USB: "1a86:fe00", Interface: intp(2),
+				Match: [][]int{{64, 1}}}}
+		}, "[offset, value]"},
+		{"hidraw match value past a byte", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", USB: "1a86:fe00", Interface: intp(2),
+				Match: [][]int{{6, 256}}}}
+		}, "[offset, value]"},
+		{"evdev usb with no interface", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-chord", Device: "d", Keys: []int{29, 125}, USB: "1a86:fe00"}}
+		}, "needs interface too"},
+		{"evdev interface with no usb", func(c *Config) {
+			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1, Interface: intp(0)}}
+		}, "vvvv:pppp"},
 		{"keyboard node on a non-evdev method", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", KeyboardNode: "why"}}
 		}, "only to evdev methods"},
@@ -647,3 +668,6 @@ tdp_max_forced = 40
 		t.Errorf("the corrected file: %v", err)
 	}
 }
+
+// intp is a pointer to v, for the optional interface fields.
+func intp(v int) *int { return &v }

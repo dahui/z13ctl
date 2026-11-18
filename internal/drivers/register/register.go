@@ -101,17 +101,37 @@ func init() {
 		return aurahid.New(cfg)
 	})
 	device.RegisterButtons("evdev-key", func(c device.ButtonConfig) (driver.Buttons, error) {
-		return evdevkey.New(c.Device, c.Keycode, c.ID, c.KeyboardNode != ""), nil
+		return withUSBNode(evdevkey.New(c.Device, c.Keycode, c.ID, c.KeyboardNode != ""), c)
 	})
 	device.RegisterButtons("evdev-chord", func(c device.ButtonConfig) (driver.Buttons, error) {
-		return evdevkey.NewChord(c.Device, c.Keys, c.ID, c.KeyboardNode != ""), nil
+		return withUSBNode(evdevkey.NewChord(c.Device, c.Keys, c.ID, c.KeyboardNode != ""), c)
 	})
 	device.RegisterButtons("hidraw-report", func(c device.ButtonConfig) (driver.Buttons, error) {
 		v, p, err := c.USBIDs()
 		if err != nil || c.Interface == nil {
 			return nil, errors.New("hidraw-report needs usb and interface")
 		}
+		match := make([]hidrawbtn.ByteMatch, 0, len(c.Match))
+		for _, m := range c.Match {
+			if len(m) != 2 {
+				return nil, errors.New("hidraw-report match entries are [offset, value]")
+			}
+			match = append(match, hidrawbtn.ByteMatch{Offset: m[0], Value: byte(m[1])})
+		}
 		return hidrawbtn.New(hidrawbtn.Spec{ID: c.ID, Vendor: v, Product: p, Interface: *c.Interface,
-			ReportID: c.ReportID, Byte: c.Byte, Value: byte(c.Value)}), nil
+			ReportID: c.ReportID, Match: match}), nil
 	})
+}
+
+// withUSBNode narrows an evdev button to the USB interface its device data
+// names, when it names one.
+func withUSBNode(b *evdevkey.Buttons, c device.ButtonConfig) (driver.Buttons, error) {
+	if c.USB == "" {
+		return b, nil
+	}
+	v, p, err := c.USBIDs()
+	if err != nil || c.Interface == nil {
+		return nil, errors.New("an evdev button's usb needs interface too")
+	}
+	return b.WithUSB(evdevkey.USBNode{Vendor: v, Product: p, Interface: *c.Interface}), nil
 }

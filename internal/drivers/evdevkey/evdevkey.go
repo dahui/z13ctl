@@ -69,7 +69,24 @@ type Buttons struct {
 	chord         []evdev.EvCode // non-empty: a chord (evdev-chord), and keycode is unused
 	id            string         // ButtonEvent.ID delivered for each press
 	allowKeyboard bool           // device data opted a typing-keyboard node in (keyboard_node)
+	usb           *USBNode       // non-nil: the node must also be this USB interface
 	checked       bool           // checkKey has run; Watch is the only goroutine touching it
+}
+
+// USBNode names an input node by the USB interface it belongs to.
+type USBNode struct {
+	Vendor, Product uint16
+	Interface       int // bInterfaceNumber
+}
+
+// WithUSB narrows the watcher to the node of that name that is also this USB
+// interface. A name alone is not always unique: the OneXPlayer X2 Mini Pro's
+// controller registers "HID 1a86:fe00" on interface 0 (the button chords) and
+// again on interface 1 (mouse and consumer keys), and sysfs order lists
+// interface 1 first. Returns b.
+func (b *Buttons) WithUSB(n USBNode) *Buttons {
+	b.usb = &n
+	return b
 }
 
 // New returns a watcher for the named input device and keycode, delivering id
@@ -151,11 +168,52 @@ func (b *Buttons) findDevice() string {
 		if err != nil {
 			continue
 		}
-		if strings.TrimSpace(string(nameBytes)) == b.deviceName {
-			return "/dev/input/" + e.Name()
+		if strings.TrimSpace(string(nameBytes)) != b.deviceName {
+			continue
 		}
+		if b.usb != nil {
+			if n, ok := NodeUSB(e.Name()); !ok || n != *b.usb {
+				continue
+			}
+		}
+		return "/dev/input/" + e.Name()
 	}
 	return ""
+}
+
+// NodeUSB reports the USB interface an input node belongs to, from sysfs
+// alone: the input device's id/vendor and id/product, and the
+// bInterfaceNumber of the nearest USB interface above it (directly above for
+// a driver bound to the interface, like xpad; one level further for a HID
+// device). ok is false for a node not on USB.
+func NodeUSB(event string) (n USBNode, ok bool) {
+	dev := inputClassDir + "/" + event + "/device"
+	bus, err1 := readHex(dev + "/id/bustype")
+	vendor, err2 := readHex(dev + "/id/vendor")
+	product, err3 := readHex(dev + "/id/product")
+	if err1 != nil || err2 != nil || err3 != nil || bus != 0x03 { // BUS_USB
+		return USBNode{}, false
+	}
+	dir, err := filepath.EvalSymlinks(dev)
+	if err != nil {
+		return USBNode{}, false
+	}
+	for range 4 { // input -> HID device -> USB interface, with room to spare
+		dir = filepath.Dir(dir)
+		if iface, err := readHex(dir + "/bInterfaceNumber"); err == nil {
+			return USBNode{Vendor: uint16(vendor), Product: uint16(product), Interface: int(iface)}, true
+		}
+	}
+	return USBNode{}, false
+}
+
+// readHex reads a sysfs attribute holding one hexadecimal number.
+func readHex(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 16, 16)
 }
 
 // Watch blocks until ctx is done, forwarding key presses to ch. It finds the

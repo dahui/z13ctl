@@ -80,8 +80,28 @@ type hidGrant struct {
 // read access to every keystroke, which is the line this keeps.
 type buttonGrant struct {
 	name     string         // the input device's sysfs name
+	usb      string         // "vvvv:pppp" when the device data names the node's USB interface
+	iface    int            // that interface's number; meaningful only with usb
 	deviceID string         // keyboard_node only: the device file that opted it in
 	dmi      []device.Match // keyboard_node only: that file's DMI patterns
+}
+
+// key orders and deduplicates grants.
+func (g buttonGrant) key() string {
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%s", g.name, g.usb, g.iface, g.deviceID)
+}
+
+// usbTerms is the rule fragment narrowing a grant to its USB interface, ""
+// when it names none. ENV, never ATTRS: usb_id sets these on the event node
+// itself, while ATTRS{idVendor} and ATTRS{name} live on different parents and
+// one rule's ATTRS keys must all match on the same one (the lighting grant's
+// 2026-11-15 lesson).
+func (g buttonGrant) usbTerms() string {
+	if g.usb == "" {
+		return ""
+	}
+	v, p, _ := strings.Cut(g.usb, ":")
+	return fmt.Sprintf(`ENV{ID_VENDOR_ID}==%q, ENV{ID_MODEL_ID}==%q, ENV{ID_USB_INTERFACE_NUM}=="%02x", `, v, p, g.iface)
 }
 
 // deviceSetupTargets collects setupTargets from the embedded device files. Its
@@ -122,6 +142,11 @@ func setupTargetsFrom(configs []device.Config) setupTargets {
 				continue
 			}
 			g := buttonGrant{name: b.Device}
+			if b.USB != "" && b.Interface != nil {
+				if v, p, err := b.USBIDs(); err == nil {
+					g.usb, g.iface = fmt.Sprintf("%04x:%04x", v, p), *b.Interface
+				}
+			}
 			if b.KeyboardNode != "" {
 				g.deviceID, g.dmi = c.Device.ID, c.Device.Match
 			}
@@ -142,12 +167,8 @@ func setupTargetsFrom(configs []device.Config) setupTargets {
 	t.hidButtons = slices.DeleteFunc(t.hidButtons, func(g hidGrant) bool { return slices.Contains(t.hid, g) })
 	slices.SortFunc(t.hidButtons, byInterface)
 	t.hidButtons = slices.Compact(t.hidButtons)
-	slices.SortFunc(t.buttons, func(a, b buttonGrant) int {
-		return strings.Compare(a.name+"\x00"+a.deviceID, b.name+"\x00"+b.deviceID)
-	})
-	t.buttons = slices.CompactFunc(t.buttons, func(a, b buttonGrant) bool {
-		return a.name == b.name && a.deviceID == b.deviceID
-	})
+	slices.SortFunc(t.buttons, func(a, b buttonGrant) int { return strings.Compare(a.key(), b.key()) })
+	t.buttons = slices.CompactFunc(t.buttons, func(a, b buttonGrant) bool { return a.key() == b.key() })
 	return t
 }
 
@@ -157,7 +178,7 @@ func buttonRules(grants []buttonGrant, group string) string {
 	var b strings.Builder
 	for _, g := range grants {
 		if g.deviceID == "" {
-			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ENV{ID_INPUT_KEYBOARD}!="1", MODE="0640", GROUP="%s"`+"\n", g.name, group)
+			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", %sENV{ID_INPUT_KEYBOARD}!="1", MODE="0640", GROUP="%s"`+"\n", g.name, g.usbTerms(), group)
 			continue
 		}
 		for _, m := range g.dmi {
@@ -165,8 +186,8 @@ func buttonRules(grants []buttonGrant, group string) string {
 			if product == "" {
 				product = m.ProductPrefix + "*"
 			}
-			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ATTR{[dmi/id]sys_vendor}=="%s", ATTR{[dmi/id]product_name}=="%s", MODE="0640", GROUP="%s"`+"\n",
-				g.name, m.Vendor, product, group)
+			fmt.Fprintf(&b, `ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", %sATTR{[dmi/id]sys_vendor}=="%s", ATTR{[dmi/id]product_name}=="%s", MODE="0640", GROUP="%s"`+"\n",
+				g.name, g.usbTerms(), m.Vendor, product, group)
 		}
 	}
 	return b.String()
@@ -276,13 +297,13 @@ After=sysinit.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
-ExecStart=/bin/sh -c 'for f in %s; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in %s; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
 ExecStart=/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/ppt_*/current_value; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
-ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
-ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f"; done'
-ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+w "$$f" || true; done'
-ExecStart=/bin/sh -c 'for f in /sys/class/powercap/*/energy_uj; do [ -e "$$f" ] && chgrp %s "$$f" && chmod g+r "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/devices/platform/asus-nb-wmi/ppt_*; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/devices/system/cpu/cpufreq/boost; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f"; done'
+ExecStart=/bin/sh -c 'for f in /sys/kernel/ryzen_smu_drv/smu_args /sys/kernel/ryzen_smu_drv/mp1_smu_cmd /sys/kernel/ryzen_smu_drv/rsmu_cmd; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+w "$$f" || true; done'
+ExecStart=/bin/sh -c 'for f in /sys/class/powercap/*/energy_uj; do [ -e "$$f" ] || continue; chgrp %s "$$f" && chmod g+r "$$f"; done'
 
 [Install]
 WantedBy=multi-user.target
@@ -437,9 +458,15 @@ func applySysfsPerms(group string, dryRun bool) {
 			if err != nil {
 				continue
 			}
-			if buttonNodeGranted(targets.buttons, strings.TrimSpace(string(nameBytes)), e.Name(), matchedID) {
-				chgrpChmod("/dev/input/"+e.Name(), "g=r") // exact: drops a write bit an older setup granted
+			if !buttonNodeGranted(targets.buttons, strings.TrimSpace(string(nameBytes)), e.Name(), matchedID) {
+				continue
 			}
+			dev := "/dev/input/" + e.Name()
+			if hiddenNode(dev) {
+				fmt.Printf("  leaving %s alone: another tool has hidden it (mode 0000; InputPlumber does this to the devices it manages)\n", dev)
+				continue
+			}
+			chgrpChmod(dev, "g=r") // exact: drops a write bit an older setup granted
 		}
 	}
 
@@ -473,12 +500,14 @@ func revokeStaleHidrawGrants(grants []hidGrant, group string, dryRun bool) {
 		if err != nil {
 			continue
 		}
-		usb, stale := staleHidrawInterface(string(uevent), strings.TrimSpace(string(iface)), grants)
+		usb, granted, stale := staleHidrawInterface(string(uevent), strings.TrimSpace(string(iface)), grants)
 		// A udev rule cannot read a report descriptor, so a device file that
 		// names a keyboard's interface by mistake would grant its keystrokes.
 		// Setup can read it: such a node is revoked too, and said out loud.
+		// Only an interface a grant names: any other HID keyboard on the
+		// machine (the OXP's built-in 258a:001e) is none of setup's business.
 		keyboard := false
-		if !stale && usb != "" {
+		if granted {
 			if desc, err := os.ReadFile(n + "/device/report_descriptor"); err == nil && hidrawbtn.IsKeyboardDescriptor(desc) {
 				keyboard = true
 				fmt.Printf("Warning: a device file grants %s, interface %s of %s, which is a keyboard; "+
@@ -505,11 +534,11 @@ func revokeStaleHidrawGrants(grants []hidGrant, group string, dryRun bool) {
 	}
 }
 
-// staleHidrawInterface reports whether a hidraw node — its HID uevent and its
-// USB bInterfaceNumber — belongs to a lighting device but is not an interface
-// that device's grant names, and which device ("vvvv:pppp") it belongs to.
-func staleHidrawInterface(uevent, iface string, grants []hidGrant) (string, bool) {
-	var usb string
+// staleHidrawInterface classifies a hidraw node by its HID uevent and its USB
+// bInterfaceNumber: which device ("vvvv:pppp") it belongs to, whether a grant
+// names exactly this interface, and whether it is stale — another interface of
+// a device setup grants. A node of a device no grant names is neither.
+func staleHidrawInterface(uevent, iface string, grants []hidGrant) (usb string, granted, stale bool) {
 	for _, line := range strings.Split(uevent, "\n") {
 		id, ok := strings.CutPrefix(line, "HID_ID=")
 		if !ok {
@@ -517,13 +546,13 @@ func staleHidrawInterface(uevent, iface string, grants []hidGrant) (string, bool
 		}
 		parts := strings.Split(id, ":") // bus:vendor:product, eight hex digits each
 		if len(parts) != 3 || len(parts[1]) < 4 || len(parts[2]) < 4 {
-			return "", false
+			return "", false, false
 		}
 		usb = strings.ToLower(parts[1][len(parts[1])-4:] + ":" + parts[2][len(parts[2])-4:])
 	}
 	n, err := strconv.ParseUint(iface, 16, 8)
 	if usb == "" || err != nil {
-		return "", false
+		return "", false, false
 	}
 	known := false
 	for _, g := range grants {
@@ -532,24 +561,46 @@ func staleHidrawInterface(uevent, iface string, grants []hidGrant) (string, bool
 		}
 		known = true
 		if g.iface == int(n) {
-			return usb, false
+			return usb, true, false
 		}
 	}
-	return usb, known
+	return usb, false, known
 }
 
 // isTypingKeyboard is the watcher's keyboard test, a var so tests can stand
 // in for sysfs.
 var isTypingKeyboard = evdevkey.IsTypingKeyboard
 
+// hiddenNode reports whether a device node has no permission bits at all. No
+// kernel creates a node that way; a tool that took the device over has hidden
+// it — InputPlumber sets its managed nodes to 0000 (udev MODE:= plus a chmod)
+// so that only its own exclusive reader sees them. Loosening such a node would
+// undo that for every member of the group until the next udev event, so the
+// direct grant skips it; the udev rule cannot override it either, because
+// InputPlumber's assignment is final.
+func hiddenNode(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().Perm() == 0
+}
+
+// nodeUSB is the watcher's USB-interface lookup, a var for the same reason.
+var nodeUSB = evdevkey.NodeUSB
+
 // buttonNodeGranted reports whether the input node event, named name, gets
-// the direct grant. A keyboard_node grant applies only when the device file
+// the direct grant. A grant naming a USB interface applies only to the node on
+// it, as the watcher and the udev rule read it. A keyboard_node grant applies only when the device file
 // that opted it in is the one matching this machine; any other grant only to
 // a node that is not a typing keyboard (an unreadable bitmap counts as one).
 func buttonNodeGranted(grants []buttonGrant, name, event, matchedID string) bool {
 	for _, g := range grants {
 		if g.name != name {
 			continue
+		}
+		if g.usb != "" {
+			n, ok := nodeUSB(event)
+			if !ok || fmt.Sprintf("%04x:%04x", n.Vendor, n.Product) != g.usb || n.Interface != g.iface {
+				continue
+			}
 		}
 		if g.deviceID != "" {
 			if g.deviceID == matchedID {

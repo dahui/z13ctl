@@ -57,7 +57,8 @@ func TestIsKeyboardDescriptor(t *testing.T) {
 // The ROG Ally's buttons as G-Helper reads them: report ID 0x5a, the button's
 // code in byte 1 (0xA6 the Armoury Crate button, 0x38 Command Center).
 func allyButton(value byte) *Buttons {
-	return New(Spec{ID: "armoury-crate", Vendor: 0x0b05, Product: 0x1abe, Interface: 2, ReportID: 0x5a, Byte: 1, Value: value})
+	return New(Spec{ID: "armoury-crate", Vendor: 0x0b05, Product: 0x1abe, Interface: 2, ReportID: 0x5a,
+		Match: []ByteMatch{{Offset: 1, Value: value}}})
 }
 
 func TestPressed(t *testing.T) {
@@ -77,9 +78,46 @@ func TestPressed(t *testing.T) {
 			t.Errorf("%s: pressed = %v, want %v", c.desc, got, c.want)
 		}
 	}
-	unnumbered := New(Spec{ID: "home", Byte: 0, Value: 0x24})
+	unnumbered := New(Spec{ID: "home", Match: []ByteMatch{{Offset: 0, Value: 0x24}}})
 	if !unnumbered.pressed([]byte{0x24, 0x00}) || unnumbered.pressed([]byte{0x22}) {
-		t.Error("an unnumbered report matches on its byte alone")
+		t.Error("an unnumbered report matches on its bytes alone")
+	}
+	if New(Spec{ID: "nothing", ReportID: 0x5a}).pressed([]byte{0x5a, 0xa6}) {
+		t.Error("a spec with no match bytes must never report a press")
+	}
+}
+
+// oxpHomeFrame is the OneXPlayer X2 Mini Pro's Home button as captured on
+// 2026-11-17 (debugfs, 1a86:fe00 interface 2, Linux 7.3.4 with hid-oxp
+// bound): a 64-byte unnumbered B2 frame, button id 0x24 at byte 6 and its
+// state at byte 12. The press and release frames are otherwise identical.
+func oxpHomeFrame(state byte) []byte {
+	f := make([]byte, 64)
+	copy(f, []byte{0xb2, 0x3f, 0x01, 0x01, 0x1f, 0x80, 0x24, 0x02, 0x02, 0x05, 0x00, 0x00, state})
+	f[62], f[63] = 0x3f, 0xb2
+	return f
+}
+
+// One tap of the OXP's Home button is one press. Matching the button id alone
+// (the old single-byte match) counted the release frame too, ~160 ms later,
+// which the daemon's press timing reads as a double press.
+func TestOXPHomeReleaseIsNotAPress(t *testing.T) {
+	home := New(Spec{ID: "home", Vendor: 0x1a86, Product: 0xfe00, Interface: 2, ReportID: 0xb2,
+		Match: []ByteMatch{{Offset: 6, Value: 0x24}, {Offset: 12, Value: 0x01}}})
+	if !home.pressed(oxpHomeFrame(0x01)) {
+		t.Error("the press frame must be a press")
+	}
+	if home.pressed(oxpHomeFrame(0x02)) {
+		t.Error("the release frame must not be a press")
+	}
+	paddle := oxpHomeFrame(0x01)
+	paddle[6] = 0x22 // the left back paddle's id, same frame shape
+	if home.pressed(paddle) {
+		t.Error("another button's press frame must not be a press")
+	}
+	idOnly := New(Spec{ID: "home", ReportID: 0xb2, Match: []ByteMatch{{Offset: 6, Value: 0x24}}})
+	if !idOnly.pressed(oxpHomeFrame(0x02)) {
+		t.Error("negative control: matching the id alone should accept the release frame")
 	}
 }
 

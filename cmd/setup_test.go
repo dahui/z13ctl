@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
 )
 
 const (
@@ -398,6 +399,60 @@ func TestDirectButtonGrantFollowsTheGuard(t *testing.T) {
 	}
 }
 
+// An evdev button naming a USB interface is granted that interface's node
+// only, in the rule and in the direct grant, as the watcher reads it. The OXP
+// X2 Mini Pro's controller has two nodes named "HID 1a86:fe00"; only
+// interface 0 carries the chords, and it is a typing keyboard by udev's test,
+// so its grant is DMI-scoped too. The terms must be ENV: the event node
+// carries usb_id's properties, while ATTRS{idVendor} sits on a different
+// parent from ATTRS{name} and would make the rule match nothing.
+func TestEvdevGrantNamesItsUSBInterface(t *testing.T) {
+	zero := 0
+	configs := []device.Config{{
+		Device: device.Meta{ID: "oxp-test", Match: []device.Match{{Vendor: "ONE-NETBOOK", Product: "ONEXPLAYER X2Mini PRO"}}},
+		Buttons: []device.ButtonConfig{{ID: "oxp", Label: "OneXPlayer button", Method: "evdev-chord",
+			Device: "HID 1a86:fe00", USB: "1a86:fe00", Interface: &zero, Keys: []int{29, 56, 125},
+			KeyboardNode: "the controller's interface-0 keyboard carries only the button chords"}},
+	}}
+	grants := setupTargetsFrom(configs).buttons
+	rules := buttonRules(grants, "users")
+	lines := inputGrantLines(rules)
+	if len(lines) != 1 {
+		t.Fatalf("got %d grant lines, want 1:\n%s", len(lines), rules)
+	}
+	for _, want := range []string{
+		`ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="fe00", ENV{ID_USB_INTERFACE_NUM}=="00"`,
+		`ATTR{[dmi/id]product_name}=="ONEXPLAYER X2Mini PRO"`,
+	} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("grant missing %s:\n  %s", want, lines[0])
+		}
+	}
+	if strings.Contains(lines[0], "ATTRS{id") {
+		t.Errorf("USB identity written as ATTRS, which cannot match beside ATTRS{name}:\n  %s", lines[0])
+	}
+	if why := checkButtonGrant(lines[0]); why != "" {
+		t.Errorf("%s\n  %s", why, lines[0])
+	}
+
+	origUSB := nodeUSB
+	t.Cleanup(func() { nodeUSB = origUSB })
+	nodes := map[string]evdevkey.USBNode{
+		"event10": {Vendor: 0x1a86, Product: 0xfe00, Interface: 1},
+		"event13": {Vendor: 0x1a86, Product: 0xfe00, Interface: 0},
+	}
+	nodeUSB = func(event string) (evdevkey.USBNode, bool) { n, ok := nodes[event]; return n, ok }
+	if !buttonNodeGranted(grants, "HID 1a86:fe00", "event13", "oxp-test") {
+		t.Error("interface 0's node, on this machine, must be granted")
+	}
+	if buttonNodeGranted(grants, "HID 1a86:fe00", "event10", "oxp-test") {
+		t.Error("interface 1's node shares the name but must not be granted")
+	}
+	if buttonNodeGranted(grants, "HID 1a86:fe00", "event99", "oxp-test") {
+		t.Error("a node whose USB identity cannot be read must not be granted")
+	}
+}
+
 // TestHidrawGrantsNameAnInterface: a keyboard's interfaces include the one it
 // types through, so a hidraw grant by vendor:product alone exposes raw
 // keystrokes. The Z13's cover did exactly that (interface 2, Generic Desktop /
@@ -442,18 +497,22 @@ func TestStaleHidrawInterface(t *testing.T) {
 	uevent := func(id string) string { return "DRIVER=hid-generic\nHID_ID=" + id + "\nHID_NAME=x\n" }
 	for _, c := range []struct {
 		desc, uevent, iface string
-		want                bool
+		granted, stale      bool
 	}{
-		{"cover lighting interface", uevent("0003:00000B05:00001A30"), "00", false},
-		{"cover typing interface", uevent("0003:00000B05:00001A30"), "02", true},
-		{"cover touchpad", uevent("0003:00000B05:00001A30"), "03", true},
-		{"lightbar's second interface", uevent("0003:00000B05:000018C6"), "01", true},
-		{"a device setup never granted", uevent("0003:0000046D:0000C52B"), "02", false},
-		{"no HID_ID", "DRIVER=x\n", "02", false},
-		{"unparseable interface", uevent("0003:00000B05:00001A30"), "zz", false},
+		{"cover lighting interface", uevent("0003:00000B05:00001A30"), "00", true, false},
+		{"cover typing interface", uevent("0003:00000B05:00001A30"), "02", false, true},
+		{"cover touchpad", uevent("0003:00000B05:00001A30"), "03", false, true},
+		{"lightbar's second interface", uevent("0003:00000B05:000018C6"), "01", false, true},
+		// The OXP's built-in keyboard: setup once reported it as "a device
+		// file grants … which is a keyboard", because the caller read a
+		// device id with no stale flag as a grant.
+		{"a device setup never granted", uevent("0003:0000258A:0000001E"), "00", false, false},
+		{"no HID_ID", "DRIVER=x\n", "02", false, false},
+		{"unparseable interface", uevent("0003:00000B05:00001A30"), "zz", false, false},
 	} {
-		if _, got := staleHidrawInterface(c.uevent, c.iface, grants); got != c.want {
-			t.Errorf("%s: stale = %v, want %v", c.desc, got, c.want)
+		_, granted, stale := staleHidrawInterface(c.uevent, c.iface, grants)
+		if granted != c.granted || stale != c.stale {
+			t.Errorf("%s: granted, stale = %v, %v; want %v, %v", c.desc, granted, stale, c.granted, c.stale)
 		}
 	}
 }
@@ -469,9 +528,9 @@ func TestHidrawButtonGrants(t *testing.T) {
 		Device:   device.Meta{ID: "ally-test", Match: []device.Match{{Vendor: "V", Product: "P"}}},
 		Lighting: &device.LightingConfig{Zones: []device.LightingZoneConfig{{Name: "sticks", Label: "Sticks", USB: "0b05:1abe", Interface: &zero}}},
 		Buttons: []device.ButtonConfig{
-			{ID: "ac", Label: "A", Method: "hidraw-report", USB: "0b05:1abe", Interface: &two, ReportID: 0x5a, Byte: 1, Value: 0xa6},
-			{ID: "cc", Label: "C", Method: "hidraw-report", USB: "0b05:1abe", Interface: &two, ReportID: 0x5a, Byte: 1, Value: 0x38},
-			{ID: "lit", Label: "L", Method: "hidraw-report", USB: "0b05:1abe", Interface: &zero, Byte: 1, Value: 1},
+			{ID: "ac", Label: "A", Method: "hidraw-report", USB: "0b05:1abe", Interface: &two, ReportID: 0x5a, Match: [][]int{{1, 0xa6}}},
+			{ID: "cc", Label: "C", Method: "hidraw-report", USB: "0b05:1abe", Interface: &two, ReportID: 0x5a, Match: [][]int{{1, 0x38}}},
+			{ID: "lit", Label: "L", Method: "hidraw-report", USB: "0b05:1abe", Interface: &zero, Match: [][]int{{1, 1}}},
 		},
 	}})
 	if len(targets.hidButtons) != 1 || targets.hidButtons[0] != (hidGrant{usb: "0b05:1abe", iface: 2}) {
@@ -479,5 +538,55 @@ func TestHidrawButtonGrants(t *testing.T) {
 	}
 	if got := targets.allHID(); len(got) != 2 {
 		t.Errorf("allHID = %+v, want the lighting interface and the button's", got)
+	}
+}
+
+// A node another tool hid (mode 0000, as InputPlumber leaves the devices it
+// manages) is not loosened by the direct grant; any other mode is fair game.
+func TestHiddenNode(t *testing.T) {
+	dir := t.TempDir()
+	hidden, open := dir+"/hidden", dir+"/open"
+	for p, mode := range map[string]os.FileMode{hidden: 0, open: 0o600} {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !hiddenNode(hidden) {
+		t.Error("a 0000 node must count as hidden")
+	}
+	if hiddenNode(open) || hiddenNode(dir+"/missing") {
+		t.Error("a 0600 node, or a missing one, is not hidden")
+	}
+}
+
+// Every loop in the perms unit skips a file that does not exist without
+// failing. "[ -e f ] && chgrp …" leaves the loop's status at 1 when the last
+// file is missing, and a non-zero ExecStart fails the unit at every boot: on
+// any machine without asus-armoury's boot_sound or asus-nb-wmi's deprecated
+// ppt_* (the OneXPlayer, or a Z13 kernel built without
+// CONFIG_ASUS_WMI_DEPRECATED_ATTRS). Found on the OXP 2026-11-17; the
+// ryzen_smu line had been patched alone (25ef8a9), the rest never were.
+func TestPermsUnitToleratesMissingFiles(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{
+		"buildServiceContent": buildServiceContent("users"),
+		packagedServicePath:   readPackaged(t, packagedServicePath),
+	} {
+		loops := 0
+		for _, line := range strings.Split(content, "\n") {
+			if !strings.HasPrefix(line, "ExecStart=") || !strings.Contains(line, "for f in") {
+				continue
+			}
+			loops++
+			if !strings.Contains(line, `[ -e "$$f" ] || continue;`) {
+				t.Errorf("%s: a loop that fails on a missing file:\n  %s", name, line)
+			}
+		}
+		if loops == 0 {
+			t.Errorf("%s: no ExecStart loops found", name)
+		}
 	}
 }

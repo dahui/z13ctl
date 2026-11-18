@@ -1,0 +1,70 @@
+# OneXPlayer X2 Mini Pro (Strix Halo). Buttons only for now: fans, power,
+# battery and the rest land with M5 (.claude/plans/oxp-power.md).
+#
+# Every value here was captured on this machine (2026-11-17, Linux 7.3.4,
+# hid-oxp bound); the captures are in
+# .claude/plans/fixtures/oxp-inputplumber-2026-11-17/. The format is
+# documented key by key in website/src/content/docs/dev/device-files.md.
+
+[device]
+id    = "onexplayer-x2-mini-pro"
+model = "X2 Mini Pro"
+name  = "OneXPlayer X2 Mini Pro"
+
+[[device.match]]
+vendor  = "ONE-NETBOOK"
+product = "ONEXPLAYER X2Mini PRO"
+
+# The three buttons above the screen. None of them is an ordinary input event
+# of its own: the controller (1a86:fe00) sends two as key chords on its
+# interface-0 keyboard node and the third as a vendor HID frame on interface 2.
+#
+# The chords: the firmware presses the modifiers, then the last key, and
+# releases in reverse. The Keyboard button's chord is a fixed ~20 ms pulse
+# however long the button is held (a long press switches the controller to
+# mouse mode inside the firmware, invisible to the host). The OneXPlayer
+# button's chord is held for as long as the button is.
+#
+# The node is "HID 1a86:fe00" on interface 0. Interface 1 registers a node
+# with the same name (mouse and consumer keys) that sysfs lists first, so the
+# USB interface is named too. udev classes interface 0 as a typing keyboard
+# (ID_INPUT_KEYBOARD=1) because its descriptor is a boot keyboard; what it
+# actually sends is only these chords, which is what keyboard_node records.
+#
+# When InputPlumber manages the controller (it auto-starts once installed) it
+# grabs this node and the hidraw interfaces, and the buttons reach voltaire
+# only through it (.claude/plans/inputplumber-buttons.md).
+[[buttons]]
+id            = "keyboard"
+label         = "Keyboard button"
+default       = true
+method        = "evdev-chord"
+device        = "HID 1a86:fe00"
+usb           = "1a86:fe00"
+interface     = 0
+keys          = [29, 125, 24] # KEY_LEFTCTRL, KEY_LEFTMETA, KEY_O
+keyboard_node = "the X2 Mini Pro controller's interface-0 keyboard sends only the button chords"
+
+[[buttons]]
+id            = "oxp"
+label         = "OneXPlayer button"
+method        = "evdev-chord"
+device        = "HID 1a86:fe00"
+usb           = "1a86:fe00"
+interface     = 0
+keys          = [29, 125, 56] # KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTALT
+keyboard_node = "the X2 Mini Pro controller's interface-0 keyboard sends only the button chords"
+
+# Home: a 64-byte unnumbered B2 frame on the controller's vendor interface,
+# button id 0x24 at byte 6 and its state at byte 12 (01 press, 02 release).
+# The two frames of a tap differ only in that byte, so it is part of the
+# match, or one tap would count as a double press. Reports on 7.3.4 without
+# the onexplayer-x2mini watcher (on 7.2 hid-oxp's button map silenced it).
+[[buttons]]
+id        = "home"
+label     = "Home button"
+method    = "hidraw-report"
+usb       = "1a86:fe00"
+interface = 2
+report_id = 0xb2
+match     = [[6, 0x24], [12, 0x01]]
