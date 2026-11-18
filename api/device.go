@@ -154,6 +154,14 @@ type PowerInfo struct {
 	// fields above. Absent from a daemon older than the field; a client then
 	// offers its built-in three.
 	Limits []PowerLimit `json:"limits,omitempty"`
+
+	// Slider says a TDP set while no custom profile is active is a remembered
+	// device setting rather than a profile (OneXConsole's one-slider model):
+	// such a set does not create or activate the "custom" profile, and the
+	// daemon re-applies the value at boot, on resume and after a charger edge.
+	// A client offers the TDP as a plain control and keeps profiles for saving
+	// and loading. Absent: the usual model.
+	Slider bool `json:"slider,omitempty"`
 }
 
 // PowerLimit is one settable power limit. ID is "pl1", "pl2" or "pl3" — the
@@ -187,6 +195,11 @@ type ProfileInfo struct {
 	Names   []string       `json:"names"`
 	Default string         `json:"default,omitempty"`
 	Entries []ProfileEntry `json:"entries,omitempty"`
+
+	// Pin is the one firmware profile the daemon holds, putting it back when
+	// anything selects another; a client offers no firmware profile choice
+	// when it is set. Absent: none pinned.
+	Pin string `json:"pin,omitempty"`
 }
 
 // ProfileEntry is one firmware profile's display label.

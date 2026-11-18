@@ -267,6 +267,7 @@ func cloneState(s api.State) api.State {
 		c.Autoswitch = &as
 	}
 	c.TDP = cloneTDP(s.TDP)
+	c.DeviceTDP = cloneTDP(s.DeviceTDP)
 	c.Undervolt = cloneUndervolt(s.Undervolt)
 	c.FanCurve = cloneFanCurve(s.FanCurve)
 	c.Telemetry = cloneTelemetrySample(s.Telemetry)

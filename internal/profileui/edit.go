@@ -20,13 +20,19 @@ import (
 // that is not running.
 type EditPlan struct {
 	Target string // the profile being edited; never empty
-	Live   bool   // true when edits apply to hardware via bare sends
+	Live   bool   // true when edits apply to hardware
+
+	// Named sends the target's name even on a live edit. On a slider device a
+	// bare TDP set is the slider, which leaves a running profile rather than
+	// editing it, so the editor names the profile it means; the daemon treats
+	// a named edit of the running profile as live.
+	Named bool
 }
 
 // WireProfile returns the value for the api ...For functions' profile
-// parameter: empty for a live edit (a bare send), the target name otherwise.
+// parameter: empty for a bare live edit, the target name otherwise.
 func (p EditPlan) WireProfile() string {
-	if p.Live {
+	if p.Live && !p.Named {
 		return ""
 	}
 	return p.Target
@@ -48,10 +54,21 @@ func (p EditPlan) WireProfile() string {
 // a *named* profile is running — must go through the ...For variants: a bare
 // send there would edit the wrong profile, and worse, apply it to hardware.
 func PlanEdit(s *api.State, target string) EditPlan {
+	return PlanEditOn(s, target, false)
+}
+
+// PlanEditOn is PlanEdit for a device whose TDP may be a slider
+// (limits.Limits.Slider). There the second live case does not exist: a bare
+// TDP send made while no custom profile runs sets the slider's remembered
+// value instead of creating "custom", so an editor addressing "custom" by a
+// bare send would move the slider and store nothing in the profile it shows.
+// It is stored like any profile that is not running, and Activate applies it.
+// A daemon that serves the slider flag understands the profile field.
+func PlanEditOn(s *api.State, target string, slider bool) EditPlan {
 	if s != nil && s.Profile == target {
-		return EditPlan{Target: target, Live: true}
+		return EditPlan{Target: target, Live: true, Named: slider}
 	}
-	if target == api.DefaultCustomProfile && (s == nil || !s.InCustomProfile()) {
+	if !slider && target == api.DefaultCustomProfile && (s == nil || !s.InCustomProfile()) {
 		return EditPlan{Target: target, Live: true}
 	}
 	return EditPlan{Target: target, Live: false}

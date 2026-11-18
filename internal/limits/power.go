@@ -142,6 +142,11 @@ type Limits struct {
 	// fallback numbers describe.
 	HasPower, HasFans, HasUndervolt, HasBattery bool
 
+	// Slider is the device's one-slider TDP model (api.PowerInfo.Slider): a
+	// TDP set with no custom profile running is a remembered device setting,
+	// offered as a plain control, rather than an edit to the custom profile.
+	Slider bool
+
 	// PowerLimits are the limits a user may set, in display order, with the
 	// words to show for each (api.PowerInfo.Limits). A daemon older than the
 	// field gets the built-in three, which is what it always offered.
@@ -552,13 +557,26 @@ func sanitizedFloor(floor []api.FanCurvePoint, minPWM, pwmMax int) []api.FanCurv
 // Presentation policy, but derived rather than fixed: it only means anything as
 // "a little under the safe max". A hardcoded 70 would be nonsense on a device
 // whose safe sustained limit is 54.
+//
+// A device whose safe maximum is its hardware maximum (OneXConsole's range on
+// the OXP: nothing above it needs force) has nothing to keep the slider under,
+// so its basic view reaches the top of the range.
 func (l Limits) BasicSliderMax() int {
 	const headroom = 5
+	if l.TDPMaxSafe >= l.TDPMaxForced {
+		return l.TDPMaxForced
+	}
 	if m := l.TDPMaxSafe - headroom; m > l.TDPMin {
 		return m
 	}
 	return l.TDPMin
 }
+
+// TDPSliderMax is the top of the plain TDP control a slider device offers: the
+// safe maximum, since a quick control never sends the force flag. On the OXP it
+// is the whole range, 85 W on AC and 55 W on battery (get-state's live
+// tdp_limits move it with the power source).
+func (l Limits) TDPSliderMax() int { return max(l.TDPMaxSafe, l.TDPMin) }
 
 // PL2Range returns the short-boost slider's bounds.
 func (l Limits) PL2Range() (lo, hi int) { return l.burstRange(l.PL2Min, l.PL2Max) }

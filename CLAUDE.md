@@ -682,6 +682,36 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   the rule would match nothing (the lighting lesson again). Checked with
   `udevadm test` against a throwaway /run rule: event13 and hidraw4 matched,
   event10, the AT keyboard and the other hidraw interfaces did not.
+- **On a slider device the GUI offers the TDP as one control, and the
+  editor stores "custom" instead of sending bare** (2026-11-17; the OXP's
+  OneXConsole model, `power.slider` + `profiles.pin`). A `tdp` drawer control
+  (`CapPowerSlider`, `gui/tdpslider.go`) and a TDP row in the Dashboard's
+  POWER card send a bare `tdp` set, debounced 400 ms (every write is three
+  SMU commands; the daemon's 150 ms spacing is only the backstop) and held
+  against mid-drag refreshes (`pending`, generation-counted). Its range is
+  `limits.TDPSliderMax` (the safe max, which get-state's `tdp_limits` move to
+  55 W on battery); the note under it is `profileui.TDPSliderNote` (firmware
+  preset, value above the battery cap, or "set by <profile>, moving the
+  slider leaves it"). **The slider never edits a profile** (Jeff,
+  2026-11-17: "A user should actively update it if they want"): a bare
+  `tdp` set on a slider device, from the GUI or the CLI, leaves a running
+  custom profile unchanged (`leaveProfileForSlider`: DeviceTDP set first, then
+  `applyStockHW` onto the pin/default, whose handBack writes the new value
+  once), and loading a profile only recalls what it saved. A profile's TDP is
+  changed with `--profile`, which the editor always sends there
+  (`EditPlan.Named`); the daemon treats a named edit of the running profile
+  as live. A pinned profile is one
+  **Default** button (`profileui.FirmwareFrom`). **The editor bug this
+  prevented:** `PlanEdit` made "custom" live while a firmware profile runs,
+  and on a slider device a bare send moves the slider, so the Profiles page
+  would have changed the remembered TDP while showing "custom" saved.
+  `PlanEditOn(…, slider)` stores it. Save As with no custom profile running
+  keeps the TDP setting (daemon and `SaveAsBlock`), the "save a slider
+  position, load it back" half of the model. `BasicSliderMax` reaches the
+  top when safe == forced. The charge-limit control now needs
+  `CapChargeLimit` (`battery.charge_limit`), or the OXP drew a dead slider.
+  Z13 focus dump byte-identical on all six lines; on the OXP the drawer is
+  profile/tdp/autoswitch and screenshots confirmed preset → 30 W.
 - **Setup leaves a node at mode 0000 alone** (`hiddenNode`). No kernel creates
   one; InputPlumber hides the nodes it manages that way, and setup's direct
   `chmod g=r` would have undone that for the whole group until the next udev
@@ -3861,7 +3891,9 @@ diff whenever a main release touches `api/`.
 16. **OXP X2 Mini Pro power (M5)** (Jeff, 2026-11-16): real TDP through
     ryzen_smu (amkillam fork) when present, `amd-pmf` platform profiles as the
     fallback with an install note; no kernel module of ours. The lockup rules
-    learned in oxp-tdpd are requirements. Plan: `.claude/plans/oxp-power.md`;
+    learned in oxp-tdpd are requirements. Daemon slider model, pin and GUI
+    built and verified 2026-11-17 (entries above); left: read-only fan RPM,
+    the device page and the remaining decision entries. Plan: `.claude/plans/oxp-power.md`;
     platform state and evidence: `.claude/plans/oxp-x2-mini-pro-status.md`.
 
 ### The daemon — COMPLETE

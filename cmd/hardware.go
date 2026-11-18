@@ -184,6 +184,28 @@ func stockRowFor(hw *device.Device, env driver.PowerEnvelope, profile string) st
 	return profile
 }
 
+// sliderStock refines stockRowFor on a slider device (power.slider), where a
+// firmware profile's limits are the user's TDP setting whenever one is
+// remembered: the row is named only while the limits shown still equal it —
+// before anything was set, or after a reset.
+func sliderStock(hw *device.Device, env driver.PowerEnvelope, stock string, tdp api.TDPState) string {
+	if stock == "" || !hw.PowerSlider {
+		return stock
+	}
+	row := env.StockProfilePPT[stock]
+	if tdp.PL1SPL == row.PL1SPL && tdp.PL2SPPT == row.PL2SPPT && tdp.FPPT == row.FPPT {
+		return stock
+	}
+	return ""
+}
+
+// inCustomProfileForTDP reports whether profile names a custom profile rather
+// than one of the device's firmware profiles (which all have stock rows).
+func inCustomProfileForTDP(profile string, env driver.PowerEnvelope) bool {
+	_, firmware := env.StockProfilePPT[profile]
+	return !firmware
+}
+
 // undervoltShortLabel is the device's compact name for its undervolt offset
 // ("CO" for AMD's Curve Optimizer), for one-line summaries.
 func undervoltShortLabel() string {

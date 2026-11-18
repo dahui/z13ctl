@@ -1,6 +1,6 @@
-# OneXPlayer X2 Mini Pro (Strix Halo). Profiles, battery, CPU boost,
-# telemetry and buttons; fans (oxpec, manual PWM only) and power limits
-# (ryzen_smu) land with M5 (.claude/plans/oxp-power.md).
+# OneXPlayer X2 Mini Pro (Strix Halo). Power limits through ryzen_smu,
+# profiles (pinned), battery, CPU boost, telemetry and buttons. Fan control is
+# left to the EC's own curve (.claude/plans/oxp-power.md).
 #
 # Every value here was captured on this machine (2026-11-17, Linux 7.3.4,
 # hid-oxp bound); the captures are in
@@ -16,15 +16,63 @@ name  = "OneXPlayer X2 Mini Pro"
 vendor  = "ONE-NETBOOK"
 product = "ONEXPLAYER X2Mini PRO"
 
-# amd-pmf is the only platform-profile handler (no vendor WMI). Measured under
-# load (2026-11-16): low-power holds ~33 W sustained, balanced and performance
-# ~61 W, which is the thermal ceiling of this chassis. The EC re-applies its own
-# power presets on every charger edge, under whichever profile is selected.
+# amd-pmf is the only platform-profile handler (no vendor WMI), and it is
+# pinned to balanced: low-power caps power at ~33 W below any SMU limit, and
+# the PM table cannot show it (measured 2026-11-17: SMU 60/60/60 on low-power
+# held 32.8 W). Balanced does not cap: SMU 85 held the same 62–65 W at 95 °C
+# on balanced and performance, the chassis's thermal ceiling. OneXConsole has
+# no profiles either, only a TDP slider, so none is offered: the daemon holds
+# balanced and puts it back (logged) when anything else selects another.
 [profiles]
 method  = "platform-profile"
-names   = ["low-power", "balanced", "performance"]
+names   = ["balanced"]
 handler = "amd-pmf"
 default = "balanced"
+pin     = "balanced"
+
+# STAPM (PL1), slow (PL2) and fast (PL3) PPT over the SMU, ryzenadj's MP1
+# 0x14/0x16/0x15, which needs the ryzen_smu module (amkillam's fork for Strix
+# Halo; it loads by PCI alias once installed). The range is OneXConsole's:
+# 10–85 W on AC, at most 55 W on battery. Nothing above it is offered, so no
+# fan floor is needed and the safe maximum is the range maximum — the EC keeps
+# its own fan curve, and sustained power is thermally bound near 62 W anyway.
+#
+# The stock rows are the EC's own presets (THMD(2) on AC, THMD(1) on battery;
+# STAPM/slow/fast), which it writes on every charger edge whatever was set —
+# measured, so the daemon re-applies the remembered TDP after each edge.
+# There is no "restore defaults" SMU message; a reset writes these rows.
+#
+# slider: like OneXConsole, setting a TDP with no custom profile active is a
+# remembered device setting, re-applied at boot, on resume and after a charger
+# edge, never written until the user first sets one.
+[power]
+method          = "amd-smu"
+tdp_min         = 10
+tdp_max_safe    = 85
+tdp_max_forced  = 85
+tdp_max_battery = 55
+slider          = true
+
+[[power.limits]]
+id          = "pl1"
+label       = "Sustained (STAPM)"
+description = "The long-term average the chip is held to"
+
+[[power.limits]]
+id          = "pl2"
+label       = "Slow PPT"
+description = "The limit over the next tens of seconds"
+
+[[power.limits]]
+id          = "pl3"
+label       = "Fast PPT"
+description = "The short boost limit"
+
+[power.stock_ppt]
+balanced = { pl1 = 80, pl2 = 85, fppt = 100 }
+
+[power.stock_ppt_battery]
+balanced = { pl1 = 50, pl2 = 50, fppt = 60 }
 
 # The charge limit is deliberately not offered yet. oxpec (7.3) exposes
 # BATT/charge_control_end_threshold on this board through the OneXPlayer X1's

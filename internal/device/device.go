@@ -60,6 +60,19 @@ type Device struct {
 	// to learn it. Served as device-get's button_label for older clients.
 	ButtonLabel string
 
+	// PowerSlider is power.slider: a TDP set while no custom profile is active
+	// is a remembered device setting, not a profile (see PowerConfig.Slider).
+	PowerSlider bool
+
+	// PowerPerSource says the power envelope differs between AC and battery in
+	// device data (power.tdp_max_battery or power.stock_ppt_battery), so a
+	// cached envelope is only good for the source it was read on.
+	PowerPerSource bool
+
+	// ProfilePin is profiles.pin, the firmware profile the daemon holds; "" for
+	// none.
+	ProfilePin string
+
 	// ButtonList is every button the device declares, in file order: the
 	// choices a user has for opening voltaire. Buttons watches all of them,
 	// each press carrying its ID.
@@ -233,8 +246,11 @@ func Assemble(c Config) (*Device, error) {
 		}
 		// The raw limiter goes into the engine and nowhere else.
 		d.Power = &safety.Engine{Fans: d.Fans, Power: raw}
+		d.PowerSlider = c.Power.Slider
+		d.PowerPerSource = c.Power.TDPMaxBattery > 0 || len(c.Power.StockPPTBattery) > 0
 	}
 	if c.Profiles != nil {
+		d.ProfilePin = c.Profiles.Pin
 		f, err := lookup("profiles", profilesFactories, c.Profiles.Method)
 		if err != nil {
 			return nil, err

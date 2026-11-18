@@ -123,4 +123,7 @@ func (w *Window) applyLimits(next limits.Limits) {
 	for _, b := range w.batterySections() {
 		b.applyLimits()
 	}
+	for _, s := range w.tdpSliderSections() {
+		s.applyLimits()
+	}
 }

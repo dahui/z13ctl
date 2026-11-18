@@ -47,6 +47,11 @@ range the kernel accepts for each.
 With --set, writes power limits in watts. By default, all PPT values are set to
 the same value. Use --pl1, --pl2, --pl3 to override individual limits.
 
+On a device with a single TDP setting (the OneXPlayer X2 Mini Pro), --set
+without --profile is that setting: it is remembered and re-applied at boot, and
+if a custom profile is running it is left, unchanged. To change a profile's TDP,
+name it with --profile.
+
 Ranges come from the kernel where it reports them (asus-armoury does), and from
 the device data where it does not; --get prints the ranges in force. A PL2 or
 PL3 below its minimum is raised to it, with a note saying so, and a PL1 outside
@@ -164,14 +169,21 @@ func runTdpGet() error {
 		fmt.Printf("  APU sPPT:           %d\n", tdp.APUSPPT)
 		fmt.Printf("  Platform sPPT:      %d\n", tdp.PlatformSPPT)
 	}
-	if stock != "" {
+	stock = sliderStock(hw, env, stock, tdp)
+	switch {
+	case stock != "":
 		fmt.Printf("  Set by:             the %s firmware profile (its stock limits)\n", stock)
+	case hw.PowerSlider && !inCustomProfileForTDP(profile, env):
+		fmt.Println("  Set by:             the TDP setting (re-applied at boot, on resume and on a charger change)")
 	}
 	if env.Interface != "" {
 		fmt.Printf("  Interface:          %s (%s)\n", env.Interface, strings.Join(ranges, ", "))
 	}
 	// The help text cannot know this machine's numbers, so it points here.
-	if env.TDPMaxSafe > 0 {
+	switch {
+	case env.TDPMaxSafe > 0 && env.TDPMaxSafe >= env.TDPMaxForced:
+		fmt.Printf("  Maximum:            %dW sustained\n", env.TDPMaxForced)
+	case env.TDPMaxSafe > 0:
 		fmt.Printf("  Safe maximum:       %dW sustained (above it needs --force and a fan floor)\n", env.TDPMaxSafe)
 	}
 	return nil
@@ -255,6 +267,16 @@ func runTdpSet() error {
 	// fails and nil makes it spuriously true, which is exactly backwards.
 	preCurve := liveFanCurve(hw)
 
+	// On a slider device a bare set leaves a running custom profile (the
+	// daemon's leaveProfileForSlider); say so, since the profile is what the
+	// user may have expected to change.
+	leaving := ""
+	if hw.PowerSlider && tdpProfileFlag == "" {
+		if p := effectiveProfileForTDP(hw); inCustomProfileForTDP(p, env) {
+			leaving = p
+		}
+	}
+
 	if handled, err := api.SendTdpSetFor(tdpProfileFlag, tdpSetFlag, tdpPL1Flag, tdpPL2Flag, tdpPL3Flag, tdpForceFlag); handled {
 		if err != nil {
 			return err
@@ -262,6 +284,9 @@ func runTdpSet() error {
 		if tdpProfileFlag != "" {
 			fmt.Print(profileEditMessage(tdpProfileFlag, ""))
 			return nil
+		}
+		if leaving != "" {
+			fmt.Printf("Left the %s profile (unchanged; change it with --profile %s)\n", leaving, leaving)
 		}
 		printFloorNotice(env, fanPWMMax(hw), pl1, preCurve, true)
 		fmt.Printf("TDP set to %dW\n", watts)

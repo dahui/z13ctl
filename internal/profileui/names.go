@@ -43,12 +43,20 @@ func SaveAsNameProblem(name string) string {
 // SaveAsBlock returns "" when Save As can work right now, else the reason the
 // affordance must be insensitive. It mirrors the daemon's profile-save
 // refusals: the copy source is the active custom profile, so there must be one
-// and it must have settings.
-func SaveAsBlock(s *api.State) string {
+// and it must have settings. On a slider device (limits.Limits.Slider) with no
+// custom profile running the source is the TDP setting, which must have been
+// set — before that the firmware's preset is in force.
+func SaveAsBlock(s *api.State, slider bool) string {
 	if s == nil {
 		return "the daemon is not connected"
 	}
 	p, ok := s.ActiveCustomProfile()
+	if !ok && slider {
+		if s.DeviceTDP == nil {
+			return "the TDP is at the firmware's preset — set one first"
+		}
+		return ""
+	}
 	if !ok {
 		return "no custom profile is active — Save As copies the active one"
 	}

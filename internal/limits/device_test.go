@@ -254,3 +254,33 @@ func TestDefaultLimitsHaveEveryCapability(t *testing.T) {
 		t.Error("FromDevice(nil) is not DefaultLimits")
 	}
 }
+
+// The OXP's document: the one-slider model, a range with nothing beyond the
+// safe maximum, and get-state moving it to the battery cap.
+func TestSliderDeviceRange(t *testing.T) {
+	l := FromDevice(&api.DeviceInfo{Power: &api.PowerInfo{
+		TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, Slider: true,
+		PL2: &api.PowerRange{Min: 10, Max: 85}, PL3: &api.PowerRange{Min: 10, Max: 100},
+	}})
+	if !l.Slider {
+		t.Fatal("Slider not carried from the document")
+	}
+	if got := l.BasicSliderMax(); got != 85 {
+		t.Errorf("BasicSliderMax = %d, want 85: no headroom to keep below when safe is the top", got)
+	}
+	if got := l.TDPSliderMax(); got != 85 {
+		t.Errorf("TDPSliderMax = %d, want 85", got)
+	}
+	bat := l.WithTDPLimits(&api.TDPLimits{Backend: "ryzen_smu",
+		PL1: api.TDPRange{Min: 10, Max: 55}, PL2: api.TDPRange{Min: 10, Max: 55},
+		PL3: api.TDPRange{Min: 10, Max: 60}, SafeMax: 55})
+	if got := bat.TDPSliderMax(); got != 55 || !bat.Slider {
+		t.Errorf("on battery TDPSliderMax = %d slider %v, want 55 and still a slider", got, bat.Slider)
+	}
+	if FromDevice(&api.DeviceInfo{Power: &api.PowerInfo{TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80}}).Slider {
+		t.Error("a document without the flag must not read as a slider device")
+	}
+	if got := DefaultLimits().BasicSliderMax(); got != DefaultLimits().TDPMaxSafe-5 {
+		t.Errorf("the Z13's basic view moved: %d", got)
+	}
+}

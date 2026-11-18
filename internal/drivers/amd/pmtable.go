@@ -77,6 +77,15 @@ func (f PMField) String() string {
 // listed is refused: a BIOS update that moves the table must report nothing,
 // not misread it.
 var pmLayouts = map[uint32]map[PMField]int{
+	// The OneXPlayer X2 Mini Pro's (Strix Halo, BIOS 0.22). Confirmed on that
+	// machine 2026-11-17: idle limits read 80/100/85, the EC's own AC preset;
+	// SMU writes of 25/25/25 and 60/60/60 read back exactly, and the slow
+	// reading settled on the RAPL package figure under load.
+	0x0064010C: {
+		PMSTAPMLimit: 0, PMSTAPMValue: 1,
+		PMFastLimit: 2, PMFastValue: 3,
+		PMSlowLimit: 4, PMSlowValue: 5,
+	},
 	0x0064020C: {
 		PMSTAPMLimit: 0, PMSTAPMValue: 1,
 		PMFastLimit: 2, PMFastValue: 3,

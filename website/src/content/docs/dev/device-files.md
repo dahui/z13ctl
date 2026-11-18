@@ -65,13 +65,16 @@ only when a user picks it. No profile switch selects one.
 
 | Key | Meaning |
 |---|---|
-| `method` | The power-limit driver: `asus-nb-wmi-ppt` (uses asus-armoury's attributes where they are writable). |
+| `method` | The power-limit driver: `asus-nb-wmi-ppt` (uses asus-armoury's attributes where they are writable), or `amd-smu`, voltaire's generic AMD driver for machines with no vendor interface: STAPM (`pl1`), slow (`pl2`) and fast (`pl3`) PPT written to the SMU through the `ryzen_smu` module (ryzenadj's messages; a CPU without a known command is refused before any write). `amd-smu` needs exactly one `stock_ppt` row, the firmware profile it runs under, and reads nothing back from the SMU: it reports what it wrote, or the firmware's row after a power-source change. |
 | `tdp_min`, `tdp_max_safe`, `tdp_max_forced` | The sustained limit's range, and the safe maximum above which a request needs `--force` and the fan floor. `0 < tdp_min < tdp_max_safe <= tdp_max_forced`. A kernel that reports its own bounds replaces `tdp_min`/`tdp_max_forced`. |
 | `tdp_default` | Optional starting value for a new custom TDP, within `tdp_min`..`tdp_max_safe`. |
 | `floor_curve` | `[temp, pwm]` pairs the fans must hold, per point, while the sustained limit exceeds `tdp_max_safe`. Needs a `[fans]` block. Leave it out on a device that needs no floor. |
 | `boot_cache_pl1` | The PL1 the attributes read after boot before anything writes them (5 on the Z13's asus-nb-wmi attributes). A readback equal to it describes no limit in force. Optional. |
 | `limits` | Which settable limits to offer, in order, and their wording: `[[power.limits]]`. |
 | `stock_ppt` | Each firmware profile's own limits, as a row. |
+| `tdp_max_battery` | Optional cap on the sustained limit while on battery, within `tdp_min`..`tdp_max_forced` (55 W on the OneXPlayer X2 Mini Pro, OneXConsole's). |
+| `stock_ppt_battery` | Optional: the firmware's own rows on battery, where they differ from `stock_ppt` (a OneXPlayer's EC writes a battery preset on every unplug). One row per `stock_ppt` row. |
+| `slider` | Optional, `true` for the one-slider model: setting a TDP while no custom profile is active applies it and remembers it as a device setting instead of creating the `custom` profile, and the daemon re-applies it at boot, on resume and after a charger edge. Nothing is written until the user first sets one. Named custom profiles still hold their own TDP. |
 
 Each `[[power.limits]]` has an `id` (`pl1`, `pl2` or `pl3`, the `tdp`
 command's fields), an optional `label` and an optional `description`. Without
@@ -97,6 +100,7 @@ re-apply its own limits. The default profile's `pl1` must be within
 | `handler` | The platform-profile class device that owns the profile, by its `name` (`asus-wmi`). Empty picks one heuristically. |
 | `default` | Where `tdp --reset` and `tuning --reset` land. Must be in `names`. |
 | `labels` | Display labels by name, overriding the built-in spellings. |
+| `pin` | Optional: the one firmware profile the daemon holds. When anything else selects another (power-profiles-daemon on low battery, a stray tool), the daemon puts it back and logs that it did. For a device whose firmware profiles cap power below what its TDP control offers. Must be in `names`. |
 
 ## `[lighting]`: RGB
 

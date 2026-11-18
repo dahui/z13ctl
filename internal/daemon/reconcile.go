@@ -33,6 +33,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -97,6 +98,18 @@ type reconcileObs struct {
 	// readback move without anyone writing it; see reconcileSourceGraceTicks.
 	OnAC        bool
 	SourceKnown bool
+	// Pin is the device's pinned firmware profile ("" none), and OffPin that
+	// the platform reports a profile the device does not offer — another tool
+	// selected it (driver.ErrProfileNotOffered), never a read that failed.
+	Pin    string
+	OffPin bool
+	// DeviceTDP is the slider device's remembered TDP while no custom profile
+	// runs (nil otherwise), and RawPL1 the limiter's own readback of the
+	// sustained limit (-1 unread). The raw readback, not ReadEffective: with no
+	// boot-cache value declared, CacheStale reads a PL1 at tdp_min as stale and
+	// would have a 10 W setting re-applied every tick.
+	DeviceTDP *api.TDPState
+	RawPL1    int
 }
 
 // observedSource is the power source as the reconcile watcher last saw it.
@@ -125,7 +138,9 @@ type reconcileAction struct {
 	// write-only. It is set on exactly one path: a stand-down that expired,
 	// meaning a PrepareForSleep(false) never arrived. See reconcileTick.
 	Undervolt *int
-	Reason    string
+	// Pin puts the device's pinned firmware profile back.
+	Pin    string
+	Reason string
 	// Routine marks an action whose only evidence is the kernel's notification.
 	// The daemon's own fan releases produce that too, so it is logged at Info
 	// rather than as a warning after every tdp --set.
@@ -134,7 +149,7 @@ type reconcileAction struct {
 
 // none reports whether the action would touch anything.
 func (a reconcileAction) none() bool {
-	return a.Curve == nil && a.TDP == nil && a.Undervolt == nil
+	return a.Curve == nil && a.TDP == nil && a.Undervolt == nil && a.Pin == ""
 }
 
 // reconcileState is the latched watcher state carried between ticks.
@@ -226,9 +241,29 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 	// is never custom even if a profile of that name somehow reached the map,
 	// so this cannot be subverted by a hand-edited state file.
 	if !obs.Custom {
-		st.failures = 0
-		st.quiet = false
-		return st, reconcileAction{}
+		// Two duties remain on a firmware profile, both device data's opt-ins.
+		// The pin: another tool selected a profile the device does not offer
+		// (power-profiles-daemon on low battery), which on the OXP caps power
+		// below the TDP control — put the pinned one back. And the slider's
+		// remembered TDP: the OXP's EC writes its own preset on every charger
+		// edge, which the limiter's readback reports as the drift it is.
+		var act reconcileAction
+		if obs.Pin != "" && obs.OffPin {
+			act.Pin = obs.Pin
+			act.Reason = "another tool selected a firmware profile this device does not offer; putting " + obs.Pin + " back"
+		}
+		if obs.DeviceTDP != nil && obs.RawPL1 >= 0 && obs.RawPL1 != safety.EffectiveTDP(env, *obs.DeviceTDP).PL1SPL {
+			act.TDP = obs.DeviceTDP
+			if act.Reason == "" {
+				act.Reason = "the remembered TDP is no longer in force"
+			}
+			act.Routine = st.sourceGrace > 0 // a charger edge: the firmware's preset, expected
+		}
+		if act.none() {
+			st.failures = 0
+			st.quiet = false
+		}
+		return st, act
 	}
 
 	var act reconcileAction
@@ -488,6 +523,24 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		// is active.
 		obs.OnAC, obs.SourceKnown = d.acPower()
 	}
+	// The slider's remembered TDP, on a firmware profile only (a custom profile
+	// carries its own TDP, handled above). The raw readback is the limiter's
+	// cache — on amd-smu no SMU transaction — and the source after it, for the
+	// charger-edge grace.
+	obs.RawPL1 = -1
+	if !obs.Custom && !suspending && d.hw != nil && d.hw.Power != nil && d.hw.PowerSlider && s.DeviceTDP != nil {
+		obs.DeviceTDP = s.DeviceTDP
+		if tdp, err := d.hw.Power.Read(); err == nil {
+			obs.RawPL1 = tdp.PL1SPL
+		}
+		obs.OnAC, obs.SourceKnown = d.acPower()
+		readPower = true
+	}
+	if d.hw != nil && d.hw.ProfilePin != "" && d.hw.Profiles != nil && !suspending {
+		obs.Pin = d.hw.ProfilePin
+		_, err := d.hw.Profiles.Get()
+		obs.OffPin = errors.Is(err, driver.ErrProfileNotOffered)
+	}
 	// Taken before the read, so a switch landing between the two is at worst
 	// reported as a warning, never a foreign change as the daemon's own.
 	if own := d.ownProfileWrite.Swap(nil); own != nil {
@@ -525,7 +578,24 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	case act.Routine:
 		logf = slog.Info
 	}
-	logf("reconciling custom thermal settings",
+	if act.Pin != "" {
+		// Pinned by device data: this is the one place the watcher writes
+		// platform_profile. No write-fight with power-profiles-daemon follows —
+		// it writes on transitions and holds, and does not re-assert.
+		if err := d.setPlatformProfile(act.Pin); err != nil {
+			slog.Warn("failed to put the pinned firmware profile back", "profile", act.Pin, "err", err)
+		} else {
+			slog.Info("firmware profile was changed by another tool; put the pinned one back", "profile", act.Pin)
+		}
+		if act.TDP == nil && act.Curve == nil && act.Undervolt == nil {
+			return st
+		}
+	}
+	msg := "reconciling custom thermal settings"
+	if !obs.Custom {
+		msg = "re-applying the remembered TDP"
+	}
+	logf(msg,
 		"reason", act.Reason,
 		"platform_profile", obs.ProfileHW,
 		"pwm_enable", obs.CurveMode)

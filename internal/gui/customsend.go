@@ -39,7 +39,7 @@ func (c *customView) editPlan() profileui.EditPlan {
 	if target == "" {
 		target = api.DefaultCustomProfile
 	}
-	return profileui.PlanEdit(c.w.state, target)
+	return profileui.PlanEditOn(c.w.state, target, c.w.limits.Slider)
 }
 
 // tdpRequest is a snapshot of the TDP widgets, taken on the GTK thread so the

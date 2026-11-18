@@ -36,6 +36,16 @@ func init() {
 	device.RegisterPower("asus-nb-wmi-ppt", func(c device.PowerConfig) (driver.PowerLimiter, error) {
 		return asus.NewPowerLimiter(c.Envelope()), nil
 	})
+	// The generic AMD power method: limits straight to the SMU, for machines
+	// with no vendor interface (the OXP). Its one stock row names the firmware
+	// profile it runs under (Config.Validate requires exactly one).
+	device.RegisterPower("amd-smu", func(c device.PowerConfig) (driver.PowerLimiter, error) {
+		profile := ""
+		for name := range c.StockPPT {
+			profile = name
+		}
+		return amd.NewSMUPower(c.Envelope(), c.EnvelopeBattery(), profile, linux.OnACPower), nil
+	})
 	device.RegisterProfiles("platform-profile", func(c device.ProfilesConfig) (driver.ProfileController, error) {
 		// asus-wmi notifies its own policy attribute on every profile write
 		// and every fan release; the generic driver watches it when told to.

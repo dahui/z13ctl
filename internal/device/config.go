@@ -159,6 +159,20 @@ type PowerConfig struct {
 	// with no label takes the driver's.
 	Limits   []PowerLimitConfig  `toml:"limits"`
 	StockPPT map[string]StockRow `toml:"stock_ppt"`
+
+	// TDPMaxBattery caps the sustained limit while on battery (0: no separate
+	// cap). StockPPTBattery is the firmware's own rows on battery, where they
+	// differ from StockPPT (the OXP's EC presets: 80/100/85 on AC, 50/60/50 on
+	// battery). Together they make EnvelopeBattery.
+	TDPMaxBattery   int                 `toml:"tdp_max_battery"`
+	StockPPTBattery map[string]StockRow `toml:"stock_ppt_battery"`
+
+	// Slider selects the one-slider model (OneXConsole's): setting a TDP while
+	// no custom profile is active applies and remembers it as a device setting
+	// rather than creating the custom profile, and the daemon re-applies the
+	// remembered value at boot, on resume and after a charger edge. Named
+	// custom profiles still hold a TDP of their own.
+	Slider bool `toml:"slider"`
 }
 
 // PowerLimitConfig is one [[power.limits]] entry.
@@ -199,6 +213,25 @@ func (c PowerConfig) Envelope() driver.PowerEnvelope {
 	return env
 }
 
+// EnvelopeBattery is the envelope while on battery: the sustained limits
+// capped at TDPMaxBattery, and StockPPTBattery's rows where it has them.
+func (c PowerConfig) EnvelopeBattery() driver.PowerEnvelope {
+	env := c.Envelope()
+	if c.TDPMaxBattery > 0 {
+		env.TDPMaxForced = min(env.TDPMaxForced, c.TDPMaxBattery)
+		env.TDPMaxSafe = min(env.TDPMaxSafe, c.TDPMaxBattery)
+	}
+	if len(c.StockPPTBattery) > 0 {
+		env.StockProfilePPT = make(map[string]api.TDPState, len(c.StockPPTBattery))
+		for name, r := range c.StockPPTBattery {
+			env.StockProfilePPT[name] = api.TDPState{
+				PL1SPL: r.PL1, PL2SPPT: r.PL2, FPPT: r.FPPT, APUSPPT: r.APU, PlatformSPPT: r.Platform,
+			}
+		}
+	}
+	return env
+}
+
 // ProfilesConfig selects the platform-profile driver and describes the
 // firmware profiles.
 //
@@ -219,6 +252,13 @@ type ProfilesConfig struct {
 	Handler string            `toml:"handler"`
 	Default string            `toml:"default"`
 	Labels  map[string]string `toml:"labels"`
+
+	// Pin is the one firmware profile the daemon holds: when anything else
+	// selects another (power-profiles-daemon on low battery, a stray tool),
+	// the daemon puts this one back and logs it. For a device whose firmware
+	// profiles cap power below what its TDP control offers (the OXP's amd-pmf
+	// low-power holds ~33 W whatever the SMU limits say).
+	Pin string `toml:"pin"`
 }
 
 // LightingConfig selects the lighting driver and describes its zones.
@@ -685,6 +725,29 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if p := c.Power; p != nil {
+		if p.TDPMaxBattery != 0 && (p.TDPMaxBattery < p.TDPMin || p.TDPMaxBattery > p.TDPMaxForced) {
+			fail("power.tdp_max_battery %dW must be within tdp_min..tdp_max_forced (%d..%d)", p.TDPMaxBattery, p.TDPMin, p.TDPMaxForced)
+		}
+		for name := range p.StockPPTBattery {
+			if _, ok := p.StockPPT[name]; !ok {
+				fail("power.stock_ppt_battery has a row for %q, which power.stock_ppt does not", name)
+			}
+		}
+		if len(p.StockPPTBattery) > 0 {
+			for name := range p.StockPPT {
+				if _, ok := p.StockPPTBattery[name]; !ok {
+					fail("power.stock_ppt_battery is missing profile %q", name)
+				}
+			}
+		}
+		if p.Method == "amd-smu" && len(p.StockPPT) != 1 {
+			fail("power.method amd-smu needs exactly one stock_ppt row, the firmware profile it runs under (got %d)", len(p.StockPPT))
+		}
+	}
+	if c.Profiles != nil && c.Profiles.Pin != "" && !slicesContains(c.Profiles.Names, c.Profiles.Pin) {
+		fail("profiles.pin %q is not in profiles.names", c.Profiles.Pin)
+	}
 	if c.Profiles != nil {
 		if c.Profiles.Method == "" {
 			fail("profiles.method is required")

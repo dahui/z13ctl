@@ -406,6 +406,21 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 		{"inputplumber capability that is not a button name", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "evdev-key", Device: "d", Keycode: 1, InputPlumber: "Gamepad:Button:Guide"}}
 		}, "gamepad button name"},
+		{"battery cap above the forced maximum", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, TDPMaxBattery: 90}
+		}, "tdp_max_battery"},
+		{"battery row for a profile with no AC row", func(c *Config) {
+			c.Power = &PowerConfig{Method: "m", TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85,
+				StockPPT:        map[string]StockRow{"balanced": {PL1: 80}},
+				StockPPTBattery: map[string]StockRow{"balanced": {PL1: 50}, "quiet": {PL1: 30}}}
+		}, "stock_ppt_battery has a row"},
+		{"amd-smu with two stock rows", func(c *Config) {
+			c.Power = &PowerConfig{Method: "amd-smu", TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85,
+				StockPPT: map[string]StockRow{"balanced": {PL1: 80}, "performance": {PL1: 85}}}
+		}, "exactly one stock_ppt row"},
+		{"profile pin not offered", func(c *Config) {
+			c.Profiles = &ProfilesConfig{Method: "m", Names: []string{"balanced"}, Pin: "low-power"}
+		}, "profiles.pin"},
 		{"keyboard node on a non-evdev method", func(c *Config) {
 			c.Buttons = []ButtonConfig{{ID: "a", Label: "B", Method: "hidraw-report", KeyboardNode: "why"}}
 		}, "only to evdev methods"},

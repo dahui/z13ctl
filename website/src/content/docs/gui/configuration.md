@@ -71,9 +71,10 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 
 | ID | Section |
 |----|---------|
-| `profile` | The three firmware profiles plus the Custom profile picker |
+| `profile` | The device's firmware profiles plus the Custom profile picker. On a device with a pinned profile (the OneXPlayer X2 Mini Pro) the firmware profiles are one **Default** button: the TDP slider, with no saved profile running |
+| `tdp` | The TDP slider, on a device whose TDP is one setting rather than part of a profile (the OneXPlayer X2 Mini Pro). It sets the machine's TDP and is remembered across reboots. With a custom profile running, moving it leaves the profile (unchanged) for the TDP setting; change a profile's TDP on the Profiles page |
 | `autoswitch` | The AC/battery autoswitch row and its two targets |
-| `battery` | The charge-limit slider |
+| `battery` | The charge-limit slider, where the device has a charge limit to set |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
 | `cpu-boost` | The CPU boost switch (off by default) |
 | `refresh-rate` | The screen's refresh rate, where the desktop can report one — not in Steam Gaming Mode, where Steam sets it (off by default) |

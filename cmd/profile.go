@@ -242,7 +242,7 @@ func runProfileSaveAs() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Copied the active profile to %s\n", name)
+	fmt.Printf("Saved what is running now as %s\n", name)
 	return nil
 }
 
@@ -268,7 +268,7 @@ func init() {
 	profileCmd.Flags().StringVar(&profileSetFlag, "set", "", "Set the profile: a firmware profile (see --list) or a custom profile name")
 	profileCmd.Flags().BoolVar(&profileListFlag, "list", false, "List the firmware profiles and saved custom profiles")
 	profileCmd.Flags().StringVar(&profileCreateFlag, "create", "", "Create an empty custom profile (does not activate it)")
-	profileCmd.Flags().StringVar(&profileSaveAsFlag, "save-as", "", "Copy the active custom profile under a new name")
+	profileCmd.Flags().StringVar(&profileSaveAsFlag, "save-as", "", "Copy the active custom profile under a new name (on a TDP-slider device with none active, the TDP setting)")
 	profileCmd.Flags().StringVar(&profileDeleteFlag, "delete", "", "Delete a saved custom profile")
 	rootCmd.AddCommand(profileCmd)
 }

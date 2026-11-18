@@ -102,6 +102,7 @@ func (w *Window) rebuildDrawer() {
 		w.drawerInner.Remove(child)
 	}
 	w.profiles, w.autoswitch, w.battery, w.lighting = nil, nil, nil, nil
+	w.tdpSlider = nil
 	w.boostSw, w.display = nil, nil
 
 	cfg, _ := w.layoutConfig()

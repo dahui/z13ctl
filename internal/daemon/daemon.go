@@ -113,6 +113,7 @@ type Daemon struct {
 	// serves while it does not, and for envCacheTTL after the read. Guarded by mu.
 	envCache   *driver.PowerEnvelope
 	envCacheAt time.Time
+	envCacheAC int // the source envCache was read on (1 AC, -1 battery/unknown), when the device's envelope differs by source; 0 otherwise
 
 	// telemetry is the sampler's history ring, sized by Run from the device's
 	// declared window. It carries its own lock and is never read directly —
@@ -426,11 +427,20 @@ func (d *Daemon) restoreHardwareAtStartup() {
 			mode, modeErr := d.hw.Fans.ReadMode()
 			owned = modeErr == nil && mode == 2
 		}
-		if owned {
-			if err := d.hw.HandBackToFirmware(d.state.Profile); err != nil {
+		switch {
+		case d.hw.PowerSlider:
+			// A slider device writes only what the user set: the firmware's
+			// own limits are already in force at boot (the OXP's EC presets),
+			// and with nothing remembered there is nothing to write — no
+			// speculative SMU write at startup.
+			if _, err := d.applyDeviceTDP("startup"); err != nil {
+				slog.Warn("failed to re-apply the remembered TDP", "err", err)
+			}
+		case owned:
+			if err := d.handBack(d.state.Profile); err != nil {
 				slog.Warn("failed to restore the firmware profile's power limits", "profile", d.state.Profile, "err", err)
 			}
-		} else {
+		default:
 			d.restoreStockPPT(d.state.Profile)
 		}
 	}
@@ -692,14 +702,26 @@ func (d *Daemon) env() driver.PowerEnvelope {
 		return driver.PowerEnvelope{}
 	}
 	d.mu.Lock()
-	wedged, cached, at := d.ecWedged, d.envCache, d.envCacheAt
+	wedged, cached, at, cachedAC := d.ecWedged, d.envCache, d.envCacheAt, d.envCacheAC
 	d.mu.Unlock()
-	if wedged || (cached != nil && time.Since(at) < envCacheTTL) {
+	// A device whose envelope differs by source (the OXP's 55 W battery cap)
+	// may not serve an AC envelope after an unplug: a read is reused only on
+	// the source it was taken on. Other devices skip the source read, which on
+	// some is an ACPI call of its own.
+	onAC := 0
+	if d.hw.PowerPerSource {
+		if ac, known := d.acPower(); known && ac {
+			onAC = 1
+		} else {
+			onAC = -1
+		}
+	}
+	if wedged || (cached != nil && time.Since(at) < envCacheTTL && cachedAC == onAC) {
 		return d.storedEnv(cached)
 	}
 	env := d.hw.Power.Envelope()
 	d.mu.Lock()
-	d.envCache, d.envCacheAt = &env, time.Now()
+	d.envCache, d.envCacheAt, d.envCacheAC = &env, time.Now(), onAC
 	d.mu.Unlock()
 	return env
 }

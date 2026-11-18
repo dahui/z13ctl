@@ -917,6 +917,13 @@ func (d *Daemon) handleTDPGet() response {
 // decision reads through ReadEffective. Callers must not hold d.mu.
 func (d *Daemon) displayTDP() (api.TDPState, error) {
 	profile := d.effectiveProfile()
+	// A slider device's limits are its own on a firmware profile: the
+	// limiter's readback is the remembered value as applied (clamped to the
+	// source's range), or the firmware's row for this source before anything
+	// was set or after a charger edge the watcher has not yet repaired.
+	if d.hw.PowerSlider && d.isFirmwareProfile(profile) {
+		return d.hw.Power.Read()
+	}
 	if d.isFirmwareProfile(profile) {
 		if hw := d.profileHW(); d.isFirmwareProfile(hw) {
 			profile = hw
@@ -984,6 +991,24 @@ func (d *Daemon) handleTDP(req request) response {
 
 	d.hwMu.Lock()
 	defer d.hwMu.Unlock()
+
+	// The one-slider model (power.slider): a bare set is always the slider, a
+	// remembered device setting and never a profile edit (Jeff, 2026-11-17: "A
+	// user should actively update it if they want"). Made while a custom
+	// profile runs, it leaves that profile. Editing a profile's TDP takes
+	// --profile, which the GUI's editor always sends on such a device.
+	if d.hw.PowerSlider && req.Profile == "" {
+		d.mu.Lock()
+		leaving := ""
+		if d.state.InCustomProfile() {
+			leaving = d.state.Profile
+		}
+		d.mu.Unlock()
+		if leaving != "" {
+			return d.leaveProfileForSlider(leaving, tdp)
+		}
+		return d.setDeviceTDP(tdp)
+	}
 
 	d.mu.Lock()
 	target, err := d.resolveEditTargetLocked(req.Profile)
@@ -1068,6 +1093,78 @@ func (d *Daemon) handleTDP(req request) response {
 	}
 
 	return response{OK: true}
+}
+
+// setDeviceTDP applies a TDP as the device setting of the one-slider model
+// and remembers it (State.DeviceTDP), creating no profile. The caller holds
+// hwMu. The value is stored as asked: the power driver clamps it to the
+// current source's range (a 70 W setting runs at the battery cap unplugged
+// and at 70 W again on AC). No fan step follows: a slider device's range ends
+// at its safe maximum, so ApplyTDPSafely never needs the floor.
+func (d *Daemon) setDeviceTDP(tdp api.TDPState) response {
+	if err := d.hw.Power.ApplyTDPSafely(tdp, nil); err != nil {
+		return response{OK: false, Error: "tdp: " + err.Error()}
+	}
+	slog.Info("tdp (device setting)", "pl1", tdp.PL1SPL, "pl2", tdp.PL2SPPT, "pl3", tdp.FPPT)
+	d.mu.Lock()
+	d.state.DeviceTDP = &tdp
+	s := cloneState(d.state)
+	d.mu.Unlock()
+	d.saveAndNotify(s)
+	return response{OK: true}
+}
+
+// leaveProfileForSlider drops the running custom profile for the slider: the
+// new value becomes the remembered TDP, and the device lands on its firmware
+// profile (the pin, else the default) exactly as `profile --set` would take it
+// there — undervolt cleared, fans handed back, and handBack applying the new
+// value as its one power write. The profile itself is untouched, so loading it
+// again recalls what it saved. The caller holds hwMu and must not hold d.mu.
+func (d *Daemon) leaveProfileForSlider(from string, tdp api.TDPState) response {
+	landing := d.hw.ProfilePin
+	if landing == "" && d.hw.Profiles != nil {
+		landing = d.hw.Profiles.Default()
+	}
+	if landing == "" {
+		return response{OK: false, Error: "tdp: no firmware profile to leave " + from + " for"}
+	}
+	d.mu.Lock()
+	prev := d.state.DeviceTDP
+	set := tdp
+	d.state.DeviceTDP = &set
+	d.mu.Unlock()
+	if err := d.applyStockHW(landing); err != nil {
+		d.mu.Lock()
+		d.state.DeviceTDP = prev
+		d.mu.Unlock()
+		return response{OK: false, Error: "tdp: leaving profile " + from + ": " + err.Error()}
+	}
+	slog.Info("tdp: left the custom profile for the TDP setting", "profile", from, "landing", landing)
+	// handBack has written the value; applying it again is free when that
+	// write took (the limiter skips a repeat) and reports the error when it
+	// did not, which handBack can only log.
+	return d.setDeviceTDP(tdp)
+}
+
+// applyDeviceTDP re-applies the remembered device TDP, if there is one, on a
+// slider device running no custom profile. It reports whether it wrote (false:
+// nothing remembered, or not a slider device). The caller holds hwMu and must
+// not hold d.mu.
+func (d *Daemon) applyDeviceTDP(why string) (bool, error) {
+	if d.hw == nil || d.hw.Power == nil || !d.hw.PowerSlider {
+		return false, nil
+	}
+	d.mu.Lock()
+	want := cloneTDP(d.state.DeviceTDP)
+	d.mu.Unlock()
+	if want == nil {
+		return false, nil
+	}
+	if err := d.hw.Power.ApplyTDPSafely(*want, nil); err != nil {
+		return true, err
+	}
+	slog.Info("tdp (device setting) re-applied", "why", why, "pl1", want.PL1SPL)
+	return true, nil
 }
 
 // handleTDPReset clears the custom power limits. When it targets the live
@@ -1203,6 +1300,12 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 		d.state.CustomProfiles[target.Name] = cleared(target.Profile, true)
 	}
 	d.state.Profile = landing
+	// A reset on a slider device forgets the remembered TDP too: the firmware's
+	// own limits are what was asked for, and keeping the value would put it
+	// back at the next boot or charger edge.
+	if d.hw.PowerSlider {
+		d.state.DeviceTDP = nil
+	}
 	setUndervoltActive(d.state, false)
 	s := cloneState(d.state)
 	d.mu.Unlock()

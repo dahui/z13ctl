@@ -159,7 +159,7 @@ func (c *customView) syncProfileSelector() {
 		}
 	}
 	if c.saveAsBtn != nil {
-		block := profileui.SaveAsBlock(c.w.state)
+		block := profileui.SaveAsBlock(c.w.state, c.w.limits.Slider)
 		c.saveAsBtn.SetSensitive(block == "")
 		if block != "" {
 			blocks = append(blocks, "Save As: "+block)

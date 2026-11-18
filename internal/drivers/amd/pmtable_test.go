@@ -7,6 +7,7 @@ package amd
 import (
 	"encoding/binary"
 	"math"
+	"os"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,7 @@ func TestParsePMTableReadsTheHead(t *testing.T) {
 // offsets — a BIOS update that moves the layout must report nothing.
 func TestParsePMTableRefusesUnknownVersions(t *testing.T) {
 	raw := synthPMTable(0xE50, map[int]float32{0: 52})
-	for _, v := range []uint32{0x0064010C, 0x0064020D, 0} {
+	for _, v := range []uint32{0x0064030C, 0x0064020D, 0} {
 		if _, err := ParsePMTable(v, raw); err == nil || !strings.Contains(err.Error(), "no known layout") {
 			t.Errorf("version 0x%X: err = %v, want a refusal", v, err)
 		}
@@ -94,5 +95,25 @@ func TestParsePMTableVersion(t *testing.T) {
 	}
 	if _, err := ParsePMTableVersion([]byte{1, 2}); err == nil {
 		t.Error("2 bytes: want an error")
+	}
+}
+
+// The OXP X2 Mini Pro's table at idle with nothing written: the limits are the
+// EC's AC preset, which is what the boot-time capture of defaults reads.
+func TestParsePMTableOXPIdle(t *testing.T) {
+	raw, err := os.ReadFile("testdata/pmtable-0x64010C-idle-ac-balanced.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The version comes from pm_table_version, not the table: 0x64010C here.
+	r, err := ParsePMTable(0x0064010C, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for f, w := range map[PMField]float64{PMSTAPMLimit: 80, PMFastLimit: 100, PMSlowLimit: 85} {
+		// The EC's values carry float32 noise (85.0000076), hence a tolerance.
+		if got := r.Values[f]; math.Abs(got-w) > 0.01 {
+			t.Errorf("%s = %v, want %v (the EC's AC preset)", f, got, w)
+		}
 	}
 }

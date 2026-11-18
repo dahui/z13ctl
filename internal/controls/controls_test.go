@@ -62,8 +62,10 @@ func TestDefaultOrderIsTheShippedLayout(t *testing.T) {
 	if len(complaints) != 0 {
 		t.Errorf("default config produced complaints: %v", complaints)
 	}
-	if got := ids(controls.Defaults()); !equal(got, want) {
-		t.Errorf("Defaults() = %v, want %v", got, want)
+	// Defaults also holds the TDP slider (2026-11-17), which only a slider
+	// device has: the Z13's resolve above is still the four.
+	if got, all := ids(controls.Defaults()), []string{"profile", "tdp", "autoswitch", "battery", "lighting"}; !equal(got, all) {
+		t.Errorf("Defaults() = %v, want %v", got, all)
 	}
 	// The opt-in controls must not reach a default drawer even where the
 	// machine supports them: that is what keeps it byte-identical.
@@ -333,7 +335,7 @@ func TestLoad(t *testing.T) {
 		// what the caller falls back to: a typo in an optional file must never
 		// be what stops the drawer opening.
 		got, _ := controls.Resolve(cfg, z13())
-		if len(got) != len(controls.Defaults()) {
+		if def, _ := controls.Resolve(controls.Config{}, z13()); !equal(ids(got), ids(def)) {
 			t.Errorf("fallback resolve = %v, want the defaults", ids(got))
 		}
 	})
@@ -359,5 +361,27 @@ func write(t *testing.T, dir, content string) {
 	t.Helper()
 	if err := os.WriteFile(dir+"/"+controls.ConfigFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// The OXP X2 Mini Pro's drawer: the TDP slider under the profile row, and no
+// charge-limit slider — its battery section reports health, and the kernel
+// gives it no threshold to set.
+func TestSliderDeviceDrawer(t *testing.T) {
+	oxp := &api.DeviceInfo{
+		ID:       "onexplayer-x2-mini-pro",
+		Power:    &api.PowerInfo{TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, Slider: true},
+		Profiles: &api.ProfileInfo{Names: []string{"balanced"}, Pin: "balanced"},
+		Battery:  &api.BatteryInfo{Health: true},
+	}
+	got, complaints := controls.Resolve(controls.Config{}, oxp)
+	if want := []string{"profile", "tdp", "autoswitch"}; !equal(ids(got), want) {
+		t.Errorf("resolve = %v, want %v", ids(got), want)
+	}
+	if len(complaints) != 0 {
+		t.Errorf("complaints: %v", complaints)
+	}
+	if rows := controls.Layout(got); rows[1].Heading != "" || rows[1].Separator {
+		t.Errorf("the slider starts a group of its own: %+v", rows[1])
 	}
 }

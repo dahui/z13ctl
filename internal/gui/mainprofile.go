@@ -133,6 +133,11 @@ func (w *Window) newProfileSection(desktop bool, onCustom func()) (*profileSecti
 			setActiveButton(p.btns, r.Name)
 			w.sendProfileSet(r.Name)
 		})
+		if r.Label == profileui.PinnedLabel {
+			// The pinned profile's one row (profiles.pin): what it means
+			// is "no saved profile", which the label alone cannot say.
+			w.setHint(btn, "Run on the TDP setting, with no saved profile")
+		}
 		p.btns[r.Name] = btn
 		p.stock = append(p.stock, r.Name)
 		stockRow.Append(btn)

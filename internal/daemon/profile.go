@@ -114,7 +114,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	if p.TDP == nil && d.hw != nil {
 		// Not controlled here, so hand the limits back to the firmware profile
 		// underneath rather than leaving the previous profile's watts in force.
-		if err := d.hw.HandBackToFirmware(d.profileHW()); err != nil {
+		if err := d.handBack(d.profileHW()); err != nil {
 			slog.Warn("failed to hand the power limits back to the firmware profile", "profile", p.Name, "err", err)
 		}
 	}
@@ -210,7 +210,7 @@ func (d *Daemon) applyStockHW(profile string) error {
 	if err := d.setPlatformProfile(profile); err != nil {
 		return err
 	}
-	if err := d.hw.HandBackToFirmware(profile); err != nil {
+	if err := d.handBack(profile); err != nil {
 		slog.Warn("failed to hand the power limits back to the firmware profile", "profile", profile, "err", err)
 	}
 
@@ -221,6 +221,17 @@ func (d *Daemon) applyStockHW(profile string) error {
 	d.mu.Unlock()
 	d.saveAndNotify(s)
 	return nil
+}
+
+// handBack puts a firmware profile's power limits in force: on a slider device
+// with a remembered TDP, that TDP (the slider's value is what runs whenever no
+// custom profile does); otherwise device.HandBackToFirmware. The caller holds
+// hwMu and must not hold d.mu.
+func (d *Daemon) handBack(profile string) error {
+	if wrote, err := d.applyDeviceTDP("firmware profile " + profile); wrote {
+		return err
+	}
+	return d.hw.HandBackToFirmware(profile)
 }
 
 // setUndervoltActive stamps the Active flag across every saved profile. Curve
@@ -474,6 +485,18 @@ func (d *Daemon) handleProfileSave(req request) response {
 
 	d.mu.Lock()
 	src, ok := d.state.ActiveCustomProfile()
+	if !ok && d.hw != nil && d.hw.PowerSlider {
+		// On a slider device the TDP setting is what is running when no
+		// custom profile is, so that is what Save As keeps: the way to turn a
+		// slider position into a profile to load back later (Jeff,
+		// 2026-11-17). Before anything was set the firmware's preset is in
+		// force, and a profile holding it would be a copy of the firmware.
+		if d.state.DeviceTDP == nil {
+			d.mu.Unlock()
+			return response{OK: false, Error: "profile-save: the TDP is at the firmware's preset; set one first"}
+		}
+		src, ok = api.CustomProfile{Name: "the TDP setting", TDP: d.state.DeviceTDP}, true
+	}
 	if !ok {
 		d.mu.Unlock()
 		return response{OK: false, Error: "profile-save: no custom profile is active; there is nothing to copy"}

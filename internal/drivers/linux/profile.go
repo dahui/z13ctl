@@ -230,7 +230,7 @@ func normalizeProfile(raw string, names []string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("platform profile reads %q, which is not one of this device's profiles %v", raw, names)
+	return "", fmt.Errorf("platform profile reads %q, which is not one of this device's profiles %v: %w", raw, names, driver.ErrProfileNotOffered)
 }
 
 // FindBatteryThresholdPath returns the writable sysfs path for the system

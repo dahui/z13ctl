@@ -1,0 +1,8 @@
+{
+ "captured": "2026-11-17, OneXPlayer X2 Mini Pro, ryzen_smu 0.1.7 (amkillam d298366), Linux 7.3.4 deckify",
+ "condition": "idle, AC, balanced, EC's AC preset in force (nothing written)",
+ "load": "none",
+ "read": "fresh (the first read discarded, then 1.1 s)",
+ "expected_limits_w": {"stapm": 80, "fast": 100, "slow": 85},
+ "platform_profile": "balanced"
+}

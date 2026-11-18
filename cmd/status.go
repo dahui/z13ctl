@@ -132,6 +132,9 @@ func statusReport(out io.Writer) error {
 			// say so once at the end, rather than leaving the N/As unexplained.
 			ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
 			if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
+				if sliderStock(hw, env, stock, tdp) == "" {
+					stockNote = ""
+				}
 				outf("TDP:     %s%s\n", tdpSummary(env, tdp), stockNote)
 				tdpShown = true
 			}

@@ -44,19 +44,19 @@ func TestSaveAsNameProblem(t *testing.T) {
 }
 
 func TestSaveAsBlock(t *testing.T) {
-	if got := profileui.SaveAsBlock(nil); got == "" {
+	if got := profileui.SaveAsBlock(nil, false); got == "" {
 		t.Error("nil state must block Save As")
 	}
-	if got := profileui.SaveAsBlock(stateWith("balanced")); got == "" {
+	if got := profileui.SaveAsBlock(stateWith("balanced"), false); got == "" {
 		t.Error("stock profile active must block Save As — there is nothing to copy")
 	}
 	// "custom" active but never populated: ActiveCustomProfile answers with an
 	// empty profile, and the daemon refuses to copy it.
-	if got := profileui.SaveAsBlock(stateWith("custom")); got == "" {
+	if got := profileui.SaveAsBlock(stateWith("custom"), false); got == "" {
 		t.Error("empty active profile must block Save As")
 	}
 	s := stateWith("gaming", api.CustomProfile{Name: "gaming", TDP: tdp(60)})
-	if got := profileui.SaveAsBlock(s); got != "" {
+	if got := profileui.SaveAsBlock(s, false); got != "" {
 		t.Errorf("active profile with settings blocked: %q", got)
 	}
 }

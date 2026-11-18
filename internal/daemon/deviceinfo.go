@@ -62,6 +62,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 			TDPMaxForced: env.TDPMaxForced,
 			FloorCurve:   append([]api.FanCurvePoint(nil), env.FloorCurve...),
 			Interface:    env.Interface,
+			Slider:       hw.PowerSlider,
 		}
 		// The burst limits' own ranges, when the driver reports them (asus-armoury
 		// does): a client bounding all three sliders by PL1's range offers values
@@ -95,7 +96,7 @@ func deviceInfoForEnv(hw *device.Device, env driver.PowerEnvelope) *api.DeviceIn
 		for i, n := range names {
 			entries[i] = api.ProfileEntry{Name: n, Label: hw.Profiles.Label(n)}
 		}
-		info.Profiles = &api.ProfileInfo{Names: names, Default: hw.Profiles.Default(), Entries: entries}
+		info.Profiles = &api.ProfileInfo{Names: names, Default: hw.Profiles.Default(), Entries: entries, Pin: hw.ProfilePin}
 	}
 	if hw.Lighting != nil {
 		c := hw.Lighting.Caps()

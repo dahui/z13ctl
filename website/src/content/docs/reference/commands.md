@@ -109,7 +109,7 @@ voltaire profile [flags]
 | `--set <profile>` | Set the profile (firmware or custom) |
 | `--list` | List the firmware profiles and saved custom profiles |
 | `--create <name>` | Create an empty custom profile (does not activate it) |
-| `--save-as <name>` | Copy the active custom profile under a new name |
+| `--save-as <name>` | Copy the active custom profile under a new name; on a TDP-slider device with none active, the TDP setting |
 | `--delete <name>` | Delete a saved custom profile |
 
 ### Firmware profiles

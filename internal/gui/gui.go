@@ -162,6 +162,7 @@ type Window struct {
 	profiles   *profileSection
 	autoswitch *autoswitchSection
 	battery    *batterySection
+	tdpSlider  *tdpSliderSection // nil off the one-slider model (tdpslider.go)
 
 	// telemetryGen and telemetryBusy drive the get-state poll that keeps the
 	// header live. Window-level rather than per-view: it runs for as long as

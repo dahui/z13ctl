@@ -78,6 +78,16 @@ const (
 	// so the question is whether *boost* specifically is offered.
 	CapCPUBoost Capability = "cpu-boost"
 
+	// CapPowerSlider is the one-slider TDP model (power.slider): the TDP is a
+	// plain device setting the drawer offers as a slider. A device on the
+	// usual model edits its TDP inside a custom profile, in the full window.
+	CapPowerSlider Capability = "power-slider"
+
+	// CapChargeLimit is a settable charge limit. A battery section alone is
+	// not one: a device can report state of health with no threshold to set
+	// (the OXP), and a slider that every write fails on is a dead control.
+	CapChargeLimit Capability = "charge-limit"
+
 	// CapRefreshRate is the one capability the device document cannot answer:
 	// a video mode is the compositor's, so whether this session can read and
 	// set one (internal/display.Available) is known only to the client. The
@@ -145,10 +155,15 @@ type Control struct {
 var defaultOrder = []Control{
 	{ID: "profile", Label: "Performance profile", Group: GroupPower,
 		Requires: []Capability{CapProfiles}, Default: true},
+	// The TDP slider sits under the profile it is the default mode of: on a
+	// slider device the profile row is "Default" plus the saved profiles, and
+	// Default means "this slider". A device on the usual model never has it.
+	{ID: "tdp", Label: "TDP", Group: GroupPower,
+		Requires: []Capability{CapPowerSlider}, Default: true},
 	{ID: "autoswitch", Label: "AC/battery autoswitch", Group: GroupPower,
 		Requires: []Capability{CapProfiles, CapBattery}, Default: true},
 	{ID: "battery", Label: "Charge limit", Group: GroupPower,
-		Requires: []Capability{CapBattery}, Default: true},
+		Requires: []Capability{CapChargeLimit}, Default: true},
 	{ID: "cpu-boost", Label: "CPU boost", Group: GroupPower,
 		Requires: []Capability{CapCPUBoost}},
 	{ID: "refresh-rate", Label: "Refresh rate", Group: GroupDisplay,
@@ -328,6 +343,10 @@ func hasCapability(info *api.DeviceInfo, capability Capability) bool {
 		return info.Telemetry != nil
 	case CapUndervolt:
 		return info.Undervolt != nil
+	case CapPowerSlider:
+		return info.Power != nil && info.Power.Slider
+	case CapChargeLimit:
+		return info.Battery != nil && info.Battery.ChargeLimit
 	case CapCPUBoost:
 		return info.CPU != nil && info.CPU.Boost
 	case CapToggles:

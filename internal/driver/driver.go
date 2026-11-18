@@ -161,6 +161,20 @@ type PowerEnvelope struct {
 	FloorCurve []api.FanCurvePoint
 }
 
+// ErrProfileNotOffered is wrapped by a ProfileController's Get when the
+// platform reports a profile the device does not offer — another tool selected
+// it. A device that pins its profile (profiles.pin) puts its own back on
+// exactly this error, and never on a read that simply failed.
+var ErrProfileNotOffered = errors.New("platform profile is not one this device offers")
+
+// PowerForgetter is implemented by a PowerLimiter that remembers what it wrote
+// and skips an identical write. Forget drops that memory so the next Apply
+// writes regardless; the daemon calls it after a resume, when the hardware may
+// have lost what was written.
+type PowerForgetter interface {
+	Forget()
+}
+
 // DeviceEnvelope is implemented by a PowerLimiter whose Envelope reads the
 // kernel. It returns the envelope from device data alone, touching nothing —
 // what the daemon serves while the embedded controller is not answering, when a

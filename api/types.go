@@ -52,6 +52,13 @@ type State struct {
 	// state file it is the user's choice alone, "" meaning the device default.
 	DrawerButton string `json:"drawer_button,omitempty"`
 
+	// DeviceTDP is the remembered TDP on a device using the one-slider model
+	// (DeviceInfo.Power.Slider): the last value set while no custom profile
+	// was active, which the daemon re-applies at boot, on resume and after a
+	// charger edge. Absent until the user first sets one — until then the
+	// firmware's own limits stand and voltaire writes nothing.
+	DeviceTDP *TDPState `json:"device_tdp,omitempty"`
+
 	OnAC        bool `json:"on_ac"`                  // true when running on mains power
 	SourceKnown bool `json:"source_known,omitempty"` // true when OnAC reflects a real reading; false = unknown, not battery
 	Temperature int  `json:"temperature,omitempty"`  // CPU temperature (Tctl), degrees Celsius

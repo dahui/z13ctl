@@ -37,7 +37,8 @@ func FromDevice(info *api.DeviceInfo) Limits {
 
 	l := Limits{Model: info.Model,
 		HasPower: info.Power != nil, HasFans: info.Fans != nil,
-		HasUndervolt: info.Undervolt != nil, HasBattery: info.Battery != nil}
+		HasUndervolt: info.Undervolt != nil, HasBattery: info.Battery != nil,
+		Slider: info.Power != nil && info.Power.Slider}
 
 	if p := info.Power; p != nil {
 		// Copied for the same reason as the floor curve below. Empty from a

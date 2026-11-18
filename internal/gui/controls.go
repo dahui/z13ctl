@@ -82,6 +82,10 @@ func (w *Window) controlBuilders() map[string]controlBuilder {
 			build: func(inner *gtk.Box) { inner.Append(w.buildProfileSection()) },
 			focus: w.focusProfileSection,
 		},
+		"tdp": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildTDPSliderSection()) },
+			focus: w.focusTDPSliderSection,
+		},
 		"autoswitch": {
 			build: func(inner *gtk.Box) { inner.Append(w.buildAutoswitchSection()) },
 			focus: w.focusAutoswitchSection,

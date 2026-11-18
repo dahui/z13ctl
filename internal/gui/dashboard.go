@@ -104,6 +104,9 @@ type dashboardView struct {
 	boostSw *gtk.Switch
 	dsp     *displaySection
 	battery *batterySection
+	// tdpSlider is the plain TDP control of a slider device, under the
+	// profile row as in the drawer; nil on any other.
+	tdpSlider *tdpSliderSection
 
 	// lightings is one RGB block per lighting zone, where the drawer has one
 	// block and a pair of zone tabs. Empty on a device with no lighting.
@@ -240,7 +243,12 @@ func (d *dashboardView) buildControls() *gtk.Box {
 		d.profiles = p
 		powerRows = append(powerRows, row)
 	}
-	if has(controls.CapBattery) {
+	if has(controls.CapPowerSlider) {
+		s, row := w.newTDPSliderSection(true)
+		d.tdpSlider = s
+		powerRows = append(powerRows, row)
+	}
+	if has(controls.CapChargeLimit) {
 		b, row := w.newBatterySection(true)
 		d.battery = b
 		powerRows = append(powerRows, row)
@@ -987,6 +995,9 @@ func (d *dashboardView) buildFocusList() {
 	// this one predated all of them.
 	if d.profiles != nil {
 		d.profiles.appendFocus(b, &items)
+	}
+	if d.tdpSlider != nil {
+		d.tdpSlider.appendFocus(b, &items)
 	}
 	if d.battery != nil {
 		d.battery.appendFocus(b, &items)

@@ -762,8 +762,24 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// would race that watcher over hwMu and apply twice for one event. The cost
 	// is a few seconds during which the pre-sleep profile is back in force,
 	// which ApplyTDPSafely still keeps within the thermal floor.
+	// A limiter that skips identical writes must write after a resume: whether
+	// the hardware kept the limits through s2idle is not something it knows.
+	if d.hw != nil && d.hw.Power != nil && ec != ecWedged {
+		if f, ok := d.hw.Power.Power.(driver.PowerForgetter); ok {
+			f.Forget()
+		}
+	}
+
 	active, ok := state.ActiveCustomProfile()
 	if !ok || active.Empty() {
+		// A slider device's remembered TDP is volatile state too.
+		if ec != ecWedged {
+			if wrote, err := d.applyDeviceTDP("resume"); err != nil {
+				slog.Warn("resume: failed to re-apply the remembered TDP", "err", err)
+			} else if wrote {
+				return
+			}
+		}
 		slog.Info("skipping volatile state restore (no custom profile active)", "profile", state.Profile)
 		return
 	}
