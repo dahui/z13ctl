@@ -267,7 +267,7 @@ func (s *settingsView) buildQuickbarCard() *gtk.Box {
 	s.qbReset = gtk.NewButtonWithLabel("Reset to default")
 	s.qbReset.SetHAlign(gtk.AlignEnd)
 	s.qbReset.ConnectClicked(func() {
-		s.applyQuickbar(controls.EditorRows(nil, w.device, w.sessionCaps()...), s.qbReset)
+		s.applyQuickbar(controls.EditorRows(nil, w.device, w.sessionCaps()...), s.qbReset, true)
 	})
 	resetRow := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	resetRow.AddCSSClass("btn-group")
@@ -334,7 +334,7 @@ func (s *settingsView) rowIndex(id string) int {
 
 func (s *settingsView) moveQuickbar(id string, delta int, from gtk.Widgetter) {
 	if rows, ok := controls.MoveRow(s.qbRows, s.rowIndex(id), delta); ok {
-		s.applyQuickbar(rows, from)
+		s.applyQuickbar(rows, from, false)
 	}
 }
 
@@ -345,18 +345,24 @@ func (s *settingsView) showQuickbar(id string, on bool, from gtk.Widgetter) {
 	}
 	rows := append([]controls.EditorRow(nil), s.qbRows...)
 	rows[i].Shown = on
-	s.applyQuickbar(rows, from)
+	s.applyQuickbar(rows, from, false)
 }
 
 // applyQuickbar saves rows, rebuilds the drawer, and moves the card onto
 // them. from is the widget that asked, which keeps the gamepad focus while its
-// row moves.
-func (s *settingsView) applyQuickbar(rows []controls.EditorRow, from gtk.Widgetter) {
+// row moves. reset discards the saved list outright: an edit keeps the IDs
+// this machine has no row for (a control it lacks, or one a newer build
+// knows), but a reset that kept them would save an explicit list rather than
+// none, leaving the drawer off the defaults and the button still live.
+func (s *settingsView) applyQuickbar(rows []controls.EditorRow, from gtk.Widgetter, reset bool) {
 	if s.qbLocked {
 		return
 	}
 	w := s.w
 	prev := controls.ParseList(theme.LoadAppConfig().QuickbarControls)
+	if reset {
+		prev = nil
+	}
 	saved := controls.SavedList(rows, prev, w.device, w.sessionCaps()...)
 	theme.UpdateAppConfig(func(cfg *theme.AppConfig) { cfg.QuickbarControls = controls.FormatList(saved) })
 	slog.Info("quickbar layout changed", "controls", controls.FormatList(saved))

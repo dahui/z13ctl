@@ -452,3 +452,25 @@ func TestUnavailableNote(t *testing.T) {
 		t.Errorf("nil document: %q", got)
 	}
 }
+
+// TestResetDiscardsTheSavedList pins why the QUICKBAR card's reset passes no
+// previous list: an edit keeps saved IDs this machine has no row for, so the
+// default rows plus a kept "battery" (no charge limit on the OXP) save an
+// explicit list. Discarding prev is what makes the reset save none.
+func TestResetDiscardsTheSavedList(t *testing.T) {
+	oxp := &api.DeviceInfo{
+		Power:    &api.PowerInfo{TDPMin: 10, TDPMaxSafe: 85, TDPMaxForced: 85, Slider: true},
+		Profiles: &api.ProfileInfo{Names: []string{"balanced"}, Pin: "balanced"},
+		Battery:  &api.BatteryInfo{Health: true},
+		CPU:      &api.CPUInfo{Boost: true},
+		Quickbar: []string{"tdp", "profile", "cpu-boost", "autoswitch", "refresh-rate", "lighting"},
+	}
+	defaults := controls.EditorRows(nil, oxp, controls.CapRefreshRate)
+	prev := []string{"profile", "tdp", "battery"}
+	if controls.SavedList(defaults, &prev, oxp, controls.CapRefreshRate) == nil {
+		t.Fatal("an edit dropped a saved ID with no row; the reset's reason to discard prev is gone")
+	}
+	if got := controls.SavedList(defaults, nil, oxp, controls.CapRefreshRate); got != nil {
+		t.Errorf("reset saved %v, want no list (the device's defaults)", *got)
+	}
+}
