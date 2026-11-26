@@ -593,6 +593,13 @@ type BatteryCaps struct {
 	// device-specific source such as "asus-armoury" (its charge_mode
 	// attribute, a live WMI read).
 	ChargerSource string
+
+	// ChargingNeedsFlow says the pack's `status` reads "Charging" whether or
+	// not current flows, so Status confirms a Charging read against the flow
+	// and reports a held pack as not charging (full at 100 %). Device data:
+	// the OneXPlayer X2 Mini Pro's EC reports Charging at 96 % over a 62 %
+	// limit with power_now at 0.
+	ChargingNeedsFlow bool
 }
 
 // Battery reads and writes battery charge policy.

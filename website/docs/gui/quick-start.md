@@ -374,6 +374,10 @@ voltaire-gui supports full gamepad control for use in Steam Gaming Mode:
 | B (Circle) | Cancel edit, close an open dropdown, close the full window, go back, or close the drawer — in that order |
 | L1/R1 (shoulder) | Jump between sections; switch tabs while the full window is open |
 
+Rest on a control for about a second and its help hint appears beside it;
+moving on hides it, so stepping through the drawer does not cover the controls
+next to the one you are on.
+
 Gamepad focus (indicated by a highlight border) is automatically hidden when
 the mouse moves. To disable gamepad input entirely, set
 `VOLTAIRE_GUI_NO_GAMEPAD=1`.

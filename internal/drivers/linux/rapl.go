@@ -96,7 +96,25 @@ func ReadBatteryPowerW() (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	watts, err := batteryFlowW(dir)
+	if err != nil {
+		return 0, err
+	}
+	return signedByStatus(dir, watts), nil
+}
 
+// ReadBatteryFlowW returns the unsigned magnitude of the pack's flow in watts,
+// with no direction applied: what a caller checking *whether* current flows
+// wants, where ReadBatteryPowerW answers which way.
+func ReadBatteryFlowW() (float64, error) {
+	dir, err := findBatteryDir()
+	if err != nil {
+		return 0, err
+	}
+	return batteryFlowW(dir)
+}
+
+func batteryFlowW(dir string) (float64, error) {
 	microwatts, err := readUint(dir + "/power_now")
 	if err != nil {
 		currentUA, cErr := readUint(dir + "/current_now")
@@ -105,9 +123,9 @@ func ReadBatteryPowerW() (float64, error) {
 			return 0, fmt.Errorf("no battery power reading: %w", err)
 		}
 		// µA × µV = picowatts.
-		return signedByStatus(dir, float64(currentUA)*float64(voltageUV)/1e12), nil
+		return float64(currentUA) * float64(voltageUV) / 1e12, nil
 	}
-	return signedByStatus(dir, float64(microwatts)/1e6), nil
+	return float64(microwatts) / 1e6, nil
 }
 
 // ReadBatteryEnergyWh returns the pack's remaining and full-charge energy in

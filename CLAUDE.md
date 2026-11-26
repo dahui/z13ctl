@@ -753,6 +753,29 @@ policy; serialization stays in the daemon (`hwMu`/`d.mu`) and safety stays in
   note with no Custom button; back on the normal build, the slider, the pin
   and the remembered 35 W returned. `TestUnavailablePowerDropsThePin`
   (negative control run: the unconditional pin fails it).
+- **A kernel interface that exists but does not work is declared off, and
+  turned on by kernel version** (the OXP's charge limit, 2026-11-17/18;
+  `battery.charge_limit = false` in its device file, whose comment carries the
+  evidence). oxpec offers `charge_control_end_threshold` and
+  `charge_behaviour` on the X2 Mini Pro and both read back whatever is
+  written, but the driver writes the OneXPlayer X1's EC registers
+  (0xA3/0xA4) while this EC reads the APEX's (0xE5/0xE6): the pack charged
+  to 96 % under a 62 % limit. **A read-back is not evidence a setting
+  holds**: the earlier steamos-manager check in Jeff's OXP repo only read the
+  value back, which is how the fault went unnoticed. The capability
+  is therefore *off*, not unavailable: nothing is missing that a user could
+  install, and a control that writes a value the hardware ignores is worse
+  than none. It comes on gated by kernel version once a release carries the
+  fix (sent to platform-driver-x86 2026-11-17), because sysfs reads the same
+  under either driver and a functional probe would have to stop the user's
+  charging to learn anything. That gate does not exist in the device schema
+  yet; it lands with the fix. **How to test a charge limit on an EC like
+  this one:** the pack does not start charging again until it is below 90 %
+  (firmware hysteresis), and `status` reads "Charging" whether current flows
+  or not, so drain below 90 % first and watch `power_now` (≈42 W charging,
+  0 when held). UPower reads the threshold once at device add, so after a
+  module swap KDE shows a stale limit until `upower` restarts. Same result on
+  BIOS 0.22 and 0.25.
 - **On a slider device the undervolt is a device setting, like the TDP**
   (Jeff, 2026-11-17: "we should support undervolt"; `deviceundervolt.go`,
   `State.DeviceUndervolt`, the OXP's `[undervolt]`). Enabling the block alone
@@ -3741,6 +3764,32 @@ way (2026-08-15):
 - Restart `voltaire-gui.service` afterwards; killing test instances by
   `pgrep -x voltaire-gui` PID, never `pkill -f` (it matches the invoking shell).
 
+### Hardware verification on the OXP X2 Mini Pro
+
+The OXP is a second machine reached over ssh, with a few traps of its own
+(found 2026-11-17/18):
+
+- **Deploy from the Z13**: the OXP's checkout lags, so build both binaries
+  here with `make build-all VERSION=$(git describe --tags --match 'v*'
+  --always --dirty)`, copy them over, `sudo install` them to
+  `/usr/local/bin`, re-run `setcap cap_bpf,cap_perfmon+ep` on
+  `voltaire-gui` (install drops it), then restart `voltaire.service` and
+  `voltaire-gui.service`.
+- **Suspend over ssh** needs `sudo -n systemctl suspend` (logind refuses a
+  non-interactive session) and `sudo -n rtcwake -m no -s 30` for the timed
+  wake. Run `sync` first: s2idle without the kernel parameters hard-locks
+  the machine, the only way out is a forced power-off, and `/boot` there is
+  the EFI system partition, written by `limine-update`.
+- **Kernel parameters** live in `/etc/default/limine` (`KERNEL_CMDLINE`);
+  `sudo limine-update` regenerates `/boot/limine.conf` (root-only). Back up
+  both first, and never overwrite an existing backup.
+- **Charge tests**: see the charge-limit decision entry (drain below 90 %,
+  watch `power_now`, restart UPower after a module swap). Swapping in a test
+  `oxpec` lasts until reboot; `rmmod oxpec && modprobe oxpec` restores the
+  stock one. Never write EC registers directly.
+- **Ask before** a suspend, a reboot or a module swap: each interrupts Jeff's
+  session or changes the machine's charging.
+
 ## Build / release
 
 ```sh
@@ -4065,15 +4114,22 @@ diff whenever a main release touches `api/`.
     read-only fan RPM, the no-ryzen_smu fallback, undervolt as a device
     setting (verified on hardware) and the device page
     (`website/.../devices/onexplayer-x2-mini-pro.md`) built and verified
-    2026-11-17 (entries above). Left: the charge limit, whose cause was
-    found and confirmed on hardware 2026-11-17: oxpec writes the X2 Mini
-    Pro's limit and bypass to 0xA3/0xA4 (`oxp_fly`) while its EC reads
-    0xE5/0xE6, as the APEX's does. A one-line kernel patch (X2 →
-    `oxp_apex`) is drafted in the OXP repo for Jeff to send. voltaire turns
-    on `charge_limit` only once a fixed kernel exists, gated by kernel
-    version: sysfs cannot tell the two drivers apart, and a functional
-    probe would have to stop the user's charging. Joystick RGB needs the
-    unmerged hid-oxp X2 series.
+    2026-11-17 (entries above). **Done for now** (Jeff, 2026-11-26: "we are solid on voltaire
+    work for that machine"). Left, each blocked outside voltaire:
+    - the charge limit: cause confirmed on hardware (BIOS 0.22 and 0.25;
+      decision entry above), one-line patch (X2 → `oxp_apex`) sent by Jeff
+      to platform-driver-x86 2026-11-17 and not yet taken; then a
+      kernel-version gate in the device file;
+    - joystick RGB: needs the unmerged hid-oxp X2 series;
+    - suspend needs `amd_iommu=off mem_sleep_default=s2idle` on 0.25 too
+      (without them it still hard-locks), which costs the NPU card.
+    Known gap, not yet addressed: this EC reports `status` "Charging" while
+    the pack is held or full, so the battery headline says "Charging" with
+    no flow where the Z13 would say "Not charging" (`mapBatteryState` takes
+    the kernel's word). Fixing it means trusting `power_now` over `status`
+    on a device that declares it, which wants its own decision.
+    The drawer's gamepad hints now wait for a 1 s rest (`internal/gui/CLAUDE.md`,
+    found on the OXP); its smoke box is unticked until re-checked.
     Plan: `.claude/plans/oxp-power.md`;
     platform state and evidence: `.claude/plans/oxp-x2-mini-pro-status.md`.
 

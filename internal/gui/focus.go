@@ -202,9 +202,10 @@ func (w *Window) setFocusIdx(idx int) {
 		gtk.BaseWidget(w.focusItems[idx].widget).AddCSSClass("gamepad-focus")
 		w.ensureVisible(w.focusItems[idx].widget)
 		// Focused-control help — the same hint map the pointer dwell reads,
-		// shown immediately: a controller has no hover to dwell with.
+		// shown once the focus rests on the control (showHintAfter), so
+		// stepping through the list does not flash a hint at every stop.
 		// showHint hides the label when the widget has no registered text.
-		w.showHint(w.focusItems[idx].widget)
+		w.showHintAfter(w.focusItems[idx].widget)
 		slog.Debug("gamepad: focus", "idx", idx,
 			"row", w.focusItems[idx].row, "col", w.focusItems[idx].col,
 			"section", w.focusItems[idx].section)

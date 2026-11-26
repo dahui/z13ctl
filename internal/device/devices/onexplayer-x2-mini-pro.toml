@@ -80,11 +80,16 @@ balanced = { pl1 = 80, pl2 = 85, fppt = 100 }
 [power.stock_ppt_battery]
 balanced = { pl1 = 50, pl2 = 50, fppt = 60 }
 
-# The charge limit is deliberately not offered yet. oxpec (7.3) exposes
-# BATT/charge_control_end_threshold on this board through the OneXPlayer X1's
-# EC registers, and it does not hold: on 2026-11-17 the pack read 96 %,
-# "Charging", with the threshold at 62. 7.4 gives the APEX (same system board)
-# registers of its own (0xE5/0xE6), so this one may need the same.
+# The charge limit is deliberately not offered yet. oxpec (7.3, 7.4) exposes
+# BATT/charge_control_end_threshold and charge_behaviour on this board but
+# writes them to the OneXPlayer X1's EC registers (0xA3/0xA4), which this EC
+# ignores: the pack charged to 96 % with the threshold at 62. It reads the
+# APEX's (0xE5/0xE6, same system board): with oxpec built to use those, the
+# threshold and the bypass both stopped and resumed charging within seconds,
+# on BIOS 0.22 and 0.25 alike (2026-11-17/18). The one-line kernel fix was
+# sent to platform-driver-x86 on 2026-11-17. Turn this on gated by kernel
+# version once a release carries it: sysfs reads the same with either
+# driver, and a functional probe would have to stop the user's charging.
 [battery]
 method       = "power-supply"
 health       = true

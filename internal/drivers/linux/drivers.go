@@ -120,6 +120,27 @@ func NewBattery(caps driver.BatteryCaps, charger ChargerFunc) driver.Battery {
 	return battery{caps: caps, charger: charger}
 }
 
+// heldFlowW is the flow below which a pack reporting "Charging" is taken to
+// be held: the X2 Mini Pro's EC reports exactly 0 when it is (its _BST present
+// rate), and a pack really charging there draws tens of watts; even the first
+// sample of a charge read 3.9 W. The margin above zero only absorbs rounding.
+const heldFlowW = 0.1
+
+// chargingByFlow is the state of a pack whose `status` said Charging, on a
+// device where that word does not mean current flows (ChargingNeedsFlow). A
+// held pack is "not charging", which is what the threshold-held Z13 reports
+// and what explains its 0 W, unless it is at 100 %, where full is the truth.
+func chargingByFlow(watts float64, capacity int) driver.BatteryState {
+	switch {
+	case watts >= heldFlowW:
+		return driver.BatteryStateCharging
+	case capacity >= 100:
+		return driver.BatteryStateFull
+	default:
+		return driver.BatteryStateNotCharging
+	}
+}
+
 type battery struct {
 	caps    driver.BatteryCaps
 	charger ChargerFunc
@@ -148,6 +169,13 @@ func (b battery) Status() (driver.BatteryStatus, error) {
 	// Best-effort, on the same terms as health: a pack whose `status` cannot be
 	// read must not make the charge level unreadable.
 	st.State = ReadBatteryState()
+	if b.caps.ChargingNeedsFlow && st.State == driver.BatteryStateCharging {
+		// An unreadable flow keeps the kernel's word: there is nothing to
+		// contradict it with.
+		if watts, err := ReadBatteryFlowW(); err == nil {
+			st.State = chargingByFlow(watts, st.Capacity)
+		}
+	}
 	// Health is best-effort for the same reason RPM is in Sample: a pack whose
 	// full-charge attributes are missing must not make the charge level
 	// unreadable. Zero is the documented "not reported".

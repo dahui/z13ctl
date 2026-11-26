@@ -7,8 +7,9 @@ description: What voltaire controls on the OneXPlayer X2 Mini Pro (Strix Halo), 
 
 voltaire supports the OneXPlayer X2 Mini Pro (AMD Strix Halo). It is detected
 by its firmware's model name, so there is nothing to select. Everything here
-was measured on one machine running Linux 7.3 with BIOS 0.22. A different
-kernel or BIOS may behave differently.
+was measured on one machine running Linux 7.3 with BIOS 0.22, and the charge
+limit and suspend were checked again on BIOS 0.25. A different kernel or BIOS
+may behave differently.
 
 ## Compatibility
 
@@ -167,9 +168,10 @@ registers of older OneXPlayer models. This machine's controller, like the
 OneXPlayer APEX's (the same system board), reads them from registers of its
 own. The kernel already uses those for the APEX but not yet for this machine. With a driver built to use them, both
 the threshold and the bypass stopped and resumed charging within seconds,
-where the stock driver's had no effect.
+where the stock driver's had no effect. The result was the same on BIOS 0.22
+and 0.25, so it is not a firmware change.
 
-The fix is a one-line kernel change. voltaire will offer a charge limit on
+The fix is a one-line kernel change, submitted upstream in November 2026. voltaire will offer a charge limit on
 kernels that carry it, since a limit that is not enforced is worse than none.
 Note that the pack also has its own rule: once full, it does not start
 charging again until it falls below 90 %.
@@ -183,7 +185,7 @@ machine (checked on 7.3), so there are no switches on the Settings tab.
 ### NPU telemetry
 
 The NPU's driver cannot load while the kernel runs with `amd_iommu=off`, which
-this BIOS needs for suspend to work ([below](#suspend)). Without the driver
+suspend needs on this machine ([below](#suspend)). Without the driver
 there is nothing to read. The NPU card appears by itself if a later BIOS or
 kernel makes the parameter unnecessary.
 
@@ -197,5 +199,6 @@ amd_iommu=off mem_sleep_default=s2idle
 ```
 
 With them, suspend reaches the deepest idle state and resumes normally. The
-cost is the NPU: its driver needs the IOMMU. This is a firmware or kernel
-problem, not voltaire's, and newer BIOS or kernel versions may not need it.
+cost is the NPU: its driver needs the IOMMU. BIOS 0.25 did not fix it: without
+the parameters, suspend still hard-locks. This is a firmware or kernel
+problem, not voltaire's, and a later BIOS or kernel may not need them.

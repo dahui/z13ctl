@@ -568,8 +568,15 @@ grid deliberately skips those). Two replacements, split by purpose:
 
 - **Hints** (`w.setHint(widget, text)`): descriptions of *usable* controls.
   Shown as the popup layer's third overlay child after a 500ms pointer dwell, or
-  immediately on gamepad focus — one help path on all three backends, so KDE and
-  gamescope cannot diverge. Entries in `w.hints` are never removed; hint only
+  after the gamepad focus has rested on the control for 1 s
+  (`gamepadHintDwellMS`, `showHintAfter`) — one help path on all three backends,
+  so KDE and gamescope cannot diverge. The gamepad dwell was immediate until
+  2026-11-18: stepping through the OXP's quickbar put a hint at every stop,
+  covering the controls beside it (Jeff, on hardware). Resting is the
+  controller's hover. Both dwells share `hintGen`, and **`hideHint` bumps it**,
+  so a hide also cancels a pending dwell — otherwise a dropdown opened, or the
+  mouse taking over, inside that second would get a hint drawn over it.
+  Entries in `w.hints` are never removed; hint only
   permanent widgets (a hinted transient would leave a stale map entry).
   **A hint must never outlive the pointer being on its anchor**, and the
   anchor's own `Leave` is not sufficient to guarantee that. Two ways it never

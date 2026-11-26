@@ -38,6 +38,27 @@ import (
 // the GTK tooltips it replaces.
 const hintDwellMS = 500
 
+// gamepadHintDwellMS is how long the D-pad must rest on a control before its
+// hint appears. Longer than the pointer's: stepping through the quickbar
+// passes over a control every few hundred milliseconds, and a hint shown at
+// each stop covered the controls beside it (Jeff, on the OXP, 2026-11-18).
+// Resting on a control is the controller's equivalent of hovering.
+const gamepadHintDwellMS = 1000
+
+// showHintAfter shows anchor's hint once the gamepad focus has stayed on it
+// for gamepadHintDwellMS, hiding any hint now showing. It shares hintGen with
+// the pointer dwell, so a later focus move, pointer motion or hide cancels it.
+func (w *Window) showHintAfter(anchor gtk.Widgetter) {
+	w.hideHint() // bumps hintGen, so the timer below is the only live one
+	gen := w.hintGen
+	glib.TimeoutAdd(gamepadHintDwellMS, func() bool {
+		if gen == w.hintGen {
+			w.showHint(anchor)
+		}
+		return false
+	})
+}
+
 // setHint registers help text for widget and arms the pointer dwell that
 // shows it. Call once per widget, at build time.
 func (w *Window) setHint(widget gtk.Widgetter, text string) {
@@ -121,7 +142,13 @@ func (w *Window) showHint(anchor gtk.Widgetter) {
 // hideHint hides the hint label on every surface. Idempotent — a hint shown
 // on the layer that was active at dwell time must not survive a surface
 // switch, so this sweeps rather than asking which layer is active now.
+//
+// It also cancels a dwell still pending (hintGen): once the gamepad dwell
+// made a hint arrive a second after the focus landed, "hide" had to mean
+// "and show nothing later" — a popup opened, or the mouse taking over from
+// the controller, inside that second would otherwise get a hint over it.
 func (w *Window) hideHint() {
+	w.hintGen++
 	for _, p := range w.popupLayers() {
 		p.hintAnchor = nil
 		p.hint.SetVisible(false)

@@ -390,6 +390,10 @@ type BatteryConfig struct {
 	// attribute. The generic view needs no firmware call; the ASUS attribute is
 	// the one the Z13's values were measured against.
 	Charger string `toml:"charger"`
+
+	// ChargingNeedsFlow marks a pack whose `status` reads "Charging" whether
+	// or not current flows (driver.BatteryCaps.ChargingNeedsFlow).
+	ChargingNeedsFlow bool `toml:"charging_needs_flow"`
 }
 
 // The charge-limit range a device gets when its data declares none: what
@@ -406,7 +410,10 @@ func (c BatteryConfig) Caps() driver.BatteryCaps {
 	if c.ChargeLimit != nil {
 		limit = *c.ChargeLimit
 	}
-	caps := driver.BatteryCaps{ChargeLimit: limit, Health: c.Health, ChargerSource: c.Charger}
+	caps := driver.BatteryCaps{
+		ChargeLimit: limit, Health: c.Health, ChargerSource: c.Charger,
+		ChargingNeedsFlow: c.ChargingNeedsFlow,
+	}
 	if limit {
 		caps.ChargeLimitMin, caps.ChargeLimitMax = DefaultChargeLimitMin, DefaultChargeLimitMax
 		if c.ChargeLimitMin != 0 {
