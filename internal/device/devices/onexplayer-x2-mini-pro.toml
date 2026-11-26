@@ -90,10 +90,15 @@ balanced = { pl1 = 50, pl2 = 50, fppt = 60 }
 # sent to platform-driver-x86 on 2026-11-17. Turn this on gated by kernel
 # version once a release carries it: sysfs reads the same with either
 # driver, and a functional probe would have to stop the user's charging.
+#
+# This EC reports `status` "Charging" whether or not current flows (it read
+# Charging at 96 % over a 62 % limit with power_now 0; 42 W when really
+# charging), so a Charging read is checked against the flow.
 [battery]
-method       = "power-supply"
-health       = true
-charge_limit = false
+method              = "power-supply"
+health              = true
+charge_limit        = false
+charging_needs_flow = true
 
 [cpu]
 boost = "cpufreq"

@@ -192,3 +192,59 @@ func TestBatteryChargerIsInjected(t *testing.T) {
 		t.Errorf("the reader was given onAC=%v acKnown=%v, want the mains reading (true, true)", gotOnAC, gotKnown)
 	}
 }
+
+// TestChargingNeedsFlow: the OneXPlayer X2 Mini Pro's EC reports `status`
+// "Charging" whether current flows or not (96 % over a 62 % limit, power_now
+// 0), so a device declaring it has a Charging read confirmed against the flow.
+// Without the declaration the kernel's word stands, as it does on the Z13.
+func TestChargingNeedsFlow(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		declared bool
+		capacity string
+		power    string // "" = no flow attribute at all
+		want     driver.BatteryState
+	}{
+		{"held below full", true, "90", "0", driver.BatteryStateNotCharging},
+		{"held at full", true, "100", "0", driver.BatteryStateFull},
+		{"really charging", true, "88", "42136000", driver.BatteryStateCharging},
+		{"first sample of a charge", true, "88", "3885000", driver.BatteryStateCharging},
+		{"flow unreadable keeps the kernel's word", true, "90", "", driver.BatteryStateCharging},
+		{"undeclared keeps the kernel's word", false, "90", "0", driver.BatteryStateCharging},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeSysfs(t)
+			f.writeFile(t, f.battery+"/status", "Charging")
+			f.writeFile(t, f.battery+"/capacity", tc.capacity)
+			if tc.power != "" {
+				f.writeFile(t, f.battery+"/power_now", tc.power)
+			}
+			st, err := NewBattery(driver.BatteryCaps{ChargingNeedsFlow: tc.declared}, nil).Status()
+			if err != nil {
+				t.Fatalf("Status() = %v", err)
+			}
+			if st.State != tc.want {
+				t.Errorf("State = %q, want %q", st.State, tc.want)
+			}
+		})
+	}
+}
+
+// TestChargingNeedsFlowLeavesOtherStatesAlone: only a Charging read is
+// questioned. A Discharging pack with a flow of 0 (a reading glitch) is not
+// turned into anything else, nor is a Not charging one.
+func TestChargingNeedsFlowLeavesOtherStatesAlone(t *testing.T) {
+	for _, status := range []string{"Discharging", "Not charging", "Full"} {
+		f := newFakeSysfs(t)
+		f.writeFile(t, f.battery+"/status", status)
+		f.writeFile(t, f.battery+"/capacity", "90")
+		f.writeFile(t, f.battery+"/power_now", "0")
+		st, err := NewBattery(driver.BatteryCaps{ChargingNeedsFlow: true}, nil).Status()
+		if err != nil {
+			t.Fatalf("Status() = %v", err)
+		}
+		if want := mapBatteryState(status); st.State != want {
+			t.Errorf("%s: State = %q, want %q", status, st.State, want)
+		}
+	}
+}

@@ -148,6 +148,7 @@ black-screen a machine. The file supplies the words.
 | `charge_limit_min`, `charge_limit_max` | The threshold's range in percent (the kernel publishes none). Default 40–100. |
 | `health` | Whether state of health is reported. |
 | `charger` | Where the charger kind (adapter or USB-C) comes from: absent for the generic `power_supply` view, `asus-armoury` for ASUS's `charge_mode`. |
+| `charging_needs_flow` | `true` when the pack's `status` reads "Charging" whether or not current flows. A Charging read is then checked against the flow (`power_now`, or current × voltage): with no flow the pack is reported as not charging, or full at 100 %. Default false, which takes `status` at its word. |
 
 ## `[cpu]`: CPU controls
 

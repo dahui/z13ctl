@@ -4123,11 +4123,15 @@ diff whenever a main release touches `api/`.
     - joystick RGB: needs the unmerged hid-oxp X2 series;
     - suspend needs `amd_iommu=off mem_sleep_default=s2idle` on 0.25 too
       (without them it still hard-locks), which costs the NPU card.
-    Known gap, not yet addressed: this EC reports `status` "Charging" while
-    the pack is held or full, so the battery headline says "Charging" with
-    no flow where the Z13 would say "Not charging" (`mapBatteryState` takes
-    the kernel's word). Fixing it means trusting `power_now` over `status`
-    on a device that declares it, which wants its own decision.
+    This EC reports `status` "Charging" while the pack is held or full, so
+    the battery headline said "Charging" with no flow. Fixed 2026-11-26 as
+    device data: `battery.charging_needs_flow = true` makes the linux
+    battery driver's `Status` check a Charging read against the unsigned flow
+    (`ReadBatteryFlowW`, `chargingByFlow`: under 0.1 W is not charging, or
+    full at 100 %). Only a Charging read is questioned, an unreadable flow
+    keeps the kernel's word, and a device that does not declare it is
+    untouched. `TestChargingNeedsFlow` (negative control run). Not yet seen
+    on the OXP: the machine was offline when it landed.
     The drawer's gamepad hints now wait for a 1 s rest (`internal/gui/CLAUDE.md`,
     found on the OXP); its smoke box is unticked until re-checked.
     Plan: `.claude/plans/oxp-power.md`;
