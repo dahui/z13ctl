@@ -47,14 +47,23 @@ bypassing any input subsystem drivers.
 
 **Access**: The files require read/write permission. By default this means
 root. A udev rule can grant a specific group access without requiring
-privilege escalation for each command:
+privilege escalation for each command. Grant interface 0 only, the one that
+carries the Aura report: the keyboard's other interfaces include the one it
+types through, and a rule by vendor:product alone would let the group read raw
+keystrokes (`z13ctl setup` writes these):
 
 ```
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="18c6", \
-    GROUP="users", MODE="0660"
+    ENV{ID_USB_INTERFACE_NUM}=="00", GROUP="users", MODE="0660"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", \
-    GROUP="users", MODE="0660"
+    ENV{ID_USB_INTERFACE_NUM}=="00", GROUP="users", MODE="0660"
 ```
+
+The interface is matched with `ENV{ID_USB_INTERFACE_NUM}`, which udev sets on
+the hidraw node. `ATTRS{bInterfaceNumber}` cannot be used here: every `ATTRS`
+key in a rule must match on the same parent device, and `bInterfaceNumber`
+lives on the USB interface while `idVendor`/`idProduct` live on the USB device
+above it, so such a rule matches nothing.
 
 **Write size**: The Aura protocol uses 64-byte output reports. Every write
 must be exactly 64 bytes. Shorter packets must be zero-padded to fill the
