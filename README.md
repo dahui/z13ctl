@@ -100,9 +100,9 @@ Full documentation at **<https://dahui.github.io/voltaire>**
 - [Installation](https://dahui.github.io/voltaire/installation)
 - [Quick Start](https://dahui.github.io/voltaire/quick-start)
 - [Migrating from z13ctl](https://dahui.github.io/voltaire/migrating-from-z13ctl)
-- [The GUI](https://dahui.github.io/voltaire/gui/)
+- [The GUI](https://dahui.github.io/voltaire/guide/gui)
 - [Commands](https://dahui.github.io/voltaire/reference/commands)
 - [Daemon](https://dahui.github.io/voltaire/reference/daemon)
-- [API](https://dahui.github.io/voltaire/reference/api)
-- [Contributing](https://dahui.github.io/voltaire/contributing)
+- [API](https://dahui.github.io/voltaire/dev/go-api)
+- [Contributing](https://dahui.github.io/voltaire/dev/contributing)
 

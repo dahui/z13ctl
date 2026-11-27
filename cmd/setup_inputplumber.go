@@ -66,7 +66,7 @@ func syncPassthrough(cfg device.Config, want, restart bool) bool {
 			hint.Wanted() && len(hint.Foreign) == 0 {
 			fmt.Printf("\nnote: InputPlumber hides this machine's lighting interface (%s), so voltaire cannot drive the lighting.\n"+
 				"To have InputPlumber leave it visible: sudo voltaire setup --inputplumber-passthrough\n"+
-				"(what that changes: https://dahui.github.io/voltaire/inputplumber#ally-lighting)\n", sourceNames(srcs))
+				"(what that changes: https://dahui.github.io/voltaire/guide/buttons-and-controllers#ally-lighting)\n", sourceNames(srcs))
 		}
 		return false
 	}

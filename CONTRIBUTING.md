@@ -3,13 +3,18 @@
 Contributions are welcome. Please open an issue before starting work on a
 significant change.
 
-Full contributing guide: <https://dahui.github.io/voltaire/contributing>
+Full contributing guide: <https://dahui.github.io/voltaire/dev/contributing>
 
 ## Short version
 
-- Run `make test && make lint` before submitting a pull request
-- Tests do not require hardware
-- The `api/` module must be tagged before the main module on releases
+- Go 1.26+; building `voltaire-gui` also needs the GTK4 and gtk4-layer-shell
+  development headers
+- `make build-all` builds both binaries
+- Run `make test && make lint` before submitting a pull request (and
+  `make docs-build` if you changed the website)
+- Tests never touch hardware
+- Adding a device: <https://dahui.github.io/voltaire/dev/device-files>
+- On releases, the `api/` module is tagged before the main module
 
 ## Module paths and tags (do not "fix" these)
 

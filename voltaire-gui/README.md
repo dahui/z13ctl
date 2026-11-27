@@ -11,7 +11,7 @@ Wayland. Formerly **z13gui**.
 by the Armoury Crate button (KEY_PROG3). It renders as a Wayland layer-shell
 overlay (KDE Plasma, Hyprland, Sway), as a transparent click-through overlay on
 compositors without layer-shell (GNOME — see
-[GNOME support](https://dahui.github.io/voltaire/gui/#gnome-support)), or as a
+[GNOME support](https://dahui.github.io/voltaire/guide/gui#gnome-support)), or as a
 gamescope X11 overlay in Steam Gaming Mode. All hardware communication goes
 through the voltaire daemon.
 
@@ -62,12 +62,12 @@ and persist across reboots.
 Full documentation at **<https://dahui.github.io/voltaire>**
 
 - [Installation](https://dahui.github.io/voltaire/installation)
-- [GUI Overview](https://dahui.github.io/voltaire/gui/)
-- [Quick Start](https://dahui.github.io/voltaire/gui/quick-start)
-- [Configuration](https://dahui.github.io/voltaire/gui/configuration)
-- [Theming](https://dahui.github.io/voltaire/gui/theming)
+- [GUI Overview](https://dahui.github.io/voltaire/guide/gui)
+- [Quick Start](https://dahui.github.io/voltaire/guide/gui)
+- [Configuration](https://dahui.github.io/voltaire/guide/gui-configuration)
+- [Theming](https://dahui.github.io/voltaire/guide/themes)
 - [Migrating from z13gui](https://dahui.github.io/voltaire/migrating-from-z13ctl)
-- [Contributing](https://dahui.github.io/voltaire/contributing)
+- [Contributing](https://dahui.github.io/voltaire/dev/contributing)
 
 ## License
 

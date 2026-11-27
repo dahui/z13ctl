@@ -5,14 +5,15 @@ description: The complete voltaire CLI reference — every command, flag, and op
 
 # Commands
 
-::: tip Beginners: consider the GUI instead
-This page is the complete CLI reference. Driving the more advanced features
-(custom fan curves, TDP, undervolting) from the command line makes sense for
-Linux veterans and scripting, but if you're newer to Linux you'll likely have
-an easier time with **[voltaire-gui](/gui/)**, the touch-friendly
-graphical frontend that exposes all of these commands as point-and-tap
-controls.
-:::
+Every `voltaire` command and flag. For what each feature does and how to use it
+from the GUI, see the [User Guide](/guide/gui); this page is the lookup table.
+
+- Commands that change hardware need the access [`voltaire setup`](#setup)
+  grants, or root.
+- When the [daemon](#daemon) is running, commands go through it; otherwise they
+  talk to the hardware directly. A few need the daemon, and say so below.
+- Ranges, profile names and lighting zones are your device's own. `--get` and
+  `--list` print them, and each [device page](/devices/) lists them.
 
 ## Global Flags
 
@@ -20,14 +21,14 @@ These flags apply to every command.
 
 | Flag | Description |
 |------|-------------|
-| `--device <name\|path>` | Target one lighting zone (`keyboard` or `lightbar` on the Z13) or a `/dev/hidrawN` path. Without this flag all zones are targeted. |
-| `--dry-run` | Preview what would be sent or written without making any changes. Works for all commands including `setup`. |
-| `--no-button` | Disable the hardware button watcher (the Armoury Crate button on the Z13; daemon only). Use when another tool needs exclusive access to the device, or to keep the keypress from reaching voltaire at all. |
-| `--no-sleep-release` | Keep a custom fan curve in force through sleep instead of handing the fans back to the firmware (daemon only). See [sleep/resume recovery](/reference/daemon#on-sleep--the-fans-are-handed-back-to-the-firmware). |
+| `--device <name\|path>` | Target one lighting zone by name (`keyboard` or `lightbar` on the Z13, `rings` on the ROG Xbox Ally X) or a `/dev/hidrawN` path. Without it, every zone is targeted. |
+| `--dry-run` | Show what would be sent or written, without changing anything. Works with every command, including `setup`. |
+| `--no-button` | Daemon only: do not watch the hardware button that opens voltaire. |
+| `--no-sleep-release` | Daemon only: keep a custom fan curve in force through sleep instead of handing the fans back to the firmware. See [Sleep and resume](/reference/daemon#sleep-and-resume). |
 
 ## apply
 
-Apply a lighting effect to the keyboard backlight, the edge lightbar, or both.
+Apply a lighting effect to every zone, or to one with `--device`.
 
 ```
 voltaire apply [flags]
@@ -36,47 +37,45 @@ voltaire apply [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--color` | `FF0000` | Primary color: 6-digit hex (`RRGGBB`) or a [named color](#colors) |
-| `--color2` | `000000` | Secondary color for `breathe` mode: 6-digit hex or name |
-| `--mode` | `static` | Lighting mode (see table below) |
+| `--color2` | `000000` | Secondary color for `breathe` |
+| `--mode` | `static` | Lighting mode (see below) |
 | `--speed` | `normal` | Animation speed: `slow`, `normal`, `fast` |
-| `--brightness` | `high` | Brightness level: `off`, `low`, `medium`, `high`, or a number from 0 to the device maximum (3 on the Z13) |
-| `--list-colors` | | Print all named colors with swatches and exit |
+| `--brightness` | `high` | `off`, `low`, `medium`, `high`, or a number from 0 to the device maximum |
+| `--list-colors` | | Print every named color with a swatch, and exit |
 
-**Modes:**
-
-| Mode | Description | `--color` | `--color2` | `--speed` |
-|------|-------------|:---------:|:----------:|:---------:|
+| Mode | Effect | Uses `--color` | Uses `--color2` | Uses `--speed` |
+|------|--------|:-:|:-:|:-:|
 | `static` | Solid color | yes | — | — |
 | `breathe` | Fade between two colors | yes | yes | yes |
-| `cycle` | Auto-cycle full spectrum | — | — | yes |
+| `cycle` | Cycle through the spectrum | — | — | yes |
 | `rainbow` | Rainbow wave across zones | — | — | yes |
 | `strobe` | Rapid flash | yes | — | yes |
 
-All modes accept `--brightness`.
-
-::: info `--color 000000` means "pick a color", not black
-An all-zero primary color sets the Aura protocol's random-color flag, so the
-firmware chooses a color itself. This matches the reference implementation the
-protocol was derived from. To turn lighting off, use [`voltaire off`](#off) or
-`--brightness off` — not a black color.
-:::
-
 ```sh
 voltaire apply --color cyan --brightness high
-voltaire apply --mode rainbow --speed slow
 voltaire apply --mode breathe --color hotpink --color2 blue --speed slow
-voltaire apply --list-colors
+voltaire apply --mode rainbow --device lightbar
 ```
+
+**Notes**
+
+- Not every device offers every mode; an unsupported one is refused. See
+  [Lighting](/guide/lighting).
+- `--color 000000` lets the firmware pick a color; it is not black. To turn the
+  lights off, use [`off`](#off) or `--brightness off`.
+- Settings sent to a raw `/dev/hidrawN` path are applied but not saved, since
+  the number can change between boots. Use the zone name.
 
 ## brightness
 
-Set the brightness level without changing the current lighting mode or color.
+Set the brightness without changing the effect or color.
 
 ```
 voltaire brightness <level>
 ```
 
-`<level>` is one of `off`, `low`, `medium` (or `med`), `high` (or `max`), or a number from 0 to the device maximum (3 on the Z13).
+`<level>` is `off`, `low`, `medium` (or `med`), `high` (or `max`), or a number
+from 0 to the device maximum.
 
 ```sh
 voltaire brightness medium
@@ -85,7 +84,7 @@ voltaire brightness off
 
 ## off
 
-Turn off all lighting zones (or a specific zone with `--device`).
+Turn the lighting off, on every zone or on one with `--device`.
 
 ```
 voltaire off
@@ -96,10 +95,12 @@ voltaire off
 voltaire off --device lightbar
 ```
 
+A zone turned off keeps its effect, so `voltaire brightness <level> --device <zone>`
+brings it back.
+
 ## profile
 
-Get or set the system performance profile, and manage named custom profiles.
-Root or group access required; see [setup](#setup).
+Get or set the performance profile, and manage named custom profiles.
 
 ```
 voltaire profile [flags]
@@ -108,123 +109,45 @@ voltaire profile [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print the active profile |
-| `--set <profile>` | Set the profile (firmware or custom) |
-| `--list` | List the firmware profiles and saved custom profiles |
-| `--create <name>` | Create an empty custom profile (does not activate it) |
-| `--save-as <name>` | Copy the active custom profile under a new name; on a TDP-slider device with none active, the TDP setting |
+| `--set <profile>` | Switch to a firmware or custom profile |
+| `--list` | List the firmware profiles and the saved custom profiles |
+| `--create <name>` | Create an empty custom profile, without activating it |
+| `--save-as <name>` | Copy the active custom profile under a new name (on a device with a TDP slider and no custom profile active, saves the current TDP setting) |
 | `--delete <name>` | Delete a saved custom profile |
 
-### Firmware profiles
-
-The firmware profiles are whatever your machine's firmware offers, and they are
-written to `platform_profile`. voltaire reads the list from the kernel, filtered
-by the device data, and `profile --list` prints it. On the Z13 they are `quiet`,
-`balanced` and `performance`; another machine may offer `low-power` or
-`balanced-performance` instead.
-
-Every kernel firmware profile name is **reserved**, not only the ones your
-machine offers: `low-power`, `cool`, `quiet`, `balanced`,
-`balanced-performance`, `performance`, `max-power`. A custom profile can never
-take one, so `--set balanced` always reaches the firmware profile, and a profile
-created on one machine stays valid on another. A custom profile saved under one
-of those names before 2.0 is renamed to `user-<name>` on first start, with a log
-line; its settings are kept, and an autoswitch target pointing at it follows
-the rename.
-
-Setting a firmware profile resets the CPU undervolt to stock and hands the power
-limits and fans back to the firmware: voltaire writes that profile's stock PPT
-values, then releases the fans to firmware auto, which makes the firmware
-re-apply the profile's own limits. Your custom profiles are untouched and can be
-selected again at any time. [`tdp --reset`](#tdp) behaves
-the same way, since it also lands on a firmware profile.
-
-### Custom profiles
-
-A custom profile is voltaire's own: a named set of fan curve, TDP, and Curve
-Optimizer settings that voltaire applies itself. It is **never** written to
-`platform_profile`, so profile ownership stays with your desktop.
-
-`custom` is the profile created automatically by a `fancurve --set`,
-`tdp --set`, or `undervolt --set` made while a firmware profile is active.
-`--create` makes more.
-
-Such a bare edit gives `custom` **only the setting you just set** — a TDP set
-from `balanced` leaves the fans on firmware auto, and a fan curve set there
-leaves the power limits at stock. Anything `custom` stored before is replaced;
-save settings you want to keep under a name of their own (`profile --save-as`).
-Editing `custom` while it is the active profile, or explicitly via
-`--profile custom`, edits the stored bundle in place as before. (Through 2.0
-development builds the bare edit re-applied everything `custom` stored, so
-setting a TDP could silently bring back an old fan curve — or an old 93W power
-limit — you had long since stopped using.)
-
-::: info `--reset` while a firmware profile is active does not touch your profiles
-Only `--set` creates and activates `custom`. `fancurve --reset`, `tdp --reset`
-and `undervolt --reset` run while a firmware profile is selected affect
-**hardware only**: the fans go to firmware auto, the power limits back to the
-firmware's own, the Curve Optimizer to zero if an offset was applied, and every
-saved custom profile is left exactly as it was.
-
-Through v1.3.0 (as z13ctl) they resolved to `custom` and committed it
-cleared — so `tdp --reset` on `balanced` silently deleted the fan curve and
-power limits saved under `custom`, and switched the reported profile to the
-one it had just emptied. Use `profile --set custom` to recall those settings.
-:::
-
-Setting a fan curve, TDP, or undervolt edits the profile you are *running*,
-and the change takes effect and persists immediately. There is no save step;
-`--save-as` copies the active profile under a new name rather than committing
-pending edits.
-
-`--profile <name>` on [`fancurve`](#fancurve), [`tdp`](#tdp), and
-[`undervolt`](#undervolt) edits a profile you are **not** running: the setting
-is stored and nothing is applied to hardware. That is how you build the
-profile [`autoswitch`](#autoswitch) selects on battery without applying it
-first.
-
-Selecting a custom profile puts the machine into the state that profile
-describes. A subsystem it does not set is cleared rather than left alone — a
-profile with no fan curve releases the fans to firmware auto, one with no
-undervolt resets it, and one with no TDP hands the power limits back to the
-firmware profile underneath. That is what makes switching between two custom
-profiles predictable.
-
-Custom profiles live in daemon state, so every custom-profile operation
-requires the daemon.
-
 ```sh
-voltaire profile --get
-voltaire profile --set performance
-
-# build a profile without applying it
-voltaire profile --create battery-uv
-voltaire tdp --set 35 --profile battery-uv
-voltaire undervolt --set -25 --profile battery-uv
-
-voltaire profile --set battery-uv    # now apply it
 voltaire profile --list
-voltaire profile --save-as gaming    # copy the active profile
+voltaire profile --set performance
+voltaire profile --create battery-uv
+voltaire profile --set battery-uv
 ```
 
-Profile names are lowercase, 1–32 characters of `a-z`, `0-9`, `-`, and `_`,
-and may not be `custom` or any kernel firmware profile name (see
-[Firmware profiles](#firmware-profiles)).
+**Notes**
 
-::: info
-When the daemon is running, setting a firmware profile also updates
-`power-profiles-daemon` (if installed) to the equivalent PPD profile. Custom
-profiles deliberately do not.
-:::
+- Firmware profiles are the ones your machine's firmware offers. Switching to
+  one resets the undervolt and hands the fans and power limits back to the
+  firmware; your custom profiles are kept.
+- A `fancurve`, `tdp` or `undervolt` `--set` made on a firmware profile creates
+  and activates the custom profile `custom`, holding only that one setting.
+  Their `--reset` on a firmware profile changes hardware only.
+- Selecting a custom profile applies exactly what it holds: a setting it does
+  not have goes back to the firmware's own.
+- Custom profiles need the daemon. Names are 1–32 characters of `a-z`, `0-9`,
+  `-` and `_`, and cannot be `custom` or any kernel firmware profile name
+  (`low-power`, `cool`, `quiet`, `balanced`, `balanced-performance`,
+  `performance`, `max-power`).
+- The active profile, and one an [`autoswitch`](#autoswitch) target names,
+  cannot be deleted.
+- With the daemon running, a firmware profile is also passed on to
+  power-profiles-daemon, if installed. Custom profiles are not.
 
-::: warning Deleting a profile
-Voltaire refuses to delete the active profile or one referenced by
-`autoswitch`. Switch away, or reconfigure autoswitch, then delete.
-:::
+See [Profiles and power](/guide/profiles-and-power#custom-profiles) for how
+profiles work.
 
 ## autoswitch
 
-Apply a different profile automatically when the charger is plugged or
-unplugged. Requires the daemon, which watches the power source.
+Switch profile automatically when the charger is plugged in or unplugged.
+Needs the daemon.
 
 ```
 voltaire autoswitch [flags]
@@ -233,60 +156,32 @@ voltaire autoswitch [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print the configuration and the current power source |
-| `--ac <profile>` | Profile to apply on AC power |
-| `--battery <profile>` | Profile to apply on battery |
+| `--ac <profile>` | Profile to use on AC power |
+| `--battery <profile>` | Profile to use on battery |
 | `--on` | Enable autoswitch with the configured targets |
-| `--off` | Disable autoswitch, keeping the configured targets |
+| `--off` | Disable autoswitch, keeping the targets |
 | `--clear` | Disable autoswitch and clear both targets |
 
-Each side takes any profile name, firmware or custom. Setting `--ac` or
-`--battery` enables autoswitch unless `--off` is given, and changes only the
-side you name — `--battery quiet` leaves the AC target as it was. An empty
-target leaves that side alone, which hands it back to your desktop's power
-management:
-
 ```sh
-voltaire autoswitch --ac "" --battery battery-uv
-```
-
-The full recipe, matching the most common request — a firmware profile on AC
-and a custom profile with an undervolt on battery:
-
-```sh
-voltaire profile --create battery-uv
-voltaire tdp --set 35 --profile battery-uv
-voltaire undervolt --set -25 --profile battery-uv
 voltaire autoswitch --ac balanced --battery battery-uv
+voltaire autoswitch --ac "" --battery quiet    # leave AC to your desktop
 voltaire autoswitch --get
 ```
 
-Turning autoswitch on is a **one-shot**: it applies the profile for the source
-you are already on, so enabling it takes effect immediately instead of waiting
-for a transition. Turning it off, or changing the targets while it is already
-on, applies nothing.
+**Notes**
 
-After that, autoswitch acts **only when the power source actually changes**. A
-profile you pick by hand therefore stays in force until the next plug or
-unplug, and voltaire does not contest the profile with `power-profiles-daemon`
-in between. The transition is applied about two seconds after the event: that
-settle window lets the desktop's own transition write land first, and stops a
-loose USB-C connector from driving a profile change per bounce.
+- Setting `--ac` or `--battery` enables autoswitch (unless `--off` is also
+  given) and changes only the side you name. An empty target leaves that side
+  to your desktop's power management.
+- Turning it on applies the profile for the current power source at once.
+  After that it acts only when the power source changes, so a profile you pick
+  by hand stays until the next plug or unplug.
 
-The daemon also resolves the right profile for the current power source at
-startup, so a machine that was on AC when the daemon stopped and is on battery
-when it starts lands on the battery profile directly.
-
-::: info GNOME's Automatic Power Saver
-That setting triggers on *low battery*, not on unplugging, so it can still
-move a firmware profile after autoswitch has acted. Voltaire deliberately
-yields between transitions rather than fighting for the profile. If you want
-your desktop to own one side entirely, give that side an empty target.
-:::
+See [Autoswitch](/guide/profiles-and-power#autoswitch).
 
 ## batterylimit
 
-Get or set the battery charge limit via the Linux ACPI `power_supply` sysfs
-interface. Root or group access required; see [setup](#setup).
+Get or set the battery charge limit.
 
 ```
 voltaire batterylimit [flags]
@@ -294,22 +189,9 @@ voltaire batterylimit [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current battery charge limit (percentage) |
-| `--set <percent>` | Set the battery charge limit, within the device's range (40–100 on the GZ302EA) |
+| `--get` | Print the charge limit, in percent |
+| `--set <percent>` | Set the charge limit, within your device's range |
 | `--full-once` | Charge to full once, then put the limit back; `--full-once=false` cancels |
-
-The range is device data — the kernel publishes none for the threshold — and an
-out-of-range value is refused with the range your machine accepts. Writing the
-top of the range (`100` on the GZ302EA) removes any limit (charges to full).
-
-`--full-once` lifts the limit until the battery is full, and then the daemon
-puts it back: for a day when you need the whole battery, without giving up the
-limit. Unplugging part-way does not end it; the next charge carries on to full.
-`--full-once=false` cancels it and restores the limit at once, and so does
-setting a limit. It needs the daemon (which watches for the battery to fill),
-and is refused when no limit is set, since the battery already charges to full
-then. While it runs, `--get` prints what the hardware holds (the maximum) and
-notes the limit it will return to on stderr.
 
 ```sh
 voltaire batterylimit --get
@@ -317,10 +199,17 @@ voltaire batterylimit --set 80
 voltaire batterylimit --full-once
 ```
 
+**Notes**
+
+- An out-of-range value is refused with the range your machine accepts.
+  Setting the top of the range removes the limit.
+- `--full-once` needs the daemon, and is refused when no limit is set. Setting
+  a limit cancels it. See [Full charge once](/guide/battery#full-charge-once).
+
 ## bootsound
 
-Get or set the POST boot sound via the `asus-armoury` firmware-attributes
-sysfs interface. Root or group access required; see [setup](#setup).
+Get or set the firmware's boot (POST) sound, on ASUS machines that have it.
+The same switch as `feature --set boot_sound=…`.
 
 ```
 voltaire bootsound [flags]
@@ -328,19 +217,17 @@ voltaire bootsound [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current boot sound setting (`0` or `1`) |
-| `--set <value>` | Set boot sound: `0` = off, `1` = on |
+| `--get` | Print the setting (`0` or `1`) |
+| `--set <value>` | `0` = off, `1` = on |
 
 ```sh
-voltaire bootsound --get
 voltaire bootsound --set 0
 ```
 
 ## paneloverdrive
 
-Get or set display panel refresh overdrive via the `asus-armoury`
-firmware-attributes sysfs interface. Root or group access required; see
-[setup](#setup).
+Get or set the display's panel overdrive, on ASUS machines that have it. The
+same switch as `feature --set panel_overdrive=…`.
 
 ```
 voltaire paneloverdrive [flags]
@@ -348,30 +235,17 @@ voltaire paneloverdrive [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current panel overdrive setting (`0` or `1`) |
-| `--set <value>` | Set panel overdrive: `0` = off, `1` = on |
+| `--get` | Print the setting (`0` or `1`) |
+| `--set <value>` | `0` = off, `1` = on |
 
 ```sh
-voltaire paneloverdrive --get
 voltaire paneloverdrive --set 1
 ```
 
 ## cpuboost
 
-Get or set the CPU's opportunistic boost clocks, through cpufreq's global boost
-switch (`/sys/devices/system/cpu/cpufreq/boost`). Root or group access
-required; see [setup](#setup).
-
-Disabling boost caps every core at its base clock — on the Z13's Ryzen AI Max+
-395 that is 3.0 GHz instead of 5.19 GHz — which lowers peak power and heat at
-the cost of peak single-thread performance. One write moves every cpufreq
-policy at once.
-
-Unlike the firmware toggles it resembles, this is a **kernel runtime setting**:
-the kernel re-enables boost on every boot. The daemon records your choice and
-restores it at startup, so setting it with the daemon stopped changes the
-hardware now but will not survive a reboot — the command says so when that
-happens.
+Turn the CPU's boost clocks on or off. With boost off every core stays at its
+base clock, which lowers peak power and heat.
 
 ```
 voltaire cpuboost [flags]
@@ -379,27 +253,20 @@ voltaire cpuboost [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print whether boost is enabled |
-| `--set <value>` | `0` = disabled, `1` = enabled |
+| `--get` | Print whether boost is on |
+| `--set <value>` | `0` = off, `1` = on |
 
 ```sh
-voltaire cpuboost --get
 voltaire cpuboost --set 0
 ```
 
-The same switch is on the full window's Dashboard, in the **Power** card.
+The kernel turns boost back on at every boot; the daemon restores your choice.
+Set without the daemon, it lasts until the next reboot. See
+[CPU boost](/guide/profiles-and-power#cpu-boost).
 
 ## rumble
 
-Get or set the built-in game controller's vibration (rumble) strength, on
-devices that have one (the OneXPlayer X2 Mini Pro, through the kernel's
-`hid-oxp` driver). Root or group access required; see [setup](#setup).
-
-The scale is the controller's own, as the kernel reports it: 0–5 on the X2
-Mini Pro, where 0 turns vibration off. It scales every rumble a game asks for.
-The daemon records the value and puts it back at startup and after a suspend;
-set with the daemon stopped, it changes the controller now but nothing will
-restore it.
+Get or set the built-in controller's vibration strength, on devices with one.
 
 ```
 voltaire rumble [flags]
@@ -408,24 +275,20 @@ voltaire rumble [flags]
 | Flag | Description |
 |------|-------------|
 | `--get` | Print the vibration strength |
-| `--set <value>` | The strength, from 0 (off) to the controller's maximum |
+| `--set <value>` | From 0 (off) to the controller's maximum |
 
 ```sh
 voltaire rumble --get
 voltaire rumble --set 2
 ```
 
-The same setting is on the full window's **Settings** tab, in the
-**Controller** card.
+The daemon restores the value at startup and after sleep; set without it, the
+value is not restored. See [Vibration](/guide/buttons-and-controllers#vibration).
 
 ## feature
 
-Get or set the device's firmware toggles (BIOS switches) by their id — the
-generic form of `bootsound` and `paneloverdrive`. The set of toggles comes
-from the device data this build carries; `--list` shows what this machine
-offers, and the daemon serves the same list to GUIs in its `device-get`
-document, so a toggle added in device data is reachable without new commands
-anywhere.
+Get or set the device's firmware switches by id. `bootsound` and
+`paneloverdrive` are named shortcuts for two of them.
 
 ```
 voltaire feature [flags]
@@ -433,9 +296,9 @@ voltaire feature [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--list` | List the device's firmware toggles (id, kind, label) |
-| `--get <id>` | Print a toggle's current value |
-| `--set <id>=<value>` | Set a toggle; boolean toggles take `0` or `1` |
+| `--list` | List this device's switches (id, kind, label) |
+| `--get <id>` | Print a switch's value |
+| `--set <id>=<value>` | Set a switch; on/off switches take `0` or `1` |
 
 ```sh
 voltaire feature --list
@@ -443,12 +306,12 @@ voltaire feature --get boot_sound
 voltaire feature --set panel_overdrive=0
 ```
 
+Some switches only take effect after a restart; the GUI's Settings tab says
+when one is pending.
+
 ## fancurve
 
-Get, set, or reset custom fan curves via the asus-wmi hwmon sysfs interface.
-One curve is applied to every fan the kernel lists — on the Z13 both fans cool
-the same APU, so that is the right model there. Root or group access required;
-see [setup](#setup).
+Get, set or reset the custom fan curve. One curve is applied to every fan.
 
 ```
 voltaire fancurve [flags]
@@ -456,137 +319,41 @@ voltaire fancurve [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print the current fan curve, mode, RPM, and CPU temperature |
-| `--set <curve>` | Set a custom fan curve, one point per curve point the device has (8 on the Z13), applied to every fan |
-| `--preset <name>` | Apply a named preset curve (see `--list-presets`) |
+| `--get` | Print the curve, the fan mode, fan speeds and CPU temperature |
+| `--set <curve>` | Set a custom curve: one `temp:speed` pair per curve point |
+| `--preset <name>` | Apply one of the device's preset curves |
 | `--list-presets` | List the preset curves this device offers |
-| `--reset` | Reset every fan to firmware auto mode |
-| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
+| `--reset` | Hand every fan back to the firmware's automatic control |
+| `--profile <name>` | Store the curve in this custom profile instead of the running one; nothing is applied. Needs the daemon. |
 
-The **mode** in `--get` output is the one to read. `custom` means the kernel
-is honouring your curve; `auto` means it is not, regardless of which points
-are listed underneath — the driver keeps the curve data after disabling it.
-
-```
-$ voltaire fancurve --get
-Fans: 4400 / 4550 RPM, mode: custom, CPU: 43°C   # <- your curve is live
-$ voltaire fancurve --get
-Fans: 1200 / 1250 RPM, mode: auto, CPU: 48°C     # <- it is not; see the warning below
-```
-
-**Curve format:** comma-separated `temp:speed` pairs, as many as the device's
-curve holds — the kernel's count, served as `fans.points` by `device-get`
-(8 on the Z13). Speed can be a PWM
-value (0–255) or a percentage with a `%` suffix (0–100%). Both formats can be
-mixed in the same curve.
-
-```
-"48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"   # PWM values
-"48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"  # percentages
-```
-
-**Validation rules:**
-
-- Exactly the device's point count (8 on the Z13)
-- Temperatures must be monotonically increasing (0–120 °C)
-- Speed values must be non-decreasing (0–255 PWM or 0–100%)
-
-### Presets
-
-Named starting points, so you do not have to draw a curve from scratch. A
-preset is applied exactly as if you had typed its points into `--set`: the same
-validation, the same fan-floor rules, the same profile it lands in. Nothing
-re-applies one later — switching profiles does **not** select a preset, and a
-preset you have edited is simply your curve.
-
-```
-$ voltaire fancurve --list-presets
-quiet — Quiet
-  Fans stopped until 60°C, then a late ramp. Quietest option; lets the package run hot.
-  35:0,50:0,60:0,70:60,80:110,90:170,95:215,105:255
-balanced — Balanced
-  Silent at idle, ramping from 55°C. A middle ground between Quiet and Turbo.
-  35:0,45:0,55:55,65:90,75:130,85:180,95:225,105:255
-turbo — Turbo
-  Fans always running, full speed by 85°C. Audible at idle, and the only preset ready for TDP above the safe maximum.
-  35:127,45:140,55:165,65:190,75:235,85:255,95:255,105:255
-
-$ voltaire fancurve --preset quiet
-```
-
-Which presets exist is device data, served in the
-[`device-get` document](/reference/daemon#device-capabilities); a device
-that declares none offers no presets rather than a fixed list. On the Flow Z13:
-
-- **Quiet** and **Balanced** hold 0 across the idle range deliberately. The
-  firmware's zero-RPM idle survives only while the curve commands 0 there, so a
-  nominally gentle curve that starts at 15% is *louder* at idle than firmware
-  auto.
-- **Turbo** is the only one that already satisfies the high-TDP fan floor at
-  every point, so raising the sustained limit past 75 W leaves it exactly as
-  drawn. The other two sit below the floor when cool and are raised there —
-  correctly, and with a notice saying so.
-
-In the GUI the presets are a row of buttons above the fan curve chart on the
-Profiles page. Choosing one loads its points into the editor without writing
-anything, so you can drag them before committing; the button stays highlighted
-only while the curve still matches it exactly.
-
-::: warning A power profile change wipes your custom curve
-The kernel's `asus-wmi` driver disables custom fan curves on every
-`platform_profile` write, silently. GNOME power modes and
-`power-profiles-daemon` do that on each AC/battery transition, so does Fn+F5,
-and so does `asusctl`. Run the [daemon](/reference/daemon) and it
-puts your curve back within a couple of seconds; without it, re-run `--set`
-after any profile change. Since 1.2.2 the command errors out instead of
-reporting success when the kernel refuses the curve.
-
-To confirm it for yourself, read the driver's own flag — `1` is custom, `2` is
-firmware auto:
+**Curve format:** comma-separated `temp:speed` pairs, exactly as many as your
+device's curve has points (`--get` shows how many). Temperatures are in °C and
+must increase. Speed is a PWM value (0–255) or a percentage (`40%`), must not
+decrease, and the two forms can be mixed.
 
 ```sh
-curve=$(grep -l asus_custom_fan_curve /sys/class/hwmon/hwmon*/name | xargs dirname)
-cat $curve/pwm1_enable
-```
-:::
-
-::: warning Fan control is restricted above the safe sustained TDP
-While sustained TDP (PL1) is above the device's safe maximum (75 W on the
-GZ302EA; `tdp --get` prints it), `fancurve --set` requires every point
-to clear the built-in high-TDP curve — an up-front refusal so you can see why,
-rather than storing a curve that would be altered on the way to the hardware.
-If you raise the limit *after* setting a curve, the points below it are
-quietly raised to it instead and the rest are left alone (see [`tdp`](#tdp));
-the curve you saved is kept intact for when the limit comes back down. "Below
-the floor" means below the built-in curve's value *at that temperature*, not
-below its bottom (127 PWM on the GZ302EA).
-
-`--reset` is refused outright — firmware auto mode has no floor at all, and
-dropping to it would remove the cooling the power limit depends on. Lower the
-limit first with [`voltaire tdp --reset`](#tdp), which restores the device's
-default firmware profile (`balanced` on the Z13) before releasing the fans.
-:::
-
-```sh
-# Read current fan curves
 voltaire fancurve --get
-
-# Set a custom fan curve using PWM values (both fans)
 voltaire fancurve --set "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
-
-# Set a custom fan curve using percentages
 voltaire fancurve --set "48:1%,53:9%,57:12%,60:17%,63:22%,65:27%,70:35%,76:40%"
-
-# Reset both fans to auto mode
+voltaire fancurve --preset quiet
 voltaire fancurve --reset
 ```
 
+**Notes**
+
+- The mode in `--get` is what counts: `custom` means your curve is running,
+  `auto` means it is not, whatever points are listed.
+- Any power profile change (a desktop power mode, plugging in the charger, a
+  hotkey) drops a custom curve. The daemon puts it back within a couple of
+  seconds; without it, run `--set` again.
+- While the sustained power limit is above your device's safe maximum, every
+  point must clear the fan floor, and `--reset` is refused. Lower the limit
+  first with `tdp --reset`. See [Fan floor](/guide/fans#fan-floor).
+- Which presets exist depends on the device. See [Presets](/guide/fans#presets).
+
 ## tdp
 
-Get, set, or reset TDP (Thermal Design Power) limits — the PPT (Package Power
-Tracking) limits. On the ROG Flow Z13 they go through the kernel's asus-armoury
-firmware-attributes, or the older asus-nb-wmi PPT attributes on kernels that do
-not expose them there. Root or group access required; see [setup](#setup).
+Get, set or reset the power limits (TDP).
 
 ```
 voltaire tdp [flags]
@@ -594,210 +361,77 @@ voltaire tdp [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print current PPT values and the range the kernel accepts for each |
-| `--set <watts>` | Set all PPT limits to the specified wattage |
-| `--reset` | Switch to the device's default firmware profile (`balanced` on the Z13), reset the undervolt to stock, and hand the power limits and fans back to the firmware |
-| `--pl1 <watts>` | Override PL1/SPL independently |
-| `--pl2 <watts>` | Override PL2/sPPT independently |
-| `--pl3 <watts>` | Override PL3/fPPT independently |
-| `--force` | Allow sustained TDP (PL1) above the device's safe maximum (`--get` prints it), up to the kernel's maximum. Burst limits (PL2/PL3) need no `--force`. Above the safe maximum, each fan curve point is raised to the built-in high-TDP curve's value if it falls below it; points above it are left exactly as you set them. |
-| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
+| `--get` | Print the current limits, the range each accepts, and the safe maximum |
+| `--set <watts>` | Set every limit to this value |
+| `--reset` | Go back to the device's default firmware profile and the firmware's own limits and fan control; also resets the undervolt |
+| `--pl1 <watts>` | Set the sustained limit (PL1) on its own |
+| `--pl2 <watts>` | Set the short boost limit (PL2) on its own |
+| `--pl3 <watts>` | Set the fast boost limit (PL3) on its own |
+| `--force` | Allow PL1 above the safe maximum, up to the kernel's maximum. The fans are held to the [fan floor](/guide/fans#fan-floor) first. |
+| `--profile <name>` | Store the limits in this custom profile instead of applying them. Needs the daemon. |
 
-**Power limits:**
-
-| Limit | asus-armoury attribute | asus-nb-wmi attribute | Description |
-|-------|------------------------|-----------------------|-------------|
-| PL1 — Sustained | `ppt_pl1_spl` | `ppt_pl1_spl` | Continuous power budget the APU can draw indefinitely. This is your effective base TDP. |
-| PL2 — Short-term boost | `ppt_pl2_sppt` | `ppt_pl2_sppt` | Power the APU can draw for several seconds before throttling to PL1. |
-| PL3 — Fast boost | `ppt_pl3_fppt` | `ppt_fppt` | Maximum instantaneous power for millisecond-scale spikes. |
-| APU short-term | — | `ppt_apu_sppt` | APU-specific short-term limit; mirrors PL2. Not exposed by asus-armoury on the GZ302EA. |
-| Platform short-term | — | `ppt_platform_sppt` | Platform-level short-term limit; mirrors PL2. As APU short-term. |
-
-**Which interface, and its ranges.** asus-armoury is used whenever the kernel
-exposes its PPT attributes (mainline 7.x carries the GZ302EA's); the asus-nb-wmi
-ones are deprecated — reading them logs a kernel notice, and distributions can
-build them out entirely — and are used only as a fallback. The accepted range
-comes from the kernel, and `--get` prints it:
-
-| Limit | asus-armoury (GZ302EA) | asus-nb-wmi (GZ302EA device data) |
-|-------|------------------------|-------------|
-| PL1 | 28–80W | 5–93W |
-| PL2 | 32–92W | 5–93W |
-| PL3 | 45–93W | 5–93W |
-
-A PL2 or PL3 below its minimum is raised to it, and `--set` says so: on
-asus-armoury `--set 30` writes 30/32/45W. The raised PL2 is what the machine
-then sustains — under load it held 32W for four minutes rather than settling to
-30W — so 32W is the practical floor on asus-armoury. A PL1 outside its range is
-refused. A custom profile saved with values outside the range (for example 15W,
-from an older version) still applies, at the nearest value the kernel accepts;
-the saved profile is not changed.
-
-With `--set`, all three limits default to the same value. Use `--pl1`,
-`--pl2`, and `--pl3` to set them independently — a stepped configuration like
-`--set 45 --pl2 55 --pl3 65` sustains 45W with short bursts to 55W and
-instantaneous peaks to 65W.
-
-Setting a custom TDP switches to the `custom` profile. Switching back to a
-stock profile hands the limits back to the firmware: voltaire writes that
-profile's stock values (which brings a high custom limit down first) and then
-releases the fans to firmware auto, which makes the firmware re-apply the
-profile's own limits. The saved custom values are kept, so `custom` stays
-re-selectable.
-
-::: warning Run the daemon to keep a custom TDP
-On the Flow Z13 the firmware re-applies the active power profile's own limits
-whenever anything writes `platform_profile` — even the profile already set, as
-power-profiles-daemon does on plugging or unplugging the charger — and whenever
-anything hands the fans back to firmware auto. `--get` and `status` cannot see
-it: the readback shows the last value written. The
-[daemon](/reference/daemon#custom-fan-curve-reconciliation) is told by
-the kernel about these writes (with one exception, described there) and
-re-applies the custom limit within two seconds. Without it, the limit is lost
-until the next `tdp --set`, which says so when it applies a limit directly.
-:::
-
-::: info PPT readback values
-On a **firmware profile** (`quiet`, `balanced`, `performance` on the Z13),
-`--get` and `status` show that profile's stock values from the device data,
-marked as such (`Set by: the balanced firmware profile`), and never the
-kernel's readback. The firmware runs those profiles on its own limits, and the
-readback says nothing about them: asus-armoury keeps one cached value per power
-source, so a custom limit written on battery is still what it reports on
-battery after you have switched to `balanced` on AC (measured on the GZ302EA:
-35 W reported, 47 W in force). On AC the stock PL1 matches the firmware's; on
-battery the firmware may hold less.
-
-On a **custom profile** the values are the kernel driver's cache, what voltaire
-last wrote, which the daemon keeps in force. Use `ryzenadj -i` if you need
-ground-truth PPT readings.
-:::
-
-**Safety:**
-
-- The sustained limit (PL1) is capped at the device's safe maximum unless
-  `--force` is given, which extends it to the kernel's maximum. `--get` prints
-  both; on the GZ302EA they are 75W, and 80W on asus-armoury (93W on
-  asus-nb-wmi). Burst limits (PL2/PL3) may go to the kernel's maximum without
-  `--force`, since short bursts are thermally safe.
-- When the **sustained** limit exceeds the safe maximum, the fans are held to
-  the device's high-TDP floor curve before the TDP values are written. If that
-  fan write fails — or the kernel accepts it and then drops the curve — the TDP
-  is not applied at all. Burst limits above the safe maximum do not trigger this
-  on their own.
-- **The floor is a per-point minimum, not a replacement curve.** Your curve is
-  raised point by point to whichever is higher — your value, or the built-in
-  curve's value **at that point's own temperature**, interpolated between the
-  rows of the table below. Nothing is ever lowered, and a point you set above
-  the built-in curve is applied exactly as you drew it. A curve at 100%
-  everywhere stays at 100%.
-
-    The comparison is by temperature and not by position in the list, so a
-    curve whose points sit at unusual temperatures cannot slip under the ramp:
-    a point at `70:130` is measured against the 215 the floor requires at
-    70 °C, not against whichever built-in point happens to be seventh.
-
-    z13ctl through v1.3.0 replaced the *whole* curve whenever the sustained
-    limit exceeded 75 W, which is why a custom curve appeared to "reset to
-    stock" after every sleep/resume and every `tdp --set`.
-
-- The built-in curve is the floor, and the whole of it matters — not just its
-  bottom. It is written whole only when the profile has no curve of its own,
-  but its rising section is what your curve is measured against at higher
-  temperatures. The curve is device data; on the GZ302EA it is:
-
-    | Temp | 30 °C | 40 °C | 50 °C | 60 °C | 65 °C | 70 °C | 75 °C | 80 °C |
-    |------|-------|-------|-------|-------|-------|-------|-------|-------|
-    | PWM  | 127   | 127   | 140   | 165   | 190   | 215   | 235   | 255   |
-
-    Below 30 °C the floor holds at 127 rather than tapering off, and above
-    80 °C it stays at 255. Between rows it interpolates, so a point at 55 °C
-    is measured against roughly 152.
-
-    So a curve flat at 50% clears the *bottom* of the floor everywhere but is
-    still raised above 40 °C, because a machine genuinely sustaining more than
-    75 W lives well past 60 °C — and the ramp, not the 127 minimum, is what
-    protects the APU there. A curve like `35:80%,40:99%,50:100%,…` is above
-    the built-in curve at every position and is left completely alone.
-
-    The 127 bottom was 204 (80%) through v1.2.1 — loud enough that users were
-    turning the feature off rather than living with it, which protects nobody.
-
-- `--reset` cannot drop to firmware auto while a high limit is in force, since
-  firmware auto has no floor at all.
-
-::: danger Run the daemon when sustaining above the safe maximum
-Every `platform_profile` write — a GNOME power mode change, an AC/battery
-transition, Fn+F5 — releases custom fan curves, the high-TDP floor included.
-The firmware re-applies the profile's own power limits at the same time, but the
-limit reads back unchanged, so voltaire cannot confirm the high limit is gone
-and treats the floor as still required. The
-[daemon](/reference/daemon) restores the floor and then the limit
-within a couple of seconds. Without it, both stay lost until you set them again.
-:::
+| Limit | Meaning |
+|-------|---------|
+| PL1 | Sustained: the power the processor can draw indefinitely |
+| PL2 | Short boost: allowed for a few seconds before falling back to PL1 |
+| PL3 | Fast boost: allowed for brief spikes |
 
 ```sh
-# Read current TDP values
 voltaire tdp --get
-
-# Set all PPT limits to 50W
 voltaire tdp --set 50
-
-# Set with individual PL overrides
-voltaire tdp --set 45 --pl2 55 --pl3 60
-
-# Force high sustained TDP (fans are held to the device's floor curve first;
-# 80W is asus-armoury's maximum on the GZ302EA)
+voltaire tdp --set 45 --pl2 55 --pl3 65
 voltaire tdp --set 80 --force
-
-# Back to balanced and the firmware's own limits (also clears the undervolt)
 voltaire tdp --reset
 ```
 
+**Notes**
+
+- Your device's ranges are on its [device page](/devices/) and in `--get`. A
+  PL1 outside its range is refused; a PL2 or PL3 below its minimum is raised to
+  it, with a note.
+- Burst limits (PL2, PL3) need no `--force`.
+- Run the daemon to keep a custom limit: a power profile change or a fan
+  release makes the firmware put its own limits back, and the readback does not
+  show it.
+- On a firmware profile, `--get` shows that profile's stock limits.
+- On a device with a single TDP slider (the OneXPlayer X2 Mini Pro), `--set`
+  without `--profile` sets the slider: it is remembered across reboots, and
+  leaves a running custom profile.
+
+See [Power limits](/guide/profiles-and-power#power-limits).
+
 ## tuning
 
-Manage the tuning overrides — fan curve, power limits and Curve Optimizer
-offset — as one group.
+Clear the fan curve, power limits and undervolt together.
 
-**Flags:**
+```
+voltaire tuning [flags]
+```
 
 | Flag | Description |
 |---|---|
-| `--reset` | Clear the fan curve, power limits and Curve Optimizer offset |
-| `--profile <name>` | Clear them from a profile you are NOT running (stores only) |
+| `--reset` | Clear all three, and return to the device's default firmware profile with firmware fan control and stock limits |
+| `--profile <name>` | Clear them from this custom profile instead; nothing is applied. Needs the daemon. |
 
-`--reset` returns the machine to the device's default firmware profile
-(`balanced` on the Z13) with firmware fan control and stock power limits, and forgets the saved fan curve, limits and
-offset in the profile it edits.
-
-**This is not the same as running the three resets by hand.** Each of
-`fancurve --reset`, `tdp --reset` and `undervolt --reset` has to lower power
-before releasing the fans; issuing them in the wrong order leaves the machine at
-a high sustained limit with no fan floor. `tuning --reset` is a single daemon
-operation, so the ordering cannot be got wrong.
-
-It also differs from `tdp --reset` in what it *forgets*: `tdp --reset` keeps the
-saved Curve Optimizer offset so it can be recalled with `profile --set custom`,
-while `tuning --reset` is the command that says to discard all of it.
-
-```bash
-# Clear every tuning override and return to stock behaviour
+```sh
 voltaire tuning --reset
-
-# Clear them from a profile you are not running
 voltaire tuning --reset --profile gaming
 ```
 
-Without the daemon running, `--profile` is refused (only the daemon owns the
-saved profiles) and the bare form performs the same hardware sequence as
-`tdp --reset`.
+**Notes**
+
+- Use this rather than three separate resets: it lowers power before releasing
+  the fans, so the order cannot go wrong.
+- Unlike `tdp --reset`, it also forgets the saved settings.
+- Without the daemon, the bare form does what `tdp --reset` does and changes no
+  saved profile.
+
+See [Reset](/guide/profiles-and-power#reset).
 
 ## undervolt
 
-Get or set CPU Curve Optimizer (CO) offsets via the `ryzen_smu` kernel module.
-Negative values reduce voltage (undervolt), improving efficiency and thermals
-without reducing performance. Root or group access required; see
-[setup](#setup).
+Get or set an all-core CPU undervolt (the Curve Optimizer offset on AMD).
+Negative values lower the voltage, for less heat at the same performance.
 
 ```
 voltaire undervolt [flags]
@@ -805,183 +439,86 @@ voltaire undervolt [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--get` | Print current CO offset (from daemon state) |
-| `--set <value>` | Set all-core CPU CO offset: 0 or negative, within the device's range |
-| `--reset` | Reset CPU CO to stock (0). With no offset applied, reports that and sends nothing. |
-| `--profile <name>` | Store the setting in this custom profile instead of applying it to the active one. Requires the daemon. |
-
-CO values have no sysfs readback — `--get` returns the last-applied values
-from daemon state. If a firmware profile is active,
-the output indicates that the saved offsets are not currently applied. If the
-daemon is not running, reports "not set".
-
-CO is volatile: values reset on reboot and sleep/resume. The daemon reapplies
-them automatically on startup and resume when a custom profile with an offset is
-active.
-
-On a device with a single TDP slider (the OneXPlayer X2 Mini Pro), an offset
-set without `--profile` is a **device setting**, like the slider: it stays in
-force on the firmware profile and under any custom profile without an offset
-of its own, is reapplied at startup and resume, and moving it while a custom
-profile runs leaves that profile. `--set 0` and `--reset` clear it. A saved
-profile can still carry its own offset (`--profile <name>`), which wins while
-that profile runs.
-
-voltaire only talks to the SMU when an offset is about to be applied, or when
-one is applied and has to be cleared. Switching to a firmware profile,
-`tdp --reset` and `undervolt --reset` send nothing when no offset is applied:
-userspace messages to the SMU can collide with the kernel's own, and an
-unnecessary reset is the prime suspect in a hard lock seen during development.
-
-The SMU message that sets an offset depends on the CPU, so voltaire picks it
-from the CPU family and model, using the table from ryzenadj 0.19.0: Renoir,
-Lucienne and Cezanne take one command, Van Gogh and Rembrandt through Strix
-Halo another. On a CPU outside that table it sends nothing and says so. `--dry-run`
-shows the command it would send on your machine.
-
-**Safety limits.** The accepted range is device data (the daemon's
-`device-get` serves it as `undervolt.min`/`max`), and an out-of-range offset is
-refused with your machine's range. On the GZ302EA it matches G-Helper's
-defaults:
-
-| Parameter | Range (GZ302EA) |
-|-----------|-------|
-| CPU CO | 0 to -40 |
-
-**Requires:** `ryzen_smu` kernel module. Install via:
-
-- **Arch/CachyOS:** `ryzen_smu-dkms-git` (AUR)
-- **Other distros:** build from
-  [amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) source
-
-::: warning Strix Halo requires the amkillam fork
-The original `leogx9r/ryzen_smu` does not support Strix Halo. Use the
-[amkillam/ryzen_smu](https://github.com/amkillam/ryzen_smu) fork instead.
-:::
-
-If the module is not installed, undervolt commands return a helpful error.
+| `--get` | Print the offset and whether it is applied now |
+| `--set <value>` | Set the offset: 0 or negative, within your device's range |
+| `--reset` | Reset the offset to 0; does nothing if no offset is applied |
+| `--profile <name>` | Store the offset in this custom profile instead of applying it. Needs the daemon. |
 
 ```sh
-# Read current CO value
 voltaire undervolt --get
-
-# Set CPU CO to -20
 voltaire undervolt --set -20
-
-# Reset to stock voltage
 voltaire undervolt --reset
-
-# Preview without applying
 voltaire --dry-run undervolt --set -20
 ```
 
+**Notes**
+
+- Needs the `ryzen_smu` kernel module. See
+  [Installation](/installation#ryzen-smu).
+- There is no readback: `--get` reports what the daemon last applied, or "not
+  set" without the daemon.
+- The offset is lost on reboot and sleep. The daemon reapplies it.
+- On a device with a single TDP slider (the OneXPlayer X2 Mini Pro), an offset
+  set without `--profile` is a device setting that stays in force on firmware
+  profiles too.
+
+See [Undervolt](/guide/profiles-and-power#undervolt).
+
 ## status
 
-Display a summary of all system metrics in a single view: CPU temperature, fan
-speed and mode, performance profile, power source, TDP power limits, undervolt
-status, and battery charge level with charge limit.
+Print a one-screen summary: CPU temperature, fans, profile, power source, power
+limits, undervolt and battery.
 
 ```
-voltaire status
+voltaire status [flags]
 ```
-
-This command is read-only. Values come from sysfs, or from the daemon when it
-is running (see [Watching](#watching) for which). Two lines always involve the
-daemon: undervolt has no sysfs readback, so the line reports availability
-rather than the active offset; and the TDP line asks the daemon which profile is
-active, because a custom TDP equal to the kernel's untouched boot-time values
-(asus-armoury's defaults, or asus-nb-wmi's 5 W) is otherwise indistinguishable
-from them. Like `tdp --get`, the TDP line shows a firmware profile's stock
-values (marked `(balanced stock)`), and on a custom profile the limits last
-written; see [`tdp`](#tdp).
-
-**Flags:**
 
 | Flag | Description |
 |---|---|
 | `-w`, `--watch` | Redraw continuously until interrupted |
-| `--interval <duration>` | How often to redraw with `--watch` (default `1s`) |
+| `--interval <duration>` | How often to redraw with `--watch` (default `1s`, minimum `100ms`) |
 
 ```sh
 voltaire status
-# CPU:     62°C
-# Fans:    4200 / 4350 RPM, mode: auto
-# Profile: balanced
-# Power:   AC via USB-C
-# TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
-# UV:      available (use 'undervolt --get' for current values)
-# Battery: 74% (limit: 80%)
-```
-
-The power line names the input in use — `AC via USB-C` or `AC via adapter` —
-on a machine that can tell its inputs apart, and plain `AC` on one that cannot.
-It is omitted when there is no mains supply to read (a desktop, a VM). With
-autoswitch enabled it adds the profile autoswitch would select, as
-`(autoswitch: gaming)`.
-
-The undervolt line comes from the daemon. It reports `available` while the
-module is loaded, until the first undervolt write tests whether this
-`ryzen_smu` build supports Curve Optimizer on the machine; from then on it
-reports the test's answer. Without a daemon, `status` can only confirm that the
-module is loaded and says so:
-
-```
-# UV:      ryzen_smu loaded (start the daemon to confirm Curve Optimizer support)
-```
-
-`status` deliberately does not run that support test itself — it works by
-writing a zero offset, which is the same command as
-[`undervolt --reset`](#undervolt), so a `status` that ran it would clear an
-active undervolt every time.
-
-### Watching
-
-`--watch` redraws the report in place until you interrupt it:
-
-```sh
-voltaire status --watch
 voltaire status --watch --interval 5s
 ```
 
-The default interval is one second, matching the daemon's sampler — redrawing
-faster than that shows the same numbers again. Intervals under 100 ms are
-refused for the same reason.
+```
+CPU:     62°C
+Fans:    4200 / 4350 RPM, mode: auto
+Profile: balanced
+Power:   AC via USB-C
+TDP:     52W (PL1) / 71W (PL2) / 70W (PL3)
+UV:      available (use 'undervolt --get' for current values)
+Battery: 74% (limit: 80%)
+```
 
-It is deliberately not a full-screen interface: no alternate screen, no raw
-mode, no key handling. It walks the cursor back over the previous frame and
-clears from there down, so your scrollback is untouched and `Ctrl-C` leaves the
-last reading on screen. Piped or redirected output gets plain frames with no
-escape sequences, so `voltaire status --watch > log.txt` stays readable.
+**Notes**
 
-The daemon is not required. Without one, `status` reads sysfs directly; with
-one, the readings that come from the embedded controller — temperature, fans,
-battery and power source — come from the daemon, which stops reading the
-controller while it is not answering after a resume. Those lines then show
-`N/A` (or are omitted) rather than reading it from here.
+- Read-only. The daemon is not required; with it running, some readings come
+  from it.
+- With autoswitch on, the power line adds the profile it would select.
+- `--watch` redraws in place without taking over the terminal; redirected
+  output gets plain frames.
 
-For a richer terminal view, [z13-panel](https://github.com/ayixiayi/z13-panel)
-is a third-party TUI built on the same daemon socket.
+See [Monitoring](/guide/monitoring).
 
 ## list
 
-List all matching hidraw devices and show whether each has Aura support.
+List the lighting devices voltaire finds and whether each supports Aura.
 
 ```
 voltaire list
 ```
 
-Useful for diagnosing missing devices or verifying that `setup` worked. Does
-not require the daemon to be running.
+Useful for checking that lighting is detected and that `setup` worked. Does not
+need the daemon.
 
 ## setup
 
-Grant a group what this machine's device file needs for voltaire to run without
-root: the lighting and hardware-button device nodes, and the sysfs attributes
-for profiles, fans, power limits, firmware switches, the charge limit, CPU
-boost and (read only) the package-power counter, each only where the device
-file declares it. Writes `/etc/udev/rules.d/99-voltaire.rules` and the boot
-unit `voltaire-perms.service`, and applies the grants immediately.
-Distribution packages run it on install and upgrade.
+Grant a group the access this machine needs for voltaire to run without root,
+and keep it across reboots. Distribution packages run it on install and
+upgrade.
 
 ```
 sudo voltaire setup [flags]
@@ -989,44 +526,32 @@ sudo voltaire setup [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--group` | `users` | Group to grant device access to |
-| `--machine` | | Device file id to use instead of matching this machine's firmware (DMI); for the same hardware under another name, or with `--dry-run` to preview another machine's grants |
-| `--perms-only` | | Apply the grants now without writing either file (what the boot unit runs) |
-| `--remove` | | Remove the rules file and boot unit (only if setup wrote them) and take the group back from everything granted |
-| `--inputplumber-passthrough` | | Where InputPlumber hides the interface this machine's lighting uses, write an override of InputPlumber's own config that leaves it visible, and restart InputPlumber. `=false` removes it. See [the Ally's joystick lighting](/inputplumber#ally-lighting) |
-
-A later run keeps the previous run's `--group`, `--machine` and
-`--inputplumber-passthrough` choice unless the flag is given again, so the
-plain `voltaire setup` a package upgrade runs changes none of them.
-
-On a machine no device file describes, setup grants nothing and prints the
-firmware's vendor and product strings to report. On a machine that previously
-ran `z13ctl setup`, the old rules file and permissions unit are cleaned up
-automatically — see [Migrating from z13ctl](/migrating-from-z13ctl).
-
-Use `--dry-run` to preview exactly what would be written and changed, without
-root:
+| `--group` | `users` | Group to grant access to |
+| `--machine` | | Use this device file id instead of detecting the machine (for the same hardware under another name, or with `--dry-run` to preview another machine) |
+| `--perms-only` | | Apply the grants now without writing any files (what the boot unit runs) |
+| `--remove` | | Remove what setup wrote and take the access back |
+| `--inputplumber-passthrough` | | Where InputPlumber hides this machine's lighting device, write an InputPlumber override that leaves it visible, and restart InputPlumber; `=false` removes it. See [Ally lighting](/guide/buttons-and-controllers#ally-lighting) |
 
 ```sh
-voltaire --dry-run setup    # preview (no root needed)
-sudo voltaire setup         # apply
+voltaire --dry-run setup    # preview, no root needed
+sudo voltaire setup
+sudo voltaire setup --remove
 ```
 
-After running setup, log out and back in (or run `newgrp <group>`) for the
-group membership to take effect in your current session.
+**Notes**
 
-For what setup installs and why a boot unit is needed, see
-[Installation](/installation#what-setup-does).
+- A later run keeps the previous `--group`, `--machine` and
+  `--inputplumber-passthrough` choices unless you give them again.
+- On a machine no device file describes, setup grants nothing and prints what
+  to report.
+- Log out and back in (or run `newgrp <group>`) after joining the group.
+- What it writes and why: [What setup does](/installation#what-setup-does).
+  Files: [Configuration](/reference/configuration#setup-files).
 
 ## button
 
 Choose which hardware button opens voltaire: one press opens the quickbar, a
-quick second press the full window (the window's Settings tab swaps the two).
-
-The choices are the buttons this machine's device file declares, plus `none`
-and `default`. They are fixed on purpose: voltaire never reads a keyboard to
-learn a key, so it cannot see what you type. On the Z13 the one choice is the
-Armoury Crate button.
+quick second press the full window.
 
 ```
 voltaire button [flags]
@@ -1034,50 +559,50 @@ voltaire button [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--list` | List the buttons this device offers, marking the one that opens voltaire |
+| `--list` | List the buttons this device offers, marking the one in use |
 | `--get` | Print the button that opens voltaire |
-| `--set <choice>` | A button id from `--list`, `none` (no button opens voltaire), or `default` |
+| `--set <choice>` | A button id from `--list`, `none`, or `default` |
 
 ```sh
 voltaire button --list
-voltaire button --set none      # open voltaire from the desktop entry only
+voltaire button --set none
 voltaire button --set default
 ```
 
-The daemon keeps the choice, so `--set` needs it running; `--list` and `--get`
-fall back to the device file's default without it. The same choice is the
-**Open voltaire with** row on the full window's Settings tab. `--no-button` on
-the daemon still turns the watcher off entirely.
+**Notes**
+
+- The choices are fixed by your device; voltaire never learns a key from the
+  keyboard.
+- `--set` needs the daemon. See
+  [Opening voltaire](/guide/buttons-and-controllers#opening-voltaire).
 
 ## daemon
 
-Start the voltaire daemon. Normally started automatically via the systemd
-socket unit — see [Daemon](/reference/daemon). You can also start it
-directly for testing.
+Run the voltaire daemon in the foreground. Normally systemd starts it; see
+[The Daemon](/reference/daemon).
 
 ```
 voltaire daemon
 ```
 
 ```sh
-voltaire daemon               # with Armoury Crate button watcher
-voltaire --no-button daemon   # without button watcher
+voltaire daemon
+voltaire --no-button daemon
+voltaire --no-sleep-release daemon
 ```
 
-When the daemon is running, all other commands (`apply`, `brightness`, `off`,
-`profile`, `batterylimit`, `bootsound`, `paneloverdrive`, `feature`, `cpuboost`,
-`rumble`, `fancurve`, `tdp`, `undervolt`, `tuning`, `status`) route through the daemon
-socket automatically. If the daemon is not running they fall back to direct
-hardware or sysfs access. `autoswitch` and `button --set` are the exceptions:
-the daemon is what watches the power source and the buttons.
+While the daemon runs, `apply`, `brightness`, `off`, `profile`,
+`batterylimit`, `bootsound`, `paneloverdrive`, `feature`, `cpuboost`,
+`rumble`, `fancurve`, `tdp`, `undervolt`, `tuning` and `status` go through it;
+without it they use the hardware directly. These need the daemon: `autoswitch`,
+`button --set`, `batterylimit --full-once`, custom profiles, and every
+`--profile` flag.
 
 ## Colors
 
 Named colors accepted by `--color` and `--color2`. Any 6-digit hex value
-(`RRGGBB`, without `#`) is also accepted.
-
-Run `voltaire apply --list-colors` to see ANSI true-color swatches in your
-terminal.
+(`RRGGBB`, without `#`) works too. `voltaire apply --list-colors` shows them
+as swatches in your terminal.
 
 | Name | Hex | Name | Hex |
 |------|-----|------|-----|

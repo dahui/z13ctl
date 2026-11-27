@@ -171,7 +171,7 @@ that changes power, fan or sleep handling needs a run on the machine:
   limit's own readback, which does not move when firmware resets it.
 - Restore the state file and restart the installed units afterwards.
 
-The [Z13 hardware smoke test](/dev/smoke-z13) is the full checklist
+The [Z13 hardware smoke test](https://github.com/dahui/voltaire/blob/main/docs/smoke-z13.md) is the full checklist
 for one machine; a new device wants its own.
 
 ## Checklist

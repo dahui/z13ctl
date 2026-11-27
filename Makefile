@@ -248,7 +248,7 @@ install-perms-service:
 uninstall-perms-service:
 	/usr/local/bin/voltaire setup --remove
 
-API_GO_PAGE := website/docs/reference/api-go.md
+API_GO_PAGE := website/docs/dev/api-go.md
 # gomarkdoc links each symbol to its source line, and left to itself it takes
 # the repository from the git remote and its default branch — on this tree
 # github.com/dahui/z13ctl's main, a different api with different line

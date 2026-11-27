@@ -470,7 +470,7 @@ make snapshot           # goreleaser release --snapshot --clean  (no publish)
 make release            # goreleaser release --clean             (requires pushed v* tag)
 make docs               # serve the website locally (pnpm install + vitepress dev)
 make docs-build         # build the website as CI does
-make docs-api           # regenerate website/.../reference/api-go.md from api/ doc comments
+make docs-api           # regenerate website/docs/dev/api-go.md from api/ doc comments
 make clean              # remove both binaries, dist/, coverage artifacts
 ```
 
@@ -550,7 +550,7 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   overview and table of contents): `docs/index.md` is an ordinary doc page,
   so the root shows the sidebar. Rules for writing pages:
   - **Links are written without the base and without a trailing slash**
-    (`/reference/commands#setup`; `/gui/` only because it is a directory
+    (`/reference/commands#setup`; `/devices/` only because it is a directory
     index). `base: '/voltaire/'` is added by VitePress, and `cleanUrls`
     serves `/voltaire/reference/commands` (GitHub Pages maps it to the
     `.html`). The README, CONTRIBUTING, the GUI README, `cmd/legacyname.go`
@@ -570,7 +570,7 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
     the coverage starlight-links-validator gave. Its negative control was run
     (a misspelt fragment fails the build). It checks the generated API page
     too: gomarkdoc's `<a name>` anchors count.
-- **`website/docs/reference/api-go.md` is generated — do not
+- **`website/docs/dev/api-go.md` is generated — do not
   hand-edit it.** Regenerate with `make docs-api` whenever `api/` doc comments
   change; the target prepends the frontmatter and renames gomarkdoc's `# api`
   heading to `# Go API Reference`.
@@ -582,11 +582,27 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   so a regeneration diffs only what the api changed. The links resolve once
   the repo is renamed and this branch is on main, which is also when the site
   starts deploying from it.
-- `reference/daemon.md` holds the user-facing socket protocol tables; keep them
-  in sync with `dispatch()` in `internal/daemon/server.go`.
-- `reference/protocol.md` — technical HID protocol reference for developers.
+- **Site layout (2026-11-26 docs pass, plan `.claude/plans/docs-pass.md`),
+  ArgoCD-style and user-first:** Overview → Supported Devices (`devices/`) →
+  Getting Started (`installation`, `quick-start`, `migrating-from-z13ctl`) →
+  User Guide (`guide/`: one page per feature — Jeff chose by-feature over
+  by-tool — plus `troubleshooting`) → Reference (`reference/commands`,
+  `configuration`, `daemon`) → Developer Guide (`dev/`, collapsed). **Writing
+  rules for every page outside `dev/`:** no Go identifiers, test names,
+  decision references, dated verification notes, version history or
+  maintainer voice (history lives only on the migrating page); a "why" only
+  when it changes what the reader does; device numbers only on device pages;
+  feature pages go what it does → In the GUI → On the command line → Device
+  notes → Things to know; American spelling. A new feature gets its guide
+  page section, its `commands.md` flags, and its matrix row where relevant.
+- `dev/socket-protocol.md` holds the socket protocol tables; keep them in sync
+  with the command table in `internal/daemon/server.go`
+  (`TestEveryCommandIsDeclaredAndDocumented` reads this page).
+  `reference/daemon.md` is the operator page (running it, what it does on its
+  own, the state file).
+- `dev/hid-protocol.md` — technical HID protocol reference for developers.
 - `dev/architecture.md`, `dev/device-files.md`, `dev/writing-a-driver.md`,
-  `dev/plugins.md` — the developer guide (sidebar "Developers"). The
+  `dev/plugins.md` — the developer guide. The
   device-file page documents every schema key and holds a complete example
   between `<!-- example-device:start/end -->` markers; both are checked by
   `internal/drivers/register/docs_test.go`, so a new `toml:` key fails
@@ -594,22 +610,27 @@ Config: `.goreleaser.yml`. GitHub Actions workflow: `.github/workflows/release.y
   and is marked planned until `plughost` exists; the package comment of
   `internal/driver` (`doc.go`) is the driver contract the guide restates.
 - `devices/` — the user-facing compatibility pages (Jeff, 2026-11-17: "users
-  will want to know [what a device does not support] and why"). `index.md`
-  holds the feature × device matrix, every "No" linking to a *why* section on
+  will want to know [what a device does not support] and why"), right after
+  the overview. `index.md`
+  holds the feature × device matrix, every gap linking to a *why* section on
   that device's page; each device file has a page at `devices/<id>.md` with
   the same rows as a Compatibility table, what it needs installed, and a
   "Not supported yet, and why" section. `register/docs_test.go`'s
   `TestEveryDeviceHasACompatibilityPage` fails a device file with no page or
   no link from the matrix (negative control run). A change to a device file's
   capabilities, or a kernel that closes a gap, means updating both pages.
-  The OXP's RGB gap needs **two** things to close, which the page says: the
+  The OXP's RGB gap needs **two** things to close: the
   hid-oxp X2 series in a released kernel, and a voltaire lighting driver for
   kernel LED devices (only `aura-hid` exists) plus an OXP `[lighting]` block.
-- `dev/smoke-z13.md` — the hardware smoke checklist (edited in place during
-  smoke runs; it is a site page now, same content).
+- `docs/smoke-z13.md` (repo, not the site) — the hardware smoke checklist,
+  edited in place during smoke runs; moved off the site in the docs pass
+  because a maintainer checklist with a run log is not user documentation.
 - `migrating-from-z13ctl.md` — the 2.0 migration story, linked from the README,
-  release notes, and AUR notices. New shims and their removal timeline belong
-  in its compatibility table.
+  release notes, AUR notices and `cmd/legacyname.go`'s deprecation line. New
+  shims and their removal timeline belong in its compatibility table.
+- URLs printed by the binaries (`cmd/legacyname.go`, `cmd/setup_inputplumber.go`
+  → `/guide/buttons-and-controllers#ally-lighting`) and the READMEs are not
+  checked by any build; move a page and grep the repo for its path.
 
 ## Current status and next steps
 
@@ -631,7 +652,7 @@ transcript (2026-10-09). Write new ones here and point at them from this file.
 | M1 — driver extraction, registry, device TOMLs, safety engine | done |
 | M2 — `device-get` protocol, generic `feature` commands, GUI adopts limits | done (capability absence hiding controls landed 2026-11-15) |
 | M3 — rename, repo merge, two binaries, shims, docs, packaging | code done; all three parity gates passed 2026-08-09. Release mechanics outstanding: merge to main, GitHub repo rename, `api/v2.0.0` then `v2.0.0` tags, drop the `replace` in go.mod, `GOPROXY=direct` rehearsal, archive z13gui, AUR playbook, comms |
-| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls, the gamepad blocker with its capabilities now kept only there) — the five unticked boxes in `dev/smoke-z13.md`; see Open work below. |
+| M4 — window split, control registry, movable quickbar, full window + dashboard + double-tap, telemetry ring | **complete** but for the Gaming Mode re-check of the 2026-11-15 fixes (Open work item 2). Landed: `internal/telemetryring`; the device-document prerequisites (`battery.health`, `telemetry.{power_draw,history_seconds}`); the 1 Hz sampler + `telemetry-history`; `internal/controls` + `gui.toml`; `panelgeom.Edge` + the movable quickbar; double-tap `gui-open-full`; the in-surface popup layer (`popupgeom` — not in the original list, and it replaced both the expanding selector and the cycle buttons); and the window split, each of `errBarView`, `themeView`, `lightingView`, `profileSection`, `autoswitchSection`, `dashboardView`, `customView` owning its own widgets and focus list. The full window is a real toplevel with Dashboard, Profiles and Settings tabs hosting second *instances* of those views through the `viewHost` seam, `internal/mainwin` deciding tabs and geometry; under gamescope the same pages live inside voltaire's own fullscreen surface via `fullSurfaceHost`, since what does not composite there is a second *toplevel*, not a second layout. Its dashboard is eight cards over the full expanded telemetry set, its Profiles page commits through one dirty-tracked button, and the bundled CSS is migrated to `@voltaire-*` (leaving the `@z13-*` aliases with no in-tree consumer). Every rule behind those three design passes — desktop density 2026-08-13, one-commit and autoswitch card 2026-08-14, expanded telemetry / battery state-of-charge / Net card the same day — has its own entry above or in `internal/gui/CLAUDE.md`, and the `VOLTAIRE_GUI_DUMP_FOCUS` fingerprint held byte-identical through all of them bar three deliberate re-baselines (twice `full:custom`, once the picker: `full:color` gone and `color` re-shaped, since a popup carries neither a back item nor the error-bar sentinel). The **Settings tab** landed 2026-08-14: generic toggle rows rendered from `DeviceInfo.Toggles` through `internal/settingsui`, plus the daemon-side notify fix two of the three toggle write paths were missing (both have their own entries above). Later the same day the Telemetry tab became the **Dashboard**: the eight tiles keep the top of the page and the live controls — profile, autoswitch, charge limit, refresh rate (`internal/display`, the one control that does not go through the daemon) and RGB — flow across the width beneath them, with autoswitch moved off the Profiles page on the rule that this page changes what the machine is *doing* while the editor changes what a profile *says*. That made every drawer section a second instance. Later still the **HSL picker stopped being a page at all** and became a single popup shared by both surfaces (`colorpopup.go`), which deleted `colorview.go` and the whole non-tab-stack-child apparatus with it; all of it has entries above. On 2026-08-14/15 a batch of small features from the feature survey landed, each with an entry above: the SMU **applied-gate** on every Curve Optimizer clear (after the hard lockup), **`tuning-reset`** (CLI + the editor's Reset All), **`status --watch`**, **`pending_reboot`** (Settings banner) and **`charge_mode`** (dashboard battery header), the fan-curve **operating-point dot**, and **named fan-curve presets**. **Quickbar customization** landed 2026-10-09 (its own entry above). **Remaining:** the Gaming Mode re-check of the 2026-11-15 fixes (expand button, refresh rate hidden, window controls, the gamepad blocker with its capabilities now kept only there) — the five unticked boxes in `docs/smoke-z13.md`; see Open work below. |
 | M5 — external plugin tier + OXP X2 Mini Pro device | not started |
 | M6 — ROG Ally + generic-AMD device TOMLs | not started |
 | OXP RGB | deferred past 2.0 — needs Linux 7.2 `hid-oxp` in CachyOS |
@@ -712,7 +733,7 @@ diff whenever a main release touches `api/`.
    Since then the GUI keeps CAP_BPF/CAP_PERFMON only under gamescope (the
    caps-drop entry), so the same session must confirm the blocker still
    attaches there with a real controller and a game running. All five checks
-   are the unticked boxes in `dev/smoke-z13.md`; they are the last thing
+   are the unticked boxes in `docs/smoke-z13.md`; they are the last thing
    before the M3 release mechanics.
 3. **pm_table telemetry** — parser and fixtures done 2026-10-09; the sampler
    and card are deliberately not built (every read is an SMU message; see the
@@ -757,7 +778,7 @@ diff whenever a main release touches `api/`.
      80.0 W at 94 °C.
    - `tdp --reset` landed on balanced at 52.0 W and skipped the SMU write.
 8. ~~Full hardware smoke of the final tree~~ — run 2026-11-15 on
-   `feat/v2-refactor`; every desktop box passed (`dev/smoke-z13.md` is ticked
+   `feat/v2-refactor`; every desktop box passed (`docs/smoke-z13.md` is ticked
    and carries a run note). It found five faults, all fixed and re-verified
    the same day (1517879, 2967c14 and the findings commit): the drawer
    reopening on the window's focus list, oversized text from the blocker's

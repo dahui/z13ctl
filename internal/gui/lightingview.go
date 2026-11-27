@@ -187,8 +187,8 @@ func (w *Window) newLightingSection(cfg lightingConfig) *lightingView {
 	l.updateSwatches()
 
 	if cfg.desktop {
-		l.color1Box = formRow("Colour 1", l.color1.row)
-		l.color2Box = formRow("Colour 2", l.color2.row)
+		l.color1Box = formRow("Color 1", l.color1.row)
+		l.color2Box = formRow("Color 2", l.color2.row)
 	} else {
 		l.color1Box = colorSubBox("COLOR 1", l.color1.row)
 		l.color2Box = colorSubBox("COLOR 2", l.color2.row)

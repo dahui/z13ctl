@@ -1,16 +1,101 @@
 ---
-title: GUI Configuration
-description: The voltaire-gui config file, theme priority, environment variables, and command-line flags.
+title: Customizing the GUI
+description: Choose the drawer's sections and their order, move it to the left edge, and set the GUI's preferences.
 ---
 
-# GUI Configuration
+# Customizing the GUI
 
-## Config file
+Most of the GUI's preferences are set from the GUI itself and saved for you.
+This page covers what you can change, and the files behind it for when you
+want to edit them by hand. For colors, see [Themes](/guide/themes).
 
-voltaire-gui stores its configuration in `~/.config/voltaire/config.toml`.
-This is the file the app itself writes: the theme picker, the Settings tab's
-preferences and its Quickbar card, and the dashboard's refresh-rate switch all
-save here. A key the app has never been told about is simply absent.
+## Drawer sections {#drawer-sections}
+
+### In the GUI
+
+Open the full window's **Settings** tab. The **Quickbar** card lists every
+drawer section your device supports, each with a switch to show or hide it and
+▲/▼ buttons to move it. The drawer changes as you go, and **Reset to default**
+puts your device's standard layout back. The buttons work with a mouse, touch
+or a controller.
+
+Your layout is saved in `~/.config/voltaire/config.toml` as
+`quickbar_controls`.
+
+### By hand, in gui.toml
+
+You can also fix the layout in `~/.config/voltaire/gui.toml`, which does not
+exist until you create it:
+
+```toml
+[quickbar]
+controls = ["profile", "battery", "lighting"]
+```
+
+The list is both which sections appear and their order. A `controls` list
+here takes precedence over the Settings card: the card then shows this layout
+without letting you change it, and says so. Delete the `controls` line to
+manage the layout from Settings again. Edits to `gui.toml` take effect the
+next time the GUI starts:
+
+```sh
+systemctl --user restart voltaire-gui
+```
+
+| ID | Section | Default |
+|----|---------|---------|
+| `tdp` | The TDP slider, on a device whose TDP is one setting (the OneXPlayer X2 Mini Pro). It is remembered across reboots | on |
+| `profile` | The firmware profiles and the custom profile picker. On a single-slider device, a **Saved profile** picker | on |
+| `autoswitch` | The AC/battery autoswitch switch and its two targets | on |
+| `battery` | The charge limit slider | on |
+| `charge-once` | Charge to 100% once, then go back to the limit | off |
+| `cpu-boost` | The CPU boost switch | off |
+| `undervolt` | The undervolt offset, on a single-slider device | off |
+| `brightness` | The screen's brightness | off |
+| `refresh-rate` | The screen's refresh rate (KDE Plasma only; not in Steam Gaming Mode) | off |
+| `volume` | The sound volume | off |
+| `rumble` | The built-in controller's vibration strength | off |
+| `lighting` | The whole RGB block: zones, effect, colors, speed and brightness | on |
+
+The **Default** column is the built-in layout. Some devices ship their own:
+
+| Device | Default drawer |
+|--------|----------------|
+| ASUS ROG Flow Z13 (2025) | `profile`, `autoswitch`, `battery`, `lighting` |
+| ASUS ROG Xbox Ally X | `profile`, `brightness`, `volume`, `cpu-boost`, `refresh-rate`, `lighting` |
+| OneXPlayer X2 Mini Pro | `tdp`, `cpu-boost`, `brightness`, `volume`, `rumble`, `refresh-rate`, `lighting` |
+
+Things to know:
+
+- **A section your machine cannot offer is left out**, whether or not you
+  list it, so one file works on more than one machine.
+- **An unknown ID is skipped** and logged as a warning; run `voltaire-gui -d`
+  to see it.
+- **`controls = []` means an empty drawer.** Delete the line (or the file) to
+  get the default back.
+- **Group headings follow their sections**, so a reordered drawer still reads
+  correctly.
+- **The bottom bar is fixed**: the theme and expand buttons are not part of
+  the list.
+
+## Move the drawer to the left edge
+
+The drawer slides in from the right. To use the left edge instead, set `edge`
+in `~/.config/voltaire/gui.toml`:
+
+```toml
+[quickbar]
+edge = "left"
+```
+
+The values are `right` (the default) and `left`; the top and bottom edges are
+not available. Restart the GUI to apply it.
+
+## Preferences in config.toml
+
+The GUI saves its preferences in `~/.config/voltaire/config.toml` as you
+change them. You rarely need to edit it, but you can; changes apply the next
+time the GUI starts.
 
 ```toml
 theme = "catppuccin-mocha"
@@ -19,136 +104,39 @@ button_press = "window"
 refresh_autoswitch = "true"
 refresh_ac = "180"
 refresh_battery = "60"
-quickbar_controls = "profile,battery,lighting,refresh-rate"
+gamepad_hints = "off"
 ```
 
-| Key | Description |
-|-----|-------------|
-| `theme` | Built-in theme ID (see `voltaire-gui --list-themes` or [Theming](/gui/theming)) |
-| `accent` | Accent color variant for themes that support it; `""` uses the theme default |
-| `button_press` | Which surface a **single** press of the hardware button opens: `quickbar` (the default) or `window`. A double press opens the other one |
-| `refresh_autoswitch` | `true` to change the screen's refresh rate when the power source changes; absent is off |
-| `refresh_ac`, `refresh_battery` | The rate, in whole hertz, to select on each source. A rate the screen does not offer is left alone rather than rounded to the nearest one |
-| `quickbar_controls` | The drawer layout saved by the Settings tab's Quickbar card: control IDs in order, comma-separated (see below). `none` means an empty drawer; absent means the default layout |
+| Key | Set from | Meaning |
+|-----|----------|---------|
+| `theme` | Theme picker | The built-in theme; the default is `rog-dark` |
+| `accent` | Theme picker | The accent color, for themes that have accent variants |
+| `button_press` | Settings → VOLTAIRE | What a single press opens: `quickbar` (default) or `window` |
+| `refresh_autoswitch` | Dashboard → Display | `true` changes the refresh rate with the power source |
+| `refresh_ac`, `refresh_battery` | Dashboard → Display | The rate for each power source, in whole hertz |
+| `quickbar_controls` | Settings → Quickbar | The drawer layout, as comma-separated IDs; `none` is an empty drawer |
+| `gamepad_hints` | Settings → VOLTAIRE | `off` hides hints on controller focus |
 
-If no config file exists, voltaire-gui defaults to the `rog-dark` theme.
-
-You can edit this file by hand. Changes take effect the next time voltaire-gui
-starts.
-
-On first run after upgrading from z13gui, everything in `~/.config/z13gui/`
-is **copied** to `~/.config/voltaire/` — never moved, so a downgrade still
-finds its config. The copy only happens while the voltaire directory does not
-exist, so it can never overwrite settings you have saved since.
-
-## Choosing which sections appear
-
-The easy way is the full window's **Settings** tab: its **Quickbar** card lists
-every section this machine supports, each with a switch to show or hide it and
-▲/▼ to move it. Changes apply straight away, and **Reset to default** puts the
-standard layout back.
-The buttons work the same with a mouse, touch or a controller.
-
-Two sections are off by default and only appear if you add them there:
-**CPU boost** and **Refresh rate** (the live rate only; the per-power-source
-rates stay on the Dashboard). The standard drawer is laid out to fit without
-scrolling, so each one you add costs a little of that.
-
-The card saves to `~/.config/voltaire/config.toml`. You can also write the
-layout by hand in `~/.config/voltaire/gui.toml`, which does not exist by
-default. A `controls` list there **takes precedence**: the Settings card then
-shows that layout without letting you change it, and says so, so a file you
-wrote is never overwritten.
-
-```toml
-[quickbar]
-edge = "left"
-controls = ["profile", "battery", "lighting"]
-```
-
-`edge` is which side of the screen the drawer slides in from — `right` (the
-default) or `left`. `top` and `bottom` are not available: the drawer is a
-fixed-width column, so a horizontal edge would need every section laid out along
-the other axis. Asking for one logs a warning saying so and uses `right`.
-
-| ID | Section |
-|----|---------|
-| `profile` | The device's firmware profiles plus the Custom profile picker. On a device with a pinned profile (the OneXPlayer X2 Mini Pro) it is one **Saved profile** dropdown instead: **No profile** runs on the TDP slider, and a saved profile loads what it saved |
-| `tdp` | The TDP slider (first in the drawer where it exists), on a device whose TDP is one setting rather than part of a profile (the OneXPlayer X2 Mini Pro). It sets the machine's TDP and is remembered across reboots. With a custom profile running, moving it leaves the profile (unchanged) for the TDP setting; change a profile's TDP on the Profiles page |
-| `autoswitch` | The AC/battery autoswitch row and its two targets |
-| `battery` | The charge-limit slider, where the device has a charge limit to set |
-| `charge-once` | The one-time full charge switch: charge to 100% once, then go back to the limit (off by default; always under the charge limit on the Dashboard) |
-| `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
-| `cpu-boost` | The CPU boost switch (off by default) |
-| `undervolt` | The undervolt setting, on a device whose TDP is one slider (the OneXPlayer X2 Mini Pro): one offset that stays in force when the TDP slider moves; also on the Dashboard. Off by default |
-| `brightness` | The screen's brightness: through KWin on KDE, and through logind on other desktops and in Steam Gaming Mode (off by default; on by default on the OneXPlayer X2 Mini Pro) |
-| `refresh-rate` | The screen's refresh rate, where the desktop can report one — not in Steam Gaming Mode, where Steam sets it (off by default) |
-| `volume` | The sound volume, through PipeWire (`wpctl`, or `pactl`); moving it unmutes (off by default; on by default on the OneXPlayer X2 Mini Pro) |
-| `rumble` | The built-in controller's vibration strength, where the device has one (on by default on the OneXPlayer X2 Mini Pro; also on the Settings tab) |
-
-The list is both the contents *and* the order, so moving an entry moves the
-section. Leaving one out hides it. The `TDP AND POWER`, `DISPLAY`, `SOUND`, `CONTROLLER` and `RGB`
-headings follow their sections rather than staying put, so a reordered drawer
-still reads correctly.
-
-RGB is one entry rather than five because the drawer already decides which of
-its parts to show from the selected effect — hiding the whole block is the
-choice that makes sense.
-
-Some notes on the edges:
-
-- A section the machine cannot do is dropped whether or not you listed it, so
-  the same file works on more than one machine.
-- An unknown ID is skipped and logged; run with `-d` to see the warning naming
-  it. A typo is not silently ignored.
-- `controls = []` really does mean an empty drawer. Delete the key (or the file)
-  to get the defaults back.
-- The bottom bar — the theme button and the expand button that opens the full
-  window — is fixed and not part of the list.
-- Edits to `gui.toml` take effect the next time voltaire-gui starts:
-  `systemctl --user restart voltaire-gui`. Changes made in Settings apply at
-  once.
-
-## Theme priority
-
-voltaire-gui resolves its theme using the following priority chain (first
-match wins):
-
-1. `~/.config/voltaire/theme.toml` — custom color definitions
-2. `~/.config/voltaire/theme.css` — full CSS override
-3. `~/.config/voltaire/config.toml` `theme = "id"` — built-in theme selection
-4. Compiled-in default (ROG Dark)
-
-See [Theming](/gui/theming) for the full theming guide.
+[Configuration files](/reference/configuration#config-toml) has the full
+reference for this file and `gui.toml`.
 
 ## Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `VOLTAIRE_GUI_SCALE` | Override CSS scale factor in gamescope mode (default: auto from output resolution) |
-| `VOLTAIRE_GUI_NO_GAMEPAD` | Set to `1` to disable gamepad input entirely |
-| `VOLTAIRE_GUI_OPEN_FULL` | Set to `1` to open the full window at startup, without the double press; a tab name (`dashboard`, `profiles`, `settings`) opens on that page, and `color` opens the colour picker over the dashboard |
-| `VOLTAIRE_GUI_DUMP_FOCUS` | Development aid: with `-d`, logs every controller focus grid at startup, so a change to the layout can be diffed |
+A few environment variables change the GUI's behavior, such as the UI scale in
+Steam Gaming Mode or ignoring controllers entirely.
+[Configuration files](/reference/configuration#environment-variables) lists
+them. Set one on the GUI's service with `systemctl --user edit voltaire-gui`:
 
-The pre-rename names (`Z13GUI_SCALE`, `Z13GUI_NO_GAMEPAD`) are honoured
-through the whole 2.x line when the new name is unset, and removed at 3.0.
-
-voltaire-gui also sets `GTK_A11Y=none` internally to disable the GTK4
-accessibility bridge. This prevents D-Bus timeouts when running under systemd
-where the AT-SPI bus may be unavailable.
-
-## Command-line flags
-
-| Flag | Description |
-|------|-------------|
-| `--debug`, `-d` | Enable debug logging (includes GTK messages) |
-| `--version` | Print version and exit |
-| `--print-theme` | Print the default theme.toml to stdout |
-| `--list-themes` | List all built-in theme IDs and names |
-
-`--print-theme` is the recommended starting point for a custom theme:
-
-```sh
-mkdir -p ~/.config/voltaire
-voltaire-gui --print-theme > ~/.config/voltaire/theme.toml
+```ini
+[Service]
+Environment=VOLTAIRE_GUI_SCALE=1.5
 ```
+
+## Command-line options
+
+| Option | Effect |
+|--------|--------|
+| `-d`, `--debug` | Log debug output, including GTK's |
+| `--version` | Print the version |
+| `--list-themes` | List the built-in themes |
+| `--print-theme` | Print a starter custom theme; see [Themes](/guide/themes#create-a-custom-theme) |

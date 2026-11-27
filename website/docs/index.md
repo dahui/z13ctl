@@ -1,80 +1,71 @@
 ---
 title: Overview
-description: TDP, fan curves, RGB lighting, and system control for the ASUS ROG Flow Z13 (2025) and OneXPlayer X2 Mini Pro on Linux.
+description: Power limits, profiles, fan curves, RGB lighting, battery and controller settings for supported ASUS and OneXPlayer laptops and handhelds on Linux.
 ---
 
-# Voltaire
+# voltaire
 
-TDP control, performance profiles, fan curves, RGB lighting, battery limit,
-CPU undervolting, and display and controller settings on Linux, for the ASUS
-ROG Flow Z13 (2025) and the OneXPlayer X2 Mini Pro. Formerly z13ctl and
-z13gui.
+voltaire controls the hardware settings that Linux leaves out on a handful of
+gaming laptops and handhelds: power limits, performance profiles, fan curves,
+RGB lighting, the battery charge limit and the firmware's own switches. It
+comes as a touch-friendly overlay, `voltaire-gui`, that works on the desktop
+and in Steam Gaming Mode, and a command-line tool, `voltaire`, whose
+background daemon keeps your settings in force. It was called z13ctl and
+z13gui before 2.0.
 
-New here? Start with [Installation](/installation). Coming from z13ctl or
-z13gui? See [Migrating from z13ctl](/migrating-from-z13ctl).
+## What it does
 
-## What Voltaire does
+- **Performance profiles**: switch between your firmware's profiles, or save
+  your own named profiles with their own power limits, fan curve and
+  undervolt.
+- **Automatic profile switching**: use one profile on the charger and another
+  on battery.
+- **Power limits (TDP)**: set how much power the processor may draw, kept in
+  force when the firmware tries to reset them.
+- **Fan curves**: draw your own curve, or start from a preset.
+- **CPU undervolt and boost**: lower the CPU voltage, or turn boost clocks off
+  to save battery.
+- **RGB lighting**: color, effect, speed and brightness.
+- **Battery**: a charge limit to look after the battery, with a one-time
+  charge to full when you need it.
+- **Controller and buttons**: open voltaire with a hardware button, navigate it
+  with the built-in controller, and set the controller's vibration strength.
+- **Monitoring**: temperatures, power draw, clocks, fan speeds and battery,
+  with up to an hour of history.
 
-Not every machine has every feature: [Supported devices](/devices/) lists
-what works on each one, and why something does not. The examples below are
-the Z13's.
+Settings survive reboots and suspends, and nothing needs root after a
+one-time setup step.
 
-- **RGB lighting** — Color, mode, speed, and brightness on the keyboard backlight and edge lightbar — independently or together.
-- **Performance profiles** — Switch between your firmware's profiles (`quiet`, `balanced` and `performance` on the Z13), or build named custom profiles with their own fan curve, TDP, and undervolt.
-- **Fan curves** — Custom fan curves via the asus-wmi hwmon interface, defended against the kernel silently dropping them.
-- **TDP control** — CPU/GPU power limits (28–80 W sustained on the GZ302EA) through the kernel's asus-armoury attributes, kept in force by the daemon, with an automatic fan floor above the safe sustained limit (on the GZ302EA, 50% PWM above 75 W, rising to 100% at 80 °C).
-- **CPU undervolting** — Lower voltage via AMD Curve Optimizer for better temperatures and power draw at the same performance (requires the `ryzen_smu` kernel module).
-- **Touch-first GUI** — `voltaire-gui` is a GTK4 overlay drawer covering every feature — on the desktop and in Steam Gaming Mode, with full gamepad navigation.
+## Supported devices
 
-Also: battery charge limit, POST boot sound, panel overdrive, and any
-other firmware toggle the device data describes.
+- [ASUS ROG Flow Z13 (2025)](/devices/asus-rog-flow-z13-2025)
+- [ASUS ROG Xbox Ally X](/devices/asus-rog-xbox-ally-x)
+- [OneXPlayer X2 Mini Pro](/devices/onexplayer-x2-mini-pro)
 
-All features work without root after a one-time `setup` step, and all persist
-across reboots when the daemon is running. The daemon re-applies keyboard
-lighting when the detachable keyboard is reattached, and puts your fan curve
-and power limits back when the kernel or firmware discards them — which happens
-on every system power profile change (see [Daemon](/reference/daemon#custom-fan-curve-reconciliation)).
+Not every feature is available on every machine.
+[Supported devices](/devices/) shows what works on yours, and why something
+does not.
 
-::: tip New to Linux? Use the GUI
-Most users — especially those newer to Linux — should install
-**voltaire-gui**, the touch-friendly GTK4 overlay that controls every feature
-(lighting, fan curves, TDP, undervolt, profiles, battery limit) through the
-daemon — no command line required. The raw `voltaire` CLI is great for
-scripting and advanced tuning, but if you're not a Linux veteran you'll have a
-far smoother experience with the GUI. Both install together — see
-[Installation](/installation).
+::: tip New to Linux? Start with the GUI
+Everything voltaire does is in the overlay: press your device's hardware
+button (or open **Voltaire** from your app menu) and change settings by touch,
+mouse or controller. The command line is there for scripting and fine
+tuning, but you never need it. See [The GUI](/guide/gui).
 :::
+
+## Where to start
+
+- [Installation](/installation): install the package and run the one-time
+  setup.
+- [Quick Start](/quick-start): your first ten minutes with voltaire.
+- [Upgrading from z13ctl](/migrating-from-z13ctl): what changes and what
+  carries over.
 
 ## Background
 
-Linux support for RGB control on the 2025 ASUS ROG Flow Z13 is limited.
-OpenRGB does not support this model. asusctl does not work with it.
-rogauracore only controls the keyboard backlight. HHD works on Bazzite kernels
-but requires out-of-tree patches that reduce performance on CachyOS.
-
-Voltaire implements the Aura HID protocol directly against the Linux `hidraw`
-interface — no kernel patches, no external daemons. The protocol was
-reverse-engineered from [g-helper](https://github.com/seerge/g-helper) (MIT).
-A full protocol specification is available in the
-[Protocol Reference](/reference/protocol).
-
-Voltaire is the continuation of **z13ctl** and **z13gui**, merged into one
-project at 2.0. Existing installs upgrade in place — state, config, and the
-daemon socket all carry over. See
-[Migrating from z13ctl](/migrating-from-z13ctl).
-
-## Requirements
-
-- Linux kernel with `hidraw` support
-- A [supported device](/devices/): the ASUS ROG Flow Z13 (2025) or the
-  OneXPlayer X2 Mini Pro
-- Read/write access to the relevant `hidraw` and sysfs files — either run as
-  root, or use [`voltaire setup`](/reference/commands#setup) to
-  install udev rules granting access to a group
-
-## Next steps
-
-Head to the [Installation](/installation) guide to get Voltaire on
-your system, then follow the [Quick Start](/quick-start) to configure
-lighting, fan curves, and performance profiles. For the full CLI reference, see
-[Commands](/reference/commands).
+voltaire began on the 2025 ROG Flow Z13, whose lighting no existing Linux tool
+could control. It talks to the hardware through the kernel's own interfaces,
+with no kernel patches and no extra daemons, and its lighting speaks the ASUS
+Aura protocol, reverse-engineered from
+[G-Helper](https://github.com/seerge/g-helper) and documented in the
+[HID protocol reference](/dev/hid-protocol).

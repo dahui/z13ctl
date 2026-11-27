@@ -325,7 +325,7 @@ contrib/
   voltaire-gui.desktop       desktop entry
 examples/themes/             shipped theme TOMLs (catppuccin, gruvbox, nord, rog-*, …)
 website/                     the docs site (VitePress; see Documentation)
-  docs/                      page sources (.md); reference/api-go.md is generated
+  docs/                      page sources (.md); dev/api-go.md is generated
     .vitepress/config.mts    site config: base /voltaire/, cleanUrls, sidebar (the table of contents)
     .vitepress/anchors.ts    post-build #fragment check (VitePress checks pages only)
 ```

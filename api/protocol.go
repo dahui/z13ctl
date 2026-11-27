@@ -5,7 +5,7 @@ package api
 // so there is one definition of what crosses the socket.
 
 // Command names: the "cmd" field of a Request. The daemon's command table
-// (internal/daemon) is keyed by these, and website/docs/reference/daemon.md
+// (internal/daemon) is keyed by these, and website/docs/dev/socket-protocol.md
 // documents each; a test holds the three together.
 const (
 	CmdApply             = "apply"

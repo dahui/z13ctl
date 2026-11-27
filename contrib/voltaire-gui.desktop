@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Voltaire
-Comment=Hardware control overlay for the ASUS ROG Flow Z13
+Comment=Power, fan, lighting and battery controls for ASUS ROG and OneXPlayer devices
 Exec=voltaire-gui
 Categories=Utility;System;
-Keywords=voltaire;rog;asus;z13;lighting;z13gui;z13ctl;
+Keywords=voltaire;rog;asus;z13;ally;onexplayer;lighting;fan;power;z13gui;z13ctl;

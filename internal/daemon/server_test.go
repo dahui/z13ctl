@@ -489,7 +489,7 @@ func TestEveryCommandIsDeclaredAndDocumented(t *testing.T) {
 			}
 		}
 	}
-	doc, err := os.ReadFile("../../website/docs/reference/daemon.md")
+	doc, err := os.ReadFile("../../website/docs/dev/socket-protocol.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestEveryCommandIsDeclaredAndDocumented(t *testing.T) {
 			t.Errorf("api names %q but the daemon's command table has no handler for it", name)
 		}
 		if !strings.Contains(string(doc), `"cmd":"`+name+`"`) {
-			t.Errorf("%q is not documented in website/docs/reference/daemon.md (as \"cmd\":\"%s\")", name, name)
+			t.Errorf("%q is not documented in website/docs/dev/socket-protocol.md (as \"cmd\":\"%s\")", name, name)
 		}
 	}
 	for name := range commands {

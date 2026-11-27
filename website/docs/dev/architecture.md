@@ -133,5 +133,5 @@ declares on another, without knowing which it is.
 - [Device files](/dev/device-files): every key, with a complete example.
 - [Writing a driver](/dev/writing-a-driver): adding a method.
 - [Plugins](/dev/plugins): the planned external driver tier.
-- [Daemon & socket protocol](/reference/daemon#device-capabilities):
+- [Daemon & socket protocol](/dev/socket-protocol#device-capabilities):
   the `device-get` document clients read.

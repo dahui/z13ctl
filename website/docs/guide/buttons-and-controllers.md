@@ -1,138 +1,239 @@
 ---
-title: Using InputPlumber
-description: How voltaire's hardware button works on a handheld whose controller InputPlumber manages, what voltaire changes in InputPlumber, and what it needs.
+title: Buttons and controllers
+description: Which hardware button opens voltaire, controller vibration, how voltaire works with InputPlumber, and the ROG Xbox Ally X's joystick lighting.
 ---
 
-# Using InputPlumber
+# Buttons and controllers
 
-[InputPlumber](https://github.com/ShadowBlip/InputPlumber) is the input daemon
-many handheld distributions ship (Bazzite, ChimeraOS, and others; on CachyOS it
-starts on its own once installed). It takes a handheld's controller over
-completely: it grabs the controller's input devices and hides them, so no
-other program can read them, and presents a virtual gamepad instead.
+voltaire opens from a hardware button on your machine, and on a handheld it
+works with the built-in controller: you can drive the GUI with it, set its
+vibration strength where the hardware allows, and share it with InputPlumber,
+the input service many handheld distributions run.
 
-That includes the buttons voltaire opens with. On a device InputPlumber
-manages, voltaire reaches the button **through InputPlumber**: it adds one
-mapping to InputPlumber's running profile that turns the button into a
-`voltaire_<button>` action on the system bus, and listens for it. Nothing to
-set up; the daemon does it whenever InputPlumber is running.
+## Opening voltaire {#opening-voltaire}
 
-## What voltaire changes
+A single press of the button opens the drawer (the quickbar). A quick second
+press opens the full window instead. Press the button again, press Escape, or
+click outside to close it. The drawer's expand button, at the bottom beside
+the theme button, also opens the full window.
 
-- **One mapping, for the button that opens voltaire, and only while the
-  daemon runs.** Choose another button and the mapping moves; choose *No
-  button* (`voltaire button --set none`) or stop the daemon and it comes out.
-- **The button stops doing its old job while it opens voltaire.** On the
-  OneXPlayer X2 Mini Pro, for example, InputPlumber's default profile sends the
-  Keyboard button to *Screenshot*; while that button opens voltaire it does not
-  take screenshots. The previous mapping is kept and put back when voltaire's
-  comes out. The other buttons keep doing what they did.
-- **No files.** voltaire never writes an InputPlumber file (not the
-  package's, not `/etc/inputplumber`). The mapping lives in InputPlumber's
-  memory only, which is why voltaire adds it again whenever it goes missing:
-  when InputPlumber restarts (it starts every device on its default profile)
-  and when another program loads a profile.
+| Device | Buttons that can open voltaire (default first) |
+|---|---|
+| [ROG Flow Z13 (2025)](/devices/asus-rog-flow-z13-2025) | Armoury Crate button |
+| [ROG Xbox Ally X](/devices/asus-rog-xbox-ally-x) | Armoury Crate button, Library button |
+| [OneXPlayer X2 Mini Pro](/devices/onexplayer-x2-mini-pro) | Keyboard button, OneXPlayer button, Home button |
 
-If InputPlumber is stopped or not installed, voltaire reads the button
-directly, as on any other machine, and switches between the two on its own.
+The choice is limited to buttons that do nothing else on that machine.
+voltaire never learns a key from a keyboard, so it can't see what you type.
 
-## What it needs
+### In the GUI
 
-Loading a profile is a privileged InputPlumber call. Its shipped polkit rule
-allows members of the **`wheel`** and **`inputplumber`** groups. Most handheld
+On the full window's **Settings** tab, the **VOLTAIRE** card has two rows:
+
+- **Open voltaire with** picks the button, or **No button**. With no button,
+  open voltaire from its desktop entry.
+- The row named after your button (for example **Armoury Crate button**)
+  chooses what a single press opens: **Quickbar** or **Full window**. A double
+  press always opens the other one.
+
+Both take effect at once.
+
+### On the command line
+
+```sh
+voltaire button --list           # this machine's buttons; * marks the one in use
+voltaire button --get
+voltaire button --set library    # an id from --list
+voltaire button --set none       # no button opens voltaire
+voltaire button --set default
+```
+
+`--set` needs the daemon, which keeps the choice. To turn the button watcher
+off completely, for example when another tool needs the button, run the
+daemon with `--no-button`.
+
+### Things to know
+
+- **On the Z13 the keypress also reaches your desktop.** No common desktop
+  uses the Armoury Crate key, but if yours does, unbind it there or choose
+  **No button**.
+- **Under InputPlumber, the button loses its old job while it opens voltaire**
+  (see [below](#inputplumber)). On the OneXPlayer, for example, the Keyboard
+  button stops taking screenshots, and choosing the OneXPlayer button means it
+  no longer opens Steam's Quick Access menu.
+- To navigate the GUI with a controller (D-pad, A, B, shoulder buttons), see
+  [Gamepad navigation](/guide/gui#gamepad).
+
+## Controller vibration {#vibration}
+
+Vibration strength scales every rumble a game asks for, from 0 (off) up to
+the controller's maximum. The daemon remembers it and puts it back after a
+reboot or a suspend.
+
+| Device | Vibration strength |
+|---|---|
+| OneXPlayer X2 Mini Pro | 0 (off) to 5 |
+| ROG Xbox Ally X | Not yet ([why](/devices/asus-rog-xbox-ally-x)) |
+| ROG Flow Z13 (2025) | No built-in controller |
+
+### In the GUI
+
+Use the **Vibration strength** slider in the **CONTROLLER** card on the full
+window's **Settings** tab, or the drawer's **Controller vibration** section
+(in the OneXPlayer's drawer by default; otherwise turn it on in Settings →
+Quickbar).
+
+### On the command line
+
+```sh
+voltaire rumble --get
+voltaire rumble --set 2
+```
+
+### Things to know
+
+- The setting needs the permission `sudo voltaire setup` grants. If you
+  installed voltaire before your device had this setting, run setup again.
+- Set with the daemon stopped, the change applies now but is not restored
+  after a reboot.
+
+## InputPlumber {#inputplumber}
+
+[InputPlumber](https://github.com/ShadowBlip/InputPlumber) is an input service
+that many handheld distributions ship (Bazzite, ChimeraOS and others; on
+CachyOS it starts by itself once installed). It takes the controller over
+completely: it hides the real controller from every other program and gives
+games a virtual one instead. That includes the buttons voltaire opens with.
+
+### What voltaire does on the OneXPlayer and the Ally
+
+On these two machines voltaire works with InputPlumber on its own; there is
+nothing to set up.
+
+- **The button.** voltaire asks InputPlumber to send it the button that opens
+  voltaire. Only that one button changes, and only while the daemon runs:
+  choose another button and the change moves with it; choose **No button** or
+  stop the daemon and InputPlumber's own mapping comes back. voltaire never
+  writes InputPlumber's files for this, and it sets the mapping again if
+  InputPlumber restarts.
+- **The controller in voltaire's window.** While the drawer or full window is
+  open, voltaire asks InputPlumber to send the controller's presses to voltaire
+  instead of the game, so the game and Steam see an idle controller. The
+  controller goes back to the game the moment voltaire closes, and also if
+  voltaire stops unexpectedly.
+
+If InputPlumber is stopped or not installed, voltaire reads the buttons and
+the controller directly, and switches between the two by itself.
+
+### What it needs
+
+Both of these are privileged InputPlumber requests, which InputPlumber allows
+for members of the **`wheel`** or **`inputplumber`** group. Most handheld
 distributions put the first user in `wheel`; check with `id`.
 
-`voltaire setup` deliberately does **not** add anyone to the `inputplumber`
-group: the same rule lets that group send keystrokes through InputPlumber's
-virtual keyboard. If your user is in neither group, the daemon logs
-`reading the profile failed (is this user in wheel or the inputplumber group?)`
-and the button stays silent while InputPlumber runs. You can add the mapping
-to a profile of your own by hand instead, mapping the button's capability to a
-`dbus` target named `voltaire_<button id>`; `voltaire button --list` shows the
-ids.
+`voltaire setup` deliberately does not add anyone to the `inputplumber`
+group, because that group can also type keystrokes through InputPlumber's
+virtual keyboard. If your user is in neither group:
 
-## The controller in voltaire's window
+- the button does nothing while InputPlumber runs, and the daemon's log says
+  `is this user in wheel or the inputplumber group?`;
+- in voltaire's window the controller still works on the OneXPlayer (voltaire
+  reads InputPlumber's virtual controller itself), but not on the Ally.
 
-While voltaire's drawer or window is open, the controller drives voltaire and
-not the game. Where InputPlumber manages the controller, the daemon asks
-InputPlumber for its **intercept mode**: InputPlumber stops feeding the
-virtual gamepad (games and Steam see an idle controller) and sends navigation
-to voltaire over the system bus instead. It hands the controller back the
-moment voltaire closes, and also if voltaire's GUI or daemon stops
-unexpectedly. Changing the mode needs the same `wheel` or `inputplumber`
-membership as the button mapping; without it, voltaire falls back to reading
-the controller itself, which works where InputPlumber's virtual gamepad is an
-ordinary one (the OneXPlayer) and not on the ROG Xbox Ally X, whose virtual
-controller has nothing voltaire can read.
+### The ROG Flow Z13 under InputPlumber
+
+Some distributions ship an InputPlumber configuration for the Z13 that takes
+over "Asus WMI hotkeys", the device the Armoury Crate button is on. voltaire
+then can't read the button, and its log repeats
+`button watcher stopped; retrying ... permission denied`.
+
+To give the button back to voltaire, tell InputPlumber to leave that one
+device alone. Copy its configuration to the override directory (never edit
+the one under `/usr/share`, which updates replace):
+
+```sh
+ls /usr/share/inputplumber/devices/ | grep -i z13     # usually 50-rog_flow_z13.yaml
+sudo mkdir -p /etc/inputplumber/devices.d
+sudo cp /usr/share/inputplumber/devices/50-rog_flow_z13.yaml /etc/inputplumber/devices.d/
+```
+
+In the copy, add `ignore: true` to the source for "Asus WMI hotkeys":
+
+```yaml
+source_devices:
+  - group: keyboard
+    ignore: true        # leave this device to voltaire
+    evdev:
+      name: Asus WMI hotkeys
+      handler: event*
+```
+
+Then restart InputPlumber, restore voltaire's permissions (InputPlumber may
+not hand them back when it lets go of a device), and restart the daemon:
+
+```sh
+sudo systemctl restart inputplumber.service
+sudo voltaire setup --perms-only
+systemctl --user restart voltaire.service
+```
+
+The rest of InputPlumber keeps working. A copy made this way does not follow
+InputPlumber's updates to its own file. If you would rather leave the button
+to InputPlumber, choose **No button** instead.
+
+### Checking it
+
+```sh
+voltaire button --list
+journalctl --user -u voltaire -b | grep -i inputplumber
+```
+
+The log names the button each time voltaire's mapping goes in or comes out.
 
 ## The ROG Xbox Ally X's joystick lighting {#ally-lighting}
 
-The Ally's ring lighting is set through one of the controller's interfaces
-that InputPlumber hides (HID interface 2). InputPlumber reads no input from
-it; it uses it to send rumble, and hides it only because it hides everything
-it manages. Hidden, it is out of voltaire's reach, so the lighting shows as
-unavailable with that reason.
+The Ally's ring lighting is set through one of the controller's interfaces.
+InputPlumber hides that interface along with the rest of the controller, even
+though it reads no input from it, so voltaire can't reach the lighting and
+shows it as unavailable. Without InputPlumber there is nothing to do.
 
-InputPlumber has a setting for exactly this, `passthrough`: the interface is
-still used, but not hidden. voltaire changes InputPlumber's configuration only
-if you ask it to:
+InputPlumber has a setting to leave one interface visible while still using
+it. voltaire turns it on for you, but only if you ask:
 
 ```sh
 sudo voltaire setup --inputplumber-passthrough
 systemctl --user restart voltaire.service
 ```
 
-Setup reads InputPlumber's installed config for this machine
-(`/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml` on the Xbox Ally X),
-adds `passthrough: true` to the source with the lighting's interface
-(`interface_num: 2`; the gamepad's `interface_num: 5` is left alone), and
-writes the result under the same name in `/etc/inputplumber/devices.d/`, which
-InputPlumber reads in preference to its own. Then it restarts InputPlumber
-(the controller pauses for a moment) and grants the interface.
+Setup writes an override of InputPlumber's configuration for this machine
+into `/etc/inputplumber/devices.d/` that differs from InputPlumber's own by
+that one setting on that one interface, restarts InputPlumber (the
+controller pauses for a moment), and gives voltaire access to the interface.
+Controller input, rumble and voltaire's controller navigation all keep
+working.
 
-- **It follows InputPlumber's updates.** The file is remade from
-  InputPlumber's installed config every time setup runs, including at every
-  boot, before InputPlumber starts. The edit is a single inserted line, and
-  setup checks that this line is the only difference; if InputPlumber's file
-  ever changes in a way that makes that impossible, setup writes no override
-  and InputPlumber uses its own file (the lighting is hidden again, and the
-  controller is unaffected). If InputPlumber starts passing the interface
-  through itself, setup removes the override.
-- **It stays until you turn it off.** Later plain `voltaire setup` runs,
-  including the ones package upgrades make, keep it. To undo it:
-  `sudo voltaire setup --inputplumber-passthrough=false` (or
-  `sudo voltaire setup --remove`, which undoes all of setup).
-- **Setup touches only its own file.** It marks the file in its first line,
-  and a file of the same name without that mark (one you wrote yourself) is
-  left alone, with a note.
-- **voltaire's group can then write to that interface**, which also carries
-  the controller's own settings (button remaps, gamepad mode, vibration).
-  voltaire sends it lighting commands only; the grant is the same kind of
-  trust the group already has over power limits and fan curves, and it is
-  given only on this machine.
-- Controller input, rumble and the drawer's controller navigation all work
-  with it in place (checked on the Ally, 2026-11-26).
+- **It follows InputPlumber's updates.** Setup remakes the override from
+  InputPlumber's current file every time it runs, including at every boot. If
+  InputPlumber's file ever changes in a way setup can't safely edit, it writes
+  no override and InputPlumber uses its own (the lighting is hidden again;
+  the controller is unaffected).
+- **It stays until you turn it off.** Plain `voltaire setup` runs, including
+  the ones package upgrades make, keep it. To undo it:
 
-Without the option, setup notes when InputPlumber hides this machine's
-lighting and names the command. To make the same change by hand instead,
-copy the config to `/etc/inputplumber/devices.d/`, add `passthrough: true` to
-the `interface_num: 2` source, and restart InputPlumber; a hand-made copy does
-not follow InputPlumber's updates.
+  ```sh
+  sudo voltaire setup --inputplumber-passthrough=false
+  ```
 
-## Checking it
+  `sudo voltaire setup --remove`, which undoes all of setup, removes it too.
+- **Setup only touches its own file.** A file of the same name that you wrote
+  yourself is left alone, with a note.
 
-```sh
-voltaire button --list                     # which button opens voltaire
-journalctl --user -u voltaire -b | grep inputplumber
-```
+::: info What access it gives
+The same interface also carries the controller's own settings, such as button
+remapping and vibration. After this change voltaire's group can write to it,
+the same kind of trust that group already has over power limits and fan
+curves; voltaire itself sends it lighting commands only.
+:::
 
-The log names the device and capability each time the mapping goes in or
-comes out, and `button route carried=true` means presses are arriving through
-InputPlumber.
-
-## Which devices
-
-A device file lists the InputPlumber capability for each of its buttons
-(`inputplumber = "QuickAccess2"`; see
-[Device Files](/dev/device-files)). Today that is the OneXPlayer X2
-Mini Pro and the ROG Xbox Ally X.
+Without the option, `voltaire setup` prints a note when InputPlumber is hiding
+this machine's lighting, naming the command above.

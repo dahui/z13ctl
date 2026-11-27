@@ -1,187 +1,109 @@
 ---
-title: Theming
-description: Built-in themes, custom theme.toml files, accent variants, and full CSS overrides for voltaire-gui.
+title: Themes
+description: Pick a built-in theme and accent, write your own theme.toml, or replace the stylesheet entirely.
 ---
 
-# Theming
+# Themes
 
-voltaire-gui supports custom color themes through a simple TOML configuration
-file. You can also select from 15 built-in themes using the in-app theme
-picker.
+voltaire-gui comes with 15 built-in themes, and you can define your own colors
+in a small TOML file.
 
-## Theme priority
+## Choose a built-in theme
 
-voltaire-gui resolves its theme using the following priority chain. The first
-match wins:
-
-1. `~/.config/voltaire/theme.toml` — custom color definitions (hex values)
-2. `~/.config/voltaire/theme.css` — full CSS override (power users)
-3. `~/.config/voltaire/config.toml` `theme = "id"` — built-in theme selection
-4. Compiled-in default (ROG Dark)
-
-If you create a `theme.toml`, it always takes priority over the built-in
-theme picker selection. Delete or rename it to return to built-in themes.
-
-## Built-in themes
+Press the palette button at the bottom-left of the drawer. Pick a theme from
+the list; for themes with accent variants (the four Catppuccin themes), a row
+of colored dots below the theme name picks the accent. Your choice is saved
+automatically.
 
 | ID | Name | Type | Accents |
 |----|------|------|---------|
-| `catppuccin-frappe` | Catppuccin Frappe | dark | 14 variants |
-| `catppuccin-latte` | Catppuccin Latte | light | 14 variants |
-| `catppuccin-macchiato` | Catppuccin Macchiato | dark | 14 variants |
-| `catppuccin-mocha` | Catppuccin Mocha | dark | 14 variants |
+| `catppuccin-frappe` | Catppuccin Frappe | dark | 14 |
+| `catppuccin-latte` | Catppuccin Latte | light | 14 |
+| `catppuccin-macchiato` | Catppuccin Macchiato | dark | 14 |
+| `catppuccin-mocha` | Catppuccin Mocha | dark | 14 |
 | `everforest-light` | Everforest Light | light | — |
 | `github-light` | GitHub Light | light | — |
 | `gruvbox-dark` | Gruvbox Dark | dark | — |
 | `gruvbox-light` | Gruvbox Light | light | — |
 | `nord` | Nord | dark | — |
 | `one-light` | One Light | light | — |
-| `rog-dark` | ROG Dark | dark | — |
+| `rog-dark` | ROG Dark (default) | dark | — |
 | `rog-neon` | ROG Neon | dark | — |
 | `rose-pine-dawn` | Rose Pine Dawn | light | — |
 | `solarized-light` | Solarized Light | light | — |
 | `tokyo-night` | Tokyo Night | dark | — |
 
-List all built-in themes from the command line:
+`voltaire-gui --list-themes` prints the same list. The Catppuccin accents are
+the 14 official Catppuccin accent colors (`rosewater`, `flamingo`, `pink`,
+`mauve`, `red`, `maroon`, `peach`, `yellow`, `green`, `teal`, `sky`,
+`sapphire`, `blue`, `lavender`).
 
-```sh
-voltaire-gui --list-themes
-```
+## Which theme wins
 
-## Choosing a built-in theme
+The GUI uses the first of these it finds:
 
-Click the palette button at the bottom-left of the drawer. For themes with
-accent variants (all four Catppuccin themes), a row of colored dots appears
-below the theme name in the picker.
+1. `~/.config/voltaire/theme.toml`: your custom colors
+2. `~/.config/voltaire/theme.css`: a full stylesheet
+3. The built-in theme chosen in the picker (saved in `config.toml`)
+4. ROG Dark
 
-Your selection is saved automatically to `~/.config/voltaire/config.toml`.
+So while a `theme.toml` exists, the picker's choice has no effect. Rename or
+delete the file to go back to the built-in themes.
 
-## Creating a custom theme
+## Create a custom theme
 
-A custom theme is a TOML file with 8 color keys. Each value is a CSS hex color
-string (`#rrggbb`).
-
-**Quick start:**
+Start from the default colors:
 
 ```sh
 mkdir -p ~/.config/voltaire
 voltaire-gui --print-theme > ~/.config/voltaire/theme.toml
 ```
 
-This writes the default ROG Dark colors. Open the file and change the values.
-
-**File format:**
+Edit the values, then restart the GUI (`systemctl --user restart
+voltaire-gui`). The file has eight colors, each a `#rrggbb` hex value:
 
 ```toml
-# Accent color — active buttons, slider fill, checked states
-accent = "#cc0000"
-
-# Drawer background
-background = "#1a1a1a"
-
-# Surface color — button and row backgrounds
-surface = "#2a2a2a"
-
-# Alternate surface — hover state background
-surface_alt = "#333333"
-
-# Primary text color
-text = "#e0e0e0"
-
-# Dim text color — section labels, secondary descriptions
-text_dim = "#888888"
-
-# Border color — window outline and separators
-border = "#444444"
-
-# Error color — error bar text and border, high-TDP warning text
-error = "#ff4444"
+accent      = "#cc0000"  # active buttons, slider fill, checked states, active tab
+background  = "#1a1a1a"  # panel background
+surface     = "#2a2a2a"  # button and row backgrounds
+surface_alt = "#333333"  # hover background
+text        = "#e0e0e0"  # primary text
+text_dim    = "#888888"  # section headings, secondary text
+border      = "#444444"  # outlines and separators
+error       = "#ff4444"  # error messages, high-TDP warning
 ```
 
-Comments, inline comments, unknown keys, and missing keys are all handled
-gracefully. Invalid hex values are skipped; missing keys fall back to ROG Dark
-defaults.
+A missing key or an invalid value falls back to the ROG Dark color, and
+unknown keys and comments are ignored.
 
-The `examples/themes/` directory in the repository contains a `.toml` file
-for every built-in theme — useful starting points for custom themes.
+For ready-made starting points, the repository's
+[examples/themes](https://github.com/dahui/voltaire/tree/main/examples/themes)
+directory has a `.toml` file for every built-in theme.
 
-Changes to `theme.toml` take effect the next time voltaire-gui starts.
+### Add accent variants
 
-### Accent variants
-
-Custom themes can define accent color variants that appear as colored dots in
-the theme picker. Add an `[accents]` section after the color keys:
+A custom theme can offer accent choices as colored dots in the theme picker.
+Add an `[accents]` section after the colors:
 
 ```toml
 accent = "#5294e2"
-background = "#1b2838"
-surface = "#253449"
-surface_alt = "#2e3f55"
-text = "#d3dae3"
-text_dim = "#7c8fa0"
-border = "#3b5068"
+# ... the other colors ...
 
 [accents]
-blue = "#5294e2"
-teal = "#2eb398"
+blue   = "#5294e2"
+teal   = "#2eb398"
 purple = "#9b59b6"
 orange = "#e67e22"
 ```
 
-Each line is `id = "#hex"`. The ID is used as the tooltip and saved to
-`config.toml`. The top-level `accent` key sets the default when no variant is
-selected.
+Each line is `name = "#hex"`. The name is shown as the dot's tooltip and saved
+in `config.toml`; the top-level `accent` is used until you pick one.
 
-## Color reference
+## Replace the stylesheet
 
-| Key | CSS variable | Controls |
-|-----|-------------|----------|
-| `accent` | `@voltaire-accent` | Active buttons, slider fill, checked radio buttons, active tab |
-| `background` | `@voltaire-bg` | Drawer panel background |
-| `surface` | `@voltaire-surface` | Button backgrounds, input row backgrounds |
-| `surface_alt` | `@voltaire-surface-alt` | Hover state for buttons and rows |
-| `text` | `@voltaire-text` | Primary text, labels, button text |
-| `text_dim` | `@voltaire-text-dim` | Section headings (MODE, SPEED, etc.), secondary labels |
-| `border` | `@voltaire-border` | Drawer border, separators, button outlines |
-| `error` | `@voltaire-error` | Error bar text and border, high-TDP warning text |
-
-Every variable is also defined under its pre-rename `@z13-*` name
-(`@z13-accent` and so on). A stylesheet may reference either through the whole
-2.x line; the `@voltaire-*` names are what the bundled rules use, and the
-`@z13-*` aliases are removed at 3.0.
-
-If you wrote a `theme.css` against the old names it keeps working unchanged —
-it is loaded verbatim and supplies its own definitions, so it never sees ours.
-The names matter only if you started from the bundled sheet and mix the two.
-
-## Catppuccin accent colors
-
-All four Catppuccin themes support the 14 official accent colors:
-
-| ID | Mocha | Macchiato | Frappe | Latte |
-|----|-------|-----------|--------|-------|
-| `rosewater` | `#f5e0dc` | `#f4dbd6` | `#f2d5cf` | `#dc8a78` |
-| `flamingo` | `#f2cdcd` | `#f0c6c6` | `#eebebe` | `#dd7878` |
-| `pink` | `#f5c2e7` | `#f5bde6` | `#f4b8e4` | `#ea76cb` |
-| `mauve` | `#cba6f7` | `#c6a0f6` | `#ca9ee6` | `#8839ef` |
-| `red` | `#f38ba8` | `#ed8796` | `#e78284` | `#d20f39` |
-| `maroon` | `#eba0ac` | `#ee99a0` | `#ea999c` | `#e64553` |
-| `peach` | `#fab387` | `#f5a97f` | `#ef9f76` | `#fe640b` |
-| `yellow` | `#f9e2af` | `#eed49f` | `#e5c890` | `#df8e1d` |
-| `green` | `#a6e3a1` | `#a6da95` | `#a6d189` | `#40a02b` |
-| `teal` | `#94e2d5` | `#8bd5ca` | `#81c8be` | `#179299` |
-| `sky` | `#89dceb` | `#91d7e3` | `#99d1db` | `#04a5e5` |
-| `sapphire` | `#74c7ec` | `#7dc4e4` | `#85c1dc` | `#209fb5` |
-| `blue` | `#89b4fa` | `#8aadf4` | `#8caaee` | `#1e66f5` |
-| `lavender` | `#b4befe` | `#b7bdf8` | `#babbf1` | `#7287fd` |
-
-## Full CSS override
-
-For complete control, provide a full GTK4 CSS stylesheet at
-`~/.config/voltaire/theme.css`. This replaces the built-in theme CSS
-entirely.
-
-The stylesheet should define all 8 `@define-color` variables:
+For complete control, write a GTK4 stylesheet to
+`~/.config/voltaire/theme.css`. It replaces the built-in styling entirely, so
+it must define all eight colors:
 
 ```css
 @define-color voltaire-accent      #cc0000;
@@ -194,36 +116,9 @@ The stylesheet should define all 8 `@define-color` variables:
 @define-color voltaire-error       #ff4444;
 ```
 
-You can then add any GTK4 CSS rules. `theme.toml` takes priority over
-`theme.css` — delete `theme.toml` to use a CSS override.
+Then add any GTK4 CSS rules you like. A color your stylesheet uses but does
+not define makes GTK drop every rule that uses it; the GUI logs the missing
+names at startup, so if part of the drawer loses its styling, check
+`journalctl --user -u voltaire-gui`.
 
-A `theme.css` is loaded **verbatim**: any color it references without
-defining is simply undefined, and GTK silently drops every rule that uses it.
-voltaire-gui checks for this at startup and logs the missing token names —
-if part of the drawer loses its styling, read the log.
-
-## Example
-
-A complete custom dark-blue theme built from scratch:
-
-```toml
-# ~/.config/voltaire/theme.toml
-accent      = "#5294e2"
-background  = "#1b2838"
-surface     = "#253449"
-surface_alt = "#2e3f55"
-text        = "#d3dae3"
-text_dim    = "#7c8fa0"
-border      = "#3b5068"
-```
-
-- `accent` — a medium blue for active buttons and checked states
-- `background` — very dark navy for the drawer panel
-- `surface` — slightly lighter than background so buttons stand out
-- `surface_alt` — slightly lighter again for hover states
-- `text` — light gray-blue for readability against the dark background
-- `text_dim` — muted blue-gray for section labels
-- `border` — sits between surface and text brightness for subtle outlines
-
-To use this theme: save it to `~/.config/voltaire/theme.toml` and restart
-voltaire-gui.
+Remember that a `theme.toml` takes priority: remove it to use `theme.css`.

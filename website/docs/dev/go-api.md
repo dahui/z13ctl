@@ -22,7 +22,7 @@ inheriting the CLI's dependency tree.
 
 The pre-rename module, `github.com/dahui/z13ctl/api`, is frozen at its last
 1.x release and keeps resolving for existing importers — see
-[Migrating from z13ctl](/migrating-from-z13ctl).
+[Upgrading from the z13ctl API](#upgrading-from-the-z13ctl-api).
 
 It is a separate Go module at `./api` with its own `go.mod`. If you are
 working on both the main binary and the API library simultaneously, create a
@@ -208,11 +208,11 @@ if handled && err == nil {
     fmt.Println("undervolt:", state.Undervolt)
     fmt.Println("undervolt available:", state.UndervoltAvailable)
     fmt.Println("CPU temp:", state.Temperature, "°C")
-    fmt.Println("fan RPM:", state.FanRPM)
+    fmt.Println("fan RPM:", state.RPM) // every fan, in driver order
 }
 ```
 
-**Subscribe to Armoury Crate button events:**
+**Subscribe to hardware button events:**
 
 ```go
 ch, cancel, err := api.Subscribe([]string{"gui-toggle"})
@@ -225,7 +225,37 @@ for event := range ch {
 }
 ```
 
+## Upgrading from the z13ctl API
+
+The module moved and gained the v2 semantic-import suffix; the package name is
+still `api`:
+
+```go
+import "github.com/dahui/voltaire/api/v2"
+```
+
+The old path, `github.com/dahui/z13ctl/api`, is frozen at its final 1.x
+release but keeps resolving: the repository redirect stays in place and the Go
+module proxy has the tags cached. Existing programs keep building; they never
+see 2.x features. The 1.x tags (`v1.*`, `api/v1.*`) are permanent, so a pinned
+one never changes.
+
+New in the v2 api, relevant to migration:
+
+- `api.SocketPaths()` returns the canonical and legacy socket paths in dial
+  order; `SocketPath()` returns the canonical one. The client dials both, so
+  it also reaches a 1.x daemon that has not been restarted since an upgrade.
+- `api.ErrUnknownCommand` distinguishes "this daemon predates the command"
+  from a real failure: `errors.Is(err, api.ErrUnknownCommand)`. Probe with it;
+  never gate on a version number.
+
+```go
+if handled, err := api.SendCPUBoostSet(false); handled && errors.Is(err, api.ErrUnknownCommand) {
+    // older daemon: hide the control, or fall back
+}
+```
+
 ## Full API reference
 
-See the [Go API Reference](/reference/api-go) page for full
+See the [Go API Reference](/dev/api-go) page for full
 documentation of all exported types and functions.

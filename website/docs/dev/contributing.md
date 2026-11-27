@@ -1,178 +1,190 @@
 ---
 title: Contributing
-description: Development setup, testing rules, and the release workflow for the voltaire repository.
+description: Setting up a development checkout of voltaire, building and testing it, adding a device, and the release workflow.
 ---
 
 # Contributing
 
-Contributions are welcome. Please open an issue before starting work on a
-significant change so the approach can be discussed first.
+Contributions are welcome. Please open an issue before starting a significant
+change, so the approach can be discussed first.
 
-## Repository structure
+## Repository layout
 
-This repo produces two binaries from two Go modules:
+One repository, two Go modules, two binaries:
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| `github.com/dahui/voltaire/v2` | `.` | The `voltaire` CLI/daemon and the `voltaire-gui` overlay |
-| `github.com/dahui/voltaire/api/v2` | `./api` | Public client library for external tools |
+| `github.com/dahui/voltaire/v2` | `.` | The `voltaire` CLI and daemon, and the `voltaire-gui` overlay |
+| `github.com/dahui/voltaire/api/v2` | `./api` | The public client library for other tools |
 
-The `api/` module is stdlib-only so that GUI tools, Decky plugins, and other
-integrations can import it without pulling in the CLI's dependencies.
-
-`voltaire` builds with `CGO_ENABLED=0`; `voltaire-gui` (the `voltaire-gui/`
-main package plus everything under `internal/gui`) needs CGO and the GTK4
-headers. Every rule worth testing on the GUI side therefore lives in a pure-Go
-package — `internal/limits`, `lighting`, `profileui`, `settingsui`,
-`controls`, `mainwin`, `display`, `telemetryplot`, `theme`, `colorconv`,
-`focusgrid`, `keyrepeat`, `panelgeom`, `popupgeom`, `uiscale`, `togglegate`,
-`startup`, `apiresult` — and the GTK files are thin adaptors that read
-widgets, call out, and apply the answer. That is not a style preference: the
-GTK code in `internal/gui` cannot compile without the headers, so it is
-excluded from the test run, and logic left in there is unverifiable by
-construction. (The cgo-free `internal/gui/gamepad` and its `hidblocker` are
-the exception, and do run.)
+The `api/` module uses only the standard library, so GUIs, Decky plugins and
+other integrations can import it without the CLI's dependencies.
+[Architecture](/dev/architecture) describes how the pieces fit together.
 
 ## Development setup
+
+You need Go 1.26 or newer. Clone the repository and fetch both modules:
 
 ```sh
 git clone https://github.com/dahui/voltaire
 cd voltaire
 go mod download
-cd api && go mod download && cd ..
+(cd api && go mod download)
 ```
 
-To work on both modules together in your IDE or when making changes to
-`api/`, create a `go.work` file (it is gitignored):
+When changing `api/` and the main module together, create a `go.work` file (it
+is gitignored):
 
 ```sh
 go work init . ./api
 ```
 
-Building the GUI additionally needs the GTK4 development headers:
+`voltaire` builds without cgo. `voltaire-gui` needs cgo and the GTK4 and
+gtk4-layer-shell development headers:
 
 ```sh
-# Arch Linux
-sudo pacman -S gtk4 gtk4-layer-shell
-
-# Debian / Ubuntu
-sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev
-
-# Fedora
-sudo dnf install gtk4-devel gtk4-layer-shell-devel
+sudo pacman -S gtk4 gtk4-layer-shell                         # Arch Linux
+sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev   # Debian / Ubuntu
+sudo dnf install gtk4-devel gtk4-layer-shell-devel             # Fedora
 ```
 
-**BPF development (optional — only for modifying the gamepad hidraw
-blocker):** requires `clang`, `bpftool`, and kernel BTF support. The generated
-bindings (`blocker_x86_bpfel.go` / `.o`) are committed, so this is needed only
-when `blocker.bpf.c` changes:
+The website needs Node.js and pnpm.
+
+## Building
+
+```sh
+make build        # voltaire
+make build-gui    # voltaire-gui (needs the GTK4 headers)
+make build-all    # both: what `make install` expects
+```
+
+To try a build on your machine, install it and restart the units:
+
+```sh
+make build-all
+sudo make install
+systemctl --user restart voltaire.service voltaire-gui.service
+```
+
+## Testing and linting
+
+Before opening a pull request:
+
+```sh
+make test         # tests for both modules; no hardware and no GTK needed
+make race         # the same tests under the race detector
+make lint         # gofmt check, then golangci-lint over the whole tree
+make docs-build   # if you changed the website
+```
+
+Pull requests must pass `make test` and `make lint`, and should include tests
+for new behavior. Run `make race` for changes to `internal/daemon` or `api`.
+
+::: warning Tests never touch hardware
+A test must never write to real sysfs, a hidraw device or the SMU. Each driver
+package tests against a fake sysfs tree, and its test setup points every
+writable path at a directory that does not exist, so a test that forgets the
+fake fails instead of changing your machine.
+:::
+
+### Testing
+
+- `make test` runs every package that builds without cgo. The GTK code in
+  `internal/gui` is left out, so any logic worth testing on the GUI side lives
+  in a plain Go package that `internal/gui` calls. A new package is picked up
+  automatically.
+- Drivers under `internal/drivers/asus`, `amd` and `linux` each keep their
+  sysfs paths as package variables and build a fake tree in
+  `sysfs_fake_test.go`. The `powerprofilesctl` call and the SMU mailbox have
+  their own swappable seams. See [Writing a driver](/dev/writing-a-driver).
+- Daemon tests that exercise a write path use the in-memory fakes in
+  `internal/daemon/fakes_test.go`, which record the order of writes. The real
+  device assembly used elsewhere in those tests refuses every write.
+- `cmd/docs_test.go` fails when a command or flag is missing from
+  [Commands](/reference/commands); `internal/daemon/server_test.go` does the
+  same for protocol commands on [Socket protocol](/dev/socket-protocol).
+- Changes to power, fan or sleep handling also need a run on real hardware,
+  since firmware behavior is invisible to unit tests. Build with
+  `make build-hwtest`, which produces a binary that cannot send undervolt
+  writes.
+
+### Gamepad blocker (BPF)
+
+Only needed when changing `blocker.bpf.c`; the generated bindings are
+committed. You need `clang`, `bpftool` and kernel BTF:
 
 ```sh
 cd internal/gui/gamepad/hidblocker
 bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
-go generate .   # runs bpf2go (see gen.go)
+go generate .
 rm vmlinux.h
 ```
 
-## Before submitting a pull request
+### Developer instruments
 
-```sh
-make test         # hermetic tests, both modules (no GTK, no hardware)
-make race         # the same set under the race detector
-make lint         # gofmt check + golangci-lint over the full tree
-make build        # compile voltaire
-make build-gui    # compile voltaire-gui (requires GTK4 headers)
-make mod-tidy     # tidy go.mod for both modules
-```
+`voltaire-gui` reads two environment variables meant for development, not
+for everyday use:
 
-Tests do not require hardware or GTK. Pull requests must pass `make test` and
-`make lint` without errors and should include tests for any new behavior. Run
-`make race` for anything touching `internal/daemon` or `api` — both hold
-concurrency invariants that only the race detector enforces.
+| Variable | Effect |
+|----------|--------|
+| `VOLTAIRE_GUI_DUMP_FOCUS=1` | With `-d`, logs every controller focus list at startup, so a layout change can be diffed (grep `focus list built`) |
+| `VOLTAIRE_GUI_OPEN_FULL` | Opens the full window at startup without the double press. A tab name (`dashboard`, `profiles`, `settings`) opens that tab; `color` opens the color picker |
 
-`make test` derives its package list from `go list ./...` minus
-`internal/gui` and `voltaire-gui`, with the cgo-free `internal/gui/gamepad/...`
-added back, so a new pure package is picked up automatically — there is
-nothing to register.
+Stop `voltaire-gui.service` first: a second launch hands over to the running
+instance and exits without building anything.
 
-## Testing notes
+## Adding a device
 
-- `internal/aura` — fully unit-testable via mock writers; covers every packet
-  type
-- `internal/drivers/asus`, `amd` and `linux` — each has its own fake sysfs
-  tree (`sysfs_fake_test.go`) for the subtree it drives: hwmon fans, PPT and
-  firmware attributes (`asus`); the `ryzen_smu` mailbox as a `fakeSMU`, amdgpu
-  and the NPU (`amd`); platform-profile, power_supply, RAPL and procfs
-  (`linux`). `internal/drivers/register` assembles the embedded device files
-  and the developer guide's example with the real drivers
-- `internal/safety` — the fan-floor rules and the raise/release ordering,
-  against a call-order-recording fake driver
-- `internal/cli` — color parsing and dry-run output
-- `internal/hid` — tests cover sysfs parsing; writes are tested via
-  pipe-backed mock devices
-- `internal/daemon` — state persistence, `cloneState`, the `saveState` race
-  regression, and request validation/dispatch. Handlers that reach hardware
-  are deliberately not exercised (see below); the button watcher needs an
-  evdev mock
-- `api` — socket client tested against a stub daemon, including the
-  read-deadline and subscriber-goroutine-leak regressions
-- `cmd/` — the generated-vs-packaged permission artifact drift guard
-- `internal/theme` — color parsing, CSS generation, config persistence, the
-  z13gui config migration, and all built-in theme/accent combinations
-- `internal/limits` — TDP limits and fan curve rules the drawer enforces
-- `internal/apiresult` — collapsing an api `(handled, err)` pair into one
-  error, plus a contract test pinning the api's "daemon not running"
-  convention
-- `internal/focusgrid`, `keyrepeat`, `colorconv`, `lighting`, `uiscale`,
-  `startup`, `togglegate`, `panelgeom` — the drawer's extracted decision logic
-- `internal/gui` and its display backends — require GTK4 and a compositor;
-  integration-tested manually against hardware
+A device is a TOML file in `internal/device/devices/` describing the machine's
+hardware and which drivers serve it. Most new machines need only that file;
+new hardware interfaces need a driver.
 
-::: warning Tests must never touch real hardware
-The drivers under `internal/drivers` write straight to sysfs, and the profile
-driver shells out to `powerprofilesctl`. Two seams exist so tests cannot reach
-either: each package's fake sysfs tree redirects every path, and `ppdRunner`
-(`linux`) / `smuReadFile` / `smuWriteFile` (`amd`) are swappable. Both were
-added after tests changed the developer's live power profile and TDP. Each
-driver package's `TestMain` also points every writable root at a nonexistent
-directory, so a test that forgets the fake fails instead of writing. See
-[Writing a driver](/dev/writing-a-driver#testing-without-hardware).
-
-`internal/daemon` handlers reach that driver through the assembled
-`device.Device`, and its path vars are unexported, so **daemon tests must stay
-on validation paths that return before any hardware access**. A daemon test that gets past `handleTDP` validation
-will rewrite the machine's actual power limits.
-:::
+- [Device files](/dev/device-files) documents every key. A new key fails
+  `make test` until it is documented there.
+- [Writing a driver](/dev/writing-a-driver) covers the driver contract and
+  testing without hardware.
+- Every device file needs a compatibility page in `website/docs/devices/` and a
+  row in the matrix on `devices/index.md`; `make test` checks both.
 
 ## Documentation
 
-This site lives in `website/` (VitePress). Preview it locally with:
+The website lives in `website/` and is built with VitePress.
 
 ```sh
-make docs
+make docs         # serve it locally with live reload
+make docs-build   # build it as CI does, including link and anchor checks
 ```
 
-The [Go API Reference](/reference/api-go) page is generated by
-gomarkdoc — edit the doc comments in `api/*.go` and run `make docs-api` to
-regenerate it rather than editing the page.
+Pages are in `website/docs/`, the sidebar in
+`website/docs/.vitepress/config.mts`. Write internal links without the base
+path and without a trailing slash (`/reference/commands#setup`).
 
-## Release workflow (maintainers only)
+The [Go API Reference](/dev/api-go) page is generated from the doc comments in
+`api/*.go`. Edit the comments and run `make docs-api`; never edit the page by
+hand.
 
-The `api/` module must be tagged before the main module so the main module
-can reference a real published version:
+## Pull requests
+
+- Keep each pull request to one change, with tests.
+- Run `make mod-tidy` if you changed dependencies.
+- Describe what you tested on hardware, if anything.
+
+## Release workflow (maintainers)
+
+Tag the `api/` module first, so the main module can depend on a published
+version:
 
 ```sh
-git tag api/v2.x.y && git push origin api/v2.x.y  # tag api/ first
-git tag v2.x.y     && git push origin v2.x.y       # then tag main module
+git tag api/v2.x.y && git push origin api/v2.x.y
+git tag v2.x.y     && git push origin v2.x.y
 ```
 
-GoReleaser builds both binaries, the one `.pkg.tar.zst`, `.deb` and `.rpm`
-package carrying them, and the GitHub Release when the main module tag is
-pushed; the release workflow then patches and pushes the `voltaire-bin` AUR
-package.
+Pushing the main tag runs GoReleaser, which builds both binaries, the one
+`.pkg.tar.zst`, `.deb` and `.rpm` package that carries them, and the GitHub
+release; the workflow then updates the `voltaire-bin` AUR package.
+`make snapshot` builds the same artifacts locally without publishing.
 
 The pre-rename tags (`v1.x`, `api/v1.x`) are frozen and must never be deleted
-or reused — the Go module proxy serves them to pre-rename importers through
-the GitHub repository redirect. For the same reason, never create a new
-repository named `z13ctl` under the same owner: it would sever the redirect
-that keeps old module paths and every historical link resolving.
+or reused: the Go module proxy serves them to old importers through the
+GitHub repository redirect. For the same reason, never create a new repository
+named `z13ctl` under the same owner.
