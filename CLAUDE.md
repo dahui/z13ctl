@@ -670,10 +670,14 @@ diff whenever a main release touches `api/`.
    says what landed): per-machine permissions (`internal/perms`; packages run
    setup), the safety boundary as types, daemon tests on fakes, the protocol
    and api cleanup, GUI sync/refresh/slider consolidation, the lint ratchet,
-   and this file split into an index plus `docs/decisions`. **Still to do with
-   Jeff:** the hardware session for per-machine permissions (a real
-   `sudo voltaire setup` from an installed binary on the Z13, a reboot, the OXP
-   and the Ally, `make snapshot` package-script inspection).
+   and this file split into an index plus `docs/decisions`. Verified on
+   hardware 2026-11-26: the Z13 (setup from an installed binary, four reboots,
+   the boot pass resetting udev's renumbered-node strays, daemon writes on the
+   new grants, a `setup --remove` round trip restoring the exact permissions)
+   and the Ally (old static install replaced, a reboot); `make snapshot`
+   package scripts checked (guarded preremove, rpm posttrans, Arch
+   post_upgrade, no permission artifact in any package). **Left:** the OXP
+   (wiped; once CachyOS is back) and a cover detach/reattach on the Z13.
 1. **ASUS ROG Xbox Ally X** (`.claude/plans/xbox-ally-x.md`): device file,
    Steam yield, stock rows (AC and battery) and the charge limit done; the ring
    lighting (Aura over hidraw interface 2, 0x5D feature reports — proven on the
