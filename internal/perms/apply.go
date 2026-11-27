@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,11 +45,23 @@ type Options struct {
 	DMIMatch bool
 	DryRun   bool
 	Out      io.Writer
+	// OnlyOurs says no udev rules file but setup's own can give a node
+	// Group (OnlyOursGrant). Then a hidraw node carrying it that the grants
+	// do not name can only be a stray of setup's rules, whatever its device,
+	// and is reset; otherwise only nodes of devices in known are.
+	OnlyOurs bool
 }
 
-// Result counts what a pass did.
+// Result counts what a pass did. Already counts files that had the grant
+// before the pass, so a run that changes nothing still says what it checked.
 type Result struct {
-	Granted, Revoked, Skipped, Failed int
+	Granted, Already, Revoked, Skipped, Failed int
+}
+
+// String is the one-line summary setup prints.
+func (r Result) String() string {
+	return fmt.Sprintf("%d granted, %d already granted, %d revoked, %d left alone, %d failed",
+		r.Granted, r.Already, r.Revoked, r.Skipped, r.Failed)
 }
 
 // Apply grants g to what exists now and resets stale hidraw grants: another
@@ -97,8 +110,8 @@ func Revert(grants []Grants, opt Options) Result {
 		hid = append(hid, g.HIDRaw...)
 	}
 	for _, n := range hidrawNodes() {
-		if _, ok := classifyHIDRaw(n, hid); ok {
-			a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, "hidraw")
+		if _, ok := classifyHIDRaw(n, hid); ok || opt.OnlyOurs {
+			a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, n.describe("hidraw"))
 		}
 	}
 	return a.res
@@ -123,6 +136,7 @@ func (a *applier) set(path string, mode func(os.FileMode) os.FileMode, what stri
 	}
 	want := mode(fi.Mode().Perm())
 	if gidOf(fi) == a.opt.GID && fi.Mode().Perm() == want {
+		a.res.Already++
 		return
 	}
 	if a.opt.DryRun {
@@ -142,7 +156,10 @@ func (a *applier) set(path string, mode func(os.FileMode) os.FileMode, what stri
 }
 
 // revert undoes a grant on path if it still carries the group. A hidden node
-// (mode 0000) is another tool's and is never touched, revoke or not.
+// (mode 0000) is another tool's and is never touched, revoke or not. Every
+// revoke is logged by name, dry run or not: one is rare, and on a boot it is
+// the only trace of what udev granted that it should not have
+// (docs/decisions/0006).
 func (a *applier) revert(path string, mode func(os.FileMode) os.FileMode, what string) {
 	fi, err := os.Stat(path)
 	if err != nil || gidOf(fi) != a.opt.GID || fi.Mode().Perm() == 0 {
@@ -162,6 +179,7 @@ func (a *applier) revert(path string, mode func(os.FileMode) os.FileMode, what s
 		a.fail(path, err)
 		return
 	}
+	a.printf("  revoked %s: %s → group root, mode %04o\n", what, display(path), want)
 	a.res.Revoked++
 }
 
@@ -231,6 +249,15 @@ type hidrawNode struct {
 	ifaceText string
 }
 
+// describe names the node's interface for a log line: hidraw numbers move
+// between boots (a driver rebind renumbers them), the interface does not.
+func (n hidrawNode) describe(what string) string {
+	if n.iface < 0 {
+		return fmt.Sprintf("%s (%s, not a USB interface)", what, n.usb)
+	}
+	return fmt.Sprintf("%s (interface %s of %s)", what, n.ifaceText, n.usb)
+}
+
 func hidrawNodes() []hidrawNode {
 	paths, _ := filepath.Glob(root + "/sys/class/hidraw/hidraw*")
 	var out []hidrawNode
@@ -239,17 +266,23 @@ func hidrawNodes() []hidrawNode {
 		if err != nil {
 			continue
 		}
-		ifaceRaw, err := os.ReadFile(n + "/device/../bInterfaceNumber")
-		if err != nil {
-			continue
-		}
 		usb := hidUSB(string(uevent))
-		text := strings.TrimSpace(string(ifaceRaw))
-		iface, err := strconv.ParseUint(text, 16, 8)
-		if usb == "" || err != nil {
+		if usb == "" {
 			continue
 		}
-		out = append(out, hidrawNode{sys: n, dev: root + "/dev/" + filepath.Base(n), usb: usb, iface: int(iface), ifaceText: text})
+		node := hidrawNode{sys: n, dev: root + "/dev/" + filepath.Base(n), usb: usb, iface: -1}
+		// A node with no USB interface (an I2C sensor hub, a touchscreen)
+		// is listed too, with iface -1: no grant names one, but a udev
+		// event for a renumbered node can land on it (OnlyOurs).
+		if raw, err := os.ReadFile(n + "/device/../bInterfaceNumber"); err == nil {
+			text := strings.TrimSpace(string(raw))
+			iface, err := strconv.ParseUint(text, 16, 8)
+			if err != nil {
+				continue
+			}
+			node.iface, node.ifaceText = int(iface), text
+		}
+		out = append(out, node)
 	}
 	return out
 }
@@ -274,6 +307,9 @@ func hidUSB(uevent string) string {
 // classifyHIDRaw finds the grant naming exactly this node's interface, and
 // reports whether the node's device appears in grants at all.
 func classifyHIDRaw(n hidrawNode, grants []HIDRaw) (match *HIDRaw, known bool) {
+	if n.iface < 0 {
+		return nil, false // grants name USB interfaces only
+	}
 	for i := range grants {
 		if grants[i].USB != n.usb {
 			continue
@@ -298,7 +334,7 @@ func (a *applier) hidraw(mine, known []HIDRaw) {
 			if desc, err := os.ReadFile(n.sys + "/device/report_descriptor"); err == nil && hidrawbtn.IsKeyboardDescriptor(desc) {
 				a.printf("  warning: the device file grants %s (interface %s of %s), which is a keyboard; refusing it (please report this as a device-file bug)\n",
 					display(n.dev), n.ifaceText, n.usb)
-				a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, "keyboard")
+				a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, n.describe("keyboard"))
 				continue
 			}
 			if hidden(n.dev) {
@@ -314,7 +350,9 @@ func (a *applier) hidraw(mine, known []HIDRaw) {
 			continue
 		}
 		if _, isKnown := classifyHIDRaw(n, known); isKnown {
-			a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, "stale hidraw")
+			a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, n.describe("stale hidraw"))
+		} else if a.opt.OnlyOurs {
+			a.revert(n.dev, func(os.FileMode) os.FileMode { return 0o600 }, n.describe("stray hidraw"))
 		}
 	}
 }
@@ -358,3 +396,40 @@ func gidOf(fi os.FileInfo) int {
 
 // display strips the test root from a path.
 func display(path string) string { return strings.TrimPrefix(path, root) }
+
+// udevRuleDirs are the directories udev reads rules from.
+var udevRuleDirs = []string{
+	"/etc/udev/rules.d", "/run/udev/rules.d",
+	"/usr/local/lib/udev/rules.d", "/usr/lib/udev/rules.d", "/lib/udev/rules.d",
+}
+
+// OnlyOursGrant reports whether no udev rules file but ours (setup's rules
+// path; a same-named file elsewhere is one udev never reads beside it) can
+// give a node group: none assigns GROUP= to it or chgrps to it. When another
+// does, it returns that file, so the caller can say why strays are not reset.
+//
+// It is what lets the boot pass reset a hidraw grant on a device no device
+// file names: udev applies GROUP to a node by name, and a coldplug event for
+// a node a driver rebind has since renumbered lands on whatever device took
+// the name (the Z13's ITE sensor hub, 2026-11-26: docs/decisions/0006).
+func OnlyOursGrant(group, ours string) (only bool, other string) {
+	re := regexp.MustCompile(`GROUP:?="` + regexp.QuoteMeta(group) + `"|chgrp\s+` + regexp.QuoteMeta(group) + `\b`)
+	for _, dir := range udevRuleDirs {
+		files, _ := filepath.Glob(root + dir + "/*.rules")
+		for _, f := range files {
+			if filepath.Base(f) == filepath.Base(ours) {
+				continue
+			}
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				if t := strings.TrimSpace(line); !strings.HasPrefix(t, "#") && re.MatchString(t) {
+					return false, display(f)
+				}
+			}
+		}
+	}
+	return true, ""
+}

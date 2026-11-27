@@ -33,3 +33,42 @@ func TestPressOf(t *testing.T) {
 		}
 	}
 }
+
+func TestGamepadEventOf(t *testing.T) {
+	sig := func(name string, value float64) *dbus.Signal {
+		return &dbus.Signal{Name: dbusDeviceIface + ".InputEvent", Body: []any{name, value}}
+	}
+	for _, c := range []struct {
+		sig  *dbus.Signal
+		want GamepadEvent
+		ok   bool
+	}{
+		{sig("ui_up", 1), GamepadEvent{"up", true}, true},
+		{sig("ui_up", 0), GamepadEvent{"up", false}, true},
+		{sig("ui_accept", 1), GamepadEvent{"accept", true}, true},
+		{sig("ui_back", 1), GamepadEvent{"back", true}, true},
+		{sig("ui_l1", 1), GamepadEvent{"l1", true}, true},
+		{sig("ui_r1", 0), GamepadEvent{"r1", false}, true},
+		// Not navigation: dropped, so the stream is not a record of the controller.
+		{sig("ui_guide", 1), GamepadEvent{}, false},
+		{sig("ui_action", 1), GamepadEvent{}, false},
+		{sig("voltaire_armoury-crate", 1), GamepadEvent{}, false},
+		{&dbus.Signal{Name: dbusDeviceIface + ".TouchEvent", Body: []any{"ui_up", 1.0}}, GamepadEvent{}, false},
+		{&dbus.Signal{Name: dbusDeviceIface + ".InputEvent", Body: []any{"ui_up"}}, GamepadEvent{}, false},
+		{nil, GamepadEvent{}, false},
+	} {
+		got, ok := gamepadEventOf(c.sig)
+		if got != c.want || ok != c.ok {
+			t.Errorf("%v: got %+v, %v; want %+v, %v", c.sig, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestHasGamepad(t *testing.T) {
+	if !(Composite{Capabilities: []string{"Keyboard:KeyA", "Gamepad:Button:South"}}).HasGamepad() {
+		t.Error("a composite with a gamepad button has a gamepad")
+	}
+	if (Composite{Capabilities: []string{"Keyboard:KeyA", "Mouse:Motion"}}).HasGamepad() {
+		t.Error("a keyboard-and-mouse composite has no gamepad: intercepting it would swallow typing")
+	}
+}

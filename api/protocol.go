@@ -46,6 +46,10 @@ const (
 	CmdUndervoltReset    = "undervolt-reset"
 	CmdGetState          = "get-state"
 	CmdSubscribe         = "subscribe"
+	// CmdGamepadIntercept takes the controller from games for as long as the
+	// connection stays open, streaming its navigation as "gamepad" events
+	// (InterceptGamepad). Like subscribe, it keeps the connection.
+	CmdGamepadIntercept = "gamepad-intercept"
 )
 
 // Request is a command sent to the daemon: one JSON object per
@@ -92,6 +96,17 @@ type Response struct {
 	// stuffed into Value, because double-encoding hurts most at this size (a
 	// full window is thousands of samples, every quote escaped).
 	History []TelemetrySample `json:"history,omitempty"`
+	// Gamepad is a "gamepad" event's payload, on a gamepad-intercept stream.
+	Gamepad *GamepadEvent `json:"gamepad,omitempty"`
+}
+
+// GamepadEvent is one navigation press or release from an intercepted
+// controller. Action is "up", "down", "left", "right", "accept", "back", "l1"
+// or "r1"; Pressed is false for the release. The left stick arrives as the four
+// directions.
+type GamepadEvent struct {
+	Action  string `json:"action"`
+	Pressed bool   `json:"pressed"`
 }
 
 // UndervoltReading is undervolt-get's value: the stored offset, and the

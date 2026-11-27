@@ -61,6 +61,14 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		return
 	}
 
+	if req.Cmd == api.CmdGamepadIntercept {
+		// Kept open like a subscription: the intercept lasts as long as the
+		// connection (intercept.go).
+		_ = conn.SetReadDeadline(time.Time{})
+		d.serveIntercept(conn)
+		return
+	}
+
 	// The command is handled synchronously below; clear the read deadline so it
 	// cannot expire mid-write on a slow hardware operation.
 	_ = conn.SetReadDeadline(time.Time{})
@@ -99,7 +107,8 @@ func noReq(h func(*Daemon) response) func(*Daemon, request) response {
 }
 
 // commands is every command the daemon answers, keyed by its wire name.
-// subscribe is not here: handleConn keeps that connection open itself.
+// subscribe and gamepad-intercept are not here: handleConn keeps those
+// connections open itself.
 var commands = map[string]command{
 	api.CmdApply:             {(*Daemon).handleApply, false},
 	api.CmdOff:               {(*Daemon).handleOff, false},

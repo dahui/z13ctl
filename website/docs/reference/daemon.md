@@ -556,6 +556,7 @@ restore paths — startup, resume, and selecting a custom profile.
 |---|---|---|
 | Full state | `{"cmd":"get-state"}` | `ok`, `state` |
 | Subscribe | `{"cmd":"subscribe","events":["gui-toggle","gui-open-full","power-source","state-changed"]}` | `ok`, then streamed events |
+| Take the controller | `{"cmd":"gamepad-intercept"}` | `ok` (`value`: controllers taken), then streamed `gamepad` events; see [Controller intercept](#controller-intercept) |
 
 `get-state` merges persisted state with live sysfs reads — see
 [State file](#state-file).
@@ -625,6 +626,43 @@ subscriptions are idle by design between button presses. In the other
 direction, `api` clients bound a whole command exchange at 10 seconds so a
 wedged daemon cannot hang the caller indefinitely.
 :::
+
+### Controller intercept
+
+`gamepad-intercept` takes the machine's controller from games for as long as
+the connection stays open, and streams its navigation. It is what voltaire-gui
+uses while the drawer or window is up on a machine where
+[InputPlumber](https://github.com/ShadowBlip/InputPlumber) manages the
+controller: InputPlumber hides the real one and presents a virtual controller
+to games, which on the ROG Xbox Ally X is an emulated Steam Deck controller
+with no evdev node, so there is nothing an overlay can read or grab itself.
+
+The daemon switches each InputPlumber composite device that carries a gamepad
+to intercept mode. InputPlumber then stops feeding the virtual controller
+(games and Steam receive an idle controller) and sends navigation over DBus,
+which the daemon forwards:
+
+```json
+{"ok":true,"event":"gamepad","gamepad":{"action":"accept","pressed":true}}
+```
+
+`action` is `up`, `down`, `left`, `right`, `accept`, `back`, `l1` or `r1`, and
+`pressed` is false for the release; the left stick arrives as the four
+directions. Nothing else the controller sends is forwarded. Buttons InputPlumber
+maps to voltaire (the button that opens it) keep working throughout.
+
+The controller goes back when the **last** client closes its connection,
+whether it released it or crashed, and when the daemon stops; each device
+returns to the mode it had, unless something else has changed it since. A
+daemon killed outright leaves `$XDG_RUNTIME_DIR/voltaire/intercept.json`, and
+the next one restores from it at startup.
+
+The reply is `ok: false` when InputPlumber is not running, manages no
+controller, or refuses: its polkit rule lets members of `wheel` and
+`inputplumber` change the mode and asks anyone else for an administrator
+password. voltaire never adds anyone to `inputplumber`, which also allows
+injecting keystrokes. A client should then fall back to reading the controller
+itself, as voltaire-gui does everywhere InputPlumber is absent.
 
 ### Minimal client
 

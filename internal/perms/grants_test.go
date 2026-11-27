@@ -363,7 +363,9 @@ func TestUnit(t *testing.T) {
 	for _, want := range []string{
 		Marker + "\n", "Type=oneshot", "RemainAfterExit=yes",
 		"ConditionPathExists=/usr/bin/voltaire",
-		"ExecStart=/usr/bin/voltaire setup --perms-only --group users\n",
+		// Before the pass, so a hidraw grant udev applied to a renumbered
+		// node is reset (docs/decisions/0006); "-" so it never fails the unit.
+		"ExecStartPre=-udevadm settle --timeout=30\nExecStart=/usr/bin/voltaire setup --perms-only --group users\n",
 	} {
 		if !strings.Contains(u, want) {
 			t.Errorf("unit missing %q:\n%s", want, u)

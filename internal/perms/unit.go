@@ -18,6 +18,14 @@ import (
 // must restart it, not merely enable it, for a changed grant to apply before
 // the next boot; setup does. ConditionPathExists makes a removed binary skip
 // the unit rather than fail it at every boot.
+//
+// ExecStartPre waits for udev's queue to drain. Ordering after
+// systemd-udev-trigger only means coldplug was queued, and a driver rebind
+// still in that queue renumbers hidraw nodes while udev applies GROUP by
+// node name, so a late event can grant an interface no rule matches (seen
+// on the Z13's lightbar: docs/decisions/0006). The pass must run after that
+// to reset it. Bounded, and "-" so a slow queue delays the pass, never
+// fails it; only this unit waits, nothing else at boot.
 func Unit(exe string, h Header, deviceID string) string {
 	args := []string{exe, "setup", "--perms-only", "--group", h.Group}
 	if deviceID != "" {
@@ -33,6 +41,7 @@ ConditionPathExists=%s
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+ExecStartPre=-udevadm settle --timeout=30
 ExecStart=%s
 
 [Install]

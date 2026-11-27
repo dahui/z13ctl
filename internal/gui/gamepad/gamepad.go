@@ -30,7 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dahui/voltaire/v2/internal/keyrepeat"
 	evdev "github.com/holoplot/go-evdev"
 )
 
@@ -91,6 +90,14 @@ type Reader struct {
 	grabbed  bool                          // true while overlay is visible (exclusive grab)
 	grabSeq  uint64                        // highest SetGrabbed seq applied; rejects stale requests
 	stop     chan struct{}
+
+	// intercept is the second input source (intercept.go), nil until
+	// SetIntercept. icptRelease gives back the controller it holds, nil when
+	// it holds none; icptGen tells one held stream from the next.
+	intercept   InterceptFunc
+	icptRelease func()
+	icptGen     uint64
+	icptLogged  bool
 }
 
 // New creates a Reader. handler is called (via dispatch) for each action.
@@ -179,6 +186,7 @@ func (r *Reader) SetGrabbed(seq uint64, grab bool) {
 	for path, dev := range r.grabOnly {
 		apply(path, dev)
 	}
+	r.setInterceptLocked(seq, grab)
 }
 
 // scan enumerates /dev/input/event* and starts readers for new devices.
@@ -455,47 +463,10 @@ func (r *Reader) readLoop(path string, dev *evdev.InputDevice) {
 		slog.Info("gamepad: disconnected", "path", path)
 	}()
 
-	// Auto-repeat for held directions. keyrepeat owns the "who holds the repeat"
-	// bookkeeping (tested there); this keeps only the timer.
-	var repeatMu sync.Mutex
-	var repeatTimer *time.Timer
-	var repeat keyrepeat.Tracker[Action]
-
-	// stopRepeat cancels the repeat. With no arguments it stops whatever is
-	// active; given actions it stops only if the repeat belongs to one of them,
-	// so releasing one held direction leaves another still held repeating.
-	stopRepeat := func(only ...Action) {
-		repeatMu.Lock()
-		defer repeatMu.Unlock()
-		if repeat.Stop(only...) && repeatTimer != nil {
-			repeatTimer.Stop()
-			repeatTimer = nil
-		}
-	}
-	defer stopRepeat()
-
-	startRepeat := func(a Action) {
-		repeatMu.Lock()
-		defer repeatMu.Unlock()
-		if repeatTimer != nil {
-			repeatTimer.Stop()
-		}
-		// gen retires any callback already in flight. Without it the previous
-		// direction's timer — which has fired and is waiting on this lock — re-armed
-		// itself and overwrote this timer, so the old direction repeated forever
-		// while the new one never started.
-		gen := repeat.Start(a)
-		var tick func()
-		tick = func() {
-			r.emit(a)
-			repeatMu.Lock()
-			if repeat.ReArm(gen) {
-				repeatTimer = time.AfterFunc(repeatInterval, tick)
-			}
-			repeatMu.Unlock()
-		}
-		repeatTimer = time.AfterFunc(repeatInitial, tick)
-	}
+	// Auto-repeat for held directions, per device: see repeater.
+	rep := &repeater{emit: r.emit}
+	defer rep.stop()
+	startRepeat, stopRepeat := rep.start, rep.stop
 
 	for {
 		select {

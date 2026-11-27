@@ -559,6 +559,44 @@ func SendFeatureSet(id string, value int) (bool, error) {
 	return sendOK(Request{Cmd: CmdFeature, ID: id, Set: strconv.Itoa(value)})
 }
 
+// openStream dials the daemon, sends req and reads its acknowledgement, for
+// the two commands that keep their connection (subscribe, gamepad-intercept).
+// Only the handshake is deadline-bounded: a stream is idle by design between
+// events. It returns a nil conn and a nil error when the daemon is not
+// running, and a nil conn with the daemon's error when it refused.
+func openStream(req Request) (net.Conn, *bufio.Scanner, error) {
+	conn, err := dialDaemon()
+	if err != nil {
+		return nil, nil, nil // daemon not running
+	}
+	_ = conn.SetDeadline(time.Now().Add(commandTimeout))
+	data, err := json.Marshal(req)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", data); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("no response from daemon")
+	}
+	var ack Response
+	if err := json.Unmarshal(scanner.Bytes(), &ack); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	if !ack.OK {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("%s: %w", req.Cmd, respErr(&ack))
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return conn, scanner, nil
+}
+
 // Subscribe opens a long-lived subscription to the daemon and returns a channel
 // that receives event name strings as they are streamed. Pass the events you
 // want — EventGUIToggle, EventPowerSource, EventStateChanged — or nil for all of
@@ -582,44 +620,10 @@ func SendFeatureSet(id string, value int) (bool, error) {
 // goroutine; the channel is closed when the connection drops or cancel is called.
 // Returns (nil, nil, nil) if the daemon is not running.
 func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error) {
-	conn, err := dialDaemon()
-	if err != nil {
-		return nil, nil, nil // daemon not running
+	conn, scanner, err := openStream(Request{Cmd: CmdSubscribe, Events: events})
+	if conn == nil {
+		return nil, nil, err // err is nil when the daemon is not running
 	}
-
-	// Bound the handshake only. The deadline is cleared before streaming
-	// begins, since a subscription is idle by design between button presses.
-	_ = conn.SetDeadline(time.Now().Add(commandTimeout))
-
-	req := Request{Cmd: CmdSubscribe, Events: events}
-	data, err := json.Marshal(req)
-	if err != nil {
-		_ = conn.Close()
-		return nil, nil, err
-	}
-	if _, err := fmt.Fprintf(conn, "%s\n", data); err != nil {
-		_ = conn.Close()
-		return nil, nil, err
-	}
-
-	// Read the initial OK acknowledgement.
-	scanner := bufio.NewScanner(conn)
-	if !scanner.Scan() {
-		_ = conn.Close()
-		return nil, nil, fmt.Errorf("no response from daemon")
-	}
-	var ack Response
-	if err := json.Unmarshal(scanner.Bytes(), &ack); err != nil {
-		_ = conn.Close()
-		return nil, nil, err
-	}
-	if !ack.OK {
-		_ = conn.Close()
-		return nil, nil, fmt.Errorf("subscribe: %s", ack.Error)
-	}
-
-	// Streaming is open-ended: clear the handshake deadline.
-	_ = conn.SetDeadline(time.Time{})
 
 	ch := make(chan string, 8)
 	done := make(chan struct{})

@@ -292,7 +292,10 @@ because the same directory holds the CPU's power caps. Then it:
    oneshot running `voltaire setup --perms-only`, for attributes that appear
    after their udev event (the charge limit and the power limits on ASUS
    machines) or have none at all (the cpufreq boost switch, the `ryzen_smu`
-   files).
+   files). It also resets any hidraw node udev gave the group by mistake:
+   when a driver takes a device over during boot its hidraw nodes are
+   renumbered, and a queued udev event can land on whichever device took the
+   old name. Each reset is logged with the device it was on.
 
 Both files name the machine and group they were written for. On a machine that
 previously ran `z13ctl setup`, setup also removes the old `99-z13ctl.rules`
@@ -431,8 +434,8 @@ recognized.
 **Permission denied**
 
 Run `sudo voltaire setup` and log out/in to apply the group membership.
-`systemctl status voltaire-perms` shows what the boot pass granted. Verify
-with:
+`journalctl -b -u voltaire-perms` shows what the boot pass granted and names
+every node it reset. Verify with:
 
 ```sh
 ls -la /dev/hidraw*

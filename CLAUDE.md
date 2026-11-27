@@ -198,6 +198,7 @@ the record before changing what it covers.
 - [The gamepad focus grid skips *insensitive* widgets, not just hidden ones](docs/decisions/0173-the-gamepad-focus-grid-skips-insensitive-widgets-not-just-hi.md)
 - [The autoswitch UI uses cycle buttons and a debounced single send](docs/decisions/0174-the-autoswitch-ui-uses-cycle-buttons-and-a-debounced-single.md)
 - [The token regexes must match *both* prefixes, and widening them was the load-bearing half of the migration](docs/decisions/0176-the-token-regexes-must-match-both-prefixes-and-widening-them.md)
+- [Where InputPlumber manages the controller, the drawer takes it through intercept mode, owned by the daemon](docs/decisions/0177-where-inputplumber-manages-the-controller-the-drawer-takes-it-through-intercept-mode.md)
 
 ### GUI (see also `internal/gui/CLAUDE.md`)
 

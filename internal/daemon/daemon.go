@@ -72,6 +72,10 @@ type Daemon struct {
 	ipKick    chan struct{}
 	ipDone    chan struct{}
 
+	// icpt is the gamepad-intercept state (intercept.go). It carries its own
+	// lock, taken only around InputPlumber calls and never with hwMu or mu.
+	icpt interceptor
+
 	// suspending is set by releaseVolatileState and cleared by
 	// restoreVolatileState. It stands the reconcile watcher down for the window
 	// between PrepareForSleep(true) and the freeze, where re-enabling the custom
@@ -255,6 +259,11 @@ func Run(ctx context.Context, opts Options) error {
 
 	go d.watchResume(ctx)
 
+	// A predecessor killed while holding the controller left a marker; give
+	// the controller back before the socket opens, so no client can take it
+	// (and write a fresh marker) first. Returns at once with no marker.
+	restoreStaleIntercept()
+
 	go d.watchHotplug(ctx, lightingOpened)
 
 	// State-driven, so it is a no-op on a machine that never uses a custom
@@ -327,6 +336,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	if ctx.Err() != nil {
+		d.icpt.stop(ipCleanup)
 		d.waitInputPlumberCleanup()
 		return nil
 	}

@@ -8,6 +8,7 @@ package perms
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dahui/voltaire/v2/internal/drivers/evdevkey"
@@ -51,10 +52,13 @@ func (tr tree) mode(path string) os.FileMode {
 	return fi.Mode().Perm()
 }
 
-// hidraw makes /sys/class/hidraw/<name> and its /dev node.
+// hidraw makes /sys/class/hidraw/<name> and its /dev node. An empty iface is
+// a node with no USB interface (an I2C device).
 func (tr tree) hidraw(name, hidID, iface string, devMode os.FileMode) {
 	tr.file("/sys/class/hidraw/"+name+"/device/uevent", "HID_ID="+hidID+"\n", 0o644)
-	tr.file("/sys/class/hidraw/"+name+"/bInterfaceNumber", iface+"\n", 0o644)
+	if iface != "" {
+		tr.file("/sys/class/hidraw/"+name+"/bInterfaceNumber", iface+"\n", 0o644)
+	}
 	tr.file("/dev/"+name, "", devMode)
 }
 
@@ -97,8 +101,14 @@ func TestApplyGrantsWhatTheDeviceDeclares(t *testing.T) {
 			t.Errorf("%s: mode %04o, want %04o", path, got, want)
 		}
 	}
-	if again := Apply(g, nil, Options{Group: "test", GID: tr.gid}); again.Granted != 0 {
-		t.Errorf("a second pass changed %d files; it should find them granted", again.Granted)
+	first := Apply(g, nil, Options{Group: "test", GID: tr.gid}) // the pass above already ran; this is the second
+	if first.Granted != 0 {
+		t.Errorf("a second pass changed %d files; it should find them granted", first.Granted)
+	}
+	// A pass that changes nothing still says what it checked: an all-zero
+	// summary read as "found nothing" on the first hardware run.
+	if first.Already == 0 {
+		t.Errorf("a second pass counted nothing as already granted: %v", first)
 	}
 }
 
@@ -128,9 +138,15 @@ func TestApplyHIDRaw(t *testing.T) {
 	tr.hidraw("hidraw5", "0003:00001A86:0000FE00", "02", 0o000) // hidden by InputPlumber; another device's anyway
 	tr.hidraw("hidraw6", "0003:0000046D:0000C52B", "00", 0o660) // a device no file names
 
-	res := Apply(g, Known(configs(t)), Options{Group: "test", GID: tr.gid})
+	var log strings.Builder
+	res := Apply(g, Known(configs(t)), Options{Group: "test", GID: tr.gid, Out: &log})
 	if res.Failed != 0 {
 		t.Fatalf("failures: %+v", res)
+	}
+	// The boot pass's journal must name what it revoked, by interface: the
+	// node number alone moves between boots.
+	if want := "revoked stale hidraw (interface 02 of 0b05:1a30): /dev/hidraw2"; !strings.Contains(log.String(), want) {
+		t.Errorf("revoke not logged; want %q in:\n%s", want, log.String())
 	}
 	for path, want := range map[string]os.FileMode{
 		"/dev/hidraw0": 0o660, // granted read-write
@@ -219,4 +235,58 @@ func TestRevert(t *testing.T) {
 			t.Errorf("%s: mode %04o after revert, want %04o", path, got, want)
 		}
 	}
+}
+
+// TestStrayHIDRawGrants is the Z13's 2026-11-26 boot: udev's coldplug event
+// for the keyboard's interface 0, queued as hidraw0, landed after a driver
+// rebind had given that name to the ITE sensor hub (I2C, in no device file).
+// With no other rules file handing out the group, the pass resets it; with
+// one, the group could be that file's, and it is left.
+func TestStrayHIDRawGrants(t *testing.T) {
+	g := mustFor(t, configByID(t, "asus-rog-flow-z13-2025"))
+	setup := func(t *testing.T) tree {
+		tr := newTree(t)
+		tr.hidraw("hidraw0", "0018:0000048D:00008353", "", 0o660)   // the sensor hub, granted by the stray event
+		tr.hidraw("hidraw7", "0003:00000B05:00001A30", "00", 0o660) // the keyboard's lighting interface
+		tr.hidraw("hidraw9", "0003:0000046D:0000C52B", "00", 0o600) // an unknown device without the group
+		tr.file("/etc/udev/rules.d/99-voltaire.rules", `SUBSYSTEM=="hidraw", GROUP="test"`+"\n", 0o644)
+		tr.file("/usr/lib/udev/rules.d/99-voltaire.rules", `GROUP="test"`+"\n", 0o644) // same name: shadowed
+		tr.file("/usr/lib/udev/rules.d/50-other.rules", "# GROUP=\"test\" in a comment\n"+`GROUP="testers"`+"\n", 0o644)
+		return tr
+	}
+
+	t.Run("only ours", func(t *testing.T) {
+		tr := setup(t)
+		only, other := OnlyOursGrant("test", "/etc/udev/rules.d/99-voltaire.rules")
+		if !only {
+			t.Fatalf("OnlyOursGrant = false (%s); comments, other groups and the shadowed copy must not count", other)
+		}
+		var log strings.Builder
+		res := Apply(g, Known(configs(t)), Options{Group: "test", GID: tr.gid, Out: &log, OnlyOurs: only})
+		if tr.mode("/dev/hidraw0") != 0o600 || tr.mode("/dev/hidraw7") != 0o660 || tr.mode("/dev/hidraw9") != 0o600 {
+			t.Errorf("modes: sensor hub %04o (want 0600), keyboard %04o (want 0660), unknown %04o (want 0600); %v",
+				tr.mode("/dev/hidraw0"), tr.mode("/dev/hidraw7"), tr.mode("/dev/hidraw9"), res)
+		}
+		if want := "revoked stray hidraw (048d:8353, not a USB interface): /dev/hidraw0"; !strings.Contains(log.String(), want) {
+			t.Errorf("want %q in:\n%s", want, log.String())
+		}
+		// setup --remove takes it back the same way.
+		tr.file("/dev/hidraw0", "", 0o660)
+		if r := Revert([]Grants{g}, Options{Group: "test", GID: tr.gid, OnlyOurs: true}); tr.mode("/dev/hidraw0") != 0o600 {
+			t.Errorf("Revert left the sensor hub at %04o: %v", tr.mode("/dev/hidraw0"), r)
+		}
+	})
+
+	t.Run("another rules file grants the group", func(t *testing.T) {
+		tr := setup(t)
+		tr.file("/etc/udev/rules.d/70-mine.rules", `SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", GROUP="test"`+"\n", 0o644)
+		only, other := OnlyOursGrant("test", "/etc/udev/rules.d/99-voltaire.rules")
+		if only || other != "/etc/udev/rules.d/70-mine.rules" {
+			t.Fatalf("OnlyOursGrant = %v, %q; want false naming 70-mine.rules", only, other)
+		}
+		Apply(g, Known(configs(t)), Options{Group: "test", GID: tr.gid, OnlyOurs: only})
+		if tr.mode("/dev/hidraw0") != 0o660 {
+			t.Errorf("a node another rule may have granted was reset to %04o", tr.mode("/dev/hidraw0"))
+		}
+	})
 }

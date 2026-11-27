@@ -446,6 +446,10 @@ func New(app *gtk.Application) *Window {
 			w.anyVisible,
 			func(f func()) { glib.IdleAdd(f) },
 		)
+		// Where InputPlumber manages the controller, the daemon takes it from
+		// games while we are open and streams its navigation (the Ally's
+		// virtual controller has no evdev node to read or grab).
+		w.gamepadReader.SetIntercept(gamepad.DaemonIntercept)
 		go w.gamepadReader.Run()
 	}
 

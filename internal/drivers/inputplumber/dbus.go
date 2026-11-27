@@ -34,6 +34,11 @@ type Composite struct {
 	// SourceDevicePaths are the device nodes InputPlumber took over for it
 	// ("/dev/input/event13", "/dev/hidraw4").
 	SourceDevicePaths []string
+	// Capabilities are its input capabilities ("Gamepad:Button:South", ...);
+	// HasGamepad reads them.
+	Capabilities []string
+	// InterceptMode is its intercept mode when listed (intercept.go).
+	InterceptMode uint32
 }
 
 // Client talks to InputPlumber over a private system-bus connection, so its
@@ -83,6 +88,8 @@ func (c *Client) Composites() ([]Composite, error) {
 		_ = props["ProfileName"].Store(&cd.ProfileName)
 		_ = props["ProfilePath"].Store(&cd.ProfilePath)
 		_ = props["SourceDevicePaths"].Store(&cd.SourceDevicePaths)
+		_ = props["Capabilities"].Store(&cd.Capabilities)
+		_ = props["InterceptMode"].Store(&cd.InterceptMode)
 		out = append(out, cd)
 	}
 	return out, nil

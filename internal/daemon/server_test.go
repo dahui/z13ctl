@@ -494,7 +494,7 @@ func TestEveryCommandIsDeclaredAndDocumented(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name := range constants {
-		if _, ok := commands[name]; !ok && name != api.CmdSubscribe {
+		if _, ok := commands[name]; !ok && name != api.CmdSubscribe && name != api.CmdGamepadIntercept {
 			t.Errorf("api names %q but the daemon's command table has no handler for it", name)
 		}
 		if !strings.Contains(string(doc), `"cmd":"`+name+`"`) {

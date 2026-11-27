@@ -86,6 +86,10 @@ internal/gui/gamepad/
                                 capabilities, and gamepad_test.go drives it — this
                                 package IS in HERMETIC_PKGS (see below)
   steam.go                      Steam PID discovery; drives the hidraw blocker
+  intercept.go                  The second source: the daemon's gamepad-intercept
+                                (InputPlumber's intercept mode), opened on every grab
+                                and given back on release (decision 0177)
+  repeat.go                     Held-direction auto-repeat, one per input source
 internal/gui/gamepad/hidblocker/
   hidblocker.go                 BPF LSM blocker: blocks hidraw reads for specific PIDs
   blocker.bpf.c                 BPF C program (SEC("lsm/file_permission"), returns -EAGAIN)

@@ -159,6 +159,7 @@ func runSetup() error {
 	}
 	header := perms.Header{Device: m.cfg.Device.ID, Group: setupGroup, Version: version.Version}
 	opts := perms.Options{Group: setupGroup, GID: gid, DMIMatch: m.dmiMatch, DryRun: dryRunFlag, Out: os.Stdout}
+	opts.OnlyOurs = onlyOursGrant(setupGroup)
 	rules := grants.Rules(header)
 	unit := perms.Unit(setupExecutable(), header, setupMachineFlag)
 
@@ -171,8 +172,8 @@ func runSetup() error {
 		}
 		fmt.Println("Would apply now (files present on this machine):")
 		res := applyGrants(grants, knownHIDRaw(), opts)
-		fmt.Printf("  %d to grant, %d to revoke, %d left alone (anything else is already granted or absent)\n",
-			res.Granted, res.Revoked, res.Skipped)
+		fmt.Printf("  %d to grant, %d already granted, %d to revoke, %d left alone (anything else is absent)\n",
+			res.Granted, res.Already, res.Revoked, res.Skipped)
 		return nil
 	}
 	if !isRoot() {
@@ -181,8 +182,7 @@ func runSetup() error {
 
 	if permsOnlyFlag {
 		res := applyGrants(grants, knownHIDRaw(), opts)
-		fmt.Printf("voltaire permissions for %s: %d granted, %d revoked, %d left alone, %d failed\n",
-			m.cfg.Device.ID, res.Granted, res.Revoked, res.Skipped, res.Failed)
+		fmt.Printf("voltaire permissions for %s: %s\n", m.cfg.Device.ID, res)
 		if data, err := os.ReadFile(rulesPath); err == nil {
 			if dev, _ := perms.ParseHeader(string(data)); dev != "" && dev != m.cfg.Device.ID {
 				fmt.Printf("note: %s was written for %s, not this machine (%s); run: sudo voltaire setup\n",
@@ -207,7 +207,7 @@ func runSetup() error {
 	// the grants are applied directly too; the rules cover real events from
 	// the next boot on.
 	res := applyGrants(grants, knownHIDRaw(), opts)
-	fmt.Printf("Applied: %d granted, %d revoked, %d left alone, %d failed.\n", res.Granted, res.Revoked, res.Skipped, res.Failed)
+	fmt.Printf("Applied: %s.\n", res)
 
 	if err := os.WriteFile(servicePath, []byte(unit), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", servicePath, err)
@@ -226,6 +226,17 @@ func runSetup() error {
 	fmt.Printf("If your user is not in '%s', add it with:\n  sudo usermod -aG %s $USER\n", setupGroup, setupGroup)
 	fmt.Println("Then log out and back in for the group change to take effect.")
 	return nil
+}
+
+// onlyOursGrant reports perms.OnlyOursGrant for group, noting when another
+// rules file hands the group out too: then a hidraw grant udev left on a
+// renumbered node of an unknown device stays (docs/decisions/0006).
+func onlyOursGrant(group string) bool {
+	only, other := perms.OnlyOursGrant(group, rulesPath)
+	if !only {
+		fmt.Printf("note: %s also gives group %s to devices, so only voltaire's own devices' stray hidraw grants are reset\n", other, group)
+	}
+	return only
 }
 
 // runSetupRemove undoes setup: the unit and the rules file (each only if it
@@ -280,7 +291,7 @@ func runSetupRemove() error {
 			all = append(all, g)
 		}
 	}
-	res := revertGrants(all, perms.Options{Group: group, GID: gid, DryRun: dryRunFlag, Out: os.Stdout})
+	res := revertGrants(all, perms.Options{Group: group, GID: gid, DryRun: dryRunFlag, Out: os.Stdout, OnlyOurs: onlyOursGrant(group)})
 	fmt.Printf("Took group %s back from %d files.\n", group, res.Revoked)
 	if !dryRunFlag {
 		// Input nodes go back to udev's defaults on a fresh event.
