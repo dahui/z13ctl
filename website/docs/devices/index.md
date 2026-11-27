@@ -35,7 +35,7 @@ kernel, not in voltaire, and close when a kernel with the support ships.
 | Fan speed readout | Yes: two fans | Yes | Yes: two fans |
 | Custom fan curves | Yes, with presets | [No](/devices/onexplayer-x2-mini-pro#fan-control) | Yes, [no presets yet](/devices/asus-rog-xbox-ally-x#fan-presets) |
 | **Lighting** | | | |
-| RGB lighting | Yes: keyboard and lightbar | [No: joystick rings not supported yet](/devices/onexplayer-x2-mini-pro#joystick-lighting) | [No: joystick rings not supported yet](/devices/asus-rog-xbox-ally-x#joystick-lighting) |
+| RGB lighting | Yes: keyboard and lightbar | [No: joystick rings not supported yet](/devices/onexplayer-x2-mini-pro#joystick-lighting) | [Yes: joystick rings (one InputPlumber setting)](/devices/asus-rog-xbox-ally-x#joystick-lighting) |
 | **Battery** | | | |
 | Charge level, rate, time left, health | Yes | Yes | Yes |
 | Charge limit | Yes: 40–100 % | [No](/devices/onexplayer-x2-mini-pro#charge-limit) | Yes: 40–100 %, desktop only (Steam sets it in Gaming Mode) |

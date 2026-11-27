@@ -451,6 +451,10 @@ func TestUnavailableNote(t *testing.T) {
 	if got := controls.UnavailableNote(nil, "power"); got != "" {
 		t.Errorf("nil document: %q", got)
 	}
+	rings := &api.DeviceInfo{Unavailable: []api.UnavailableInfo{{Capability: "lighting", Reason: "hidden by InputPlumber"}}}
+	if got := controls.UnavailableNote(rings, "lighting"); got != "Hidden by InputPlumber. Once that is changed, restart voltaire or reboot." {
+		t.Errorf("lighting note = %q; nothing is installed to fix it", got)
+	}
 }
 
 // TestResetDiscardsTheSavedList pins why the QUICKBAR card's reset passes no

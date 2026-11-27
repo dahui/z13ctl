@@ -428,10 +428,17 @@ func UnavailableNote(info *api.DeviceInfo, capability string) string {
 	if info == nil {
 		return ""
 	}
+	// What makes it count is a module for power and undervolt, a change to
+	// InputPlumber's config for lighting (the Ally's rings): either way the
+	// daemon assembles once, so it takes a restart.
+	after := ". Once it is installed, restart voltaire or reboot."
+	if capability == "lighting" {
+		after = ". Once that is changed, restart voltaire or reboot."
+	}
 	for _, u := range info.Unavailable {
 		if u.Capability == capability && u.Reason != "" {
 			r := []rune(u.Reason)
-			return strings.ToUpper(string(r[0])) + string(r[1:]) + ". Once it is installed, restart voltaire or reboot."
+			return strings.ToUpper(string(r[0])) + string(r[1:]) + after
 		}
 	}
 	return ""

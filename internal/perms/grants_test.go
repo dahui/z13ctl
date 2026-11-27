@@ -241,8 +241,11 @@ func TestNoMachineGrantsAnothersHardware(t *testing.T) {
 			[]string{"0b05", "asus-armoury", "hwmon", "asus-nb-wmi", "charge_control_end_threshold"},
 			[]string{"rumble_intensity", "ryzen_smu", "HID 1a86:fe00", `idProduct}=="fe00"`}},
 		{"asus-rog-xbox-ally-x",
-			[]string{"1a86", "rumble", "ryzen_smu", "Asus WMI hotkeys", `SUBSYSTEM=="hidraw"`},
-			[]string{"mcu_powersave", "ASUS ROG Ally X Gamepad", "asus_custom_fan_curve", "charge_control_end_threshold"}},
+			// The rings' interface 2 alone: never interface 5, the gamepad,
+			// nor the Z13's lighting devices.
+			[]string{"1a86", "rumble", "ryzen_smu", "Asus WMI hotkeys", `ID_USB_INTERFACE_NUM}=="05"`, `idProduct}=="1a30"`, `idProduct}=="18c6"`},
+			[]string{"mcu_powersave", "ASUS ROG Ally X Gamepad", "asus_custom_fan_curve", "charge_control_end_threshold",
+				`idProduct}=="1b4c", ENV{ID_USB_INTERFACE_NUM}=="02"`}},
 	} {
 		rules := mustFor(t, configByID(t, tc.id)).Rules(testHeader(tc.id))
 		for _, s := range tc.absent {

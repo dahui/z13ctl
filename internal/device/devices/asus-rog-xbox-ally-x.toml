@@ -86,6 +86,31 @@ low-power   = "Silent"
 balanced    = "Balanced"
 performance = "Turbo"
 
+# The joystick rings: ASUS Aura on the controller's HID interface 2 (vendor
+# page 0xFF31, report IDs 5A/5D/5E; the only interface carrying 0x5D). Packets
+# are G-Helper's Ally path (seerge/g-helper app/USB/Aura.cs, 2026-11-25): the
+# generic init without the Z13's 0xC0 packet, brightness and modes as feature
+# reports, zone byte 0 for every ring, no 0xBD power message (G-Helper sends
+# the Ally 5A D1 09 01 instead, which the rings were shown not to need).
+# Verified by hand on 2026-11-26: static, breathe and cycle all showed.
+# InputPlumber hides this interface (mode 0000) unless its config marks the
+# source passthrough; until then the lighting is unavailable, with that
+# reason. The kernel's LED device (ally:rgb:joystick_rings) is no fallback:
+# its four values are clamped to 255 and show only blue.
+[lighting]
+method                = "aura-hid"
+report                = "feature"
+dynamic_lighting_init = false
+power_flags           = false
+modes                 = ["static", "breathe", "cycle", "strobe"]
+
+[[lighting.zones]]
+name      = "rings"
+label     = "Joystick rings"
+usb       = "0b05:1b4c"
+zone      = 0
+interface = 2
+
 [toggles]
 method = "asus-armoury"
 
@@ -154,4 +179,4 @@ keycode      = 148 # KEY_PROG1
 inputplumber = "QuickAccess"
 
 [quickbar]
-controls = ["profile", "brightness", "volume", "cpu-boost", "refresh-rate"]
+controls = ["profile", "brightness", "volume", "cpu-boost", "refresh-rate", "lighting"]

@@ -6,6 +6,9 @@
 # (voltaire-perms.service) applies the same grants to attributes that appear
 # after their udev event.
 
+# lighting: Joystick rings
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1b4c", ENV{ID_USB_INTERFACE_NUM}=="02", MODE="0660", GROUP="users"
+
 # button: Armoury Crate button (read only)
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="ASUS ROG Ally X Gamepad", ENV{ID_INPUT_KEYBOARD}!="1", MODE="0640", GROUP="users"
 

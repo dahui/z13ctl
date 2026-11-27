@@ -1,12 +1,16 @@
-// Package aura implements the ASUS Aura HID protocol for the ROG Flow Z13.
+// Package aura implements the ASUS Aura HID protocol (the ROG Flow Z13's
+// keyboard and lightbar, the ROG Xbox Ally X's joystick rings).
 //
 // Protocol reverse-engineered from g-helper (MIT):
 //
 //	app/USB/AsusHid.cs — device enumeration and I/O routing
 //	app/USB/Aura.cs    — packet construction and command sequencing
 //
-// All writes go to Report ID 0x5d (auraID) as 64-byte output reports.
-// The standard flow is: Init → SetPower → SetBrightness → SetMode → commit.
+// All packets carry Report ID 0x5d (auraID) and go out as 64-byte reports;
+// whether those are output or feature reports is the Writer's choice, since it
+// differs by device. The standard flow is: Init → SetPower → SetBrightness →
+// SetMode → commit, with the packets a device does not take left out by its
+// Protocol.
 //
 // File layout:
 //
@@ -34,12 +38,29 @@ const MaxBrightness = 3
 // CLI accepts and a client may show. Index i is level i.
 var BrightnessNames = []string{"off", "low", "medium", "high"}
 
-// Init sends the ASUS Aura initialization sequence.
-// The Z13-specific Dynamic Lighting Init packet (0xC0 0x03 0x01) is always sent
-// because the 2025 ROG Flow Z13 requires it to activate the lightbar.
+// Protocol is how one device speaks Aura, from its device data. The packets
+// differ by machine and G-Helper branches on the model for each, so every
+// difference is a field here rather than a model check.
+type Protocol struct {
+	// DynamicLightingInit sends the Z13's 0xC0 0x03 0x01 init packet, which
+	// the 2025 ROG Flow Z13 needs to light its lightbar. G-Helper sends it to
+	// the Z13 alone.
+	DynamicLightingInit bool
+	// PowerFlags sends the 0xBD power-state message (SetPower) on apply and
+	// off. The Ally takes a different power message (5A D1 09 01) that its
+	// rings were shown not to need, so it takes neither, and its off is
+	// brightness 0.
+	PowerFlags bool
+}
+
+// Z13 is the 2025 ROG Flow Z13's protocol: every packet this package sends.
+var Z13 = Protocol{DynamicLightingInit: true, PowerFlags: true}
+
+// Init sends the ASUS Aura initialization sequence, with the Z13's Dynamic
+// Lighting packet (0xC0 0x03 0x01) when p asks for it.
 //
 // Source: Aura.cs Init() — lines 288–295
-func Init(d Writer) error {
+func Init(d Writer, p Protocol) error {
 	// Packet 1: wake/init
 	if err := d.Write([]byte{auraID, 0xB9}); err != nil {
 		return fmt.Errorf("init packet 1: %w", err)
@@ -58,6 +79,9 @@ func Init(d Writer) error {
 	}
 
 	// Packet 4: Z13 Dynamic Lighting Init (required for lightbar on Z13)
+	if !p.DynamicLightingInit {
+		return nil
+	}
 	if err := d.Write([]byte{auraID, 0xC0, 0x03, 0x01}); err != nil {
 		return fmt.Errorf("init packet 4 (Z13 dyn lighting): %w", err)
 	}
@@ -149,12 +173,14 @@ func commit(d Writer) error {
 // node written to: each physical device answers only the zone it owns and
 // ignores the others, which is how g-helper addresses them too.
 // This is the primary entry point for setting lighting state.
-func Apply(d Writer, zones []uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
-	if err := Init(d); err != nil {
+func Apply(d Writer, p Protocol, zones []uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed Speed, brightness uint8) error {
+	if err := Init(d, p); err != nil {
 		return err
 	}
-	if err := SetPower(d, true); err != nil {
-		return err
+	if p.PowerFlags {
+		if err := SetPower(d, true); err != nil {
+			return err
+		}
 	}
 	if err := SetBrightness(d, brightness); err != nil {
 		return err
@@ -167,13 +193,16 @@ func Apply(d Writer, zones []uint8, mode Mode, r, g, b, r2, g2, b2 uint8, speed 
 	return nil
 }
 
-// TurnOff disables all lighting zones.
-func TurnOff(d Writer) error {
-	if err := Init(d); err != nil {
+// TurnOff disables all lighting zones: the power flags off where the device
+// takes them, then brightness 0.
+func TurnOff(d Writer, p Protocol) error {
+	if err := Init(d, p); err != nil {
 		return err
 	}
-	if err := SetPower(d, false); err != nil {
-		return err
+	if p.PowerFlags {
+		if err := SetPower(d, false); err != nil {
+			return err
+		}
 	}
 	return SetBrightness(d, 0)
 }

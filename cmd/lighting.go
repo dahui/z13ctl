@@ -24,9 +24,26 @@ func lightingHW() (driver.Lighting, error) {
 		return nil, err
 	}
 	if hw.Lighting == nil {
-		return nil, errors.New("this device has no lighting control")
+		return nil, errors.New(hw.Missing("lighting", "this device has no lighting control"))
 	}
 	return hw.Lighting, nil
+}
+
+// lightingUnavailable is the reason this machine cannot reach the lighting its
+// device file declares (the Ally's rings while InputPlumber hides their
+// interface), or nil. Checked first, so a lighting command says that rather
+// than a generic "no brightness control" from the empty caps.
+func lightingUnavailable() error {
+	hw, err := hardware()
+	if err != nil || hw.Lighting != nil {
+		return nil
+	}
+	for _, u := range hw.Unavailable {
+		if u.Capability == "lighting" {
+			return errors.New(u.Reason)
+		}
+	}
+	return nil
 }
 
 // lightingCaps is the device's lighting capabilities; zero when it has none.

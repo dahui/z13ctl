@@ -18,6 +18,7 @@ package register
 import (
 	"errors"
 
+	"github.com/dahui/voltaire/v2/internal/aura"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/amd"
@@ -127,7 +128,8 @@ func init() {
 	// protocol, watched evdev keys, vendor HID reports); this is where they are
 	// registered, like every other method.
 	device.RegisterLighting("aura-hid", func(c device.LightingConfig) (driver.Lighting, error) {
-		cfg := aurahid.Config{Modes: c.Modes, Speeds: c.Speeds}
+		cfg := aurahid.Config{Modes: c.Modes, Speeds: c.Speeds, Feature: c.FeatureReports(),
+			Protocol: aura.Protocol{DynamicLightingInit: c.SendsDynamicLightingInit(), PowerFlags: c.SendsPowerFlags()}}
 		for _, z := range c.Zones {
 			v, p, err := z.USBIDs()
 			if err != nil {
@@ -135,7 +137,12 @@ func init() {
 			}
 			cfg.Zones = append(cfg.Zones, aurahid.Zone{Name: z.Name, Label: z.Label, Vendor: v, Product: p, Byte: uint8(z.Zone)})
 		}
-		return aurahid.New(cfg)
+		l, err := aurahid.New(cfg)
+		var hidden *aurahid.HiddenError
+		if errors.As(err, &hidden) {
+			return nil, &device.UnavailableError{Reason: hidden.Error()}
+		}
+		return l, err
 	})
 	device.RegisterButtons("evdev-key", func(c device.ButtonConfig) (driver.Buttons, error) {
 		return withUSBNode(evdevkey.New(c.Device, c.Keycode, c.ID, c.KeyboardNode != ""), c)

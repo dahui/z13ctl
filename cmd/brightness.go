@@ -28,6 +28,9 @@ Levels are positions on the device's scale, or a number from 0 to its maximum:
 		if len(args) == 0 {
 			return cmd.Help()
 		}
+		if err := lightingUnavailable(); err != nil {
+			return err
+		}
 		caps := lightingCaps()
 		if err := checkLightingZone(caps, deviceFlag); err != nil {
 			return err

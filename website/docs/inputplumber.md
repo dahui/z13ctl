@@ -51,6 +51,72 @@ to a profile of your own by hand instead, mapping the button's capability to a
 `dbus` target named `voltaire_<button id>`; `voltaire button --list` shows the
 ids.
 
+## The controller in voltaire's window
+
+While voltaire's drawer or window is open, the controller drives voltaire and
+not the game. Where InputPlumber manages the controller, the daemon asks
+InputPlumber for its **intercept mode**: InputPlumber stops feeding the
+virtual gamepad (games and Steam see an idle controller) and sends navigation
+to voltaire over the system bus instead. It hands the controller back the
+moment voltaire closes, and also if voltaire's GUI or daemon stops
+unexpectedly. Changing the mode needs the same `wheel` or `inputplumber`
+membership as the button mapping; without it, voltaire falls back to reading
+the controller itself, which works where InputPlumber's virtual gamepad is an
+ordinary one (the OneXPlayer) and not on the ROG Xbox Ally X, whose virtual
+controller has nothing voltaire can read.
+
+## The ROG Xbox Ally X's joystick lighting {#ally-lighting}
+
+The Ally's ring lighting is set through one of the controller's interfaces
+that InputPlumber hides (HID interface 2). InputPlumber reads no input from
+it; it uses it to send rumble, and hides it only because it hides everything
+it manages. Hidden, it is out of voltaire's reach, so the lighting shows as
+unavailable with that reason.
+
+InputPlumber has a setting for exactly this, `passthrough`: the interface is
+still used, but not hidden. voltaire will not change InputPlumber's
+configuration for you; to turn it on yourself, copy the device's config and
+add one line:
+
+```sh
+sudo mkdir -p /etc/inputplumber/devices.d
+sudo cp /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml /etc/inputplumber/devices.d/
+sudoedit /etc/inputplumber/devices.d/50-rog_xbox_ally.yaml
+```
+
+In the copy, add `passthrough: true` to the source device with
+`interface_num: 2` (leave `interface_num: 5`, the gamepad, alone):
+
+```yaml
+  - group: gamepad # Used for setting attributes on load
+    hidraw:
+      vendor_id: 0x0b05
+      product_id: 0x1b4c
+      interface_num: 2
+    passthrough: true
+```
+
+Then restart InputPlumber and voltaire:
+
+```sh
+sudo systemctl restart inputplumber
+sudo voltaire setup --perms-only
+systemctl --user restart voltaire.service
+```
+
+What to know before you do:
+
+- **It is a copy.** It replaces InputPlumber's own config for the Ally, so a
+  later InputPlumber update to that file does not reach you until you copy
+  it again. Delete the copy and restart InputPlumber to undo everything.
+- **voltaire's group can then write to that interface**, which also carries
+  the controller's own settings (button remaps, gamepad mode, vibration).
+  voltaire sends it lighting commands only; the grant is the same kind of
+  trust the group already has over power limits and fan curves, and it is
+  given only on this machine.
+- Controller input, rumble and the drawer's controller navigation all work
+  with it in place (checked on the Ally, 2026-11-26).
+
 ## Checking it
 
 ```sh
@@ -67,4 +133,4 @@ InputPlumber.
 A device file lists the InputPlumber capability for each of its buttons
 (`inputplumber = "QuickAccess2"`; see
 [Device Files](/dev/device-files)). Today that is the OneXPlayer X2
-Mini Pro.
+Mini Pro and the ROG Xbox Ally X.

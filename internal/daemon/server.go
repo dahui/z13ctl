@@ -314,13 +314,18 @@ func (d *Daemon) handleBatteryLimitGet() response {
 	return response{OK: true, Value: strconv.Itoa(limit)}
 }
 
+// noLighting is the refusal when the device has no lighting capability: the
+// reason it is unavailable when there is one (the Ally's rings while
+// InputPlumber hides their node), else the protocol's established message.
+func (d *Daemon) noLighting() string { return d.hw.Missing("lighting", "no HID device available") }
+
 // lightingRequestError checks a lighting request's zone and brightness against
 // the driver's capabilities. The driver checks them again; validating here keeps
 // the wire protocol's field-specific errors, which its single return cannot
 // distinguish, and refuses before d.mu is taken.
 func (d *Daemon) lightingRequestError(req request) string {
 	if d.hw.Lighting == nil {
-		return "no HID device available"
+		return d.noLighting()
 	}
 	c := d.hw.Lighting.Caps()
 	if req.Device != "" && !strings.HasPrefix(req.Device, "/") && !c.HasZone(req.Device) {
@@ -350,7 +355,7 @@ func (d *Daemon) handleApply(req request) response {
 	defer d.mu.Unlock()
 
 	if d.hw.Lighting == nil {
-		return response{OK: false, Error: "no HID device available"}
+		return response{OK: false, Error: d.noLighting()}
 	}
 	ls := api.LightingState{
 		Enabled:    true,
@@ -396,7 +401,7 @@ func (d *Daemon) handleOff(req request) response {
 	defer d.mu.Unlock()
 
 	if d.hw.Lighting == nil {
-		return response{OK: false, Error: "no HID device available"}
+		return response{OK: false, Error: d.noLighting()}
 	}
 	if err := d.hw.Lighting.Off(req.Device); err != nil {
 		return response{OK: false, Error: err.Error()}
@@ -447,7 +452,7 @@ func (d *Daemon) handleBrightness(req request) response {
 	defer d.mu.Unlock()
 
 	if d.hw.Lighting == nil {
-		return response{OK: false, Error: "no HID device available"}
+		return response{OK: false, Error: d.noLighting()}
 	}
 	on := req.Brightness > 0
 	if err := d.hw.Lighting.SetBrightness(req.Device, req.Brightness); err != nil {

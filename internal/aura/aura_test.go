@@ -35,7 +35,7 @@ func TestInit(t *testing.T) {
 	t.Parallel()
 	m := &mockWriter{}
 
-	if err := aura.Init(m); err != nil {
+	if err := aura.Init(m, aura.Z13); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	got := m.buf.Bytes()
@@ -179,7 +179,7 @@ func TestApply(t *testing.T) {
 	t.Parallel()
 	m := &mockWriter{}
 
-	err := aura.Apply(m, []uint8{0, 1}, aura.ModeStatic, 0x00, 0xFF, 0x00, 0, 0, 0, aura.SpeedNormal, 2)
+	err := aura.Apply(m, aura.Z13, []uint8{0, 1}, aura.ModeStatic, 0x00, 0xFF, 0x00, 0, 0, 0, aura.SpeedNormal, 2)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestTurnOff(t *testing.T) {
 	t.Parallel()
 	m := &mockWriter{}
 
-	if err := aura.TurnOff(m); err != nil {
+	if err := aura.TurnOff(m, aura.Z13); err != nil {
 		t.Fatalf("TurnOff: %v", err)
 	}
 	got := m.buf.Bytes()
@@ -234,5 +234,41 @@ func TestBrightnessNamesCoverEveryLevel(t *testing.T) {
 	}
 	if aura.BrightnessNames[0] != "off" {
 		t.Errorf("level 0 is named %q; it is the off level", aura.BrightnessNames[0])
+	}
+}
+
+// ally is the ROG Xbox Ally X's protocol (G-Helper's Ally path): no Z13
+// Dynamic Lighting packet and no 0xBD power message.
+var ally = aura.Protocol{}
+
+func TestAllyProtocolSendsOnlyItsPackets(t *testing.T) {
+	m := &mockWriter{}
+	if err := aura.Apply(m, ally, []uint8{0}, aura.ModeBreathe, 0xFF, 0x80, 0x00, 0, 0, 0xFF, aura.SpeedNormal, 3); err != nil {
+		t.Fatal(err)
+	}
+	got := m.buf.Bytes()
+	for _, want := range [][]byte{
+		{0x5d, 0xB9},                                                 // init
+		[]byte("]ASUS Tech.Inc."),                                    // init
+		{0x5d, 0x05, 0x20, 0x31, 0x00, 0x1A},                         // init
+		{0x5d, 0xBA, 0xC5, 0xC4, 0x03},                               // brightness
+		{0x5d, 0xB3, 0x00, byte(aura.ModeBreathe), 0xFF, 0x80, 0x00}, // zone 0: every ring
+		{0x5d, 0xB5, 0x00, 0x00, 0x00}, {0x5d, 0xB4},                 // set, apply
+	} {
+		if !containsPacket(got, want) {
+			t.Errorf("missing packet % x", want)
+		}
+	}
+	// Only packets G-Helper sends the Ally: never the Z13's.
+	if containsPacket(got, []byte{0x5d, 0xC0}) || containsPacket(got, []byte{0x5d, 0xBD}) {
+		t.Error("the Ally was sent a Z13-only packet (0xC0 init or 0xBD power)")
+	}
+
+	m = &mockWriter{}
+	if err := aura.TurnOff(m, ally); err != nil {
+		t.Fatal(err)
+	}
+	if containsPacket(m.buf.Bytes(), []byte{0x5d, 0xBD}) || !containsPacket(m.buf.Bytes(), []byte{0x5d, 0xBA, 0xC5, 0xC4, 0x00}) {
+		t.Error("the Ally's off must be brightness 0 with no 0xBD power message")
 	}
 }

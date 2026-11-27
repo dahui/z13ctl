@@ -866,3 +866,33 @@ func TestConfigByID(t *testing.T) {
 		t.Errorf("an unknown id must fail and list the ids there are: %v", err)
 	}
 }
+
+// TestUnavailableLightingIsRecorded: the Ally's rings while InputPlumber hides
+// their node. The capability is absent with the reason, and the device still
+// assembles; any other lighting error still fails it.
+func TestUnavailableLightingIsRecorded(t *testing.T) {
+	c := Config{
+		Device: Meta{ID: "rings", Model: "R", Name: "Rings", Match: []Match{{Vendor: "V", Product: "R"}}},
+		Lighting: &LightingConfig{Method: "test-light",
+			Zones: []LightingZoneConfig{{Name: "rings", Label: "Rings", USB: "0b05:1b4c"}}},
+	}
+	t.Cleanup(func() { delete(lightingFactories, "test-light") })
+	lightingFactories["test-light"] = func(LightingConfig) (driver.Lighting, error) {
+		return nil, &UnavailableError{Reason: "hidden by InputPlumber"}
+	}
+	d, err := Assemble(c)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if d.Lighting != nil {
+		t.Error("an unavailable lighting method assembled a lighting capability")
+	}
+	if got := d.Missing("lighting", "none"); got != "hidden by InputPlumber" {
+		t.Errorf("Missing(lighting) = %q, want the factory's reason", got)
+	}
+
+	lightingFactories["test-light"] = func(LightingConfig) (driver.Lighting, error) { return nil, fmt.Errorf("broken") }
+	if _, err := Assemble(c); err == nil {
+		t.Error("a failing lighting factory assembled a device")
+	}
+}

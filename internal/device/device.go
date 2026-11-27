@@ -416,8 +416,17 @@ func Assemble(c Config) (*Device, error) {
 		if err != nil {
 			return nil, err
 		}
-		if d.Lighting, err = f(*c.Lighting); err != nil {
+		l, err := f(*c.Lighting)
+		var missing *UnavailableError
+		switch {
+		case errors.As(err, &missing):
+			// The ROG Xbox Ally X's lighting interface while InputPlumber
+			// hides it: unavailable, with the reason, not a failed device.
+			d.Unavailable = append(d.Unavailable, Unavailable{Capability: "lighting", Reason: missing.Reason})
+		case err != nil:
 			return nil, fmt.Errorf("lighting (%s): %w", c.Lighting.Method, err)
+		default:
+			d.Lighting = l
 		}
 	}
 	if c.Toggles != nil {

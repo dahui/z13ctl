@@ -207,7 +207,30 @@ func nameFromPath(devPath string, known []Known) string {
 // ueventToDevPath converts a sysfs uevent path (…/hidrawN/device/uevent) to
 // its /dev/hidrawN counterpart.
 func ueventToDevPath(ueventPath string) string {
-	return "/dev/" + filepath.Base(filepath.Dir(filepath.Dir(ueventPath)))
+	return devDir + "/" + filepath.Base(filepath.Dir(filepath.Dir(ueventPath)))
+}
+
+// devDir is where hidraw nodes live; a var so tests can point it at a fake tree.
+var devDir = "/dev"
+
+// HiddenAuraNode reports the first node of the known device named name that
+// carries the Aura report and is hidden: mode 0000, which is how InputPlumber
+// keeps the nodes it manages from everyone else (the ROG Xbox Ally X's
+// lighting interface). Hidden means not ours to open, and not a failed open to
+// retry: the node stays that way until InputPlumber is told otherwise. Sysfs
+// and stat only; it opens nothing.
+func HiddenAuraNode(name string, known []Known) (string, bool) {
+	entries, _ := filepath.Glob(ueventGlob())
+	for _, u := range entries {
+		if deviceNameFromUevent(u, known) != name || !hasAuraReport(u, nil) {
+			continue
+		}
+		dev := ueventToDevPath(u)
+		if fi, err := os.Stat(dev); err == nil && fi.Mode().Perm() == 0 {
+			return dev, true
+		}
+	}
+	return "", false
 }
 
 // hasAuraReport reports whether the node's HID report descriptor carries

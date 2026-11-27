@@ -232,3 +232,30 @@ func TestDeviceNamesComeFromTheZoneTable(t *testing.T) {
 		t.Errorf("listed device named %q, want joysticks", got)
 	}
 }
+
+func TestHiddenAuraNode(t *testing.T) {
+	sys, dev := t.TempDir(), t.TempDir()
+	defer hid.SetSysHidrawDir(sys)()
+	defer hid.SetDevDir(dev)()
+	known := []hid.Known{{Name: "rings", Vendor: 0x0b05, Product: 0x1b4c}}
+	node := func(name string, desc []byte, mode os.FileMode) {
+		d := sys + "/" + name + "/device"
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.WriteFile(d+"/uevent", []byte("HID_ID=0003:00000B05:00001B4C\n"), 0o644)
+		_ = os.WriteFile(d+"/report_descriptor", desc, 0o644)
+		_ = os.WriteFile(dev+"/"+name, nil, 0o600)
+		_ = os.Chmod(dev+"/"+name, mode)
+	}
+	node("hidraw0", []byte{0x85, 0x01}, 0o600)         // LampArray: no Aura report
+	node("hidraw4", []byte{0x85, 0x5a, 0x85, 0x5d}, 0) // the lighting interface, hidden
+
+	if path, hidden := hid.HiddenAuraNode("rings", known); !hidden || path != dev+"/hidraw4" {
+		t.Errorf("HiddenAuraNode = %q, %v; want the hidden Aura node", path, hidden)
+	}
+	_ = os.Chmod(dev+"/hidraw4", 0o660) // InputPlumber told to leave it (passthrough)
+	if path, hidden := hid.HiddenAuraNode("rings", known); hidden {
+		t.Errorf("a reachable node reported hidden: %s", path)
+	}
+}

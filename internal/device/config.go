@@ -301,12 +301,38 @@ type ProfilesConfig struct {
 // Modes and Speeds are optional subsets of what the driver's protocol can
 // send, in the order to offer them; empty means all of it. Which inputs each
 // mode takes is the protocol's to say, not the device's, so it is not here.
+//
+// Report, DynamicLightingInit and PowerFlags say how this device speaks the
+// Aura protocol, which differs between machines: the Z13 takes output reports,
+// its 0xC0 init packet and the 0xBD power message (the defaults); the ROG Xbox
+// Ally X takes feature reports and neither packet (G-Helper's Ally path).
 type LightingConfig struct {
 	Method string               `toml:"method"`
 	Zones  []LightingZoneConfig `toml:"zones"`
 	Modes  []string             `toml:"modes"`
 	Speeds []string             `toml:"speeds"`
+
+	// Report is how Aura packets are sent: "output" reports (the default)
+	// or "feature" reports.
+	Report string `toml:"report"`
+	// DynamicLightingInit sends the Z13's 0xC0 0x03 0x01 init packet;
+	// absent means true.
+	DynamicLightingInit *bool `toml:"dynamic_lighting_init"`
+	// PowerFlags sends the 0xBD power-state message on every apply and off;
+	// absent means true. Without it, off is brightness 0.
+	PowerFlags *bool `toml:"power_flags"`
 }
+
+// FeatureReports reports whether Aura packets go out as feature reports.
+func (c LightingConfig) FeatureReports() bool { return c.Report == "feature" }
+
+// SendsDynamicLightingInit reports whether the Z13's 0xC0 init packet is sent.
+func (c LightingConfig) SendsDynamicLightingInit() bool {
+	return c.DynamicLightingInit == nil || *c.DynamicLightingInit
+}
+
+// SendsPowerFlags reports whether the 0xBD power message is sent.
+func (c LightingConfig) SendsPowerFlags() bool { return c.PowerFlags == nil || *c.PowerFlags }
 
 // LightingZoneConfig is one zone, as [[lighting.zones]]: its wire name, the
 // label to show, the USB vendor:product of the HID device that carries it, and
@@ -868,6 +894,9 @@ func (c Config) validateLighting(fail failFunc) {
 		}
 		if len(c.Lighting.Zones) == 0 {
 			fail("lighting.zones must name at least one zone")
+		}
+		if r := c.Lighting.Report; r != "" && r != "output" && r != "feature" {
+			fail("lighting.report %q must be \"output\" or \"feature\"", r)
 		}
 		seen := map[string]bool{}
 		for i, z := range c.Lighting.Zones {

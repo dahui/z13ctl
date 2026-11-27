@@ -182,3 +182,66 @@ func TestPresentZones(t *testing.T) {
 		t.Errorf("PresentZones = %v, want [lightbar]", got)
 	}
 }
+
+// Every test starts with no node hidden, so none reads the machine's /dev;
+// the hidden-node tests below turn it on for their own zones.
+func init() {
+	hidHidden = func(string, []hid.Known) (string, bool) { return "", false }
+}
+
+// ally is the ROG Xbox Ally X's lighting as the registry builds it.
+var ally = Config{
+	Zones:   []Zone{{Name: "rings", Label: "Joystick rings", Vendor: 0x0b05, Product: 0x1b4c, Byte: 0}},
+	Modes:   []string{"static", "breathe", "cycle", "strobe"},
+	Feature: true,
+}
+
+func hideZone(t *testing.T, zone string) {
+	t.Helper()
+	orig := hidHidden
+	t.Cleanup(func() { hidHidden = orig })
+	hidHidden = func(name string, _ []hid.Known) (string, bool) { return "/dev/hidraw4", name == zone }
+}
+
+// A node InputPlumber hides makes the lighting unavailable at assembly, with
+// a reason naming the fix, rather than a driver failing every write.
+func TestHiddenZoneIsUnavailable(t *testing.T) {
+	hideZone(t, "rings")
+	_, err := New(ally)
+	var hidden *HiddenError
+	if !errors.As(err, &hidden) {
+		t.Fatalf("New with the lighting node hidden = %v, want a HiddenError", err)
+	}
+	if !strings.Contains(err.Error(), "passthrough") || !strings.Contains(err.Error(), "/dev/hidraw4") {
+		t.Errorf("reason %q should name the node and the passthrough fix", err)
+	}
+}
+
+// One hidden after the daemon started counts as absent: the hotplug watcher
+// waits for it rather than retrying an open that cannot succeed.
+func TestHiddenZoneIsNotPresent(t *testing.T) {
+	origHas := hidHas
+	t.Cleanup(func() { hidHas = origHas })
+	hidHas = func(string, []hid.Known) bool { return true }
+	l, err := New(ally)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hideZone(t, "rings")
+	if got := l.PresentZones(); len(got) != 0 {
+		t.Errorf("PresentZones = %v with the node hidden, want none", got)
+	}
+}
+
+func TestFeatureReportsGoThroughSetFeature(t *testing.T) {
+	l, err := New(ally)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.writer(&hid.Device{}).(featureWriter); !ok {
+		t.Error("a feature-report device writes output reports")
+	}
+	if _, ok := newZ13(t).writer(&hid.Device{}).(featureWriter); ok {
+		t.Error("the Z13, an output-report device, writes feature reports")
+	}
+}

@@ -22,8 +22,9 @@ import (
 // hidFind and hidHas wrap the hid package's discovery entry points purely so
 // tests can drive Reopen without real hidraw nodes.
 var (
-	hidFind = hid.FindDevice
-	hidHas  = hid.HasDevice
+	hidFind   = hid.FindDevice
+	hidHas    = hid.HasDevice
+	hidHidden = hid.HiddenAuraNode
 )
 
 // kbdBacklightMax is the LED class's own ceiling for the keyboard backlight,
@@ -40,10 +41,26 @@ type Zone struct {
 
 // Config is the device data the driver is built from. Modes and Speeds are
 // optional subsets of the protocol's, in order; empty means all of it.
+// Protocol and Feature say how the device speaks Aura (the packets it takes,
+// and whether they go out as feature reports rather than output reports).
 type Config struct {
-	Zones  []Zone
-	Modes  []string
-	Speeds []string
+	Zones    []Zone
+	Modes    []string
+	Speeds   []string
+	Protocol aura.Protocol
+	Feature  bool
+}
+
+// HiddenError is New's answer when a zone's lighting node is hidden: mode
+// 0000, which is how InputPlumber keeps the nodes it manages to itself (the
+// ROG Xbox Ally X's lighting interface, unless its config marks that source
+// passthrough). The capability is then unavailable rather than broken; the
+// registry turns this into the device's unavailable reason.
+type HiddenError struct{ Zone, Node string }
+
+func (e *HiddenError) Error() string {
+	return fmt.Sprintf("the %s lighting interface (%s) is hidden, which InputPlumber does to the devices it "+
+		"manages; it needs InputPlumber's config to mark that interface passthrough (see the device's page)", e.Zone, e.Node)
 }
 
 // Lighting drives Aura RGB zones over hidraw. The zero value is unopened;
@@ -53,7 +70,24 @@ type Lighting struct {
 	known     []hid.Known
 	zoneBytes []uint8
 	caps      driver.LightingCaps
+	protocol  aura.Protocol
+	feature   bool
 	dev       *hid.Device // nil until Reopen succeeds
+}
+
+// featureWriter sends Aura packets as feature reports (HIDIOCSFEATURE), for a
+// device that takes them that way (the Ally; G-Helper's SetFeatureAura).
+type featureWriter struct{ d *hid.Device }
+
+func (f featureWriter) Write(data []byte) error { return f.d.SetFeature(data) }
+
+// writer is where Aura packets for target go: the node itself (output
+// reports) or its feature reports.
+func (l *Lighting) writer(target *hid.Device) aura.Writer {
+	if l.feature {
+		return featureWriter{target}
+	}
+	return target
 }
 
 // New returns an unopened lighting driver for c. Pure apart from a static
@@ -61,11 +95,16 @@ type Lighting struct {
 // touches no hardware. A mode or speed the protocol cannot send is an error —
 // the device data is wrong, and offering it would fail at every apply.
 func New(c Config) (*Lighting, error) {
-	l := &Lighting{zones: append([]Zone(nil), c.Zones...)}
+	l := &Lighting{zones: append([]Zone(nil), c.Zones...), protocol: c.Protocol, feature: c.Feature}
 	for _, z := range c.Zones {
 		l.known = append(l.known, hid.Known{Name: z.Name, Vendor: z.Vendor, Product: z.Product})
 		l.zoneBytes = append(l.zoneBytes, z.Byte)
 		l.caps.Zones = append(l.caps.Zones, driver.LightingZone{Name: z.Name, Label: z.Label})
+	}
+	for _, z := range c.Zones {
+		if node, hidden := hidHidden(z.Name, l.known); hidden {
+			return nil, &HiddenError{Zone: z.Label, Node: node}
+		}
 	}
 	modes := c.Modes
 	if len(modes) == 0 {
@@ -162,11 +201,22 @@ func (l *Lighting) Zones() []string {
 func (l *Lighting) PresentZones() []string {
 	var out []string
 	for _, z := range l.zones {
-		if hidHas(z.Name, l.known) {
+		if l.present(z.Name) {
 			out = append(out, z.Name)
 		}
 	}
 	return out
+}
+
+// present reports whether a zone's node exists and is ours to open: a node
+// InputPlumber hid after the daemon started counts as absent, so the hotplug
+// watcher waits for it instead of retrying an open that cannot succeed.
+func (l *Lighting) present(zone string) bool {
+	if !hidHas(zone, l.known) {
+		return false
+	}
+	_, hidden := hidHidden(zone, l.known)
+	return !hidden
 }
 
 // Reopen re-discovers and reopens the Aura HID device, replacing (and
@@ -191,7 +241,7 @@ func (l *Lighting) Reopen() error {
 		return err
 	}
 	for _, z := range l.zones {
-		if !hidHas(z.Name, l.known) {
+		if !l.present(z.Name) {
 			continue
 		}
 		if _, err := dev.FilteredView(z.Name); err != nil {
@@ -225,7 +275,7 @@ func (l *Lighting) Apply(zone string, ls api.LightingState) error {
 		return err
 	}
 	if !ls.Enabled {
-		return aura.TurnOff(target)
+		return aura.TurnOff(l.writer(target), l.protocol)
 	}
 	if _, ok := l.caps.Mode(ls.Mode); !ok {
 		return fmt.Errorf("unknown mode %q (valid: %s)", ls.Mode, strings.Join(l.modeNames(), " "))
@@ -252,7 +302,7 @@ func (l *Lighting) Apply(zone string, ls api.LightingState) error {
 	if err != nil {
 		return err
 	}
-	if err := aura.Apply(target, l.zoneBytes, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness)); err != nil {
+	if err := aura.Apply(l.writer(target), l.protocol, l.zoneBytes, mode, r, g, b, r2, g2, b2, speed, uint8(ls.Brightness)); err != nil {
 		return errors.New("apply: " + err.Error())
 	}
 	return nil
@@ -264,7 +314,7 @@ func (l *Lighting) Off(zone string) error {
 	if err != nil {
 		return err
 	}
-	if err := aura.TurnOff(target); err != nil {
+	if err := aura.TurnOff(l.writer(target), l.protocol); err != nil {
 		return errors.New("off: " + err.Error())
 	}
 	return nil
@@ -282,13 +332,16 @@ func (l *Lighting) SetBrightness(zone string, level int) error {
 	if err != nil {
 		return err
 	}
-	if err := aura.Init(target); err != nil {
+	w := l.writer(target)
+	if err := aura.Init(w, l.protocol); err != nil {
 		return errors.New("init: " + err.Error())
 	}
-	if err := aura.SetPower(target, level > 0); err != nil {
-		return errors.New("setpower: " + err.Error())
+	if l.protocol.PowerFlags {
+		if err := aura.SetPower(w, level > 0); err != nil {
+			return errors.New("setpower: " + err.Error())
+		}
 	}
-	if err := aura.SetBrightness(target, uint8(level)); err != nil {
+	if err := aura.SetBrightness(w, uint8(level)); err != nil {
 		return errors.New("brightness: " + err.Error())
 	}
 	return nil

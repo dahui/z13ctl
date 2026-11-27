@@ -16,6 +16,9 @@ var offCmd = &cobra.Command{
 	Use:   "off",
 	Short: "Turn all lighting off",
 	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := lightingUnavailable(); err != nil {
+			return err
+		}
 		if err := checkLightingZone(lightingCaps(), deviceFlag); err != nil {
 			return err
 		}

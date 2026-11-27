@@ -39,6 +39,9 @@ var applyCmd = &cobra.Command{
 			return cmd.Help()
 		}
 
+		if err := lightingUnavailable(); err != nil {
+			return err
+		}
 		caps := lightingCaps()
 		if err := checkLightingZone(caps, deviceFlag); err != nil {
 			return err

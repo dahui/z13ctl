@@ -350,6 +350,14 @@ func (d *dashboardView) buildControls() *gtk.Box {
 	if has(controls.CapLighting) {
 		region.Append(dashSectionHeader("RGB", nil))
 		region.Append(d.buildLightingRow())
+	} else if note := controls.UnavailableNote(w.device, "lighting"); note != "" {
+		// The device has lighting this machine cannot reach (the Ally's rings
+		// while InputPlumber hides their interface): say why where the cards
+		// would be. Read-only, so nothing for the focus grid.
+		region.Append(dashSectionHeader("RGB", nil))
+		l := blockNote()
+		setBlockNote(l, note)
+		region.Append(l)
 	}
 
 	if region.FirstChild() == nil {

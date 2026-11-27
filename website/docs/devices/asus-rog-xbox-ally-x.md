@@ -24,7 +24,7 @@ different machine and is not supported yet.
 | **CPU undervolt** | No | ([why](#undervolt)) |
 | **Fan curves** | Yes | Two fans, eight points. No presets yet ([why](#fan-presets)). |
 | **Fan speed** | Yes | |
-| **RGB lighting** | No | The joystick rings are not supported yet ([why](#joystick-lighting)). |
+| **RGB lighting** | Yes | The joystick rings: static, breathe, colour cycle and strobe, four brightness levels, put back after a suspend. With InputPlumber it needs one InputPlumber setting ([how](#joystick-lighting)). |
 | **Battery** | Yes | Level, charge and discharge rate, time estimate and pack health. |
 | **Charge limit** | Yes | 40–100 %. On the desktop only: in Steam Gaming Mode, Steam sets it. |
 | **Brightness and volume** | Yes | |
@@ -42,6 +42,22 @@ installed. [Using InputPlumber](/inputplumber) explains what voltaire changes
 there: the button that opens voltaire stops doing its InputPlumber job while
 it does.
 
+## Joystick lighting
+
+The rings around the sticks speak ASUS Aura, the same protocol as the Z13's
+keyboard, on one of the controller's interfaces (HID interface 2). voltaire
+sends them the packets G-Helper sends the Ally.
+
+InputPlumber hides that interface along with the rest of the controller, so
+on a machine where it runs (CachyOS's handheld edition starts it), the
+lighting shows as unavailable until InputPlumber is told to leave the
+interface visible. [Using InputPlumber](/inputplumber#ally-lighting) has the
+one-line setting, what it costs, and how to undo it. Without InputPlumber
+there is nothing to do.
+
+The kernel's own LED device for the rings (`ally:rgb:joystick_rings`) is no
+substitute: it only shows shades of blue.
+
 ## Not supported yet, and why
 
 ### Undervolt
@@ -56,13 +72,6 @@ Custom fan curves work, but this machine's fan controller does not respond to
 low curve values in proportion: 30, 56 and 100 (out of 255) all ran the fans
 at about 6300 rpm, and 255 at about 8100 rpm. Presets wait until the low end
 is understood, so that "Quiet" really is quiet.
-
-### Joystick lighting
-
-The rings around the sticks are driven by the controller's Aura protocol, the
-same protocol family as the Z13's keyboard. Support is planned. Linux's
-upstream driver for the Ally offers no lighting interface, so voltaire will
-speak Aura to the controller itself.
 
 ### Controller settings
 

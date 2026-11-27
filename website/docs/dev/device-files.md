@@ -112,6 +112,9 @@ re-apply its own limits. The default profile's `pl1` must be within
 | `method` | `aura-hid`. |
 | `zones` | `[[lighting.zones]]`, one per addressable zone. |
 | `modes`, `speeds` | Optional subsets of the protocol's modes and speeds, in the order to offer them. Absent means all of them. What each mode takes (colours, speed) is the protocol's to say, so it is not here. |
+| `report` | How Aura packets are sent: `output` reports (the default, the Z13) or `feature` reports (the ROG Xbox Ally X). |
+| `dynamic_lighting_init` | Whether to send the Z13's Dynamic Lighting init packet (`0xC0 0x03 0x01`), which its lightbar needs. Default `true`; G-Helper sends it to the Z13 alone. |
+| `power_flags` | Whether to send the `0xBD` power-state message on every apply and off. Default `true`. Without it, off is brightness 0 (the Ally, which takes a different power message its rings do not need). |
 
 Each `[[lighting.zones]]` has a `name` (the wire name, which must not start
 with `/`), a `label`, the `usb` `vendor:product` of the HID device that carries
@@ -126,6 +129,12 @@ every process in the group its raw keystrokes over hidraw. Find it with
 `report_descriptor`, and pick the one that carries the lighting report (on the
 Aura protocol, report ID `0x5d`). The Z13's is interface `0` on both devices;
 the cover's interface `2` is its typing keyboard.
+
+A zone whose node is hidden (mode `0000`, which is how InputPlumber keeps the
+devices it manages to itself) makes the lighting *unavailable* with that
+reason, rather than a driver that fails on every write. The ROG Xbox Ally X's
+rings are on such a node; see its device page for the InputPlumber
+`passthrough` override that releases it.
 
 ## `[toggles]`: firmware switches
 

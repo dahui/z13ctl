@@ -35,3 +35,10 @@ func SetSysHidrawDir(dir string) (restore func()) {
 
 // HasAuraReport is the test-only export of hasAuraReport.
 var HasAuraReport = hasAuraReport
+
+// SetDevDir points node paths at a fake tree for the test's duration.
+func SetDevDir(dir string) (restore func()) {
+	orig := devDir
+	devDir = dir
+	return func() { devDir = orig }
+}

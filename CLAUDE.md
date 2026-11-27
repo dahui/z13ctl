@@ -199,6 +199,7 @@ the record before changing what it covers.
 - [The autoswitch UI uses cycle buttons and a debounced single send](docs/decisions/0174-the-autoswitch-ui-uses-cycle-buttons-and-a-debounced-single.md)
 - [The token regexes must match *both* prefixes, and widening them was the load-bearing half of the migration](docs/decisions/0176-the-token-regexes-must-match-both-prefixes-and-widening-them.md)
 - [Where InputPlumber manages the controller, the drawer takes it through intercept mode, owned by the daemon](docs/decisions/0177-where-inputplumber-manages-the-controller-the-drawer-takes-it-through-intercept-mode.md)
+- [The Ally's rings are Aura over interface 2, and InputPlumber must leave it visible](docs/decisions/0178-the-ally-s-rings-are-aura-over-interface-2-and-inputplumber-must-leave-it-visible.md)
 
 ### GUI (see also `internal/gui/CLAUDE.md`)
 
@@ -676,13 +677,17 @@ diff whenever a main release touches `api/`.
    new grants, a `setup --remove` round trip restoring the exact permissions)
    and the Ally (old static install replaced, a reboot); `make snapshot`
    package scripts checked (guarded preremove, rpm posttrans, Arch
-   post_upgrade, no permission artifact in any package). **Left:** the OXP
-   (wiped; once CachyOS is back) and a cover detach/reattach on the Z13.
+   post_upgrade, no permission artifact in any package), and a cover
+   detach/reattach (udev granted interface 0 alone on the renumbered nodes;
+   the daemon restored the lighting). **Left:** the OXP (wiped; once CachyOS
+   is back).
 1. **ASUS ROG Xbox Ally X** (`.claude/plans/xbox-ally-x.md`): device file,
-   Steam yield, stock rows (AC and battery) and the charge limit done; the ring
-   lighting (Aura over hidraw interface 2, 0x5D feature reports — proven on the
-   machine) and the Gaming Mode check remain; controller settings wait for the
-   upstream hid-asus Ally series.
+   Steam yield, stock rows (AC and battery), the charge limit, controller
+   intercept (decision 0177) and the ring lighting (decision 0178; needs
+   InputPlumber's `passthrough` on interface 2, upstream request drafted in
+   `.claude/plans/inputplumber-ally-passthrough-request.md`) done; the Gaming
+   Mode check remains; controller settings wait for the upstream hid-asus Ally
+   series.
 
 1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
    `.claude/plans/quickbar-customization.md`). M4 is complete but for the
