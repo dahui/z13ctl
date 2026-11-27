@@ -42,6 +42,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/dahui/voltaire/v2/internal/driver"
+	"github.com/dahui/voltaire/v2/internal/wakeup"
 )
 
 // watchResume connects to the system DBus and listens for sleep and resume
@@ -104,7 +105,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 
 	// What the kernel had counted when the last suspend was handed to logind;
 	// zero until the first one. See wakeup.go.
-	var beforeSleep wakeSnapshot
+	var beforeSleep wakeup.Snapshot
 
 	for {
 		select {
@@ -149,7 +150,7 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				// ErrUnsupported, which is the old "no device, nothing to
 				// turn off" silence.
 				d.mu.Lock()
-				if d.hw != nil && d.hw.Lighting != nil {
+				if d.hw.Lighting != nil {
 					if err := d.hw.Lighting.Off(""); err != nil && !errors.Is(err, driver.ErrUnsupported) {
 						slog.Warn("failed to turn off lighting before sleep", "err", err)
 					}
@@ -167,20 +168,20 @@ func (d *Daemon) watchResume(ctx context.Context) {
 				// again by the EC within a couple of seconds. See releaseHold.
 				if wrote {
 					hold := releaseHold(d.releaseSettle(), inhibitBudget, time.Since(started))
-					before := sciCount()
+					before := wakeup.SCICount()
 					select {
 					case <-ctx.Done():
 					case <-time.After(hold):
 					}
 					slog.Info("sleep: held the suspend after the fan release", "held", hold,
-						"ec_events", sub(sciCount(), before))
+						"ec_events", wakeup.SCISince(before))
 				}
 
 				// Taken last, so a wakeup counted from here on happened after
 				// everything voltaire did. How long that took and whether it
 				// wrote the EC are what tell an EC answering our own writes
 				// apart from a wake voltaire had no part in.
-				beforeSleep = snapshotWakeups()
+				beforeSleep = wakeup.Take()
 				slog.Info("sleep: handing the suspend to logind",
 					"pre_sleep_work", time.Since(started).Round(time.Millisecond), "wrote_fans_or_ppt", wrote)
 
@@ -192,9 +193,9 @@ func (d *Daemon) watchResume(ctx context.Context) {
 			}
 			slog.Info("system resumed from sleep")
 			if !beforeSleep.At.IsZero() {
-				after := snapshotWakeups()
-				diffWakeups(beforeSleep, after, readWakeExtras(after.Failed > beforeSleep.Failed)).log()
-				beforeSleep = wakeSnapshot{}
+				after := wakeup.Take()
+				wakeup.Diff(beforeSleep, after, wakeup.ReadExtras(after.Failed > beforeSleep.Failed)).Log()
+				beforeSleep = wakeup.Snapshot{}
 			}
 			// Re-taken here rather than after the restore: the EC wait and restore
 			// below run for seconds, and logind must not be free to run an unheld
@@ -278,9 +279,9 @@ func (c *sleepCycle) settle() (skipped bool) {
 
 // sleepObs is what the sleep hook observes before touching anything.
 type sleepObs struct {
-	ECWedged  bool   // the last resume left the EC unresponsive; see Daemon.ecWedged
-	Owned     bool   // daemon state says a non-empty custom profile is active
-	CurveMode int    // curve device pwm1_enable; -1 if unreadable
+	ECWedged  bool // the last resume left the EC unresponsive; see Daemon.ecWedged
+	Owned     bool // daemon state says a non-empty custom profile is active
+	CurveMode driver.FanMode
 	PL1       int    // effective sustained limit in watts; -1 if unreadable
 	Firmware  string // platform_profile underneath, naming the stock PPT row
 }
@@ -323,14 +324,14 @@ func sleepTick(obs sleepObs, env driver.PowerEnvelope) sleepAction {
 	}
 
 	switch obs.CurveMode {
-	case -1:
+	case driver.FanModeUnknown:
 		// Unreadable: never act on an unknown, as reconcileTick does not.
 		return sleepAction{}
-	case 0:
+	case driver.FanModeFullSpeed:
 		// Someone deliberately forced full speed. We did not write it and have
 		// nothing to restore it from, so it is not ours to undo.
 		return sleepAction{}
-	case 2:
+	case driver.FanModeAuto:
 		// Already on firmware auto, which is what the EC needs to stop the fans.
 		return sleepAction{}
 	}
@@ -385,20 +386,20 @@ func (d *Daemon) releaseVolatileState() (wrote bool) {
 	obs := sleepObs{
 		ECWedged:  wedged,
 		Owned:     ok && !active.Empty(),
-		CurveMode: -1,
+		CurveMode: driver.FanModeUnknown,
 		PL1:       -1,
 		Firmware:  d.profileHW(),
 	}
 	// d.effectiveProfile() takes d.mu, which is why it is called with only hwMu
 	// held.
-	if d.hw != nil && d.hw.Fans != nil {
+	if d.hw.Fans != nil {
 		if mode, err := d.hw.Fans.ReadMode(); err == nil {
 			obs.CurveMode = mode
 		}
 	}
 	// Not while wedged: sleepTick stands down then anyway, and on asus-armoury a
 	// PPT read evaluates the AC adapter's _PSR — a live ACPI call into the EC.
-	if !wedged && d.hw != nil && d.hw.Power != nil {
+	if !wedged && d.hw.Power != nil {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
 		}
@@ -462,7 +463,7 @@ func (d *Daemon) lowerLimitForRelease(firmware string) error {
 	slog.Debug("sleep: no stock PPT row; clamping the sustained limit instead",
 		"profile", firmware, "err", stockErr)
 
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return stockErr
 	}
 	cur, err := d.hw.Power.Read()
@@ -532,7 +533,7 @@ func inhibitDelayMax(conn *dbus.Conn) time.Duration {
 // releaseSettle is the device's post-release hold, zero for a device with no
 // fan control or no measurement.
 func (d *Daemon) releaseSettle() time.Duration {
-	if d.hw == nil || d.hw.Fans == nil {
+	if d.hw.Fans == nil {
 		return 0
 	}
 	return d.hw.Fans.Shape().SleepReleaseSettle
@@ -625,7 +626,7 @@ const (
 // A device with no battery capability has nothing cheap to probe, so it reports
 // ready rather than blocking a restore the machine still needs.
 func (d *Daemon) probeEC() ecStatus {
-	if d.hw == nil || d.hw.Battery == nil {
+	if d.hw.Battery == nil {
 		return ecReady
 	}
 	_, err := d.hw.Battery.Status()
@@ -739,7 +740,7 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 		d.state.DeviceUndervolt.Active = false
 	}
 	state := cloneState(d.state)
-	if d.hw != nil && d.hw.Lighting != nil {
+	if d.hw.Lighting != nil {
 		// USB re-enumerates across suspend, so the handle opened at startup (or
 		// at the last reattach) usually points at a device node that no longer
 		// exists — the write then fails with ENODEV and the lighting is never
@@ -773,10 +774,8 @@ func (d *Daemon) restoreVolatileState(ec ecStatus) {
 	// which ApplyTDPSafely still keeps within the thermal floor.
 	// A limiter that skips identical writes must write after a resume: whether
 	// the hardware kept the limits through s2idle is not something it knows.
-	if d.hw != nil && d.hw.Power != nil && ec != ecWedged {
-		if f, ok := d.hw.Power.Power.(driver.PowerForgetter); ok {
-			f.Forget()
-		}
+	if d.hw.Power != nil && ec != ecWedged {
+		d.hw.Power.Forget()
 	}
 
 	active, ok := state.ActiveCustomProfile()

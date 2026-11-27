@@ -37,8 +37,8 @@ func TestSetProfileMapsQuietPerDevice(t *testing.T) {
 	pmf := f.withProfileDevice(t, "platform-profile-1", "low-power balanced performance", "balanced")
 	asus := f.withProfileDevice(t, "platform-profile-2", "quiet balanced performance", "balanced")
 
-	if err := SetProfile("quiet"); err != nil {
-		t.Fatalf("SetProfile(quiet) = %v, want nil", err)
+	if err := setProfileFor("", "quiet"); err != nil {
+		t.Fatalf("SetProfileFor(quiet) = %v, want nil", err)
 	}
 	if got := readTrimmed(t, asus+"/profile"); got != "quiet" {
 		t.Errorf("asus device profile = %q, want \"quiet\"", got)
@@ -56,8 +56,8 @@ func TestSetProfileWritesUniversalNamesUnmapped(t *testing.T) {
 	pmf := f.withProfileDevice(t, "platform-profile-1", "low-power balanced performance", "balanced")
 	asus := f.withProfileDevice(t, "platform-profile-2", "quiet balanced performance", "balanced")
 
-	if err := SetProfile("performance"); err != nil {
-		t.Fatalf("SetProfile(performance) = %v, want nil", err)
+	if err := setProfileFor("", "performance"); err != nil {
+		t.Fatalf("SetProfileFor(performance) = %v, want nil", err)
 	}
 	for _, p := range []string{asus, pmf} {
 		if got := readTrimmed(t, p+"/profile"); got != "performance" {
@@ -102,8 +102,8 @@ func TestSetProfileWritesPrimaryWhenNoClassDevice(t *testing.T) {
 	}
 	f.writeFile(t, acpi, "balanced")
 
-	if err := SetProfile("performance"); err != nil {
-		t.Fatalf("SetProfile() = %v, want nil", err)
+	if err := setProfileFor("", "performance"); err != nil {
+		t.Fatalf("SetProfileFor() = %v, want nil", err)
 	}
 
 	data, err := os.ReadFile(acpi)
@@ -123,8 +123,8 @@ func TestSetProfileReportsPrimaryWriteFailure(t *testing.T) {
 	swap(t, &sysProfileDir, f.root+"/missing-platform-profile")
 	swap(t, &sysProfileACPI, f.root+"/missing-dir/platform_profile")
 
-	if err := SetProfile("quiet"); err == nil {
-		t.Error("SetProfile() = nil, want an error when no profile file can be written")
+	if err := setProfileFor("", "quiet"); err == nil {
+		t.Error("SetProfileFor() = nil, want an error when no profile file can be written")
 	}
 	if calls := *f.ppdCalls; len(calls) != 0 {
 		t.Errorf("powerprofilesctl was called %v after a failed write, want no calls", calls)

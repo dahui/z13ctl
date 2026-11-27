@@ -27,26 +27,37 @@ func activeButton(btns map[string]*gtk.Button, fallback string) string {
 	return fallback
 }
 
-// syncState updates all widgets from the current daemon state.
-// Sets syncing=true to suppress signal handlers from firing sendApply.
+// syncState updates all widgets from the current daemon state (the drawer's
+// own fetch on show).
 func (w *Window) syncState() {
-	if w.state == nil {
+	if w.state == nil || w.syncsSuppressed() {
 		return
 	}
-	if w.syncsSuppressed() {
-		return
-	}
+	w.syncAll()
+}
+
+// syncAll moves every built section, on every surface, to w.state, inside the
+// syncing guard: gtk.Switch fires state-set on a programmatic SetActive too,
+// so an unguarded sync writes every switch straight back to the daemon — which
+// calls refreshState again. It is the one list. syncState (the drawer's fetch)
+// and refreshState (every write path, the daemon's state-changed broadcast,
+// the full window's show) both end here; when they kept two lists, three
+// sections (the settings page, the charge limit and RGB on the dashboard, the
+// boost switch) were synced by one and not the other, and sat stale on the
+// surface the other served. A new section's sync goes here and nowhere else.
+func (w *Window) syncAll() {
 	w.syncing = true
 	defer func() { w.syncing = false }()
-	w.syncLightingSection()
+	w.syncCustomView()
 	w.syncProfiles()
 	w.syncAutoswitch()
+	w.syncSettings()
 	w.syncBattery()
 	w.syncTDPSlider()
 	w.syncUndervoltSlider()
 	w.syncRumble()
-	w.syncSettings()
-	w.syncCustomView()
+	w.syncLightingSection()
+	w.syncCPUBoost()
 	w.updateHeader()
 }
 
@@ -69,8 +80,14 @@ func (w *Window) updateHeader() {
 // editor's PWM floor is derived from the target's limit, so a TDP change has
 // to re-evaluate the whole view, not just a highlight — and a profile
 // created or deleted by another client has to reshape the list.
-// Safe to call from a background goroutine.
-func (w *Window) refreshState() {
+// Safe to call from a background goroutine. Calls are coalesced (one fetch in
+// flight; any number arriving meanwhile become one more fetch after it): a
+// write ends in a refresh and the daemon's state-changed event triggers
+// another, and two replies racing could apply out of order.
+func (w *Window) refreshState() { w.refresher.Do(w.fetchState) }
+
+// fetchState is one refresh: get-state, then apply it on the GTK thread.
+func (w *Window) fetchState() {
 	ok, state, rawErr := api.SendGetState()
 	// Report a failed read rather than returning quietly. This runs after a
 	// successful write, so a failure here means the daemon went away in between
@@ -93,40 +110,7 @@ func (w *Window) refreshState() {
 		}
 		w.state = state
 		w.adoptStateLimits(state)
-		w.syncCustomView()
-		w.syncing = true
-		w.syncProfiles()
-		w.syncAutoswitch()
-		// The settings page's switches, and it must be inside the syncing
-		// guard: gtk.Switch fires state-set on a *programmatic* SetActive too,
-		// so an unguarded sync writes every row straight back to the daemon —
-		// which calls refreshState again.
-		//
-		// Here rather than only in syncState because this is the funnel: every
-		// write path ends in refreshState, the daemon's state-changed broadcast
-		// calls it, and the full window's show() calls it, whereas syncState
-		// runs on the drawer's own fetch — a surface the settings page does not
-		// live on. Without this the page is correct only at the moment its tab
-		// is first opened.
-		w.syncSettings()
-		// The charge limit and the RGB block, for the same reason and since the
-		// same date: both are on the dashboard rail now, and both were synced
-		// only by syncState — the drawer's own fetch. Left out, the window's
-		// copies would show whatever the daemon happened to be reporting when
-		// the page was built and never move again.
-		w.syncBattery()
-		w.syncTDPSlider()
-		w.syncUndervoltSlider()
-		w.syncRumble()
-		w.syncLightingSection()
-		// The dashboard's boost switch, for the same reason and with the
-		// same syncing guard: it is a gtk.Switch, and refreshState is the
-		// funnel every write path and daemon event ends in. syncControls
-		// alone would leave it correct only at the moment the tab is opened
-		// — which is exactly how the settings page was found stale.
-		w.syncCPUBoost()
-		w.syncing = false
-		w.updateHeader()
+		w.syncAll()
 		// The screen's refresh rate, if the power source has actually moved.
 		// Here rather than in the subscribe loop's power-source case because
 		// the event carries no payload — the source is in the state this
@@ -222,17 +206,6 @@ func (w *Window) sendProfileSet(prof string) {
 	}()
 }
 
-// sendFeatureSet writes one firmware toggle by its wire id — the only toggle
-// write path the GUI has, and what the settings page uses for every row.
-//
-// It replaced a named send per toggle when the drawer's two bespoke switches
-// moved to that page. The api keeps SendBootSoundSet and SendPanelOverdriveSet
-// for the CLI and for clients written against them; nothing here needs a
-// function per toggle, which is the point of rendering rows from the document.
-//
-// The error names the toggle's id rather than a prose label because this
-// function does not have one: the label is device data the page renders, and
-// an id is what the user would grep the daemon's log for.
 // sendCPUBoostSet turns boost clocks on or off through the daemon.
 //
 // Deliberately not sendFeatureSet: boost is not one of the device's firmware
@@ -262,6 +235,16 @@ func (w *Window) sendButtonSet(choice string) {
 	}()
 }
 
+// sendFeatureSet writes one firmware toggle by its wire id — the only toggle
+// write path the GUI has, and what the settings page uses for every row.
+//
+// It replaced a named send per toggle when the drawer's two bespoke switches
+// moved to that page; nothing here needs a function per toggle, which is the
+// point of rendering rows from the document.
+//
+// The error names the toggle's id rather than a prose label because this
+// function does not have one: the label is device data the page renders, and
+// an id is what the user would grep the daemon's log for.
 func (w *Window) sendFeatureSet(id string, value int) {
 	go func() {
 		slog.Debug("sendFeatureSet: calling daemon", "id", id, "value", value)

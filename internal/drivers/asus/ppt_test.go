@@ -88,7 +88,7 @@ func TestPPTInterfaceSelection(t *testing.T) {
 		if env := lim.Envelope(); env.Interface != "" || env.TDPMin != base.TDPMin {
 			t.Errorf("envelope with no interface = %+v, want the device data alone", env)
 		}
-		if err := SetTDPState(base.StockProfilePPT["balanced"]); err == nil {
+		if err := setTDPState(base.StockProfilePPT["balanced"]); err == nil {
 			t.Error("SetTDPState() with no interface = nil error, want one")
 		}
 	})
@@ -101,7 +101,7 @@ func TestSetTDPStateUsesArmouryOnly(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.withArmouryPPT(t)
 
-	if err := SetTDPState(api.TDPState{PL1SPL: 40, PL2SPPT: 55, FPPT: 60, APUSPPT: 70, PlatformSPPT: 70}); err != nil {
+	if err := setTDPState(api.TDPState{PL1SPL: 40, PL2SPPT: 55, FPPT: 60, APUSPPT: 70, PlatformSPPT: 70}); err != nil {
 		t.Fatalf("SetTDPState() = %v", err)
 	}
 	if got, want := f.armouryState(t), (api.TDPState{PL1SPL: 40, PL2SPPT: 55, FPPT: 60}); got != want {
@@ -136,7 +136,7 @@ func TestSetTDPStateClampsIntoArmourysRange(t *testing.T) {
 		if got := safety.EffectiveTDP(env, tc.in); got != tc.want {
 			t.Errorf("EffectiveTDP(%+v) = %+v, want %+v", tc.in, got, tc.want)
 		}
-		if err := SetTDPState(tc.in); err != nil {
+		if err := setTDPState(tc.in); err != nil {
 			t.Fatalf("SetTDPState(%+v) = %v", tc.in, err)
 		}
 		if got := f.armouryState(t); got != tc.want {
@@ -203,7 +203,7 @@ func TestReadEffectiveOnArmoury(t *testing.T) {
 	if got, _ := eng.ReadEffective("custom"); got.PL1SPL != 60 {
 		t.Errorf("untouched cache on custom = %+v, want the raw cache (PL1 60)", got)
 	}
-	if err := SetTDPState(api.TDPState{PL1SPL: 28, PL2SPPT: 32, FPPT: 45}); err != nil {
+	if err := setTDPState(api.TDPState{PL1SPL: 28, PL2SPPT: 32, FPPT: 45}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := eng.ReadEffective("balanced"); got.PL1SPL != 28 {
@@ -239,7 +239,7 @@ func TestHandBackToFirmwareOnArmoury(t *testing.T) {
 		f.writeFile(t, f.hwmon+"/pwm1_enable", "1") // the floor is on
 		f.writeFile(t, f.hwmon+"/pwm2_enable", "1")
 		eng, env := z13Engine(t)
-		if err := SetTDPState(api.TDPState{PL1SPL: 78, PL2SPPT: 78, FPPT: 78}); err != nil {
+		if err := setTDPState(api.TDPState{PL1SPL: 78, PL2SPPT: 78, FPPT: 78}); err != nil {
 			t.Fatal(err)
 		}
 		if err := eng.HandBackToFirmware("balanced"); err != nil {
@@ -273,7 +273,7 @@ func TestUnwritableArmouryFallsBack(t *testing.T) {
 	if got := NewPowerLimiter(z13Env(t)).Envelope().Interface; got != PPTInterfaceLegacy {
 		t.Fatalf("Interface with armoury read-only = %q, want %q", got, PPTInterfaceLegacy)
 	}
-	if err := SetTDPState(tdpAll(40)); err != nil {
+	if err := setTDPState(tdpAll(40)); err != nil {
 		t.Fatalf("SetTDPState = %v, want it written through asus-nb-wmi", err)
 	}
 	if got := f.readInt(t, f.ppt+"/ppt_pl1_spl"); got != 40 {

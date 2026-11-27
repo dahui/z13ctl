@@ -57,13 +57,10 @@ var applyCmd = &cobra.Command{
 			cli.PrintColorList()
 			return fmt.Errorf("--color2: %w", err)
 		}
-		modeInfo, ok := caps.Mode(modeFlag)
-		if !ok {
-			return fmt.Errorf("--mode: unknown mode %q (valid: %s)", modeFlag, modeNamesText(caps))
+		if e := caps.CheckEffect(modeFlag, speedFlag); e != nil {
+			return fmt.Errorf("--%w", e)
 		}
-		if !caps.HasSpeed(speedFlag) {
-			return fmt.Errorf("--speed: unknown speed %q (valid: %s)", speedFlag, strings.Join(caps.Speeds, "|"))
-		}
+		modeInfo, _ := caps.Mode(modeFlag)
 
 		if dryRunFlag {
 			mode, merr := aura.ModeFromString(modeFlag)

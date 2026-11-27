@@ -62,14 +62,11 @@ func FindProfilePathFor(handler string) string {
 	return sysProfileACPI
 }
 
-// SetProfile is SetProfileFor with no handler name.
-func SetProfile(profile string) error { return SetProfileFor("", profile) }
-
 // SetProfileFor writes profile to every platform_profile class device, the
 // owning handler's write being the one whose error counts. A secondary handler
 // that does not offer the name gets its equivalent (profileNameForDevice);
 // its errors are ignored. power-profiles-daemon is told afterwards.
-func SetProfileFor(handler, profile string) error {
+func setProfileFor(handler, profile string) error {
 	dir := sysProfileDir
 	primaryPath := FindProfilePathFor(handler)
 	entries, err := os.ReadDir(dir)

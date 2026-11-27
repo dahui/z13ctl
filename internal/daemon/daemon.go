@@ -52,8 +52,9 @@ type Daemon struct {
 	// selected for this machine, with power control wrapped in the safety
 	// engine. Set once by Run before any watcher or handler can run (tests
 	// inject it), read-only afterwards, so it needs no lock. A nil capability
-	// field means the device does not have it; a nil hw altogether (bare test
-	// Daemons) reads as a device with no capabilities at all.
+	// field means the device does not have it. hw itself is never nil: Run
+	// assembles before anything reads it, and a test wanting a device with no
+	// capabilities uses &device.Device{} (75 nil checks went with this rule).
 	//
 	// The one exception to "read-only" is the lighting driver's *internal*
 	// state: Reopen swaps its HID handle, so every hw.Lighting call — reads
@@ -121,25 +122,11 @@ type Daemon struct {
 	// literals.
 	telemetry *telemetryring.Ring
 
-	// prevEnergy is the last package-energy counter reading, for converting
-	// the next one into power. Owned by the sampler goroutine alone and so
-	// deliberately unguarded: it is written and read only in sampleOnce, which
-	// runs on the single watchTelemetry timer. Anything else that wants to
-	// read the counter must take its own baseline rather than sharing this one.
-	prevEnergy energyReading
+	// rates holds the previous counter readings the sampler derives rates
+	// from; the sampler goroutine's alone (see rates in telemetry.go).
+	rates rates
 
-	// prevJiffies is the last CPU jiffie-counter reading, for deriving the
-	// utilisation percentage. Owned by the sampler goroutine on exactly
-	// prevEnergy's terms: unguarded because that goroutine is the only
-	// toucher, so no handler may read or re-baseline it.
-	prevJiffies jiffieReading
-
-	// prevNet is the last network byte-counter reading, for deriving the
-	// throughput rate. Same ownership terms as the two above.
-	prevNet netReading
-
-	subMu       sync.Mutex
-	subscribers []subscriber // long-lived connections subscribed to events
+	subs hub // long-lived connections subscribed to events
 
 	// buttonCh carries the moment of each hardware-button press. It is a
 	// timestamp rather than a bare signal because the press *timing* is what
@@ -163,37 +150,20 @@ type Options struct {
 	SleepRelease bool
 }
 
-// fallbackDeviceID is the device assumed when no device file matches this
-// machine. Transitional: voltaire (né z13ctl) has only ever supported the Z13 and every
-// earlier version ran best-effort on anything else, so the Z13 config —
-// whose drivers all fail soft on absent sysfs — preserves that exactly. The
-// multi-device milestone replaces this with a conservative generic device.
-const fallbackDeviceID = "asus-rog-flow-z13-2025"
-
 // assembleDevice matches this machine against the embedded device data and
-// assembles its drivers. Assembly can only fail on a build defect — a device
-// file naming a factory this binary does not register — so an error here is
-// worth refusing to start over.
+// assembles its drivers, assuming device.FallbackID on a machine no file
+// describes. Assembly can only fail on a build defect — a device file naming a
+// factory this binary does not register — so an error here is worth refusing
+// to start over.
 func assembleDevice() (*device.Device, error) {
-	c, err := device.MatchConfig()
+	c, unmatched, err := device.MatchOrFallback()
 	if err != nil {
-		slog.Warn("no device file matches this machine; assuming the ASUS ROG Flow Z13", "err", err)
-		configs, cfgErr := device.Configs()
-		if cfgErr != nil {
-			return nil, cfgErr
-		}
-		found := false
-		for _, cand := range configs {
-			if cand.Device.ID == fallbackDeviceID {
-				c, found = cand, true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("fallback device %q is not in the embedded device data", fallbackDeviceID)
-		}
+		return nil, err
 	}
-	return device.AssembleForSession(c, device.GamingMode())
+	if unmatched != nil {
+		slog.Warn("no device file matches this machine; assuming "+c.Device.Name, "err", unmatched)
+	}
+	return device.AssembleForSession(c, device.GamingMode)
 }
 
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
@@ -439,7 +409,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 		owned := leftCustom || d.hw.Fans == nil
 		if !owned {
 			mode, modeErr := d.hw.Fans.ReadMode()
-			owned = modeErr == nil && mode == 2
+			owned = modeErr == nil && mode == driver.FanModeAuto
 		}
 		switch {
 		case d.hw.PowerSlider:
@@ -580,12 +550,7 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			d.subMu.Lock()
-			for _, s := range d.subscribers {
-				_ = s.conn.Close()
-			}
-			d.subscribers = nil
-			d.subMu.Unlock()
+			d.subs.closeAll()
 			return
 		case at := <-d.buttonCh:
 			var act pressAction
@@ -595,77 +560,19 @@ func (d *Daemon) broadcastLoop(ctx context.Context) {
 	}
 }
 
-// broadcastWriteTimeout bounds a single write to one subscriber.
-//
-// Broadcasts are emitted from handlers that hold hwMu, so an unbounded write to
-// a subscriber that has stopped reading — a hung GUI, a suspended process —
-// would block every hardware operation in the daemon behind a socket buffer.
-// A subscriber that cannot take a notification in this long is dropped. Declared
-// as a var so tests can shorten it.
-var broadcastWriteTimeout = 2 * time.Second
-
-// subscriber is one long-lived event connection and the events it asked for.
-type subscriber struct {
-	conn net.Conn
-	// events is the set the client subscribed to. Empty means every event: that
-	// is what a client sending no list gets, and it is what the daemon did for
-	// every subscriber before the filter existed.
-	events map[string]bool
-}
-
-// wants reports whether this subscriber asked for the named event.
-func (s subscriber) wants(event string) bool {
-	return len(s.events) == 0 || s.events[event]
-}
-
 // broadcast delivers an event to the subscribers that asked for it.
-//
-// The filter matters as soon as there is more than one event name: a client
-// that subscribed to "gui-toggle" and reasonably wrote `for range ch { toggle() }`
-// — the obvious loop when only one event existed — would otherwise toggle its
-// window on every power-source change.
 func (d *Daemon) broadcast(r response) {
 	data, _ := json.Marshal(r)
-	data = append(data, '\n')
-
-	d.subMu.Lock()
-	alive := d.subscribers[:0:0]
-	for _, s := range d.subscribers {
-		if !s.wants(r.Event) {
-			alive = append(alive, s)
-			continue
-		}
-		_ = s.conn.SetWriteDeadline(time.Now().Add(broadcastWriteTimeout))
-		_, err := s.conn.Write(data)
-		_ = s.conn.SetWriteDeadline(time.Time{})
-		if err == nil {
-			alive = append(alive, s)
-		} else {
-			_ = s.conn.Close()
-		}
-	}
-	d.subscribers = alive
-	d.subMu.Unlock()
+	d.subs.broadcast(r.Event, append(data, '\n'))
 }
 
 // addSubscriber registers a connection for the named events. An empty or nil
 // list subscribes to everything.
-func (d *Daemon) addSubscriber(conn net.Conn, events []string) {
-	set := make(map[string]bool, len(events))
-	for _, e := range events {
-		if e != "" {
-			set[e] = true
-		}
-	}
-	d.subMu.Lock()
-	d.subscribers = append(d.subscribers, subscriber{conn: conn, events: set})
-	d.subMu.Unlock()
-}
+func (d *Daemon) addSubscriber(conn net.Conn, events []string) { d.subs.add(conn, events) }
 
 // notifyStateChanged tells subscribers that profile or thermal state moved, so
-// anything displaying it can re-read. Callers pass the state they just saved
-// only to make the call sites read as "persist, then announce"; the event
-// carries no payload by design (see api/events.go).
+// anything displaying it can re-read. The event carries no payload by design
+// (see api/events.go): get-state answers with current truth.
 func (d *Daemon) notifyStateChanged() {
 	d.broadcast(response{OK: true, Event: api.EventStateChanged})
 }
@@ -719,7 +626,7 @@ func (d *Daemon) setECWedged(v bool) {
 // that long; the driver clamps every write to the kernel's current range
 // regardless, so the cost is a request validated against the previous table.
 func (d *Daemon) env() driver.PowerEnvelope {
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return driver.PowerEnvelope{}
 	}
 	d.mu.Lock()
@@ -752,7 +659,7 @@ func (d *Daemon) env() driver.PowerEnvelope {
 // (the safe maximum, the floor curve) on a path that runs when the EC may not
 // be answering. Callers must not hold d.mu.
 func (d *Daemon) cachedEnv() driver.PowerEnvelope {
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return driver.PowerEnvelope{}
 	}
 	d.mu.Lock()
@@ -766,8 +673,8 @@ func (d *Daemon) storedEnv(cached *driver.PowerEnvelope) driver.PowerEnvelope {
 	if cached != nil {
 		return *cached
 	}
-	if de, ok := d.hw.Power.Power.(driver.DeviceEnvelope); ok {
-		return de.DeviceEnvelope()
+	if d.hw.Power != nil {
+		return d.hw.Power.DeviceEnvelope()
 	}
 	return driver.PowerEnvelope{}
 }
@@ -794,7 +701,7 @@ func (d *Daemon) acPower() (onAC, known bool) {
 // state of health together, and a helper per field would read sysfs three
 // times for one answer.
 func (d *Daemon) batteryStatus() (driver.BatteryStatus, bool) {
-	if d.hw == nil || d.hw.Battery == nil {
+	if d.hw.Battery == nil {
 		return driver.BatteryStatus{}, false
 	}
 	st, err := d.hw.Battery.Status()
@@ -811,7 +718,7 @@ func (d *Daemon) batteryStatus() (driver.BatteryStatus, bool) {
 // uvApplied once state says an offset is applied); TestOnlyWritersProbeTheSMU
 // pins the list. The driver caches the answer, so later calls are bool reads.
 func (d *Daemon) uvProbe() bool {
-	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.ProbeAvailable()
+	return d.hw.Undervolt != nil && d.hw.Undervolt.ProbeAvailable()
 }
 
 // uvAvailable answers "is undervolting available?" without ever writing: the
@@ -823,7 +730,7 @@ func (d *Daemon) uvProbe() bool {
 // wrong-fork machine reports available until the first real write probes and
 // fails.
 func (d *Daemon) uvAvailable() bool {
-	return d.hw != nil && d.hw.Undervolt != nil && d.hw.Undervolt.Available()
+	return d.hw.Undervolt != nil && d.hw.Undervolt.Available()
 }
 
 // uvApplied reports whether the Curve Optimizer offset is believed to be
@@ -866,7 +773,7 @@ func (d *Daemon) uvApplied() bool {
 // profileHW reads the platform profile from hardware, or "" when the device
 // has no profile control or the read fails.
 func (d *Daemon) profileHW() string {
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return ""
 	}
 	p, err := d.hw.Profiles.Get()
@@ -880,7 +787,7 @@ func (d *Daemon) profileHW() string {
 // controller can apply: custom mode, and exactly the point count the fan shape
 // declares. A device with no fan control can apply nothing.
 func (d *Daemon) hasApplicableCurve(fc *api.FanCurveState) bool {
-	if fc == nil || fc.Mode != 1 || d.hw == nil || d.hw.Fans == nil {
+	if fc == nil || driver.FanMode(fc.Mode) != driver.FanModeCustom || d.hw.Fans == nil {
 		return false
 	}
 	return len(fc.Points) == d.hw.Fans.Shape().Points
@@ -891,7 +798,7 @@ func (d *Daemon) hasApplicableCurve(fc *api.FanCurveState) bool {
 // A device without power control imposes nothing; a PPT read failure is
 // deliberately not a refusal (see safety.Engine.CheckFanFloorRelease).
 func (d *Daemon) checkFanFloorRelease(profile string) error {
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return nil
 	}
 	return d.hw.Power.CheckFanFloorRelease(profile)
@@ -958,7 +865,7 @@ func (d *Daemon) reopenAndRestore() bool {
 // is a concurrent map access, which the Go runtime turns into an unrecoverable
 // crash.
 func (d *Daemon) applyLightingState() error {
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return nil
 	}
 	if len(d.state.Devices) > 0 {

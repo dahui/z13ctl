@@ -6,6 +6,7 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"net"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestBroadcastRespectsTheSubscriptionFilter(t *testing.T) {
 			client, server := net.Pipe()
 			defer func() { _ = client.Close() }()
 
-			d := &Daemon{}
+			d := &Daemon{hw: &device.Device{}}
 			d.addSubscriber(server, tt.subscribe)
 			go d.broadcast(response{OK: true, Event: tt.emit})
 
@@ -79,7 +80,7 @@ func TestBroadcastKeepsFilteredSubscribers(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(server, []string{api.EventGUIToggle})
 
 	go d.broadcast(response{OK: true, Event: api.EventPowerSource})
@@ -107,7 +108,7 @@ func TestBroadcastDropsAWedgedSubscriber(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(server, nil)
 
 	done := make(chan struct{})
@@ -119,9 +120,7 @@ func TestBroadcastDropsAWedgedSubscriber(t *testing.T) {
 		t.Fatal("broadcast blocked on a subscriber that never reads; this would stall every hardware operation")
 	}
 
-	d.subMu.Lock()
-	n := len(d.subscribers)
-	d.subMu.Unlock()
+	n := d.subs.count()
 	if n != 0 {
 		t.Errorf("subscribers after a timed-out write = %d, want 0 (the wedged one should be dropped)", n)
 	}

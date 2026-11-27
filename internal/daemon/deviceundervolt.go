@@ -33,7 +33,7 @@ import (
 // deviceUndervoltModel reports whether this device keeps its undervolt as a
 // device setting: the one-slider power model, with a Curve Optimizer.
 func (d *Daemon) deviceUndervoltModel() bool {
-	return d.hw != nil && d.hw.PowerSlider && d.hw.Undervolt != nil
+	return d.hw.PowerSlider && d.hw.Undervolt != nil
 }
 
 // wantDeviceUndervolt returns the remembered offset and whether it is in

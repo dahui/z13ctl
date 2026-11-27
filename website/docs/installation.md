@@ -94,10 +94,10 @@ yay -S voltaire-bin
 ```
 
 The package installs both binaries, the systemd units, and the desktop entry,
-and runs `voltaire setup` — which writes the udev rules, installs the sysfs
-permissions service, applies every permission grant immediately (so an upgrade
-needs no reboot), and cleans up anything a pre-2.0 `z13ctl setup` left behind.
-After installing, add your user to the `users` group if not already a member:
+and runs [`voltaire setup`](#what-setup-does), which grants the `users` group
+what this machine needs (so an upgrade needs no reboot) and cleans up anything a
+pre-2.0 `z13ctl setup` left behind. After installing, add your user to the
+`users` group if not already a member:
 
 ```sh
 sudo usermod -aG users $USER
@@ -125,10 +125,10 @@ Download the `.deb` package from the
 sudo apt install ./voltaire_*.deb
 ```
 
-The package installs both binaries, udev rules, systemd units, desktop entry,
-and the sysfs permissions service automatically, restarting the latter so an
-upgrade applies any new permission grants without a reboot. After installing,
-add your user to the `users` group if not already a member:
+The package installs both binaries, the systemd units and the desktop entry,
+and runs [`voltaire setup`](#what-setup-does), which grants the `users` group
+what this machine needs, on every install and upgrade. After installing, add
+your user to the `users` group if not already a member:
 
 ```sh
 sudo usermod -aG users $USER
@@ -146,10 +146,10 @@ Download the `.rpm` package from the
 sudo dnf install ./voltaire_*.rpm
 ```
 
-The package installs both binaries, udev rules, systemd units, desktop entry,
-and the sysfs permissions service automatically, restarting the latter so an
-upgrade applies any new permission grants without a reboot. After installing,
-add your user to the `users` group if not already a member:
+The package installs both binaries, the systemd units and the desktop entry,
+and runs [`voltaire setup`](#what-setup-does), which grants the `users` group
+what this machine needs, on every install and upgrade. After installing, add
+your user to the `users` group if not already a member:
 
 ```sh
 sudo usermod -aG users $USER
@@ -275,53 +275,46 @@ curve, and performance profile, or straight to the
 
 ## What `setup` does
 
-`sudo voltaire setup` performs four steps:
+voltaire's daemon runs as you, not as root, so `sudo voltaire setup` gives a
+group (`users` by default) access to exactly what **this machine** needs, and
+nothing another machine needs. It identifies the machine by its firmware (DMI),
+finds its [device file](/devices/), and grants only what that file declares:
+the lighting and hardware-button device nodes, and the sysfs attributes for
+profiles, fans, power limits, firmware switches, the charge limit, CPU boost
+and the package-power counter. The energy counter is granted **read** only,
+because the same directory holds the CPU's power caps. Then it:
 
-1. Writes `/etc/udev/rules.d/99-voltaire.rules` — grants the `users` group
-   `MODE=0660` / `GROUP=users` on the ASUS HID and input device nodes; uses
-   `RUN+=chgrp/chmod` to set permissions on the platform-profile attribute,
-   hwmon fan curve attributes (`asus_custom_fan_curve` + `asus` pwm_enable),
-   and the PPT power limit attributes (asus-armoury's, and asus-nb-wmi's as the
-   fallback) when the drivers load.
-2. Reloads udev and applies permissions immediately to all currently present
-   files — including `ryzen_smu` sysfs files for undervolting (if the module
-   is loaded).
-3. Writes `/etc/systemd/system/voltaire-perms.service` and enables it — a
-   `Type=oneshot` service that runs `chgrp` + `chmod g+w` at boot on
-   `BAT*/charge_control_end_threshold`, the asus-armoury firmware attributes
-   (`boot_sound`, `panel_overdrive`, and the `ppt_*` power limits), the
-   asus-nb-wmi `ppt_*` power limits, the cpufreq `boost` switch (which no udev
-   rule can match), and the `ryzen_smu_drv` files — plus group **read** only
-   on the powercap RAPL `energy_uj` counter, for the dashboard's package-power
-   chart. Read, never write: the same directory holds the CPU's power caps.
-4. Starts the service immediately so battery limit, TDP, and undervolt are
-   accessible right away.
+1. Writes `/etc/udev/rules.d/99-voltaire.rules`, which udev applies on real
+   device events: every boot, and when a detachable keyboard is reattached.
+   Each rule carries a comment saying what it is for.
+2. Applies the same grants immediately to everything present now.
+3. Writes `/etc/systemd/system/voltaire-perms.service` and starts it: a boot
+   oneshot running `voltaire setup --perms-only`, for attributes that appear
+   after their udev event (the charge limit and the power limits on ASUS
+   machines) or have none at all (the cpufreq boost switch, the `ryzen_smu`
+   files).
 
-On a machine that previously ran `z13ctl setup`, it also removes the old
-`99-z13ctl.rules` file (after verifying z13ctl generated it) and disables the
-old `z13ctl-perms.service` unit.
+Both files name the machine and group they were written for. On a machine that
+previously ran `z13ctl setup`, setup also removes the old `99-z13ctl.rules`
+file (after verifying z13ctl generated it) and disables the old
+`z13ctl-perms.service` unit.
 
-::: info Why a separate oneshot service?
-The `charge_control_end_threshold` and `ppt_*` attributes are added by the
-`asus_nb_wmi` kernel driver late in its `probe()` sequence — after all
-observable udev child-device events have already fired. The firmware-attribute
-`current_value` files may likewise be created after their parent's `ADD` event,
-and the `ryzen_smu` files are kobjects under `/sys/kernel/`, not udev-managed
-devices. No udev hook can reliably target any of them. The
-`voltaire-perms.service` unit is a self-contained workaround that runs at
-`sysinit.target`. It has no dependency on the voltaire binary and can be
-inspected at any time:
+On a machine no device file describes, setup grants nothing and prints the
+firmware's vendor and product strings; please report them. If the machine is
+the same hardware sold under another name, `--machine <id>` uses that device
+file instead.
 
-```sh
-systemctl cat voltaire-perms.service
-```
-:::
-
-Use `--dry-run` to preview all changes without root or any side effects:
+Use `--dry-run` to preview everything without root or any side effects,
+including another machine's grants:
 
 ```sh
 voltaire --dry-run setup
+voltaire --dry-run setup --machine onexplayer-x2-mini-pro
 ```
+
+`sudo voltaire setup --remove` undoes it: it removes both files (only if setup
+wrote them) and takes the group back from everything it granted. Packages run
+it when they are removed.
 
 ## Gamepad input blocking (capabilities)
 
@@ -413,14 +406,10 @@ systemctl --user daemon-reload
 Then remove the binaries and system files:
 
 ```sh
+sudo voltaire setup --remove
 sudo rm -f /usr/local/bin/voltaire /usr/local/bin/voltaire-gui \
             /usr/local/bin/z13ctl /usr/local/bin/z13gui
 rm -f ~/.local/share/applications/voltaire-gui.desktop
-sudo rm /etc/udev/rules.d/99-voltaire.rules
-sudo udevadm control --reload-rules
-sudo systemctl disable --now voltaire-perms.service
-sudo rm /etc/systemd/system/voltaire-perms.service
-sudo systemctl daemon-reload
 ```
 
 ## Troubleshooting
@@ -435,13 +424,14 @@ lsmod | grep hid
 ls /dev/hidraw*
 ```
 
-If `/dev/hidraw*` devices exist but none match the ASUS USB IDs, the device is
-present but not recognized. This tool targets the 2025 ROG Flow Z13
-specifically (USB IDs `0b05:18c6` and `0b05:1a30`).
+If `/dev/hidraw*` devices exist but none match the USB IDs your machine's
+[device page](/devices/) lists for its lighting, the device is present but not
+recognized.
 
 **Permission denied**
 
-Run `sudo voltaire setup` and log out/in to apply the group membership. Verify
+Run `sudo voltaire setup` and log out/in to apply the group membership.
+`systemctl status voltaire-perms` shows what the boot pass granted. Verify
 with:
 
 ```sh

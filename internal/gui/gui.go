@@ -11,6 +11,8 @@ package gui
 
 import (
 	_ "embed"
+	"github.com/dahui/voltaire/v2/internal/coalesce"
+	"github.com/dahui/voltaire/v2/internal/dismiss"
 	"log/slog"
 	"math"
 	"os"
@@ -69,6 +71,9 @@ const (
 // Window is the overlay drawer. All methods must be called from the GTK main
 // thread except subscribeLoop, which runs in a background goroutine.
 type Window struct {
+	// refresher coalesces refreshState calls (internal/coalesce).
+	refresher coalesce.Runner
+
 	win       *gtk.ApplicationWindow
 	gtkWin    *gtk.Window // alias for backend calls
 	backend   Backend     // display backend (layer-shell or gamescope)
@@ -589,12 +594,14 @@ func (w *Window) Toggle() {
 	// Gamescope reaches none of this: openFull there shows the drawer's own
 	// dashboard, so fullVisible stays false and the ordinary drawer toggle below
 	// is already the right behaviour.
-	if w.fullVisible.Load() && w.mainWin != nil {
-		slog.Info("toggle", "action", "hide full window")
-		w.mainWin.hide()
+	switch dismiss.Toggle(w.dismissState()) {
+	case dismiss.HideFull:
+		if w.mainWin != nil {
+			slog.Info("toggle", "action", "hide full window")
+			w.mainWin.hide()
+		}
 		return
-	}
-	if w.visible.Load() {
+	case dismiss.HideDrawer:
 		slog.Info("toggle", "action", "hide")
 		w.hide()
 		return
@@ -813,22 +820,16 @@ func (w *Window) handleGamepadAction(action gamepad.Action) {
 			w.activateOrEdit()
 		}
 	case gamepad.ActionBack:
-		switch {
-		case w.focusEditing:
+		switch dismiss.Back(w.dismissState()) {
+		case dismiss.ExitEdit:
 			w.exitEditMode(false)
-		// Above the window and view-stack cases: B must close the popup, not
-		// the surface underneath it — closing the surface first would strand
-		// the popup's focus frame over a vanished list.
-		case w.popupOpen():
+		case dismiss.ClosePopup:
 			w.closePopup()
-		// Above the drawer cases: while the full window is up, the drawer is
-		// hidden, so falling through to w.hide() dismissed nothing — B could
-		// not close the window at all. Same order as Escape and Toggle.
-		case w.fullVisible.Load():
+		case dismiss.HideFull:
 			if w.mainWin != nil {
 				w.mainWin.hide()
 			}
-		case w.viewStack != nil && w.viewStack.VisibleChildName() != "main":
+		case dismiss.BackToMain:
 			w.showMainView()
 		default:
 			w.hide()
@@ -1085,4 +1086,16 @@ func fileExists(path string) bool {
 // Used by --print-theme to let users bootstrap a custom theme.
 func DefaultThemeTOML() string {
 	return defaultThemeTOML
+}
+
+// dismissState is what is on screen, for internal/dismiss to decide what a
+// "put it away" gesture closes.
+func (w *Window) dismissState() dismiss.State {
+	return dismiss.State{
+		Editing:       w.focusEditing,
+		PopupOpen:     w.popupOpen(),
+		FullVisible:   w.fullVisible.Load(),
+		SubView:       w.viewStack != nil && w.viewStack.VisibleChildName() != "main",
+		DrawerVisible: w.visible.Load(),
+	}
 }

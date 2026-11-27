@@ -103,11 +103,6 @@ func init() {
 		}
 		return amd.NewUndervolter(c.Min, c.Max, c.Text()), nil
 	})
-	// Not an ASUS interface at all — cpufreq's boost switch is generic Linux,
-	// and any future device driver can register the same method name against
-	// its own config. It lives here because this is the only binary that drives
-	// hardware today; when a second device wants it, the factory moves to a
-	// shared package rather than being copied.
 	// The OneXPlayer controller's vibration strength, through the kernel's
 	// hid-oxp driver; USB names which controller.
 	device.RegisterRumble("hid-oxp", func(c device.RumbleConfig) (driver.Rumble, error) {
@@ -117,6 +112,7 @@ func init() {
 		}
 		return hidoxp.NewRumble(v, p), nil
 	})
+	// cpufreq's global boost switch: generic Linux, used by every device file.
 	device.RegisterCPUBoost("cpufreq", func(device.CPUConfig) (driver.CPUBoost, error) {
 		return linux.NewCPUBoost(), nil
 	})
@@ -127,10 +123,9 @@ func init() {
 			NPU:  amd.NPUSource{},
 		}), nil
 	})
-	// Lighting and buttons live in their own driver packages — the Aura HID
-	// protocol and a watched evdev key are not Z13 sysfs concerns — but the Z13
-	// is what registers them, since a registration is a per-binary statement of
-	// which hardware this build drives.
+	// Lighting and buttons live in their own driver packages (the Aura HID
+	// protocol, watched evdev keys, vendor HID reports); this is where they are
+	// registered, like every other method.
 	device.RegisterLighting("aura-hid", func(c device.LightingConfig) (driver.Lighting, error) {
 		cfg := aurahid.Config{Modes: c.Modes, Speeds: c.Speeds}
 		for _, z := range c.Zones {

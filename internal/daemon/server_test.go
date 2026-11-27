@@ -5,7 +5,12 @@ package daemon
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +21,7 @@ import (
 )
 
 func TestDispatchUnknownCommand(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	resp := d.dispatch(request{Cmd: "nope"})
 	if resp.OK {
 		t.Error("dispatch(nope).OK = true, want false")
@@ -122,7 +127,7 @@ func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 
 	// And a device with no fan control rejects on the capability, before the
 	// parse has a shape to judge against.
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	if resp := d.handleFanCurve(request{Cmd: "fancurve", Set: "40:100,50:150"}); resp.OK ||
 		!strings.Contains(resp.Error, "no fan control") {
 		t.Errorf("fanless device = %+v, want the no-fan-control rejection", resp)
@@ -130,7 +135,7 @@ func TestHandleFanCurveRejectsInvalidCurve(t *testing.T) {
 }
 
 func TestHandleProfileRequiresSet(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	resp := d.handleProfile(request{Cmd: "profile"})
 	if resp.OK || !strings.Contains(resp.Error, "requires a set field") {
 		t.Errorf("handleProfile with no set = %+v, want a validation error", resp)
@@ -140,7 +145,7 @@ func TestHandleProfileRequiresSet(t *testing.T) {
 // TestHandleProfileCustomWithoutSavedSettings covers the guard that keeps
 // "custom" from being selected before anything has been saved.
 func TestHandleProfileCustomWithoutSavedSettings(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	resp := d.handleProfile(request{Cmd: "profile", Set: "custom"})
 	if resp.OK {
 		t.Fatal("profile --set custom with no saved settings was accepted, want a rejection")
@@ -162,7 +167,7 @@ func TestHandleBrightnessRejectsOutOfRange(t *testing.T) {
 		}
 	}
 	// No lighting at all says so, rather than claiming a range.
-	if resp := (&Daemon{}).handleBrightness(request{Brightness: 2}); resp.OK || resp.Error != "no HID device available" {
+	if resp := (&Daemon{hw: &device.Device{}}).handleBrightness(request{Brightness: 2}); resp.OK || resp.Error != "no HID device available" {
 		t.Errorf("no lighting = %+v", resp)
 	}
 }
@@ -175,7 +180,7 @@ func TestHandleApplyRejections(t *testing.T) {
 		mut  func(*request)
 		want string
 	}{
-		{"mode the device does not offer", func(r *request) { r.Mode = "disco" }, `mode: unknown mode "disco" (valid: static breathe cycle rainbow strobe)`},
+		{"mode the device does not offer", func(r *request) { r.Mode = "disco" }, `mode: unknown mode "disco" (valid: static|breathe|cycle|rainbow|strobe)`},
 		{"unknown speed", func(r *request) { r.Speed = "ludicrous" }, `speed: unknown speed "ludicrous"`},
 		{"bad colour", func(r *request) { r.Color = "nothex" }, "color: "},
 		{"brightness above the scale", func(r *request) { r.Brightness = 4 }, "out of range 0–3"},
@@ -206,7 +211,7 @@ func TestHandleBatteryLimitRejectsOutOfRange(t *testing.T) {
 }
 
 func TestHandleBatteryLimitWithoutChargeControl(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	resp := d.handleBatteryLimit(request{Cmd: "batterylimit", Set: "80"})
 	if resp.OK || !strings.Contains(resp.Error, "no battery charge control") {
 		t.Errorf("batterylimit on a device with no battery = %+v, want a capability refusal", resp)
@@ -232,12 +237,12 @@ func TestRestoreStockPPTIgnoresUnknownProfiles(t *testing.T) {
 // bug where a legitimate 5W custom TDP was displayed as the stock table:
 // platform_profile is never "custom", so only daemon state can tell them apart.
 func TestEffectiveProfilePrefersDaemonState(t *testing.T) {
-	d := &Daemon{state: api.State{Profile: "custom"}}
+	d := &Daemon{hw: &device.Device{}, state: api.State{Profile: "custom"}}
 	if got := d.effectiveProfile(); got != "custom" {
 		t.Errorf("effectiveProfile() = %q, want \"custom\" from daemon state", got)
 	}
 
-	d = &Daemon{state: api.State{Profile: "quiet"}}
+	d = &Daemon{hw: &device.Device{}, state: api.State{Profile: "quiet"}}
 	if got := d.effectiveProfile(); got != "quiet" {
 		t.Errorf("effectiveProfile() = %q, want \"quiet\"", got)
 	}
@@ -286,7 +291,7 @@ func TestRequestUnmarshalsProtocolShape(t *testing.T) {
 // TestHandleTDPForceBoundaryRejections.
 
 func TestHandleProfileCreateRejectsBadNames(t *testing.T) {
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	for _, name := range []string{"", "quiet", "balanced", "performance", "custom", "Gaming", "my profile", "a/b"} {
 		resp := d.handleProfileCreate(request{Cmd: "profile-create", Set: name})
 		if resp.OK {
@@ -300,7 +305,7 @@ func TestHandleProfileCreateRejectsBadNames(t *testing.T) {
 // platform_profile; a mistyped name would now reach ResetAllFanCurves and drop
 // the user's fan curve on the way to failing.
 func TestHandleProfileRejectsUnknownNames(t *testing.T) {
-	d := &Daemon{state: api.State{Profile: "balanced"}}
+	d := &Daemon{hw: &device.Device{}, state: api.State{Profile: "balanced"}}
 	for _, name := range []string{"performanc", "low-power", "gaming"} {
 		resp := d.handleProfile(request{Cmd: "profile", Set: name})
 		if resp.OK {
@@ -335,7 +340,7 @@ func TestHandleProfileDeleteRefusals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Daemon{state: base()}
+			d := &Daemon{hw: &device.Device{}, state: base()}
 			resp := d.handleProfileDelete(request{Cmd: "profile-delete", Set: tt.target})
 			if resp.OK {
 				t.Fatalf("deleting %q was accepted, want a rejection", tt.target)
@@ -348,7 +353,7 @@ func TestHandleProfileDeleteRefusals(t *testing.T) {
 }
 
 func TestHandleAutoswitchRejectsUnknownTargets(t *testing.T) {
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		CustomProfiles: map[string]api.CustomProfile{"battery-uv": {Name: "battery-uv"}},
 	}}
 	for _, req := range []request{
@@ -392,7 +397,7 @@ func TestResolveEditTargetLocked(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := cloneState(state)
 			s.Profile = tt.active
-			d := &Daemon{state: s}
+			d := &Daemon{hw: &device.Device{}, state: s}
 			d.mu.Lock()
 			got, err := d.resolveEditTargetLocked(tt.arg)
 			d.mu.Unlock()
@@ -414,7 +419,7 @@ func TestResolveEditTargetLocked(t *testing.T) {
 // snapshot, so building the edited profile from it cannot mutate live state
 // before the commit — and cannot alias it afterwards.
 func TestEditTargetIsACopy(t *testing.T) {
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		Profile: "gaming",
 		CustomProfiles: map[string]api.CustomProfile{
 			"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 70}},
@@ -436,44 +441,70 @@ func TestEditTargetIsACopy(t *testing.T) {
 // wedged-EC latch. The watchers stand down on their own; a command from the CLI
 // or GUI would otherwise walk straight into the stalled EC. The refusal returns
 // before any handler runs, which is also what makes this safe to test — nothing
-// here reaches the driver.
+// here reaches the driver. Every command the table marks ec is checked, so a
+// new one is covered as soon as it is declared.
 func TestDispatchRefusesECCommandsWhileWedged(t *testing.T) {
 	t.Parallel()
-	for _, cmd := range []string{
-		"profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
-		"batterylimit", "bootsound", "paneloverdrive", "feature",
-		"bootsound-get", "paneloverdrive-get", "feature-get", "tdp-get",
-	} {
-		t.Run(cmd, func(t *testing.T) {
-			t.Parallel()
-			d := &Daemon{hw: testDev, ecWedged: true}
-			resp := d.dispatch(request{Cmd: cmd, Set: "1"})
-			if resp.OK || resp.Error != errECWedged {
-				t.Errorf("dispatch(%s) while wedged = %+v, want the wedged-EC refusal", cmd, resp)
-			}
-		})
+	guarded := 0
+	for cmd, c := range commands {
+		if !c.ec {
+			continue
+		}
+		guarded++
+		d := &Daemon{hw: testDev, ecWedged: true}
+		if resp := d.dispatch(request{Cmd: cmd, Set: "1"}); resp.OK || resp.Error != errECWedged {
+			t.Errorf("dispatch(%s) while wedged = %+v, want the wedged-EC refusal", cmd, resp)
+		}
+	}
+	if guarded < 14 {
+		t.Errorf("only %d commands are EC-guarded; the table lost some", guarded)
+	}
+	d := &Daemon{hw: testDev, ecWedged: true}
+	if resp := d.dispatch(request{Cmd: api.CmdProfileList}); !resp.OK {
+		t.Errorf("profile-list while wedged = %+v, want OK: it touches only state", resp)
 	}
 }
 
-// TestDispatchLeavesNonECCommandsAlone is the other side: lighting, state-only
-// commands, cpufreq boost, the telemetry ring and undervolt (the SMU, not the
-// EC) are not the EC's business.
-func TestDispatchLeavesNonECCommandsAlone(t *testing.T) {
-	t.Parallel()
-	for _, cmd := range []string{
-		"apply", "off", "brightness", "profile-get", "profile-create", "profile-save",
-		"profile-delete", "profile-list", "autoswitch", "autoswitch-get",
-		"batterylimit-get", "device-get", "telemetry-history", "cpuboost", "cpuboost-get",
-		"fancurve-get", "undervolt", "undervolt-get", "undervolt-reset",
-		"get-state", "subscribe",
-	} {
-		if ecGuarded(cmd) {
-			t.Errorf("ecGuarded(%q) = true; it does not reach the EC", cmd)
+// TestEveryCommandIsDeclaredAndDocumented holds the three places a command
+// name lives together: the api's Cmd constants, the daemon's table, and the
+// protocol reference. A command answered but undocumented, documented but
+// gone, or named in the api with no handler, fails here.
+func TestEveryCommandIsDeclaredAndDocumented(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../../api/protocol.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constants := map[string]bool{}
+	for _, decl := range f.Decls {
+		g, ok := decl.(*ast.GenDecl)
+		if !ok || g.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range g.Specs {
+			v := spec.(*ast.ValueSpec)
+			if strings.HasPrefix(v.Names[0].Name, "Cmd") {
+				name, _ := strconv.Unquote(v.Values[0].(*ast.BasicLit).Value)
+				constants[name] = true
+			}
 		}
 	}
-	d := &Daemon{hw: testDev, ecWedged: true}
-	if resp := d.dispatch(request{Cmd: "profile-list"}); !resp.OK {
-		t.Errorf("profile-list while wedged = %+v, want OK: it touches only state", resp)
+	doc, err := os.ReadFile("../../website/docs/reference/daemon.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range constants {
+		if _, ok := commands[name]; !ok && name != api.CmdSubscribe {
+			t.Errorf("api names %q but the daemon's command table has no handler for it", name)
+		}
+		if !strings.Contains(string(doc), `"cmd":"`+name+`"`) {
+			t.Errorf("%q is not documented in website/docs/reference/daemon.md (as \"cmd\":\"%s\")", name, name)
+		}
+	}
+	for name := range commands {
+		if !constants[name] {
+			t.Errorf("the daemon answers %q, which api/protocol.go does not name", name)
+		}
 	}
 }
 
@@ -570,7 +601,7 @@ func TestEnvDoesNotReadTheKernelWhileWedged(t *testing.T) {
 	reads := 0
 	live := driver.PowerEnvelope{TDPMin: 28, TDPMaxSafe: 75, TDPMaxForced: 80, Interface: "asus-armoury"}
 	data := driver.PowerEnvelope{TDPMin: 5, TDPMaxSafe: 75, TDPMaxForced: 93}
-	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &reads, live: live, data: data}}}
+	hw := &device.Device{ID: "z13", Power: safety.NewEngine(nil, countingPower{reads: &reads, live: live, data: data})}
 
 	d := &Daemon{hw: hw, ecWedged: true}
 	if got := d.env(); got.TDPMin != data.TDPMin || got.Interface != "" {
@@ -603,7 +634,7 @@ func TestEnvDoesNotReadTheKernelWhileWedged(t *testing.T) {
 // two seconds, and on asus-armoury a fresh one is nine live ACPI evaluations.
 func TestEnvReusesARecentRead(t *testing.T) {
 	reads := 0
-	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &reads}}}
+	hw := &device.Device{ID: "z13", Power: safety.NewEngine(nil, countingPower{reads: &reads})}
 	d := &Daemon{hw: hw}
 	d.env()
 	d.env()
@@ -639,7 +670,7 @@ func TestReconcileReadsPowerOnlyWhenItCanAct(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			envReads, limitReads := 0, 0
-			hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: countingPower{reads: &envReads, limitReads: &limitReads}}}
+			hw := &device.Device{ID: "z13", Power: safety.NewEngine(nil, countingPower{reads: &envReads, limitReads: &limitReads})}
 			d := &Daemon{hw: hw, suspending: tt.suspending}
 			d.state.Profile = tt.profile
 			d.state.CustomProfiles = map[string]api.CustomProfile{"custom": {Name: "custom", TDP: tdp}}

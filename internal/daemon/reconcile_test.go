@@ -423,7 +423,7 @@ func TestReconcileTickTracksProfileForLogging(t *testing.T) {
 // action for it whatever the hardware reports, so this exercises the snapshot
 // and locking without any path to a sysfs write.
 func TestReconcileOnceIsRaceFree(t *testing.T) {
-	d := &Daemon{state: sampleState()}
+	d := &Daemon{hw: &device.Device{}, state: sampleState()}
 	d.state.Profile = "balanced"
 
 	var wg sync.WaitGroup

@@ -226,7 +226,7 @@ func tdpLimitsFrom(env driver.PowerEnvelope) *api.TDPLimits {
 //
 // Returns nil for a device with no toggles, which omitempty drops from the wire.
 func (d *Daemon) readFeatures() map[string]int {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return nil
 	}
 	specs := d.hw.Toggles.List()
@@ -252,7 +252,7 @@ func (d *Daemon) readFeatures() map[string]int {
 // Toggles driver that does not implement driver.RebootPending, and a read that
 // failed. None of them is evidence that nothing is pending.
 func (d *Daemon) readPendingReboot() *bool {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return nil
 	}
 	rp, ok := d.hw.Toggles.(driver.RebootPending)
@@ -270,8 +270,8 @@ func (d *Daemon) readPendingReboot() *bool {
 // set, returning the spec or the rejection response. Resolving against List
 // rather than passing the ID straight to Get/Set is what turns the driver's
 // generic ErrUnsupported into a message that names the unknown feature.
-func (d *Daemon) featureSpec(id string) (driver.ToggleSpec, response) {
-	if d.hw == nil || d.hw.Toggles == nil {
+func (d *Daemon) featureSpec(id string) (spec driver.ToggleSpec, rejection response) {
+	if d.hw.Toggles == nil {
 		return driver.ToggleSpec{}, response{OK: false, Error: "feature: no firmware toggles on this device"}
 	}
 	if id == "" {
@@ -316,12 +316,25 @@ func (d *Daemon) handleFeature(req request) response {
 	if !spec.Accepts(value) {
 		return response{OK: false, Error: fmt.Sprintf("feature %s: value must be %s", spec.ID, spec.ValuesText())}
 	}
-	if err := d.hw.Toggles.Set(spec.ID, value); err != nil {
+	if err := d.writeToggle(spec.ID, value); err != nil {
 		return response{OK: false, Error: "feature " + spec.ID + ": " + err.Error()}
 	}
-	slog.Info("feature", "id", spec.ID, "set", value)
-	d.notifyToggleChanged(spec.ID, value)
 	return response{OK: true}
+}
+
+// writeToggle is the one firmware-toggle write all three commands (feature,
+// bootsound, paneloverdrive) go through, so each takes hwMu — a toggle write
+// is a WMI call into the EC, which must not land inside the reconcile
+// watcher's or a resume's sequence — and each notifies (notifyToggleChanged).
+func (d *Daemon) writeToggle(id string, value int) error {
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
+	if err := d.hw.Toggles.Set(id, value); err != nil {
+		return err
+	}
+	slog.Info("toggle", "id", id, "set", value)
+	d.notifyToggleChanged(id, value)
+	return nil
 }
 
 // notifyToggleChanged records a firmware toggle's new value and tells every

@@ -125,7 +125,7 @@ func ipReconcile(c ipClient, chosen ipButton, loaded map[dbus.ObjectPath]bool, f
 // chosenIPButton is the button that opens voltaire, with what the route needs.
 func (d *Daemon) chosenIPButton() ipButton {
 	id := d.drawerButton()
-	if d.hw == nil || id == "" {
+	if id == "" {
 		return ipButton{}
 	}
 	for _, b := range d.hw.ButtonList {
@@ -143,9 +143,6 @@ func (d *Daemon) chosenIPButton() ipButton {
 // usesInputPlumber reports whether any button the device declares can route
 // through InputPlumber; without one the watcher is not started.
 func (d *Daemon) usesInputPlumber() bool {
-	if d.hw == nil {
-		return false
-	}
 	for _, b := range d.hw.ButtonList {
 		if b.InputPlumber != "" {
 			return true

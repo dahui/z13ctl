@@ -8,7 +8,7 @@ import (
 
 func TestFanModeName(t *testing.T) {
 	tests := []struct {
-		mode int
+		mode driver.FanMode
 		want string
 	}{
 		{0, "full-speed"},
@@ -17,9 +17,8 @@ func TestFanModeName(t *testing.T) {
 		{99, "unknown(99)"},
 	}
 	for _, tt := range tests {
-		got := driver.FanModeName(tt.mode)
-		if got != tt.want {
-			t.Errorf("FanModeName(%d) = %q, want %q", tt.mode, got, tt.want)
+		if got := tt.mode.String(); got != tt.want {
+			t.Errorf("FanMode(%d).String() = %q, want %q", int(tt.mode), got, tt.want)
 		}
 	}
 }

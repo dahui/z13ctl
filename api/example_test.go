@@ -1,7 +1,7 @@
 package api_test
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -106,65 +106,9 @@ func ExampleSendBatteryLimitGet() {
 	fmt.Println("battery limit:", limit)
 }
 
-func ExampleSendBootSoundSet() {
-	// Disable the POST boot sound.
-	handled, err := api.SendBootSoundSet(0)
-	if !handled {
-		fmt.Println("daemon not running")
-		return
-	}
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	fmt.Println("boot sound set")
-}
-
-func ExampleSendBootSoundGet() {
-	// Read the current boot sound setting.
-	handled, value, err := api.SendBootSoundGet()
-	if !handled {
-		fmt.Println("daemon not running")
-		return
-	}
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	fmt.Println("boot sound:", value)
-}
-
-func ExampleSendPanelOverdriveSet() {
-	// Enable panel refresh overdrive.
-	handled, err := api.SendPanelOverdriveSet(1)
-	if !handled {
-		fmt.Println("daemon not running")
-		return
-	}
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	fmt.Println("panel overdrive set")
-}
-
-func ExampleSendPanelOverdriveGet() {
-	// Read the current panel overdrive setting.
-	handled, value, err := api.SendPanelOverdriveGet()
-	if !handled {
-		fmt.Println("daemon not running")
-		return
-	}
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	fmt.Println("panel overdrive:", value)
-}
-
 func ExampleSendFanCurveGet() {
 	// Read the current fan curve for both fans via the daemon.
-	handled, value, err := api.SendFanCurveGet()
+	handled, fc, err := api.SendFanCurveGet()
 	if !handled {
 		fmt.Println("daemon not running")
 		return
@@ -173,7 +117,7 @@ func ExampleSendFanCurveGet() {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println("fan curve:", value)
+	fmt.Println("mode:", fc.Mode, "points:", fc.Points)
 }
 
 func ExampleSendFanCurveSet() {
@@ -206,16 +150,20 @@ func ExampleSendFanCurveReset() {
 
 func ExampleSendTdpGet() {
 	// Read current TDP/PPT values via the daemon.
-	handled, value, err := api.SendTdpGet()
+	handled, tdp, err := api.SendTdpGet()
 	if !handled {
 		fmt.Println("daemon not running")
+		return
+	}
+	if errors.Is(err, api.ErrECWedged) {
+		fmt.Println("the EC is not answering yet; try again shortly")
 		return
 	}
 	if err != nil {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println("tdp:", value)
+	fmt.Println("PL1:", tdp.PL1SPL, "PL2:", tdp.PL2SPPT, "PL3:", tdp.FPPT)
 }
 
 func ExampleSendTdpSet() {
@@ -248,7 +196,7 @@ func ExampleSendTdpReset() {
 
 func ExampleSendUndervoltGet() {
 	// Read current Curve Optimizer offsets from daemon state.
-	handled, value, err := api.SendUndervoltGet()
+	handled, uv, err := api.SendUndervoltGet()
 	if !handled {
 		fmt.Println("daemon not running")
 		return
@@ -257,7 +205,7 @@ func ExampleSendUndervoltGet() {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println("undervolt:", value)
+	fmt.Println("CO:", uv.CPUCO, "active:", uv.Active, "profile:", uv.Profile)
 }
 
 func ExampleSendUndervoltSet() {
@@ -365,20 +313,12 @@ func ExampleSendProfileDelete() {
 }
 
 func ExampleSendProfileList() {
-	handled, value, err := api.SendProfileList()
+	handled, profiles, err := api.SendProfileList()
 	if !handled {
 		fmt.Println("daemon not running")
 		return
 	}
 	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	var profiles []struct {
-		api.CustomProfile
-		Active bool `json:"active"`
-	}
-	if err := json.Unmarshal([]byte(value), &profiles); err != nil {
 		fmt.Println("error:", err)
 		return
 	}
@@ -487,20 +427,12 @@ func ExampleSendAutoswitchSet() {
 }
 
 func ExampleSendAutoswitchGet() {
-	handled, value, err := api.SendAutoswitchGet()
+	handled, st, err := api.SendAutoswitchGet()
 	if !handled {
 		fmt.Println("daemon not running")
 		return
 	}
 	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	var st struct {
-		api.AutoswitchState
-		OnAC bool `json:"on_ac"`
-	}
-	if err := json.Unmarshal([]byte(value), &st); err != nil {
 		fmt.Println("error:", err)
 		return
 	}

@@ -68,7 +68,7 @@ top of the range removes any limit (charges to full).`,
 			}
 
 			if err := hw.Battery.SetChargeLimit(limit); err != nil {
-				return fmt.Errorf("setting battery limit: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+				return withSetupHint("setting battery limit", err)
 			}
 			fmt.Printf("Battery charge limit set to %d%%\n", limit)
 			return nil

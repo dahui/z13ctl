@@ -330,7 +330,7 @@ func z13TestConfig(t *testing.T) device.Config {
 		t.Fatalf("Configs: %v", err)
 	}
 	for _, c := range configs {
-		if c.Device.ID == fallbackDeviceID {
+		if c.Device.ID == device.FallbackID {
 			return c
 		}
 	}
@@ -479,7 +479,6 @@ func TestReadFeaturesOmitsWhatItCannotRead(t *testing.T) {
 // so omitempty keeps the key off the wire entirely for such a device.
 func TestReadFeaturesOnADeviceWithNoToggles(t *testing.T) {
 	for name, d := range map[string]*Daemon{
-		"no device":  {},
 		"no toggles": {hw: &device.Device{}},
 		"none declared": {hw: &device.Device{Toggles: fakeToggles{
 			values: map[string]int{},
@@ -536,7 +535,7 @@ func TestDeviceGetCarriesTheKernelsRanges(t *testing.T) {
 	env.TDPMin, env.TDPMaxForced = 28, 80
 	env.PL2 = driver.PowerRange{Min: 32, Max: 92}
 	env.PL3 = driver.PowerRange{Min: 45, Max: 93}
-	hw := &device.Device{ID: "z13", Power: &safety.Engine{Power: deviceFileEnvelope{env: env}}}
+	hw := &device.Device{ID: "z13", Power: safety.NewEngine(nil, deviceFileEnvelope{env: env})}
 
 	p := (&Daemon{hw: hw}).handleDeviceGet().Device.Power
 	if p == nil {

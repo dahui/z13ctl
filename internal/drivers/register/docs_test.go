@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/perms"
 )
 
 const deviceFilesDoc = "../../../website/docs/dev/device-files.md"
@@ -55,6 +56,10 @@ func TestDeviceFilesExampleAssembles(t *testing.T) {
 	if d.Fans == nil || d.Power == nil || d.Profiles == nil || d.Lighting == nil || d.Toggles == nil ||
 		d.Battery == nil || d.CPUBoost == nil || d.Undervolt == nil || d.Telemetry == nil || d.Buttons == nil {
 		t.Errorf("the example left a capability unassembled: %+v", d)
+	}
+	// And voltaire setup knows what every section it uses needs granted.
+	if _, err := perms.For(c); err != nil {
+		t.Errorf("the guide's example has a section setup cannot grant: %v", err)
 	}
 }
 

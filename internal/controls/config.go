@@ -135,7 +135,7 @@ func Load(dir string) (Config, error) {
 // Complaints are returned rather than logged so that the pure function stays
 // pure and the caller decides where they go.
 func Resolve(cfg Config, info *api.DeviceInfo, session ...Capability) (resolved []Control, complaints []string) {
-	wanted := DefaultsFor(info)
+	wanted := defaultsFor(info)
 	if cfg.Quickbar.Controls != nil {
 		wanted = nil
 		seen := make(map[string]bool)

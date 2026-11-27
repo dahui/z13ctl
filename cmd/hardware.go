@@ -5,12 +5,10 @@ package cmd
 // I/O goes through it only on the no-daemon fallbacks and the --get reads that
 // deliberately bypass daemon state.
 //
-// The fallback policy mirrors the daemon's assembleDevice: an unrecognized
-// machine is assumed to be the Z13, because that is exactly what every earlier
-// z13ctl did on non-Z13 hardware — the Z13 drivers all fail soft on absent
-// sysfs. The multi-device milestone replaces this with a conservative generic
-// device. A failed assembly, by contrast, is a build defect (a device file
-// naming a factory this binary does not register) and errors the command.
+// The fallback policy is the daemon's: an unrecognized machine is assumed to
+// be device.FallbackID (device.MatchOrFallback). A failed assembly, by
+// contrast, is a build defect (a device file naming a factory this binary
+// does not register) and errors the command.
 
 import (
 	"fmt"
@@ -19,16 +17,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
-
-// cliFallbackDeviceID is the device assumed when no device file matches this
-// machine. Kept equal to the daemon's fallbackDeviceID; both go away with the
-// generic device.
-const cliFallbackDeviceID = "asus-rog-flow-z13-2025"
 
 var (
 	hwOnce   sync.Once
@@ -43,30 +37,18 @@ var (
 // whether the daemon will handle the operation.
 func hardware() (*device.Device, error) {
 	hwOnce.Do(func() {
-		c, err := device.MatchConfig()
+		c, unmatched, err := device.MatchOrFallback()
 		if err != nil {
+			hwErr = err
+			return
+		}
+		if unmatched != nil {
 			// Once per process: the note explains the op-by-op sysfs errors a
-			// genuinely foreign machine sees next, and is invisible on a Z13.
-			fmt.Fprintln(os.Stderr, "note: no device data matches this machine; assuming the ASUS ROG Flow Z13")
-			configs, cfgErr := device.Configs()
-			if cfgErr != nil {
-				hwErr = cfgErr
-				return
-			}
-			found := false
-			for _, cand := range configs {
-				if cand.Device.ID == cliFallbackDeviceID {
-					c, found = cand, true
-					break
-				}
-			}
-			if !found {
-				hwErr = fmt.Errorf("fallback device %q is not in the embedded device data", cliFallbackDeviceID)
-				return
-			}
+			// genuinely foreign machine sees next.
+			fmt.Fprintf(os.Stderr, "note: no device data matches this machine; assuming the %s\n", c.Device.Name)
 		}
 		hwConfig = c
-		hwDev, hwErr = device.AssembleForSession(c, device.GamingMode())
+		hwDev, hwErr = device.AssembleForSession(c, device.GamingMode)
 	})
 	return hwDev, hwErr
 }
@@ -88,11 +70,30 @@ func envOf(hw *device.Device) driver.PowerEnvelope {
 // the CLI reading the bounds itself would walk into the stalled EC the daemon is
 // avoiding. With no daemon there is no latch to honour, and the driver is asked.
 func powerEnvFor(hw *device.Device) driver.PowerEnvelope {
+	envCache.Lock()
+	defer envCache.Unlock()
+	if envCache.ok && time.Since(envCache.at) < envCacheTTL {
+		return envCache.env
+	}
 	if handled, info, err := api.SendDeviceGet(); handled && err == nil && info != nil && info.Power != nil {
-		return envFromInfo(info.Power)
+		envCache.env, envCache.at, envCache.ok = envFromInfo(info.Power), time.Now(), true
+		return envCache.env
 	}
 	return envOf(hw)
 }
+
+// envCache keeps powerEnvFor's device-get for envCacheTTL, so status --watch
+// does not refetch the document every frame. The ranges can move (asus-armoury
+// keeps one table per power source), so it expires, as the daemon's own
+// envelope cache does.
+var envCache struct {
+	sync.Mutex
+	env driver.PowerEnvelope
+	at  time.Time
+	ok  bool
+}
+
+const envCacheTTL = 30 * time.Second
 
 // envFromInfo is the envelope a device-get document describes.
 func envFromInfo(p *api.PowerInfo) driver.PowerEnvelope {
@@ -227,7 +228,7 @@ func liveFanCurve(hw *device.Device) []api.FanCurvePoint {
 	if hw.Fans == nil {
 		return nil
 	}
-	if mode, err := hw.Fans.ReadMode(); err != nil || mode != 1 {
+	if mode, err := hw.Fans.ReadMode(); err != nil || mode != driver.FanModeCustom {
 		return nil
 	}
 	c, err := hw.Fans.LiveCurve()
@@ -414,4 +415,11 @@ func defaultProfile(hw *device.Device) string {
 		return ""
 	}
 	return hw.Profiles.Default()
+}
+
+// withSetupHint wraps a direct (no-daemon) write's error with the remedy: the
+// usual cause is a machine that has not run setup, so the attribute is still
+// root's.
+func withSetupHint(what string, err error) error {
+	return fmt.Errorf("%s: %w\n  (run 'sudo voltaire setup' to enable non-root access)", what, err)
 }

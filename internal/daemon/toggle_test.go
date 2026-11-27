@@ -13,8 +13,8 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +33,7 @@ func TestNotifyToggleChangedEmitsStateChanged(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(server, []string{api.EventStateChanged})
 
 	go d.notifyToggleChanged("boot_sound", 1)
@@ -59,7 +59,7 @@ func TestNotifyToggleChangedEmitsStateChanged(t *testing.T) {
 func TestNotifyToggleChangedProjectsTheNamedFields(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.notifyToggleChanged("boot_sound", 1)
 	d.notifyToggleChanged("panel_overdrive", 1)
 	if d.state.BootSound != 1 || d.state.PanelOverdrive != 1 {
@@ -83,61 +83,37 @@ func TestNotifyToggleChangedProjectsTheNamedFields(t *testing.T) {
 	}
 }
 
-// TestEveryToggleWritePathNotifies is a source check, and it is a source check
-// because the alternative is a hardware write.
-//
-// All three write paths — the generic feature command and the two named ones —
-// must call notifyToggleChanged. handlePanelOverdrive did the equivalent inline
-// from the start while handleBootSound and handleFeature did nothing, which no
-// client could observe until one rendered toggle rows from State.Features: the
-// same switch then updated live or did not, depending on which command wrote
-// it. A fourth toggle handler added without the call is the same bug again.
+// TestEveryToggleWritePathNotifies: all three toggle commands — the generic
+// feature command and the two named ones — must tell subscribers the state
+// moved. handlePanelOverdrive did from the start while handleBootSound and
+// handleFeature did not, which no client could observe until one rendered
+// toggle rows from State.Features: the same switch then updated live or did
+// not, depending on which command wrote it. All three now share writeToggle;
+// this checks the behaviour over fakeDevice (it used to scan the source,
+// because the alternative was a hardware write).
 func TestEveryToggleWritePathNotifies(t *testing.T) {
-	sources := map[string][]string{
-		"internal/daemon/server.go":     {"handleBootSound", "handlePanelOverdrive"},
-		"internal/daemon/deviceinfo.go": {"handleFeature"},
-	}
-	for file, funcs := range sources {
-		src, err := os.ReadFile("../../" + file)
-		if err != nil {
-			t.Fatalf("reading %s: %v", file, err)
-		}
-		for _, fn := range funcs {
-			body := funcBody(t, string(src), "func (d *Daemon) "+fn+"(")
-			if !strings.Contains(body, "notifyToggleChanged") {
-				t.Errorf("%s writes a firmware toggle without calling notifyToggleChanged; "+
-					"every client showing that toggle stays stale until something else "+
-					"happens to refresh it", fn)
+	for _, req := range []request{
+		{Cmd: "feature", ID: "boot_sound", Set: "1"},
+		{Cmd: "bootsound", Set: "1"},
+		{Cmd: "paneloverdrive", Set: "1"},
+	} {
+		t.Run(req.Cmd, func(t *testing.T) {
+			d, _ := fakeDaemon(t)
+			client, server := net.Pipe()
+			defer func() { _ = client.Close() }()
+			d.addSubscriber(server, []string{api.EventStateChanged})
+			got := make(chan string, 1)
+			go func() {
+				_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+				line, _ := bufio.NewReader(client).ReadString('\n')
+				got <- line
+			}()
+			if resp := d.dispatch(req); !resp.OK {
+				t.Fatalf("%s: %s", req.Cmd, resp.Error)
 			}
-		}
+			if line := <-got; !strings.Contains(line, api.EventStateChanged) {
+				t.Errorf("%s did not notify subscribers (read %q)", req.Cmd, line)
+			}
+		})
 	}
-}
-
-// funcBody returns the source between a function's signature and the next
-// top-level closing brace, with line comments stripped.
-//
-// The stripping is not tidiness. Written without it this guard passed with the
-// call deleted, because each of these functions *mentions* notifyToggleChanged
-// in a comment — so the check was reading prose and reporting it as code. That
-// was caught by running the negative control, which is the only thing that
-// would have caught it.
-func funcBody(t *testing.T, src, signature string) string {
-	t.Helper()
-	start := strings.Index(src, signature)
-	if start < 0 {
-		t.Fatalf("%s not found; this guard needs updating with the rename", signature)
-	}
-	rest := src[start:]
-	if end := strings.Index(rest, "\n}\n"); end >= 0 {
-		rest = rest[:end]
-	}
-	var code strings.Builder
-	for _, line := range strings.Split(rest, "\n") {
-		if i := strings.Index(line, "//"); i >= 0 {
-			line = line[:i]
-		}
-		code.WriteString(line)
-		code.WriteByte('\n')
-	}
-	return code.String()
 }

@@ -118,6 +118,14 @@ func runFeatureSet(arg string) error {
 	if !ok || id == "" {
 		return fmt.Errorf("invalid --set %q: expected id=value, e.g. boot_sound=1", arg)
 	}
+	return setToggle(id, valStr, "Feature "+id+" set to %d\n")
+}
+
+// setToggle validates and writes one firmware toggle, through the daemon when
+// it is running, and prints confirm (a format taking the value). It is the one
+// toggle write path the CLI has: feature --set and the named bootsound and
+// paneloverdrive commands all come here, differing only in what they print.
+func setToggle(id, valStr, confirm string) error {
 	value, err := strconv.Atoi(strings.TrimSpace(valStr))
 	if err != nil {
 		return fmt.Errorf("invalid value %q for %s: must be an integer", valStr, id)
@@ -158,7 +166,7 @@ func runFeatureSet(arg string) error {
 		if sendErr != nil {
 			return sendErr
 		}
-		fmt.Printf("Feature %s set to %d\n", id, value)
+		fmt.Printf(confirm, value)
 		return nil
 	}
 
@@ -170,9 +178,9 @@ func runFeatureSet(arg string) error {
 		return fmt.Errorf("no firmware toggles on this device")
 	}
 	if err := hw.Toggles.Set(id, value); err != nil {
-		return fmt.Errorf("setting %s: %w\n  (run 'sudo voltaire setup' to enable non-root access)", id, err)
+		return withSetupHint(fmt.Sprintf("setting %s", id), err)
 	}
-	fmt.Printf("Feature %s set to %d\n", id, value)
+	fmt.Printf(confirm, value)
 	return nil
 }
 
@@ -191,25 +199,3 @@ func toggleSpecOf(t api.ToggleInfo) driver.ToggleSpec {
 // toggleInfoAccepts applies the firmware's legal values (ToggleSpec.Accepts)
 // to a toggle described on the wire.
 func toggleInfoAccepts(t api.ToggleInfo, v int) bool { return toggleSpecOf(t).Accepts(v) }
-
-// checkToggleValue validates a value for one of this device's toggles against
-// the firmware's legal values. Reading the toggle list touches only attribute
-// metadata, never the value itself.
-func checkToggleValue(id string, value int) error {
-	hw, err := hardware()
-	if err != nil {
-		return err
-	}
-	if hw.Toggles == nil {
-		return fmt.Errorf("no firmware toggles on this device")
-	}
-	for _, t := range hw.Toggles.List() {
-		if t.ID == id {
-			if !t.Accepts(value) {
-				return fmt.Errorf("invalid value %d: must be %s", value, t.ValuesText())
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("this device does not offer %s", id)
-}

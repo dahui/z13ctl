@@ -183,7 +183,7 @@ func TestFromDeviceNarrowsStockTableToTheComparedRails(t *testing.T) {
 		t.Errorf("extra rails leaked into the conversion:\n got: %+v\nwant: %+v", got, DefaultLimits())
 	}
 	// The rails that are compared must survive intact.
-	if !got.IsStockPPT(api.TDPState{PL1SPL: 52, PL2SPPT: 71, FPPT: 70}) {
+	if !got.isStockPPT(api.TDPState{PL1SPL: 52, PL2SPPT: 71, FPPT: 70}) {
 		t.Error("balanced's own values no longer read as stock")
 	}
 }
@@ -230,7 +230,7 @@ func TestFromDeviceRecordsWhatTheDeviceLacks(t *testing.T) {
 	if len(l.PowerLimits) != 1 || l.PowerLimits[0].ID != "pl1" || l.PowerLimits[0].Label != "TDP" {
 		t.Errorf("PowerLimits = %+v, want the device's single TDP limit", l.PowerLimits)
 	}
-	if l.HasLimit("pl2") || l.HasLimit("pl3") || !l.HasLimit("pl1") {
+	if l.hasLimit("pl2") || l.hasLimit("pl3") || !l.hasLimit("pl1") {
 		t.Error("HasLimit disagrees with the device's one limit")
 	}
 	if l.TDPMin != 8 || l.TDPMaxSafe != 25 || l.TDPMaxForced != 30 {

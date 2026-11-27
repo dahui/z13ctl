@@ -4,7 +4,6 @@ package cmd
 // offsets via the ryzen_smu kernel module. Requires the ryzen_smu DKMS module.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -75,18 +74,11 @@ nothing is applied to the CPU until you select that profile.`,
 }
 
 func runUndervoltGet() error {
-	if handled, value, err := api.SendUndervoltGet(); handled {
+	if handled, uv, err := api.SendUndervoltGet(); handled {
 		if err != nil {
 			return err
 		}
-		var resp struct {
-			api.UndervoltState
-			Profile string `json:"profile"`
-		}
-		if jErr := json.Unmarshal([]byte(value), &resp); jErr != nil {
-			return fmt.Errorf("parsing undervolt state: %w", jErr)
-		}
-		printUndervoltState(resp.UndervoltState, resp.Profile)
+		printUndervoltState(uv.UndervoltState, uv.Profile)
 		return nil
 	}
 
@@ -173,7 +165,7 @@ func runUndervoltSet() error {
 		return err
 	}
 	if err := hw.Undervolt.Apply(cpuOffset); err != nil {
-		return fmt.Errorf("setting curve optimizer: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("setting curve optimizer", err)
 	}
 	fmt.Printf("Curve Optimizer set: CPU %d\n", cpuOffset)
 	return nil
@@ -230,7 +222,7 @@ func runUndervoltReset() error {
 		return nil
 	}
 	if err := hw.Undervolt.Reset(); err != nil {
-		return fmt.Errorf("resetting curve optimizer: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("resetting curve optimizer", err)
 	}
 	fmt.Println("Curve Optimizer reset to stock (0)")
 	return nil

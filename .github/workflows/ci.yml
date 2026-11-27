@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   # Unit tests need no GTK4 headers, so they run on plain ubuntu and report fast.
-  # PURE_PKGS is derived by the Makefile, so a newly added package is picked up
+  # HERMETIC_PKGS is derived by the Makefile, so a newly added package is picked up
   # here without touching this file.
   test:
     name: Test
@@ -31,6 +31,10 @@ jobs:
       # the tagged tree. Nothing else here would notice: stale go.sum entries are
       # ignored by the build. v1.1.6 hashes survived yesterday's api bump this way.
       - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      # api/ is its own module, published on its own; the step above never sees it.
+      - name: api go.mod and go.sum are tidy
+        working-directory: api
         run: go mod tidy -diff
       - name: Unit tests
         run: make test
@@ -116,6 +120,12 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15.0
+      # The public api module, which the step above (root module only) skips.
+      # make lint has always run both; CI linted only one until 2026-11-26.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          working-directory: api
 
       # Last, and always: lint reuses the warm build cache above and adds its own
       # analysis output to it, so saving after lint captures more than saving after

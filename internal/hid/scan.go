@@ -81,7 +81,7 @@ func findAll(known []Known) (*Device, error) {
 		if hasAuraReport(ueventPath, f) {
 			nodes = append(nodes, hidrawNode{path: devPath, name: name, f: f})
 		} else {
-			_ = f.Close() //nolint:errcheck // best-effort cleanup
+			_ = f.Close() // best-effort cleanup
 		}
 	}
 
@@ -115,7 +115,7 @@ func findByName(want string, known []Known) (*Device, error) {
 			continue
 		}
 		if !hasAuraReport(ueventPath, f) {
-			_ = f.Close() //nolint:errcheck // best-effort cleanup
+			_ = f.Close() // best-effort cleanup
 			continue      // skip nodes without the Aura report, same as findAll
 		}
 		return &Device{nodes: []hidrawNode{{path: devPath, name: name, f: f}}}, nil
@@ -150,7 +150,7 @@ func ListDevices(known []Known) []DeviceInfo {
 			info.HasAura = hasAuraReport(ueventPath, nil)
 		} else {
 			info.HasAura = hasAuraReport(ueventPath, f)
-			_ = f.Close() //nolint:errcheck // best-effort cleanup
+			_ = f.Close() // best-effort cleanup
 		}
 		results = append(results, info)
 	}

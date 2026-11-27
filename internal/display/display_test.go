@@ -187,7 +187,7 @@ func TestFormatHzRounds(t *testing.T) {
 		29.97: "30 Hz",
 	}
 	for hz, want := range cases {
-		if got := FormatHz(hz); got != want {
+		if got := formatHz(hz); got != want {
 			t.Errorf("FormatHz(%v) = %q, want %q", hz, got, want)
 		}
 	}

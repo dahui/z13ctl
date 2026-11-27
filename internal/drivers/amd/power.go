@@ -54,7 +54,7 @@ func setPPT(stapm, fast, slow int) error {
 		cmd  uint32
 		w    int
 	}{{"STAPM", pptCmdSTAPM, stapm}, {"fast PPT", pptCmdFast, fast}, {"slow PPT", pptCmdSlow, slow}} {
-		code, _, err := SendSMUCommand(MailboxMP1, c.cmd, [6]uint32{uint32(c.w) * 1000})
+		code, _, err := sendSMUCommand(MailboxMP1, c.cmd, [6]uint32{uint32(c.w) * 1000})
 		if err != nil {
 			return fmt.Errorf("setting %s on %s: %w", c.name, p.Name, err)
 		}
@@ -165,6 +165,19 @@ func (p *SMUPower) Read() (api.TDPState, error) {
 		return api.TDPState{}, fmt.Errorf("power limits: no firmware row for profile %q", p.profile)
 	}
 	return row, nil
+}
+
+// PlanWrites is driver.WritePlanner: the three SMU messages Apply(t) would
+// send, clamped as Apply clamps.
+func (p *SMUPower) PlanWrites(t api.TDPState) []string {
+	p.mu.Lock()
+	env := p.envFor(p.onACNow())
+	p.mu.Unlock()
+	return []string{
+		fmt.Sprintf("send SMU message 0x%02X (STAPM) = %d W", pptCmdSTAPM, clamp(t.PL1SPL, env.TDPMin, env.TDPMaxForced)),
+		fmt.Sprintf("send SMU message 0x%02X (fast PPT) = %d W", pptCmdFast, clamp(t.FPPT, env.PL3.Min, env.PL3.Max)),
+		fmt.Sprintf("send SMU message 0x%02X (slow PPT) = %d W", pptCmdSlow, clamp(t.PL2SPPT, env.PL2.Min, env.PL2.Max)),
+	}
 }
 
 // Apply writes the limits, clamped into the current source's ranges (a value

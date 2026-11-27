@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
+	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
 func TestFindFanHwmonPathByName(t *testing.T) {
@@ -41,7 +42,7 @@ func TestSetFanCurvesWritesBothFansAndEnablesCustom(t *testing.T) {
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 50 + i*20}
 	}
-	if err := SetFanCurves(points); err != nil {
+	if err := setFanCurves(points); err != nil {
 		t.Fatalf("SetFanCurves() = %v, want nil", err)
 	}
 
@@ -82,7 +83,7 @@ func seedReadingsSentinel(t *testing.T, f *fakeSysfs) {
 func TestSetFanCurvesRejectsWrongPointCount(t *testing.T) {
 	f := newFakeSysfs(t)
 	f.seedFanCurveFiles(t, 40, 100)
-	err := SetFanCurves([]api.FanCurvePoint{{Temp: 30, PWM: 100}})
+	err := setFanCurves([]api.FanCurvePoint{{Temp: 30, PWM: 100}})
 	if err == nil || !strings.Contains(err.Error(), "exactly 8 points") {
 		t.Fatalf("SetFanCurves() with 1 point = %v, want the kernel's count named", err)
 	}
@@ -91,7 +92,7 @@ func TestSetFanCurvesRejectsWrongPointCount(t *testing.T) {
 func TestSetFanCurvesErrorsWhenHwmonMissing(t *testing.T) {
 	swap(t, &sysHwmonDir, t.TempDir())
 	points := make([]api.FanCurvePoint, fakeCurvePoints)
-	if err := SetFanCurves(points); err == nil {
+	if err := setFanCurves(points); err == nil {
 		t.Error("SetFanCurves() = nil, want an error when the hwmon device is absent")
 	}
 }
@@ -105,7 +106,7 @@ func TestResetAllFanCurvesSetsAutoOnCurveDeviceOnly(t *testing.T) {
 	if err := setAllFanModes(1); err != nil {
 		t.Fatalf("setAllFanModes(1) = %v", err)
 	}
-	if err := ResetAllFanCurves(); err != nil {
+	if err := resetAllFanCurves(); err != nil {
 		t.Fatalf("ResetAllFanCurves() = %v, want nil", err)
 	}
 	for _, fan := range fakeFanChannels {
@@ -135,7 +136,7 @@ func TestResetAllFanCurvesFailsWhenReleaseDoesNotStick(t *testing.T) {
 	fanWriteInt = func(string, int) error { return nil }
 	t.Cleanup(func() { fanWriteInt = orig })
 
-	err := ResetAllFanCurves()
+	err := resetAllFanCurves()
 	if err == nil {
 		t.Fatal("ResetAllFanCurves() = nil, want an error when the kernel does not honour the release")
 	}
@@ -185,7 +186,7 @@ func TestVerifyFanModeReleased(t *testing.T) {
 // path: nothing but the curve device may be written, because the base device's
 // store handler clears the driver's custom-curve enabled flag as a side effect.
 func TestSetFanModeLeavesReadingsDeviceAlone(t *testing.T) {
-	for _, mode := range []int{1, 2} {
+	for _, mode := range []driver.FanMode{driver.FanModeCustom, driver.FanModeAuto} {
 		f := newFakeSysfs(t)
 		f.seedFanCurveFiles(t, 40, 100)
 		seedReadingsSentinel(t, f)
@@ -193,7 +194,7 @@ func TestSetFanModeLeavesReadingsDeviceAlone(t *testing.T) {
 		if err := setFanMode(1, mode); err != nil {
 			t.Fatalf("setFanMode(1, %d) = %v, want nil", mode, err)
 		}
-		if got := f.readInt(t, f.hwmon+"/pwm1_enable"); got != mode {
+		if got := f.readInt(t, f.hwmon+"/pwm1_enable"); got != int(mode) {
 			t.Errorf("curve device pwm1_enable = %d, want %d", got, mode)
 		}
 		if got := f.readInt(t, f.hwmonRead+"/pwm1_enable"); got != readingsSentinel {
@@ -218,7 +219,7 @@ func TestSetFanCurvesFailsWhenCurveDoesNotStick(t *testing.T) {
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 50 + i*20}
 	}
-	err := SetFanCurves(points)
+	err := setFanCurves(points)
 	if err == nil {
 		t.Fatal("SetFanCurves() = nil, want an error when the kernel does not honour the curve")
 	}
@@ -268,25 +269,6 @@ func TestVerifyFanCurveActiveErrorsWhenHwmonMissing(t *testing.T) {
 	}
 }
 
-// TestSetAllFansFullSpeedUsesReadingsDeviceOnly pins the hardware quirk
-// documented on SetAllFansFullSpeed: only the base "asus" device accepts
-// pwm_enable=0, and only pwm1_enable is functional.
-func TestSetAllFansFullSpeedUsesReadingsDeviceOnly(t *testing.T) {
-	f := newFakeSysfs(t)
-	f.seedFanCurveFiles(t, 40, 100)
-
-	if err := SetAllFansFullSpeed(); err != nil {
-		t.Fatalf("SetAllFansFullSpeed() = %v, want nil", err)
-	}
-	if got := f.readInt(t, f.hwmonRead+"/pwm1_enable"); got != 0 {
-		t.Errorf("readings pwm1_enable = %d, want 0 (full-speed)", got)
-	}
-	// The curve device must be left alone — it rejects mode 0 with EINVAL.
-	if got := f.readInt(t, f.hwmon+"/pwm1_enable"); got == 0 {
-		t.Error("curve device pwm1_enable was set to 0; that device rejects full-speed mode")
-	}
-}
-
 func TestSetFanModeFullSpeedErrorsWithoutReadingsDevice(t *testing.T) {
 	root := t.TempDir()
 	swap(t, &sysHwmonDir, root)
@@ -303,7 +285,7 @@ func TestReadFanCurvesRoundTrip(t *testing.T) {
 	for i := range points {
 		points[i] = api.FanCurvePoint{Temp: 30 + i*5, PWM: 60 + i*10}
 	}
-	if err := SetFanCurves(points); err != nil {
+	if err := setFanCurves(points); err != nil {
 		t.Fatalf("SetFanCurves() = %v", err)
 	}
 	curves, err := ReadFanCurves()
@@ -350,24 +332,5 @@ func TestFanReadersErrorWhenDeviceMissing(t *testing.T) {
 	}
 	if _, err := ReadFanCurves(); err == nil {
 		t.Error("ReadFanCurves() = nil, want an error")
-	}
-}
-
-func TestBootSoundAndPanelOverdriveRoundTrip(t *testing.T) {
-	f := newFakeSysfs(t)
-	f.writeFile(t, FindBootSoundPath(), "0")
-	f.writeFile(t, FindPanelOverdrivePath(), "0")
-
-	if err := SetBootSound(1); err != nil {
-		t.Fatalf("SetBootSound(1) = %v, want nil", err)
-	}
-	if got := f.readInt(t, FindBootSoundPath()); got != 1 {
-		t.Errorf("boot_sound = %d, want 1", got)
-	}
-	if err := SetPanelOverdrive(1); err != nil {
-		t.Fatalf("SetPanelOverdrive(1) = %v, want nil", err)
-	}
-	if got := f.readInt(t, FindPanelOverdrivePath()); got != 1 {
-		t.Errorf("panel_overdrive = %d, want 1", got)
 	}
 }

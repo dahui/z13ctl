@@ -75,6 +75,18 @@ type FanShape struct {
 //     The pre-sleep release depends on it — an unnoticed failure is a machine
 //     that runs its fans through the whole suspend.
 type FanController interface {
+	FanCurves
+
+	// Release hands the fans back to firmware auto and verifies it took effect.
+	Release() error
+}
+
+// FanCurves is everything a FanController does except Release: what a Device
+// hands out. A release makes the firmware re-apply the profile's own power
+// limits (issue #22), so it is reached only through safety.Engine.ReleaseFans
+// (or Device.ReleaseFans), which puts the intended limit back; leaving Release
+// off this interface is what makes that a compile error rather than a rule.
+type FanCurves interface {
 	Shape() FanShape
 
 	// ReadRPM returns the current speed of each fan.
@@ -82,32 +94,41 @@ type FanController interface {
 
 	// ReadMode returns the pwm_enable state: 0 full speed, 1 custom curve,
 	// 2 firmware auto. This is the reconcile watcher's ground truth.
-	ReadMode() (int, error)
+	ReadMode() (FanMode, error)
 
 	// ApplyCurve writes pts to every fan and verifies it took effect.
 	ApplyCurve(pts []api.FanCurvePoint) error
-
-	// Release hands the fans back to firmware auto and verifies it took effect.
-	Release() error
 
 	// LiveCurve returns the curve currently programmed, whether or not it is
 	// active — curve registers survive a release on the Z13.
 	LiveCurve() ([]api.FanCurvePoint, error)
 }
 
-// FanModeName returns a human-readable name for a FanController.ReadMode
-// value. It lives with the interface because the 0/1/2 semantics are the
-// interface's own contract, not any one device's.
-func FanModeName(mode int) string {
-	switch mode {
-	case 0:
+// FanMode is a fan channel's mode, as FanController.ReadMode reports it. The
+// values are hwmon's pwm_enable (0, 1, 2), so a driver over hwmon converts
+// with a cast; they live with the interface because they are its contract,
+// not any one device's.
+type FanMode int
+
+// The fan modes. FanModeUnknown is a reading, never written.
+const (
+	FanModeUnknown   FanMode = -1 // no channel's mode could be read: never act on it
+	FanModeFullSpeed FanMode = 0  // forced full speed (more cooling than any curve)
+	FanModeCustom    FanMode = 1  // a custom curve is in force
+	FanModeAuto      FanMode = 2  // the firmware's own control
+)
+
+// String names a fan mode for logs and the CLI.
+func (m FanMode) String() string {
+	switch m {
+	case FanModeFullSpeed:
 		return "full-speed"
-	case 1:
+	case FanModeCustom:
 		return "custom"
-	case 2:
+	case FanModeAuto:
 		return "auto"
 	default:
-		return fmt.Sprintf("unknown(%d)", mode)
+		return fmt.Sprintf("unknown(%d)", int(m))
 	}
 }
 
@@ -173,6 +194,15 @@ var ErrProfileNotOffered = errors.New("platform profile is not one this device o
 // have lost what was written.
 type PowerForgetter interface {
 	Forget()
+}
+
+// WritePlanner is implemented by a PowerLimiter that can say, for a dry run,
+// what Apply(s) would write — one line each, naming where the value goes
+// ("write 30 to /sys/…/ppt_pl1_spl/current_value", "SMU message 0x14 (STAPM) =
+// 30 W"). A limiter without it gets a generic line, never another driver's
+// paths.
+type WritePlanner interface {
+	PlanWrites(s api.TDPState) []string
 }
 
 // DeviceEnvelope is implemented by a PowerLimiter whose Envelope reads the
@@ -300,6 +330,28 @@ func (c LightingCaps) HasSpeed(name string) bool {
 		}
 	}
 	return false
+}
+
+// EffectError names the lighting request field that is wrong and why, so the
+// CLI ("--mode: …") and the daemon ("mode: …") word one rule the same way.
+type EffectError struct{ Field, Msg string }
+
+func (e *EffectError) Error() string { return e.Field + ": " + e.Msg }
+
+// CheckEffect reports what is wrong with a mode and speed on this device, or
+// nil. The valid names come from the caps, so no layer restates the list.
+func (c LightingCaps) CheckEffect(mode, speed string) *EffectError {
+	if _, ok := c.Mode(mode); !ok {
+		names := make([]string, len(c.Modes))
+		for i, m := range c.Modes {
+			names[i] = m.Name
+		}
+		return &EffectError{"mode", fmt.Sprintf("unknown mode %q (valid: %s)", mode, strings.Join(names, "|"))}
+	}
+	if !c.HasSpeed(speed) {
+		return &EffectError{"speed", fmt.Sprintf("unknown speed %q (valid: %s)", speed, strings.Join(c.Speeds, "|"))}
+	}
+	return nil
 }
 
 // ProfileController reads and writes the platform performance profile.

@@ -5,12 +5,6 @@ package cmd
 // No HID access required.
 
 import (
-	"fmt"
-	"strconv"
-
-	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/cli"
-
 	"github.com/spf13/cobra"
 )
 
@@ -33,60 +27,13 @@ feature command shows them); for this switch:
   1 — enabled`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if !panelOverdriveGetFlag && panelOverdriveSetFlag == "" {
-			return cmd.Help()
+		switch {
+		case panelOverdriveSetFlag != "":
+			return setToggle("panel_overdrive", panelOverdriveSetFlag, "Panel overdrive set to %d\n")
+		case panelOverdriveGetFlag:
+			return runFeatureGet("panel_overdrive")
 		}
-
-		if panelOverdriveSetFlag != "" {
-			value, err := strconv.Atoi(panelOverdriveSetFlag)
-			if err != nil {
-				return fmt.Errorf("invalid value %q: must be an integer", panelOverdriveSetFlag)
-			}
-			if verr := checkToggleValue("panel_overdrive", value); verr != nil {
-				return verr
-			}
-
-			if dryRunFlag {
-				cli.DryRunPanelOverdrive(value)
-				return nil
-			}
-
-			if handled, sendErr := api.SendPanelOverdriveSet(value); handled {
-				if sendErr != nil {
-					return sendErr
-				}
-				fmt.Printf("Panel overdrive set to %d\n", value)
-				return nil
-			}
-
-			hw, err := hardware()
-			if err != nil {
-				return err
-			}
-			if hw.Toggles == nil {
-				return fmt.Errorf("no panel overdrive control on this device")
-			}
-			if err := hw.Toggles.Set("panel_overdrive", value); err != nil {
-				return fmt.Errorf("setting panel overdrive: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
-			}
-			fmt.Printf("Panel overdrive set to %d\n", value)
-			return nil
-		}
-
-		// --get
-		hw, err := hardware()
-		if err != nil {
-			return err
-		}
-		if hw.Toggles == nil {
-			return fmt.Errorf("no panel overdrive control on this device")
-		}
-		v, err := hw.Toggles.Get("panel_overdrive")
-		if err != nil {
-			return fmt.Errorf("reading panel overdrive: %w", err)
-		}
-		fmt.Println(v)
-		return nil
+		return cmd.Help()
 	},
 }
 

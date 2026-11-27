@@ -85,7 +85,7 @@ func TestBuildThemeCSS_PreservesTemplateRules(t *testing.T) {
 
 func TestStripDefineColors(t *testing.T) {
 	input := "@define-color z13-accent #cc0000;\n.foo { color: red; }\n@define-color z13-bg #1a1a1a;\n.bar { }\n"
-	got := StripDefineColors(input)
+	got := stripDefineColors(input)
 	if strings.Contains(got, "@define-color") {
 		t.Error("@define-color lines were not stripped")
 	}
@@ -99,14 +99,14 @@ func TestStripDefineColors(t *testing.T) {
 
 func TestStripDefineColors_IndentedLine(t *testing.T) {
 	input := "  @define-color z13-accent #cc0000;\n.foo { }\n"
-	got := StripDefineColors(input)
+	got := stripDefineColors(input)
 	if strings.Contains(got, "@define-color") {
 		t.Error("indented @define-color line was not stripped")
 	}
 }
 
 func TestStripDefineColors_EmptyInput(t *testing.T) {
-	got := StripDefineColors("")
+	got := stripDefineColors("")
 	if got != "\n" { // strings.Split("", "\n") produces one empty element
 		t.Errorf("unexpected output for empty input: %q", got)
 	}
@@ -217,7 +217,7 @@ func TestBuildThemeCSSCanOverrideEveryTemplateToken(t *testing.T) {
 	}
 
 	// And BuildThemeCSS's own output must stand on its own too.
-	for _, tok := range UndefinedColorTokens(StripDefineColors(generated)) {
+	for _, tok := range UndefinedColorTokens(stripDefineColors(generated)) {
 		t.Errorf("BuildThemeCSS emits a reference to %s that it does not define", tok)
 	}
 }

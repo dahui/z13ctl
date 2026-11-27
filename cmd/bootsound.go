@@ -4,12 +4,6 @@ package cmd
 // the ASUS asus-armoury firmware-attributes sysfs interface. No HID access required.
 
 import (
-	"fmt"
-	"strconv"
-
-	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/cli"
-
 	"github.com/spf13/cobra"
 )
 
@@ -32,60 +26,13 @@ feature command shows them); for this switch:
   1 — enabled (audible POST beep)`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if !bootSoundGetFlag && bootSoundSetFlag == "" {
-			return cmd.Help()
+		switch {
+		case bootSoundSetFlag != "":
+			return setToggle("boot_sound", bootSoundSetFlag, "Boot sound set to %d\n")
+		case bootSoundGetFlag:
+			return runFeatureGet("boot_sound")
 		}
-
-		if bootSoundSetFlag != "" {
-			value, err := strconv.Atoi(bootSoundSetFlag)
-			if err != nil {
-				return fmt.Errorf("invalid value %q: must be an integer", bootSoundSetFlag)
-			}
-			if verr := checkToggleValue("boot_sound", value); verr != nil {
-				return verr
-			}
-
-			if dryRunFlag {
-				cli.DryRunBootSound(value)
-				return nil
-			}
-
-			if handled, sendErr := api.SendBootSoundSet(value); handled {
-				if sendErr != nil {
-					return sendErr
-				}
-				fmt.Printf("Boot sound set to %d\n", value)
-				return nil
-			}
-
-			hw, err := hardware()
-			if err != nil {
-				return err
-			}
-			if hw.Toggles == nil {
-				return fmt.Errorf("no boot sound control on this device")
-			}
-			if err := hw.Toggles.Set("boot_sound", value); err != nil {
-				return fmt.Errorf("setting boot sound: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
-			}
-			fmt.Printf("Boot sound set to %d\n", value)
-			return nil
-		}
-
-		// --get
-		hw, err := hardware()
-		if err != nil {
-			return err
-		}
-		if hw.Toggles == nil {
-			return fmt.Errorf("no boot sound control on this device")
-		}
-		v, err := hw.Toggles.Get("boot_sound")
-		if err != nil {
-			return fmt.Errorf("reading boot sound: %w", err)
-		}
-		fmt.Println(v)
-		return nil
+		return cmd.Help()
 	},
 }
 

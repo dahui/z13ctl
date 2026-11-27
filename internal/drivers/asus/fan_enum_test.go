@@ -44,10 +44,10 @@ func TestFanCurvesFollowTheKernelsShape(t *testing.T) {
 	if err != nil || !slices.Equal(chans, []int{1}) || n != 6 {
 		t.Fatalf("FanCurveShape() = %v, %d, %v; want [1], 6", chans, n, err)
 	}
-	if werr := SetFanCurves(ramp(8)); werr == nil || !strings.Contains(werr.Error(), "exactly 6 points") {
+	if werr := setFanCurves(ramp(8)); werr == nil || !strings.Contains(werr.Error(), "exactly 6 points") {
 		t.Errorf("an 8-point curve on 6-point hardware = %v, want refused", werr)
 	}
-	if werr := SetFanCurves(ramp(6)); werr != nil {
+	if werr := setFanCurves(ramp(6)); werr != nil {
 		t.Fatalf("SetFanCurves(6 points) = %v", werr)
 	}
 	if got := f.readInt(t, f.hwmon+"/pwm1_auto_point6_pwm"); got != 100 {
@@ -69,7 +69,7 @@ func TestFanCurveShapeRefusesDisagreeingChannels(t *testing.T) {
 	if _, _, err := FanCurveShape(); err == nil {
 		t.Error("channels with 8 and 6 points = nil error, want refused")
 	}
-	if err := SetFanCurves(ramp(8)); err == nil {
+	if err := setFanCurves(ramp(8)); err == nil {
 		t.Error("SetFanCurves on disagreeing channels = nil, want refused")
 	}
 }

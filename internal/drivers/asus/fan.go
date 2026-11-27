@@ -192,20 +192,23 @@ func FanKernelLabels() []string {
 }
 
 // fanCurveMode pairs a curve-device channel with its pwm_enable value.
-type fanCurveMode struct{ channel, mode int }
+type fanCurveMode struct {
+	channel int
+	mode    driver.FanMode
+}
 
 // ReadFanCurveModes returns the pwm_enable value for each channel on the curve
-// hwmon device, using -1 for a channel whose mode cannot be read. A missing
+// hwmon device, using driver.FanModeUnknown for a channel whose mode cannot be read. A missing
 // channel is not a failure: a SKU that exposes only the CPU curve is a
 // supported configuration, and the reconcile watcher must still be able to
 // act on the channel it has. An error is returned only when the hwmon device
 // itself is absent.
-func ReadFanCurveModes() ([]int, error) {
+func ReadFanCurveModes() ([]driver.FanMode, error) {
 	modes, err := readFanCurveModes()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]int, len(modes))
+	out := make([]driver.FanMode, len(modes))
 	for i, m := range modes {
 		out[i] = m.mode
 	}
@@ -219,11 +222,11 @@ func readFanCurveModes() ([]fanCurveMode, error) {
 	}
 	var out []fanCurveMode
 	for _, ch := range curveModeChannels(dir) {
-		v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", ch))
-		if err != nil {
-			v = -1
+		mode := driver.FanModeUnknown
+		if v, err := readIntFile(dir + "/" + fmt.Sprintf("pwm%d_enable", ch)); err == nil {
+			mode = driver.FanMode(v)
 		}
-		out = append(out, fanCurveMode{ch, v})
+		out = append(out, fanCurveMode{ch, mode})
 	}
 	return out, nil
 }
@@ -248,13 +251,13 @@ func VerifyFanCurveActive() error {
 		return err
 	}
 	for _, m := range modes {
-		if m.mode == -1 || m.mode == 1 {
+		if m.mode == driver.FanModeUnknown || m.mode == driver.FanModeCustom {
 			continue
 		}
 		return fmt.Errorf(
 			"custom fan curve was written but the kernel is not honouring it (pwm%d_enable = %d, %s): "+
 				"a platform_profile change disables custom fan curves in the kernel driver; re-apply the curve",
-			m.channel, m.mode, driver.FanModeName(m.mode))
+			m.channel, int(m.mode), m.mode)
 	}
 	return nil
 }
@@ -297,7 +300,7 @@ func ReadFanCurves() ([][]api.FanCurvePoint, error) {
 // them, so without it every caller reports success for a curve that is no
 // longer in effect — including ApplyTDPSafely, whose thermal floor depends on
 // this write having stuck.
-func SetFanCurves(points []api.FanCurvePoint) error {
+func setFanCurves(points []api.FanCurvePoint) error {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
@@ -320,7 +323,7 @@ func SetFanCurves(points []api.FanCurvePoint) error {
 		}
 	}
 	for _, ch := range chans { // enable custom mode on every curve channel
-		if err := setFanMode(ch, 1); err != nil {
+		if err := setFanMode(ch, driver.FanModeCustom); err != nil {
 			return err
 		}
 	}
@@ -340,30 +343,30 @@ func SetFanCurves(points []api.FanCurvePoint) error {
 // SKU that accepts the write, syncing the mode there would disable the very
 // curve this function has just enabled. z13ctl did exactly that through
 // v1.2.1; it was inert only because the Z13 rejects it (issue #15).
-func setFanMode(idx, mode int) error {
+func setFanMode(idx int, mode driver.FanMode) error {
 	file := fmt.Sprintf("pwm%d_enable", idx)
 
-	if mode == 0 {
+	if mode == driver.FanModeFullSpeed {
 		// Full-speed: only the base "asus" hwmon device supports pwm_enable=0.
 		readDir := FindFanReadingsHwmonPath()
 		if readDir == "" {
 			return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
 		}
-		return fanWriteInt(readDir+"/"+file, mode)
+		return fanWriteInt(readDir+"/"+file, int(mode))
 	}
 
 	curveDir := FindFanCurveHwmonPath()
 	if curveDir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
 	}
-	if err := fanWriteInt(curveDir+"/"+file, mode); err != nil {
+	if err := fanWriteInt(curveDir+"/"+file, int(mode)); err != nil {
 		return fmt.Errorf("setting fan mode on %s: %w", hwmonNameCurves, err)
 	}
 	return nil
 }
 
 // setAllFanModes writes pwm_enable for every channel on the curve device.
-func setAllFanModes(mode int) error {
+func setAllFanModes(mode driver.FanMode) error {
 	dir := FindFanCurveHwmonPath()
 	if dir == "" {
 		return fmt.Errorf("hwmon device %q not found", hwmonNameCurves)
@@ -389,8 +392,8 @@ func setAllFanModes(mode int) error {
 // Firmware auto is what lets the EC stop the fans through s2idle, so a release
 // that did not take is the difference between a quiet suspend and a machine that
 // runs its fans all night.
-func ResetAllFanCurves() error {
-	if err := setAllFanModes(2); err != nil { // auto/firmware
+func resetAllFanCurves() error {
+	if err := setAllFanModes(driver.FanModeAuto); err != nil {
 		return err
 	}
 	return verifyFanModeReleased()
@@ -409,35 +412,14 @@ func verifyFanModeReleased() error {
 		return err
 	}
 	for _, m := range modes {
-		if m.mode == -1 || m.mode == 0 || m.mode == 2 {
+		if m.mode == driver.FanModeUnknown || m.mode == driver.FanModeFullSpeed || m.mode == driver.FanModeAuto {
 			continue
 		}
 		return fmt.Errorf(
 			"fans were released to firmware auto but the kernel is not honouring it (pwm%d_enable = %d, %s)",
-			m.channel, m.mode, driver.FanModeName(m.mode))
+			m.channel, int(m.mode), m.mode)
 	}
 	return nil
-}
-
-// SetAllFansFullSpeed writes pwm1_enable=0 on the base "asus" hwmon device —
-// the only device that accepts mode 0; pwm2_enable there returns EIO on
-// writes. Despite the name it does **not** force every fan: measured on the
-// GZ302EA (2026-10-09), fan 1 went to 8900 RPM within three seconds while fan 2
-// stayed at 0 for the full 30 s. A curve of 255 at every point with
-// pwm_enable=1 on the curve device is what drives both to full speed.
-//
-// Nothing calls this. High-TDP cooling uses the envelope's floor curve (a 50%
-// PWM floor with pwm_enable=1) via the safety engine's ApplyTDPSafely; full
-// speed was an earlier approach that the docs, the --dry-run output, and
-// CLAUDE.md all went on describing long after the code stopped doing it. Kept
-// because it is a real, tested hardware capability — but it is not the
-// high-TDP path, and callers should not assume so.
-func SetAllFansFullSpeed() error {
-	readDir := FindFanReadingsHwmonPath()
-	if readDir == "" {
-		return fmt.Errorf("hwmon device %q not found", hwmonNameReadings)
-	}
-	return writeIntFile(readDir+"/pwm1_enable", 0)
 }
 
 // readIntFile reads a sysfs file and parses its content as an integer.

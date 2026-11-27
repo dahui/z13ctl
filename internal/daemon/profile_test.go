@@ -47,7 +47,7 @@ func TestProfileMutatorsTakeHwMu(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Daemon{state: api.State{
+			d := &Daemon{hw: &device.Device{}, state: api.State{
 				Profile: "gaming",
 				CustomProfiles: map[string]api.CustomProfile{
 					"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 70}},
@@ -151,7 +151,7 @@ func TestApplyCustomHWClearsWhatTheProfileDoesNotSet(t *testing.T) {
 // editing an existing profile folds case.
 func TestProfileNamesStayLowercaseInTheMap(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	d := &Daemon{state: api.State{Profile: "balanced"}}
+	d := &Daemon{hw: &device.Device{}, state: api.State{Profile: "balanced"}}
 
 	if resp := d.handleProfileCreate(request{Set: "Gaming"}); resp.OK {
 		t.Error("profile-create accepted \"Gaming\"; the map key would not match what the user typed")
@@ -175,7 +175,7 @@ func TestProfileNamesStayLowercaseInTheMap(t *testing.T) {
 // populated profile.
 func TestProfileCreateRejectsDuplicates(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		CustomProfiles: map[string]api.CustomProfile{
 			"gaming": {Name: "gaming", TDP: &api.TDPState{PL1SPL: 70}},
 		},
@@ -193,7 +193,7 @@ func TestProfileCreateRejectsDuplicates(t *testing.T) {
 // applied itself.
 func TestProfileSaveZeroesUndervoltActive(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		Profile: "gaming",
 		CustomProfiles: map[string]api.CustomProfile{
 			"gaming": {Name: "gaming", Undervolt: &api.UndervoltState{CPUCO: -25, Active: true}},
@@ -222,7 +222,7 @@ func TestProfileSaveRefusesWithNothingToCopy(t *testing.T) {
 		{Profile: "balanced"}, // a firmware profile is active
 		{Profile: "custom"},   // custom exists but holds nothing
 	} {
-		d := &Daemon{state: s}
+		d := &Daemon{hw: &device.Device{}, state: s}
 		if resp := d.handleProfileSave(request{Set: "copy"}); resp.OK {
 			t.Errorf("profile-save with Profile=%q was accepted, want a rejection", s.Profile)
 		}
@@ -249,7 +249,7 @@ func TestSetUndervoltActiveStampsEveryProfile(t *testing.T) {
 // the paths a GUI would drive.
 func TestConcurrentProfileMutationIsRaceFree(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		Profile:        "balanced",
 		CustomProfiles: map[string]api.CustomProfile{"keep": {Name: "keep", TDP: &api.TDPState{PL1SPL: 40}}},
 	}}
@@ -276,7 +276,7 @@ func TestConcurrentProfileMutationIsRaceFree(t *testing.T) {
 }
 
 func TestDeleteRefusalMessages(t *testing.T) {
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		Profile: "gaming",
 		CustomProfiles: map[string]api.CustomProfile{
 			"gaming": {Name: "gaming"}, "ac-one": {Name: "ac-one"}, "bat-one": {Name: "bat-one"},
@@ -299,7 +299,7 @@ func TestDeleteRefusalMessages(t *testing.T) {
 // when both are wrong — a map range would name a different one each run.
 func TestAutoswitchValidationOrderIsStable(t *testing.T) {
 	for range 20 {
-		d := &Daemon{state: api.State{}}
+		d := &Daemon{hw: &device.Device{}, state: api.State{}}
 		resp := d.handleAutoswitch(request{Enabled: true, AC: "nope-ac", Battery: "nope-bat"})
 		if resp.OK {
 			t.Fatal("autoswitch accepted two unknown targets")
@@ -315,7 +315,7 @@ func TestAutoswitchValidationOrderIsStable(t *testing.T) {
 // enabled with no way back short of editing the state file.
 func TestAutoswitchDisableIsAlwaysAllowed(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	d := &Daemon{state: api.State{}}
+	d := &Daemon{hw: &device.Device{}, state: api.State{}}
 
 	if resp := d.handleAutoswitch(request{Enabled: true, Battery: "ghost"}); resp.OK {
 		t.Fatal("enabling with an unknown target was accepted")
@@ -370,7 +370,7 @@ func TestEditTargetActiveDistinguishesCreateFromEdit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := &Daemon{state: api.State{Profile: tc.active, CustomProfiles: profiles}}
+			d := &Daemon{hw: &device.Device{}, state: api.State{Profile: tc.active, CustomProfiles: profiles}}
 			got, err := d.resolveEditTargetLocked(tc.request)
 			if err != nil {
 				t.Fatalf("resolveEditTargetLocked(%q) on %q: %v", tc.request, tc.active, err)
@@ -402,7 +402,7 @@ func TestActiveImpliesLive(t *testing.T) {
 	}
 	for _, active := range []string{"balanced", "quiet", "performance", "custom", "gaming"} {
 		for _, req := range []string{"", "custom", "gaming"} {
-			d := &Daemon{state: api.State{Profile: active, CustomProfiles: profiles}}
+			d := &Daemon{hw: &device.Device{}, state: api.State{Profile: active, CustomProfiles: profiles}}
 			got, err := d.resolveEditTargetLocked(req)
 			if err != nil {
 				continue // unknown-profile rejections are covered elsewhere
@@ -484,7 +484,7 @@ func TestResetProfileTargetStillClearsStoredSettings(t *testing.T) {
 func TestResetOnFirmwareProfilePreservesSavedProfile(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{state: api.State{
+	d := &Daemon{hw: &device.Device{}, state: api.State{
 		Profile: "balanced",
 		CustomProfiles: map[string]api.CustomProfile{
 			"custom": {
@@ -537,7 +537,7 @@ func TestImplicitEditStartsFresh(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := &Daemon{state: api.State{
+			d := &Daemon{hw: &device.Device{}, state: api.State{
 				Profile:        tc.active,
 				CustomProfiles: map[string]api.CustomProfile{"custom": cloneCustomProfile(full)},
 			}}

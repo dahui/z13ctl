@@ -72,7 +72,7 @@ hardware but will not survive a reboot.`,
 				return fmt.Errorf("no CPU boost control on this device")
 			}
 			if err := hw.CPUBoost.Set(on); err != nil {
-				return fmt.Errorf("setting cpu boost: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+				return withSetupHint("setting cpu boost", err)
 			}
 			// Said plainly rather than warned about: with no daemon there is
 			// nothing to replay the choice, and a user who reboots and finds

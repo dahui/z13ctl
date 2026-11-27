@@ -129,7 +129,7 @@ func TestCurveOptimizerSendsTheCPUsCommand(t *testing.T) {
 	fake := &fakeSMU{response: SMUReturnOK}
 	fake.install(t)
 
-	if err := SetCurveOptimizer(-10); err != nil {
+	if err := setCurveOptimizer(-10); err != nil {
 		t.Fatalf("SetCurveOptimizer(-10) = %v", err)
 	}
 	// The probe and the write, both with Cezanne's command and nothing else.
@@ -154,14 +154,14 @@ func TestUnknownCPUNeverWritesTheMailbox(t *testing.T) {
 	if SMUUndervoltAvailable() {
 		t.Error("SMUUndervoltAvailable() = true on an unknown CPU")
 	}
-	if SMUProbeUndervolt() {
+	if smuProbeUndervolt() {
 		t.Error("SMUProbeUndervolt() = true on an unknown CPU")
 	}
-	err := SetCurveOptimizer(-10)
+	err := setCurveOptimizer(-10)
 	if err == nil || !strings.Contains(err.Error(), "model 999") {
 		t.Errorf("SetCurveOptimizer() = %v, want a refusal naming the CPU", err)
 	}
-	if err := ResetCurveOptimizer(); err == nil {
+	if err := resetCurveOptimizer(); err == nil {
 		t.Error("ResetCurveOptimizer() = nil on an unknown CPU")
 	}
 	if fake.writes != 0 {

@@ -4,12 +4,13 @@ package daemon
 //
 // Assembly is hermetic: driver constructors are pure and device.Assemble
 // performs no I/O, so handler tests get the real envelope and validation
-// limits without touching hardware. The usual warning still applies with more
-// force than ever: a test that gets past validation into a driver method
-// writes the developer's actual machine, so tests must stay on rejection and
-// state-only paths exactly as before.
+// limits without touching hardware. Every write method is guarded
+// (writeguard_test.go), so a test that gets past validation gets an error
+// rather than writing the developer's machine; a test of a write path uses
+// fakeDevice instead.
 
 import (
+	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/amd"
@@ -29,7 +30,7 @@ var testDev = func() *device.Device {
 		panic(err)
 	}
 	for _, c := range configs {
-		if c.Device.ID == fallbackDeviceID {
+		if c.Device.ID == device.FallbackID {
 			return assembleForTest(c)
 		}
 	}
@@ -38,22 +39,24 @@ var testDev = func() *device.Device {
 
 // assembleForTest assembles c with the registered drivers, then puts device
 // data in place of every answer a driver would read from the running kernel,
-// so a test's result does not depend on the machine running it. Reads and
-// writes still go to the real drivers, so the rule that a daemon test must
-// stay on rejection paths is unchanged.
+// so a test's result does not depend on the machine running it, and puts a
+// guard in front of every write (writeguard_test.go): reads still reach the
+// real drivers, writes return errTestWrite.
 func assembleForTest(c device.Config) *device.Device {
 	d, err := device.Assemble(c)
 	if err != nil {
 		panic(err)
 	}
+	var env *driver.PowerEnvelope
 	if d.Power != nil {
 		// The PPT driver lays the running kernel's ranges over the device data
 		// (asus-armoury's 28–80 W PL1 where it exists). DeviceEnvelope is the
 		// driver's view of the device data alone — the file's numbers with the
 		// driver's limit wording filled in — which is also what the daemon
-		// serves while the EC is not answering.
-		d.Power.Power = deviceFileEnvelope{Power: d.Power.Power,
-			env: d.Power.Power.(driver.DeviceEnvelope).DeviceEnvelope()}
+		// serves while the EC is not answering. guardWrites rebuilds the engine
+		// over it.
+		e := d.Power.DeviceEnvelope()
+		env = &e
 	}
 	if c.Undervolt != nil && d.Undervolt == nil {
 		// The ryzen-smu-co factory reports the capability unavailable when
@@ -80,7 +83,7 @@ func assembleForTest(c device.Config) *device.Device {
 	}
 	if d.Fans != nil {
 		// The driver lays hwmon's point count and fan labels over the data.
-		d.Fans = deviceFileFans{FanController: d.Fans, shape: c.Fans.Shape()}
+		d.Fans = deviceFileFans{FanCurves: d.Fans, shape: c.Fans.Shape()}
 	}
 	if d.Telemetry != nil {
 		// The driver drops sources whose hardware is absent and adds the
@@ -88,17 +91,22 @@ func assembleForTest(c device.Config) *device.Device {
 		// declaration guard needs.
 		d.Telemetry = deviceFileTelemetry{Telemetry: d.Telemetry, info: c.Telemetry.Info()}
 	}
+	guardWrites(d, env)
 	return d
 }
 
-// deviceFileEnvelope reports the device file's envelope in place of the
-// driver's live one.
+// deviceFileEnvelope is the test power limiter: the device file's envelope,
+// the default profile's stock row as the reading, and no writes.
 type deviceFileEnvelope struct {
-	safety.Power
 	env driver.PowerEnvelope
 }
 
-func (p deviceFileEnvelope) Envelope() driver.PowerEnvelope { return p.env }
+func (p deviceFileEnvelope) Envelope() driver.PowerEnvelope       { return p.env }
+func (p deviceFileEnvelope) DeviceEnvelope() driver.PowerEnvelope { return p.env }
+func (p deviceFileEnvelope) Apply(api.TDPState) error             { return errTestWrite }
+func (p deviceFileEnvelope) Read() (api.TDPState, error) {
+	return p.env.StockProfilePPT["balanced"], nil
+}
 
 // deviceFileProfiles reports the device file's profile names in place of the
 // driver's kernel-filtered list.
@@ -124,7 +132,7 @@ var testEnv driver.PowerEnvelope = func() driver.PowerEnvelope {
 		panic(err)
 	}
 	for _, c := range configs {
-		if c.Device.ID == fallbackDeviceID {
+		if c.Device.ID == device.FallbackID {
 			return c.Power.Envelope()
 		}
 	}
@@ -134,7 +142,7 @@ var testEnv driver.PowerEnvelope = func() driver.PowerEnvelope {
 // deviceFileFans reports the device file's fan shape in place of the driver's
 // hwmon-resolved one.
 type deviceFileFans struct {
-	driver.FanController
+	driver.FanCurves
 	shape driver.FanShape
 }
 
@@ -172,4 +180,39 @@ func declaredToggles(c device.Config) []driver.ToggleSpec {
 		}
 	}
 	return out
+}
+
+// guardWrites replaces every capability's write methods with ones that fail,
+// and rebuilds the engine over the guarded fans and a power limiter that
+// serves the device file's envelope (env) and reads no hardware at all.
+func guardWrites(d *device.Device, env *driver.PowerEnvelope) {
+	var fans guardFans
+	if d.Fans != nil {
+		fans = guardFans{d.Fans}
+		d.Fans = fans
+	}
+	if env != nil {
+		d.Power = safety.NewEngine(fans, deviceFileEnvelope{env: *env})
+	}
+	if d.Profiles != nil {
+		d.Profiles = guardProfiles{d.Profiles}
+	}
+	if d.Toggles != nil {
+		d.Toggles = guardToggles{d.Toggles}
+	}
+	if d.Battery != nil {
+		d.Battery = guardBattery{d.Battery}
+	}
+	if d.Undervolt != nil {
+		d.Undervolt = guardUndervolter{d.Undervolt}
+	}
+	if d.CPUBoost != nil {
+		d.CPUBoost = guardBoost{d.CPUBoost}
+	}
+	if d.Rumble != nil {
+		d.Rumble = guardRumble{d.Rumble}
+	}
+	if d.Lighting != nil {
+		d.Lighting = guardLighting{d.Lighting}
+	}
 }

@@ -80,7 +80,7 @@ func (d *Device) SetFeature(data []byte) error {
 			uintptr(unsafe.Pointer(&buf[0])),
 		)
 		if errno != 0 {
-			lastErr = fmt.Errorf("HIDIOCSFEATURE on %s: errno %d", n.path, errno)
+			lastErr = fmt.Errorf("HIDIOCSFEATURE on %s: %w", n.path, errno)
 		}
 	}
 	return lastErr
@@ -147,6 +147,6 @@ func (d *Device) FilteredView(nameOrPath string) (*Device, error) {
 // Close releases all open nodes.
 func (d *Device) Close() {
 	for _, n := range d.nodes {
-		_ = n.f.Close() //nolint:errcheck // best-effort cleanup
+		_ = n.f.Close() // best-effort cleanup
 	}
 }

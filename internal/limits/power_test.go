@@ -270,7 +270,7 @@ func TestSanitizedFloorCurve(t *testing.T) {
 func TestIsStockPPT(t *testing.T) {
 	for _, l := range []Limits{DefaultLimits(), otherDevice()} {
 		for name, stock := range l.StockProfilePPT {
-			if !l.IsStockPPT(stock) {
+			if !l.isStockPPT(stock) {
 				t.Errorf("%s: IsStockPPT(%s defaults %+v) = false, want true", l.Model, name, stock)
 			}
 			// The daemon mirrors APU/Platform sPPT from PL2, so a real reading
@@ -278,7 +278,7 @@ func TestIsStockPPT(t *testing.T) {
 			withMirrored := stock
 			withMirrored.APUSPPT = stock.PL2SPPT
 			withMirrored.PlatformSPPT = stock.PL2SPPT
-			if !l.IsStockPPT(withMirrored) {
+			if !l.isStockPPT(withMirrored) {
 				t.Errorf("%s: IsStockPPT(%s with mirrored APU fields) = false, want true", l.Model, name)
 			}
 		}
@@ -291,13 +291,13 @@ func TestIsStockPPT(t *testing.T) {
 		{PL1SPL: 45, PL2SPPT: 45, FPPT: 45},
 		{},
 	} {
-		if z.IsStockPPT(tdp) {
+		if z.isStockPPT(tdp) {
 			t.Errorf("IsStockPPT(%+v) = true, want false", tdp)
 		}
 	}
 
 	// Another device's stock values are not this device's stock values.
-	if z.IsStockPPT(otherDevice().StockProfilePPT["balanced"]) {
+	if z.isStockPPT(otherDevice().StockProfilePPT["balanced"]) {
 		t.Error("Z13 accepted the fictional device's balanced defaults as stock")
 	}
 }

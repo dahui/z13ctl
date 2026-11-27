@@ -30,7 +30,7 @@ const hotplugPollInterval = 2 * time.Second
 //
 // PresentZones is sysfs-only by the driver contract, so polling it opens nothing.
 func (d *Daemon) watchHotplug(ctx context.Context, opened bool) {
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return
 	}
 	var present []string

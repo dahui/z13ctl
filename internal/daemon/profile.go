@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 // applyProfileLocked applies a profile — firmware or custom — to hardware and
@@ -111,7 +110,7 @@ func (d *Daemon) applyProfileLocked(profile string) error {
 // it — for the fan-floor check before that.
 func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	hasCurve := d.hasApplicableCurve(p.FanCurve)
-	if p.TDP == nil && d.hw != nil {
+	if p.TDP == nil {
 		// Not controlled here, so hand the limits back to the firmware profile
 		// underneath rather than leaving the previous profile's watts in force.
 		if err := d.handBack(d.profileHW()); err != nil {
@@ -132,7 +131,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 		// wantCurve is what keeps the profile's own curve from being replaced by
 		// the floor: ApplyTDPSafely honours it whenever it already satisfies the
 		// floor, and substitutes the envelope's floor curve only when it does not.
-		if d.hw == nil || d.hw.Power == nil {
+		if d.hw.Power == nil {
 			slog.Warn("profile TDP not applied", "profile", p.Name, "reason", d.hw.Missing("power", noPowerControl))
 		} else if err := d.hw.Power.ApplyTDPSafely(*t, wantCurve); err != nil {
 			slog.Warn("failed to apply TDP", "profile", p.Name, "err", err)
@@ -142,7 +141,7 @@ func (d *Daemon) applyCustomHW(p api.CustomProfile) {
 	}
 
 	// A profile with no TDP was released above, by HandBackToFirmware.
-	if p.TDP != nil && !hasCurve && !highTDP && d.hw != nil && d.hw.Fans != nil {
+	if p.TDP != nil && !hasCurve && !highTDP && d.hw.Fans != nil {
 		if err := d.checkFanFloorRelease(d.effectiveProfile()); err != nil {
 			slog.Warn("keeping the high-TDP fan floor: the sustained limit in hardware still requires it",
 				"profile", p.Name, "err", err)
@@ -225,7 +224,7 @@ func (d *Daemon) applyStockHW(profile string) error {
 			slog.Warn("failed to reset undervolt", "err", err)
 		}
 	}
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return fmt.Errorf("no platform profile control on this device")
 	}
 	if err := d.setPlatformProfile(profile); err != nil {
@@ -433,7 +432,7 @@ func (d *Daemon) commitEditLocked(t editTarget, p api.CustomProfile) api.State {
 // unsafe the moment it is activated.
 func (d *Daemon) floorLimitFor(t editTarget) int {
 	if t.Live {
-		if d.hw == nil || d.hw.Power == nil {
+		if d.hw.Power == nil {
 			// No power control means no limit to clear.
 			return 0
 		}
@@ -475,7 +474,7 @@ func (d *Daemon) handleProfile(req request) response {
 // editing a profile does fold case.
 func (d *Daemon) handleProfileCreate(req request) response {
 	name := strings.TrimSpace(req.Set)
-	if err := cli.ValidateProfileName(name); err != nil {
+	if err := api.ValidateProfileName(name); err != nil {
 		return response{OK: false, Error: "profile-create: " + err.Error()}
 	}
 	// hwMu even though this writes no hardware: the fancurve/tdp/undervolt
@@ -507,7 +506,7 @@ func (d *Daemon) handleProfileCreate(req request) response {
 // not activate the copy: saving is a bookmark, not a switch.
 func (d *Daemon) handleProfileSave(req request) response {
 	name := strings.TrimSpace(req.Set)
-	if err := cli.ValidateProfileName(name); err != nil {
+	if err := api.ValidateProfileName(name); err != nil {
 		return response{OK: false, Error: "profile-save: " + err.Error()}
 	}
 	// hwMu for the same reason as handleProfileCreate.
@@ -516,7 +515,7 @@ func (d *Daemon) handleProfileSave(req request) response {
 
 	d.mu.Lock()
 	src, ok := d.state.ActiveCustomProfile()
-	if !ok && d.hw != nil && d.hw.PowerSlider {
+	if !ok && d.hw.PowerSlider {
 		// On a slider device the TDP setting is what is running when no
 		// custom profile is, so that is what Save As keeps: the way to turn a
 		// slider position into a profile to load back later (Jeff,
@@ -610,13 +609,9 @@ func (d *Daemon) deleteRefusalLocked(name string) string {
 	return ""
 }
 
-// profileSummary is one row of profile-list. It reports which profile is active
-// so a client does not have to correlate against get-state.
-type profileSummary struct {
-	api.CustomProfile
-	Active bool `json:"active"`
-}
-
+// handleProfileList answers profile-list: every custom profile as an
+// api.ProfileListEntry, marked active so a client need not correlate against
+// get-state.
 func (d *Daemon) handleProfileList() response {
 	d.mu.Lock()
 	s := cloneState(d.state)
@@ -633,11 +628,11 @@ func (d *Daemon) handleProfileList() response {
 	}
 	slices.Sort(names)
 
-	out := make([]profileSummary, 0, len(names))
+	out := make([]api.ProfileListEntry, 0, len(names))
 	for _, name := range names {
 		p := s.CustomProfiles[name]
 		p.Name = name
-		out = append(out, profileSummary{CustomProfile: p, Active: s.Profile == name})
+		out = append(out, api.ProfileListEntry{CustomProfile: p, Active: s.Profile == name})
 	}
 	data, _ := json.Marshal(out)
 	return response{OK: true, Value: string(data)}
@@ -656,7 +651,7 @@ func (d *Daemon) isFirmwareProfile(name string) bool {
 // firmwareProfiles is the device's firmware profile names, nil without
 // profile control.
 func (d *Daemon) firmwareProfiles() []string {
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return nil
 	}
 	return d.hw.Profiles.Names()

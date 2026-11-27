@@ -14,15 +14,12 @@ package gui
 // internal/profileui; this file is the widgets, the debounce and the send.
 
 import (
-	"log/slog"
 	"strconv"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/profileui"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -37,12 +34,7 @@ type undervoltSliderSection struct {
 	scale *gtk.Scale
 	value *gtk.Label
 	note  *gtk.Label
-	timer *time.Timer
-
-	// pending and gen hold sync off from the first move until the send has
-	// landed; see tdpSliderSection. Main thread only.
-	pending bool
-	gen     int
+	send  settleSend // holds sync off mid-drag; see tdpSliderSection
 }
 
 // buildUndervoltSliderSection creates the drawer's block and registers it as
@@ -57,7 +49,7 @@ func (w *Window) buildUndervoltSliderSection() *gtk.Box {
 // offset range (w.limits.UVMin..UVMax). desktop is the Dashboard's form row;
 // otherwise the drawer's heading with the value at its end.
 func (w *Window) newUndervoltSliderSection(desktop bool) (*undervoltSliderSection, *gtk.Box) {
-	s := &undervoltSliderSection{w: w}
+	s := &undervoltSliderSection{w: w, send: settleSend{delay: undervoltSliderDebounce}}
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal,
 		float64(w.limits.UVMin), float64(w.limits.UVMax), 1)
 	sc.SetDigits(0)
@@ -107,43 +99,14 @@ func (s *undervoltSliderSection) syncValueLabel() {
 // a slider device is the undervolt setting (0 clears it), leaving a running
 // custom profile as the note under the slider says beforehand.
 func (s *undervoltSliderSection) queueSend() {
-	w := s.w
-	if w.syncing {
-		return
-	}
-	s.pending = true
-	s.gen++
-	if s.timer != nil {
-		s.timer.Stop()
-	}
-	s.timer = time.AfterFunc(undervoltSliderDebounce, func() {
-		glib.IdleAdd(func() bool {
-			co := strconv.Itoa(int(s.scale.Value())) // read on the GTK thread
-			gen := s.gen
-			go func() {
-				slog.Debug("undervolt slider: calling daemon", "cpu", co)
-				err := apiresult.Err(api.SendUndervoltSet(co))
-				glib.IdleAdd(func() bool {
-					if s.gen == gen {
-						s.pending = false
-					}
-					return false
-				})
-				if err != nil {
-					w.reportError("Set undervolt", err)
-				} else {
-					w.clearErrorAsync()
-				}
-				w.refreshState() // onto what the daemon holds either way
-			}()
-			return false
-		})
-	})
+	s.send.queue(s.w, func() int { return int(s.scale.Value()) }, func(co int) (bool, error) {
+		return api.SendUndervoltSet(strconv.Itoa(co))
+	}, "Set undervolt", true)
 }
 
 // sync sets the slider from daemon state. Callers hold w.syncing.
 func (s *undervoltSliderSection) sync() {
-	if s.pending {
+	if s.send.pending {
 		return
 	}
 	st := s.w.state

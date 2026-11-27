@@ -312,7 +312,7 @@ func ReadAllPPT() (api.TDPState, error) {
 // custom profile saved under asus-nb-wmi's 5 W floor still applies, at
 // armoury's minimum, and the stored profile is left as the user saved it. New
 // values are validated up front by safety.ResolveTDP.
-func SetTDPState(s api.TDPState) error {
+func setTDPState(s api.TDPState) error {
 	b, err := activePPT()
 	if err != nil {
 		return err

@@ -40,6 +40,11 @@ import (
 // numbers.
 var ErrUnknownCommand = errors.New("daemon does not support this command")
 
+// ErrECWedged reports that the daemon refused a command because the embedded
+// controller has not answered since a resume (ECWedgedMessage). It clears on
+// its own once the EC responds.
+var ErrECWedged = errors.New(ECWedgedMessage)
+
 // SocketPath returns the canonical runtime path for the daemon's Unix socket.
 func SocketPath() string {
 	return runtimeDir() + "/voltaire/voltaire.sock"
@@ -97,53 +102,28 @@ func (e *unknownCommandError) Unwrap() error { return ErrUnknownCommand }
 // unknown-command case so callers can distinguish an older daemon from a
 // command that ran and failed. Every Send* goes through it; a new command
 // added to the protocol therefore gets the distinction for free.
-func respErr(resp *response) error {
-	if strings.HasPrefix(resp.Error, "unknown command") {
+func respErr(resp *Response) error {
+	switch {
+	case strings.HasPrefix(resp.Error, "unknown command"):
 		return &unknownCommandError{text: resp.Error}
+	case resp.Error == ECWedgedMessage:
+		return fmt.Errorf("%w", ErrECWedged)
 	}
 	return fmt.Errorf("%s", resp.Error)
 }
 
-// request is a command sent to the daemon over the socket.
-type request struct {
-	Cmd        string   `json:"cmd"`
-	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
-	Speed      string   `json:"speed,omitempty"`
-	Brightness int      `json:"brightness,omitempty"`
-	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"` // "keyboard", "lightbar", /dev/hidrawN; empty = all
-	Events     []string `json:"events,omitempty"`
-	PL1        string   `json:"pl1,omitempty"`
-	PL2        string   `json:"pl2,omitempty"`
-	PL3        string   `json:"pl3,omitempty"`
-	Force      bool     `json:"force,omitempty"`
-	// Profile names the custom profile a fancurve/tdp/undervolt command edits.
-	// Empty means the active profile, which is also what every client written
-	// before this field existed sends.
-	Profile string `json:"profile,omitempty"`
-	AC      string `json:"ac,omitempty"`
-	Battery string `json:"battery,omitempty"`
-	Enabled bool   `json:"enabled,omitempty"`
-	// ID names the firmware toggle a feature/feature-get command addresses,
-	// e.g. "boot_sound". The valid set is DeviceInfo.Toggles.
-	ID string `json:"id,omitempty"`
-	// Seconds is telemetry-history's window. Absent means the whole retained
-	// history, whose length DeviceInfo.Telemetry.HistorySeconds gives.
-	Seconds int `json:"seconds,omitempty"`
-}
-
-// response is the reply to a command or a streamed event notification.
-type response struct {
-	OK     bool        `json:"ok"`
-	Error  string      `json:"error,omitempty"`
-	Value  string      `json:"value,omitempty"`
-	State  *State      `json:"state,omitempty"`
-	Device *DeviceInfo `json:"device,omitempty"`
-	Event  string      `json:"event,omitempty"`
-
-	History []TelemetrySample `json:"history,omitempty"`
+// sendJSON sends req and decodes the response's value (JSON carried in the
+// value field, the convention of the commands that predate typed replies).
+func sendJSON[T any](req Request) (handled bool, out *T, err error) {
+	handled, value, err := sendValue(req)
+	if !handled || err != nil {
+		return handled, nil, err
+	}
+	out = new(T)
+	if err := json.Unmarshal([]byte(value), out); err != nil {
+		return true, nil, fmt.Errorf("decoding %s reply: %w", req.Cmd, err)
+	}
+	return true, out, nil
 }
 
 // dialTimeout bounds establishing the connection; commandTimeout bounds the
@@ -166,7 +146,7 @@ const (
 
 // sendCommand connects to the daemon and sends req, returning the response.
 // Returns (false, nil, nil) if the daemon is not running.
-func sendCommand(req request) (bool, *response, error) {
+func sendCommand(req Request) (bool, *Response, error) {
 	conn, err := dialDaemon()
 	if err != nil {
 		return false, nil, nil // daemon not running
@@ -185,7 +165,7 @@ func sendCommand(req request) (bool, *response, error) {
 		return true, nil, err
 	}
 
-	var resp response
+	var resp Response
 	scanner := bufio.NewScanner(conn)
 	// bufio.Scanner's default ceiling is 64 KiB, which every command fitted
 	// under until telemetry-history: a device declaring an hour of 1 Hz history
@@ -206,20 +186,10 @@ func sendCommand(req request) (bool, *response, error) {
 	return true, &resp, nil
 }
 
-// SendApply sends an apply command to the daemon. color and color2 must be
-// "RRGGBB" hex strings. device may be "keyboard", "lightbar", a /dev/hidrawN
-// path, or "" to target all devices. Returns (true, nil) on success, (false,
-// nil) if the daemon is not running (caller should fall back to direct HID access).
-func SendApply(device, color, color2, mode, speed string, brightness int) (bool, error) {
-	handled, resp, err := sendCommand(request{
-		Cmd:        "apply",
-		Mode:       mode,
-		Color:      color,
-		Color2:     color2,
-		Speed:      speed,
-		Brightness: brightness,
-		Device:     device,
-	})
+// sendOK sends req and reports the outcome of a command that answers with
+// nothing but ok: (false, nil) when the daemon is not running.
+func sendOK(req Request) (bool, error) {
+	handled, resp, err := sendCommand(req)
 	if !handled || err != nil {
 		return handled, err
 	}
@@ -229,38 +199,9 @@ func SendApply(device, color, color2, mode, speed string, brightness int) (bool,
 	return true, nil
 }
 
-// SendOff sends an off command to the daemon. device may be "keyboard",
-// "lightbar", a /dev/hidrawN path, or "" to target all devices.
-func SendOff(device string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "off", Device: device})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
-}
-
-// SendBrightness sends a brightness-only command to the daemon. device may be
-// "keyboard", "lightbar", a /dev/hidrawN path, or "" to target all devices.
-func SendBrightness(device string, level int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "brightness", Brightness: level, Device: device})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
-}
-
-// SendProfileGet queries the daemon for the current performance profile by
-// reading sysfs (not cached daemon state). Intended for GUI/plugin callers.
-// Returns (false, "", nil) if the daemon is not running.
-func SendProfileGet() (handled bool, profile string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "profile-get"})
+// sendValue sends req and returns the response's value.
+func sendValue(req Request) (handled bool, value string, err error) {
+	handled, resp, err := sendCommand(req)
 	if !handled || err != nil {
 		return handled, "", err
 	}
@@ -270,71 +211,70 @@ func SendProfileGet() (handled bool, profile string, err error) {
 	return true, resp.Value, nil
 }
 
+// sendInt sends req and parses the response's value as an integer; what
+// names the value in the error.
+func sendInt(req Request, what string) (handled bool, n int, err error) {
+	handled, value, err := sendValue(req)
+	if !handled || err != nil {
+		return handled, 0, err
+	}
+	n, err = strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return true, 0, fmt.Errorf("invalid %s value %q: %w", what, value, err)
+	}
+	return true, n, nil
+}
+
+// SendApply sends an apply command to the daemon. color and color2 must be
+// "RRGGBB" hex strings. device may be "keyboard", "lightbar", a /dev/hidrawN
+// path, or "" to target all devices. Returns (true, nil) on success, (false,
+// nil) if the daemon is not running (caller should fall back to direct HID access).
+func SendApply(device, color, color2, mode, speed string, brightness int) (bool, error) {
+	return sendOK(Request{
+		Cmd:        CmdApply,
+		Mode:       mode,
+		Color:      color,
+		Color2:     color2,
+		Speed:      speed,
+		Brightness: brightness,
+		Device:     device,
+	})
+}
+
+// SendOff sends an off command to the daemon. device may be "keyboard",
+// "lightbar", a /dev/hidrawN path, or "" to target all devices.
+func SendOff(device string) (bool, error) {
+	return sendOK(Request{Cmd: CmdOff, Device: device})
+}
+
+// SendBrightness sends a brightness-only command to the daemon. device may be
+// "keyboard", "lightbar", a /dev/hidrawN path, or "" to target all devices.
+func SendBrightness(device string, level int) (bool, error) {
+	return sendOK(Request{Cmd: CmdBrightness, Brightness: level, Device: device})
+}
+
+// SendProfileGet queries the daemon for the current performance profile by
+// reading sysfs (not cached daemon state). Intended for GUI/plugin callers.
+// Returns (false, "", nil) if the daemon is not running.
+func SendProfileGet() (handled bool, profile string, err error) {
+	return sendValue(Request{Cmd: CmdProfileGet})
+}
+
 // SendBatteryLimitGet queries the daemon for the current battery charge limit by
 // reading sysfs (not cached daemon state). Intended for GUI/plugin callers.
 // Returns (false, 0, nil) if the daemon is not running.
 func SendBatteryLimitGet() (handled bool, limit int, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "batterylimit-get"})
-	if !handled || err != nil {
-		return handled, 0, err
-	}
-	if !resp.OK {
-		return true, 0, respErr(resp)
-	}
-	limit, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if parseErr != nil {
-		return true, 0, fmt.Errorf("invalid battery limit value %q: %w", resp.Value, parseErr)
-	}
-	return true, limit, nil
+	return sendInt(Request{Cmd: CmdBatteryLimitGet}, "battery limit")
 }
 
 // SendProfileSet sends a profile set command to the daemon.
 func SendProfileSet(profile string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "profile", Set: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdProfile, Set: profile})
 }
 
 // SendBatteryLimitSet sends a battery limit set command to the daemon.
 func SendBatteryLimitSet(limit int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "batterylimit", Set: fmt.Sprintf("%d", limit)})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
-}
-
-// SendBootSoundSet sends a boot sound set command to the daemon.
-func SendBootSoundSet(value int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "bootsound", Set: fmt.Sprintf("%d", value)})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
-}
-
-// SendPanelOverdriveSet sends a panel overdrive set command to the daemon.
-func SendPanelOverdriveSet(value int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "paneloverdrive", Set: fmt.Sprintf("%d", value)})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdBatteryLimit, Set: fmt.Sprintf("%d", limit)})
 }
 
 // SendButtonSet chooses which hardware button opens voltaire: a button id
@@ -342,14 +282,7 @@ func SendPanelOverdriveSet(value int) (bool, error) {
 // go back to the device's default. The daemon stores the choice; no hardware
 // is touched. An older daemon answers "unknown command".
 func SendButtonSet(choice string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "button-set", Set: choice})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdButtonSet, Set: choice})
 }
 
 // SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off.
@@ -363,33 +296,15 @@ func SendCPUBoostSet(on bool) (bool, error) {
 	if on {
 		v = "1"
 	}
-	handled, resp, err := sendCommand(request{Cmd: "cpuboost", Set: v})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdCPUBoost, Set: v})
 }
 
 // SendCPUBoostGet reads whether boost clocks are currently enabled, from the
 // hardware rather than from cached state. Returns (false, false, nil) if the
 // daemon is not running.
 func SendCPUBoostGet() (handled, on bool, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "cpuboost-get"})
-	if !handled || err != nil {
-		return handled, false, err
-	}
-	if !resp.OK {
-		return true, false, respErr(resp)
-	}
-	v, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if parseErr != nil {
-		return true, false, fmt.Errorf("invalid cpu boost value %q: %w", resp.Value, parseErr)
-	}
-	return true, v != 0, nil
+	handled, v, err := sendInt(Request{Cmd: CmdCPUBoostGet}, "cpu boost")
+	return handled, v != 0, err
 }
 
 // SendRumbleSet sets the game controller's vibration strength, on device-get's
@@ -397,82 +312,19 @@ func SendCPUBoostGet() (handled, on bool, err error) {
 // The daemon records the value and puts it back at startup and after a
 // suspend.
 func SendRumbleSet(strength int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "rumble", Set: strconv.Itoa(strength)})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdRumble, Set: strconv.Itoa(strength)})
 }
 
 // SendRumbleGet reads the controller's vibration strength from the hardware.
 // Returns (false, 0, nil) if the daemon is not running.
 func SendRumbleGet() (handled bool, strength int, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "rumble-get"})
-	if !handled || err != nil {
-		return handled, 0, err
-	}
-	if !resp.OK {
-		return true, 0, respErr(resp)
-	}
-	v, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if parseErr != nil {
-		return true, 0, fmt.Errorf("invalid rumble value %q: %w", resp.Value, parseErr)
-	}
-	return true, v, nil
+	return sendInt(Request{Cmd: CmdRumbleGet}, "rumble")
 }
 
-// SendBootSoundGet queries the daemon for the current boot sound setting by
-// reading sysfs. Returns (false, 0, nil) if the daemon is not running.
-func SendBootSoundGet() (handled bool, value int, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "bootsound-get"})
-	if !handled || err != nil {
-		return handled, 0, err
-	}
-	if !resp.OK {
-		return true, 0, respErr(resp)
-	}
-	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if parseErr != nil {
-		return true, 0, fmt.Errorf("invalid boot sound value %q: %w", resp.Value, parseErr)
-	}
-	return true, value, nil
-}
-
-// SendPanelOverdriveGet queries the daemon for the current panel overdrive
-// setting by reading sysfs. Returns (false, 0, nil) if the daemon is not running.
-func SendPanelOverdriveGet() (handled bool, value int, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "paneloverdrive-get"})
-	if !handled || err != nil {
-		return handled, 0, err
-	}
-	if !resp.OK {
-		return true, 0, respErr(resp)
-	}
-	value, parseErr := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if parseErr != nil {
-		return true, 0, fmt.Errorf("invalid panel overdrive value %q: %w", resp.Value, parseErr)
-	}
-	return true, value, nil
-}
-
-// SendFanCurveGet queries the daemon for the current fan curve data.
-// Returns JSON value string with both fans' curve and mode.
-func SendFanCurveGet() (handled bool, value string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "fancurve-get"})
-	if !handled || err != nil {
-		return handled, "", err
-	}
-	if !resp.OK {
-		return true, "", respErr(resp)
-	}
-	return true, resp.Value, nil
+// SendFanCurveGet reads the fan curve in force and the fans' mode from the
+// hardware. Returns (false, nil, nil) if the daemon is not running.
+func SendFanCurveGet() (bool, *FanCurveState, error) {
+	return sendJSON[FanCurveState](Request{Cmd: CmdFanCurveGet})
 }
 
 // SendFanCurveSet sends a fan curve set command to the daemon, editing the
@@ -485,14 +337,7 @@ func SendFanCurveSet(curve string) (bool, error) {
 // profile means the active one, in which case the curve is also written to
 // hardware; naming a profile that is not active only records it.
 func SendFanCurveSetFor(profile, curve string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "fancurve", Set: curve, Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdFanCurve, Set: curve, Profile: profile})
 }
 
 // SendFanCurveReset resets both fans to firmware auto mode.
@@ -504,28 +349,15 @@ func SendFanCurveReset() (bool, error) {
 // empty profile means the active one, which also releases both fans to firmware
 // auto mode.
 func SendFanCurveResetFor(profile string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "fancurve-reset", Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdFanCurveReset, Profile: profile})
 }
 
-// SendTdpGet queries the daemon for current TDP/PPT values.
-// Returns JSON value string.
-func SendTdpGet() (handled bool, value string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "tdp-get"})
-	if !handled || err != nil {
-		return handled, "", err
-	}
-	if !resp.OK {
-		return true, "", respErr(resp)
-	}
-	return true, resp.Value, nil
+// SendTdpGet reads the power limits: a firmware profile's own row, or a custom
+// profile's limits as the hardware reads back. Returns (false, nil, nil) if the
+// daemon is not running; errors.Is(err, ErrECWedged) while the EC is not
+// answering.
+func SendTdpGet() (bool, *TDPState, error) {
+	return sendJSON[TDPState](Request{Cmd: CmdTDPGet})
 }
 
 // SendTdpSet sends a TDP set command to the daemon, editing the active custom
@@ -541,8 +373,8 @@ func SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error) {
 // raised to it, and a PL1 outside its range, or above TDPMaxSafe without force,
 // is refused.
 func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, error) {
-	handled, resp, err := sendCommand(request{
-		Cmd:     "tdp",
+	return sendOK(Request{
+		Cmd:     CmdTDP,
 		Set:     watts,
 		PL1:     pl1,
 		PL2:     pl2,
@@ -550,13 +382,6 @@ func SendTdpSetFor(profile, watts, pl1, pl2, pl3 string, force bool) (bool, erro
 		Force:   force,
 		Profile: profile,
 	})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
 }
 
 // SendTdpReset sends a TDP reset command to the daemon.
@@ -568,14 +393,7 @@ func SendTdpReset() (bool, error) {
 // profile means the active one, which also switches to balanced and hands the
 // power limits back to the firmware.
 func SendTdpResetFor(profile string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "tdp-reset", Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdTDPReset, Profile: profile})
 }
 
 // SendTuningReset clears every tuning override at once — fan curve, power
@@ -598,28 +416,14 @@ func SendTuningReset() (bool, error) {
 // profile. An empty profile means the active one, which also writes hardware;
 // naming a profile that is not running stores the change only.
 func SendTuningResetFor(profile string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "tuning-reset", Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdTuningReset, Profile: profile})
 }
 
-// SendUndervoltGet queries the daemon for the current Curve Optimizer offsets.
-// Returns JSON value string. Returns (false, "", nil) if the daemon is not running.
-func SendUndervoltGet() (handled bool, value string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "undervolt-get"})
-	if !handled || err != nil {
-		return handled, "", err
-	}
-	if !resp.OK {
-		return true, "", respErr(resp)
-	}
-	return true, resp.Value, nil
+// SendUndervoltGet reads the stored Curve Optimizer offset and the profile
+// running (CO has no hardware readback). Returns (false, nil, nil) if the
+// daemon is not running.
+func SendUndervoltGet() (bool, *UndervoltReading, error) {
+	return sendJSON[UndervoltReading](Request{Cmd: CmdUndervoltGet})
 }
 
 // SendUndervoltSet sends a Curve Optimizer set command to the daemon, editing
@@ -633,14 +437,7 @@ func SendUndervoltSet(cpu string) (bool, error) {
 // profile. An empty profile means the active one, in which case the offset is
 // also applied to hardware; naming a profile that is not active only records it.
 func SendUndervoltSetFor(profile, cpu string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "undervolt", Set: cpu, Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdUndervolt, Set: cpu, Profile: profile})
 }
 
 // SendUndervoltReset resets Curve Optimizer to stock (0).
@@ -652,106 +449,58 @@ func SendUndervoltReset() (bool, error) {
 // profile. An empty profile means the active one, which also resets hardware if
 // an offset is applied.
 func SendUndervoltResetFor(profile string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "undervolt-reset", Profile: profile})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdUndervoltReset, Profile: profile})
 }
 
 // SendProfileCreate creates an empty custom profile. It does not activate it.
 func SendProfileCreate(name string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "profile-create", Set: name})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdProfileCreate, Set: name})
 }
 
 // SendProfileSave copies the active custom profile under a new name. It does
 // not activate the copy.
 func SendProfileSave(name string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "profile-save", Set: name})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdProfileSave, Set: name})
 }
 
 // SendProfileDelete removes a saved custom profile. The daemon refuses to
 // delete the active profile or one referenced by autoswitch.
 func SendProfileDelete(name string) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "profile-delete", Set: name})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdProfileDelete, Set: name})
 }
 
-// SendProfileList queries the daemon for the saved custom profiles.
-// Returns a JSON array of CustomProfile. Returns (false, "", nil) if the daemon
-// is not running.
-func SendProfileList() (handled bool, value string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "profile-list"})
-	if !handled || err != nil {
-		return handled, "", err
+// SendProfileList returns the saved custom profiles, sorted by name, each
+// marked whether it is running; "custom" is always listed. Returns
+// (false, nil, nil) if the daemon is not running.
+func SendProfileList() (bool, []ProfileListEntry, error) {
+	handled, list, err := sendJSON[[]ProfileListEntry](Request{Cmd: CmdProfileList})
+	if list == nil {
+		return handled, nil, err
 	}
-	if !resp.OK {
-		return true, "", respErr(resp)
-	}
-	return true, resp.Value, nil
+	return handled, *list, err
 }
 
 // SendAutoswitchSet configures automatic profile selection by power source.
 // An empty ac or battery target leaves the profile alone on that source.
 func SendAutoswitchSet(enabled bool, ac, battery string) (bool, error) {
-	handled, resp, err := sendCommand(request{
-		Cmd:     "autoswitch",
+	return sendOK(Request{
+		Cmd:     CmdAutoswitch,
 		Enabled: enabled,
 		AC:      ac,
 		Battery: battery,
 	})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
 }
 
-// SendAutoswitchGet queries the daemon for the autoswitch configuration.
-// Returns a JSON AutoswitchState. Returns (false, "", nil) if the daemon is not
-// running.
-func SendAutoswitchGet() (handled bool, value string, err error) {
-	var resp *response
-	handled, resp, err = sendCommand(request{Cmd: "autoswitch-get"})
-	if !handled || err != nil {
-		return handled, "", err
-	}
-	if !resp.OK {
-		return true, "", respErr(resp)
-	}
-	return true, resp.Value, nil
+// SendAutoswitchGet returns the autoswitch configuration and the power source
+// now. Returns (false, nil, nil) if the daemon is not running.
+func SendAutoswitchGet() (bool, *AutoswitchReading, error) {
+	return sendJSON[AutoswitchReading](Request{Cmd: CmdAutoswitchGet})
 }
 
 // SendGetState fetches the daemon's full cached state for GUI initialization.
 // Returns (false, nil, nil) if the daemon is not running.
 func SendGetState() (bool, *State, error) {
-	handled, resp, err := sendCommand(request{Cmd: "get-state"})
+	handled, resp, err := sendCommand(Request{Cmd: CmdGetState})
 	if !handled || err != nil {
 		return handled, nil, err
 	}
@@ -768,7 +517,7 @@ func SendGetState() (bool, *State, error) {
 // handled=false means the daemon is not running; there is no fallback, since
 // the capability data lives with the daemon's assembled device.
 func SendDeviceGet() (handled bool, info *DeviceInfo, err error) {
-	handled, resp, err := sendCommand(request{Cmd: "device-get"})
+	handled, resp, err := sendCommand(Request{Cmd: CmdDeviceGet})
 	if !handled || err != nil {
 		return handled, nil, err
 	}
@@ -787,7 +536,7 @@ func SendDeviceGet() (handled bool, info *DeviceInfo, err error) {
 // daemon is not running; there is no fallback, since the history only exists in
 // the daemon's memory — nothing persists it, so a restart starts it over.
 func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample, err error) {
-	handled, resp, err := sendCommand(request{Cmd: "telemetry-history", Seconds: seconds})
+	handled, resp, err := sendCommand(Request{Cmd: CmdTelemetryHistory, Seconds: seconds})
 	if !handled || err != nil {
 		return handled, nil, err
 	}
@@ -801,31 +550,13 @@ func SendTelemetryHistory(seconds int) (handled bool, samples []TelemetrySample,
 // its wire ID (DeviceInfo.Toggles). handled=false means the daemon is not
 // running and the caller should fall back to direct sysfs access.
 func SendFeatureGet(id string) (handled bool, value int, err error) {
-	handled, resp, err := sendCommand(request{Cmd: "feature-get", ID: id})
-	if !handled || err != nil {
-		return handled, 0, err
-	}
-	if !resp.OK {
-		return true, 0, respErr(resp)
-	}
-	v, err := strconv.Atoi(strings.TrimSpace(resp.Value))
-	if err != nil {
-		return true, 0, fmt.Errorf("parsing feature value %q: %w", resp.Value, err)
-	}
-	return true, v, nil
+	return sendInt(Request{Cmd: CmdFeatureGet, ID: id}, "feature "+id)
 }
 
 // SendFeatureSet sets a firmware toggle by its wire ID (DeviceInfo.Toggles).
 // For "bool" toggles the value must be 0 or 1.
 func SendFeatureSet(id string, value int) (bool, error) {
-	handled, resp, err := sendCommand(request{Cmd: "feature", ID: id, Set: strconv.Itoa(value)})
-	if !handled || err != nil {
-		return handled, err
-	}
-	if !resp.OK {
-		return true, respErr(resp)
-	}
-	return true, nil
+	return sendOK(Request{Cmd: CmdFeature, ID: id, Set: strconv.Itoa(value)})
 }
 
 // Subscribe opens a long-lived subscription to the daemon and returns a channel
@@ -860,7 +591,7 @@ func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error
 	// begins, since a subscription is idle by design between button presses.
 	_ = conn.SetDeadline(time.Now().Add(commandTimeout))
 
-	req := request{Cmd: "subscribe", Events: events}
+	req := Request{Cmd: CmdSubscribe, Events: events}
 	data, err := json.Marshal(req)
 	if err != nil {
 		_ = conn.Close()
@@ -877,7 +608,7 @@ func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error
 		_ = conn.Close()
 		return nil, nil, fmt.Errorf("no response from daemon")
 	}
-	var ack response
+	var ack Response
 	if err := json.Unmarshal(scanner.Bytes(), &ack); err != nil {
 		_ = conn.Close()
 		return nil, nil, err
@@ -895,7 +626,7 @@ func Subscribe(events []string) (eventCh <-chan string, cancel func(), err error
 	go func() {
 		defer close(ch)
 		for scanner.Scan() {
-			var ev response
+			var ev Response
 			if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil || ev.Event == "" {
 				continue
 			}

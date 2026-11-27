@@ -37,6 +37,7 @@
 package limits
 
 import (
+	"github.com/dahui/voltaire/v2/internal/safety"
 	"reflect"
 	"strings"
 
@@ -183,9 +184,9 @@ var defaultUVText = UVText{
 	Description: "All-core Curve Optimizer offset: negative values lower the CPU's voltage curve. Unstable values may cause crashes.",
 }
 
-// HasLimit reports whether the device lets a user set the limit with this id
+// hasLimit reports whether the device lets a user set the limit with this id
 // ("pl1", "pl2", "pl3").
-func (l Limits) HasLimit(id string) bool {
+func (l Limits) hasLimit(id string) bool {
 	_, ok := l.PowerLimit(id)
 	return ok
 }
@@ -591,9 +592,9 @@ func (l Limits) burstRange(lo, hi int) (rangeLo, rangeHi int) {
 	return lo, hi
 }
 
-// BasicTriple is what a basic-view save of watts stores: the daemon raises a
+// basicTriple is what a basic-view save of watts stores: the daemon raises a
 // burst limit below its minimum to it, so 30 W on asus-armoury is 30/32/45.
-func (l Limits) BasicTriple(watts int) api.TDPState {
+func (l Limits) basicTriple(watts int) api.TDPState {
 	if watts <= 0 { // no reading yet: nothing was raised
 		return api.TDPState{PL1SPL: watts, PL2SPPT: watts, FPPT: watts}
 	}
@@ -635,14 +636,13 @@ func (l Limits) FanFloorPWM(pl1 int) int {
 	return PWMMin
 }
 
-// FloorPWMAt evaluates a floor curve at a temperature, mirroring the daemon's
-// semantics exactly (z13ctl cli.FloorPWMAt): below the first point it returns
-// that point's PWM — a floor does not taper off at low temperature — above the
-// last point it returns the last PWM, and between points it interpolates
-// linearly. An empty floor is PWMMin everywhere. The mirroring is the point:
-// what this accepts and what the daemon accepts must be the same set of curves.
+// FloorPWMAt evaluates a floor curve at a temperature: below the first point
+// it returns that point's PWM — a floor does not taper off at low temperature —
+// above the last point it returns the last PWM, and between points it
+// interpolates linearly. It is safety.FloorPWMAt itself, so what the editor
+// accepts and what the daemon accepts are the same set of curves.
 func FloorPWMAt(floor []api.FanCurvePoint, temp int) int {
-	return PWMAt(floor, temp)
+	return safety.FloorPWMAt(floor, temp)
 }
 
 // PWMAt is the PWM a curve commands at a temperature, interpolated
@@ -654,35 +654,17 @@ func FloorPWMAt(floor []api.FanCurvePoint, temp int) int {
 // read the same way — and the fan-curve editor needs it for the *user's* curve,
 // where calling something named "Floor" would misdescribe what it computes.
 func PWMAt(curve []api.FanCurvePoint, temp int) int {
-	floor := curve
-	if len(floor) == 0 {
-		return PWMMin
-	}
-	if temp <= floor[0].Temp {
-		return floor[0].PWM
-	}
-	for i := 1; i < len(floor); i++ {
-		if temp > floor[i].Temp {
-			continue
-		}
-		lo, hi := floor[i-1], floor[i]
-		span := hi.Temp - lo.Temp
-		if span <= 0 {
-			return hi.PWM
-		}
-		return lo.PWM + (hi.PWM-lo.PWM)*(temp-lo.Temp)/span
-	}
-	return floor[len(floor)-1].PWM
+	return safety.FloorPWMAt(curve, temp) // PWMMin (0) for an empty curve, as safety's
 }
 
-// IsStockPPT reports whether a TDP reading matches some stock profile's firmware
+// isStockPPT reports whether a TDP reading matches some stock profile's firmware
 // defaults exactly, meaning the user has not diverged from what the firmware
 // would set on its own.
 //
 // An exact match on a genuinely user-chosen triple is possible but harmless: it
 // only means the drawer offers the basic view for values the basic view would
 // reproduce unchanged.
-func (l Limits) IsStockPPT(t api.TDPState) bool {
+func (l Limits) isStockPPT(t api.TDPState) bool {
 	for _, s := range l.StockProfilePPT {
 		if t.PL1SPL == s.PL1SPL && t.PL2SPPT == s.PL2SPPT && t.FPPT == s.FPPT {
 			return true
@@ -716,16 +698,16 @@ func (l Limits) IsStockPPT(t api.TDPState) bool {
 // plain equality instead flipped every low basic save on asus-armoury (30 W
 // stores 30/32/45) into the advanced view.
 func (l Limits) NeedsAdvanced(isCustom bool, t api.TDPState) bool {
-	if !isCustom || l.IsStockPPT(t) {
+	if !isCustom || l.isStockPPT(t) {
 		return false
 	}
 	if t.PL1SPL > l.BasicSliderMax() {
 		return true
 	}
-	b := l.BasicTriple(t.PL1SPL)
+	b := l.basicTriple(t.PL1SPL)
 	// Only the limits the device has: one with no PL2 reads it back as 0,
 	// which is not a sign the user set it apart from PL1.
-	return (l.HasLimit("pl2") && t.PL2SPPT != b.PL2SPPT) || (l.HasLimit("pl3") && t.FPPT != b.FPPT)
+	return (l.hasLimit("pl2") && t.PL2SPPT != b.PL2SPPT) || (l.hasLimit("pl3") && t.FPPT != b.FPPT)
 }
 
 // FanCurveIsCustom reports whether a fan curve reported by the daemon is actually

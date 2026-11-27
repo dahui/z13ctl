@@ -156,10 +156,19 @@ func (r *Ring) Since(now time.Time, d time.Duration) []Entry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Every retained entry is tested, not just a newest-first run: after a
+	// backward clock step an in-window sample can follow an older one. Only
+	// the entries in the window are copied; the ring holds an hour on some
+	// devices, and a one-minute window used to clone all of it first.
 	var out []Entry
-	for _, e := range r.snapshot() {
+	start := 0
+	if r.count == len(r.buf) {
+		start = r.next
+	}
+	for i := range r.count {
+		e := &r.buf[(start+i)%len(r.buf)]
 		if !e.At.Before(cutoff) {
-			out = append(out, e)
+			out = append(out, e.clone())
 		}
 	}
 	return out

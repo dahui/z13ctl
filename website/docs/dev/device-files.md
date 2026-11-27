@@ -255,8 +255,8 @@ controller's vibration strength and the refresh rate.
 | `usb` | The controller's USB identifier, `vvvv:pppp` in hex, so another device bound to the same driver is never the one written. |
 
 The daemon records the value the user sets and puts it back at startup and
-after a suspend. `voltaire setup` grants the attribute on every device hid-oxp
-binds. The control is offered only while the controller is present; check that
+after a suspend. `voltaire setup` grants the attribute on whichever of the
+controller's HID devices hid-oxp gives it to. The control is offered only while the controller is present; check that
 the controller actually obeys the value (feel a rumble at two strengths)
 before declaring it.
 
@@ -405,9 +405,11 @@ keyboard_node = "on the EX1 the AT keyboard carries only the button chords"
 
 ## Checking a new file
 
-`make test` validates every embedded device file. It also checks that each
-lighting zone and button the files name is granted in the packaged udev rules
-(`TestEveryDeviceFileTargetIsGranted`), so a new device's hardware is
-reachable on a package install. Run `sudo voltaire setup` after adding a file
-on the machine itself, then `voltaire status` and `voltaire tdp --get` to see
-what the daemon read.
+`make test` validates every embedded device file. `voltaire setup` grants each
+machine only what its own file declares (`internal/perms`), so a new file needs
+its rules golden: run `go test ./internal/perms -run TestGoldens -update`,
+then read `internal/perms/testdata/<id>.rules` — it should grant this
+machine's hardware and nothing else. A section whose method perms has no case
+for fails the tests until one is added. On the machine itself, preview with
+`voltaire --dry-run setup --machine <id>`, run `sudo voltaire setup`, then
+`voltaire status` and `voltaire tdp --get` to see what the daemon read.

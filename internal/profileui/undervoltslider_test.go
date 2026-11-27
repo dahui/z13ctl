@@ -62,7 +62,7 @@ func TestUndervoltSliderNote(t *testing.T) {
 }
 
 func TestUndervoltNoteOn(t *testing.T) {
-	if UndervoltNoteOn(false) != UndervoltNote() {
+	if UndervoltNoteOn(false) != undervoltNote() {
 		t.Error("the usual model's note changed")
 	}
 	if strings.Contains(UndervoltNoteOn(true), "resets them to 0") {

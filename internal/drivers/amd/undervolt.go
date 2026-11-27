@@ -156,7 +156,7 @@ func sendCO(offset int) error {
 	if err != nil {
 		return err
 	}
-	resp, _, err := SendSMUCommand(p.Mailbox, p.Cmd, [6]uint32{encodeCOValue(offset)})
+	resp, _, err := sendSMUCommand(p.Mailbox, p.Cmd, [6]uint32{encodeCOValue(offset)})
 	if err != nil {
 		return err
 	}
@@ -169,8 +169,8 @@ func sendCO(offset int) error {
 // The offset bounds live in device data and are enforced by the undervolter
 // driver's Apply before this runs; encodeCOValue independently maps any
 // positive value to stock, so an overvolt cannot be encoded here at all.
-func SetCurveOptimizer(cpuOffset int) error {
-	if !SMUProbeUndervolt() {
+func setCurveOptimizer(cpuOffset int) error {
+	if !smuProbeUndervolt() {
 		return errCONotAvailable()
 	}
 	if err := sendCO(cpuOffset); err != nil {
@@ -180,8 +180,8 @@ func SetCurveOptimizer(cpuOffset int) error {
 }
 
 // ResetCurveOptimizer resets the CPU Curve Optimizer to stock (0).
-func ResetCurveOptimizer() error {
-	if !SMUProbeUndervolt() {
+func resetCurveOptimizer() error {
+	if !smuProbeUndervolt() {
 		return errCONotAvailable()
 	}
 	if err := sendCO(0); err != nil {

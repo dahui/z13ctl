@@ -8,12 +8,11 @@ package cmd
 // reconfigure the developer's machine.
 
 import (
+	"github.com/dahui/voltaire/api/v2"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-
-	"github.com/dahui/voltaire/v2/internal/cli"
 )
 
 // resetAutoswitchFlags restores the package-level flag vars between cases.
@@ -82,12 +81,12 @@ func TestAutoswitchRejectsConflictingFlags(t *testing.T) {
 // would refuse must not get as far as the socket.
 func TestProfileNameValidationParity(t *testing.T) {
 	for _, name := range []string{"", "quiet", "balanced", "performance", "custom", "Gaming", "has space", "a/b"} {
-		if err := cli.ValidateProfileName(name); err == nil {
+		if err := api.ValidateProfileName(name); err == nil {
 			t.Errorf("ValidateProfileName(%q) = nil, want a rejection", name)
 		}
 	}
 	for _, name := range []string{"gaming", "battery-uv", "my_profile2"} {
-		if err := cli.ValidateProfileName(name); err != nil {
+		if err := api.ValidateProfileName(name); err != nil {
 			t.Errorf("ValidateProfileName(%q) = %v, want nil", name, err)
 		}
 	}

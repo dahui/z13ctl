@@ -201,7 +201,7 @@ func TestSleepActionZeroValueIsInert(t *testing.T) {
 // only thing that then distinguishes "still the same suspend" from "a new one".
 func TestSetSuspendingBumpsGenerationOnEntry(t *testing.T) {
 	t.Parallel()
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 
 	read := func() (bool, int) {
 		d.mu.Lock()
@@ -375,7 +375,7 @@ func TestECStatusAfterSleepTreatsAVanishedBatteryAsWedged(t *testing.T) {
 // d.dev, and a firmware profile has nothing for applyCustomHW to restore.
 func TestRestoreLatchesAWedgedEC(t *testing.T) {
 	t.Parallel()
-	d := &Daemon{state: api.State{Profile: "balanced"}}
+	d := &Daemon{hw: &device.Device{}, state: api.State{Profile: "balanced"}}
 
 	wedged := func() bool {
 		d.mu.Lock()
@@ -432,7 +432,6 @@ func TestProbeECClassifiesThroughTheDriver(t *testing.T) {
 		hw   *device.Device
 		want ecStatus
 	}{
-		{"no device at all", nil, ecReady},
 		{"device without a battery", &device.Device{}, ecReady},
 		{"capacity read succeeds", &device.Device{Battery: errBattery{}}, ecReady},
 		{"no battery attribute", &device.Device{Battery: errBattery{&fs.PathError{Op: "open", Err: syscall.ENOENT}}}, ecAbsent},
@@ -620,7 +619,7 @@ func TestReleaseSettleComesFromTheDevice(t *testing.T) {
 	if got := (&Daemon{hw: &device.Device{}}).releaseSettle(); got != 0 {
 		t.Errorf("releaseSettle with no fans = %v, want 0", got)
 	}
-	if got := (&Daemon{}).releaseSettle(); got != 0 {
+	if got := (&Daemon{hw: &device.Device{}}).releaseSettle(); got != 0 {
 		t.Errorf("releaseSettle with no device = %v, want 0", got)
 	}
 }

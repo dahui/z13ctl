@@ -14,63 +14,16 @@ import (
 
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/aura"
-	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
-// request and response mirror the unexported types in api/client.go.
-// They are intentionally duplicated: the api module is a separate Go module
-// (stdlib-only), so the daemon cannot share types with it across the module
-// boundary without making them public. Both sides must stay in sync with the
-// JSON wire protocol.
-
-// request is a command sent by a client over the socket.
-// One JSON object per newline-terminated message.
-type request struct {
-	Cmd        string   `json:"cmd"`
-	Mode       string   `json:"mode,omitempty"`
-	Color      string   `json:"color,omitempty"`  // "RRGGBB" hex
-	Color2     string   `json:"color2,omitempty"` // "RRGGBB" hex
-	Speed      string   `json:"speed,omitempty"`
-	Brightness int      `json:"brightness,omitempty"`
-	Set        string   `json:"set,omitempty"`
-	Device     string   `json:"device,omitempty"` // "keyboard", "lightbar", /dev/hidrawN; empty = all
-	Events     []string `json:"events,omitempty"`
-	PL1        string   `json:"pl1,omitempty"`
-	PL2        string   `json:"pl2,omitempty"`
-	PL3        string   `json:"pl3,omitempty"`
-	Force      bool     `json:"force,omitempty"`
-	// Profile names the custom profile a fancurve/tdp/undervolt command edits.
-	// Empty means the active profile — which is what every client written before
-	// this field existed sends, so their behaviour is unchanged.
-	Profile string `json:"profile,omitempty"`
-	AC      string `json:"ac,omitempty"`
-	Battery string `json:"battery,omitempty"`
-	Enabled bool   `json:"enabled,omitempty"`
-	// ID names the firmware toggle a feature/feature-get command addresses,
-	// e.g. "boot_sound". The valid set is the device-get document's toggles.
-	ID string `json:"id,omitempty"`
-	// Seconds is telemetry-history's window. Absent means the whole retained
-	// history, which device-get's telemetry.history_seconds gives in advance.
-	Seconds int `json:"seconds,omitempty"`
-}
-
-// response is the reply to a command or a streamed event notification.
-type response struct {
-	OK     bool            `json:"ok"`
-	Error  string          `json:"error,omitempty"`
-	Value  string          `json:"value,omitempty"`
-	State  *api.State      `json:"state,omitempty"`
-	Device *api.DeviceInfo `json:"device,omitempty"`
-	Event  string          `json:"event,omitempty"`
-	// History is telemetry-history's payload. It is a typed field rather than
-	// JSON stuffed into Value, following device-get: Value's embedded-JSON
-	// convention exists for the commands that predate a structured reply, and
-	// double-encoding hurts most at exactly this size — a full window is 300
-	// samples, whose every quote would be escaped to be carried as a string.
-	History []api.TelemetrySample `json:"history,omitempty"`
-}
+// request and response are the wire protocol's messages (api.Request and
+// api.Response): one definition for the client and the daemon.
+type (
+	request  = api.Request
+	response = api.Response
+)
 
 // requestReadTimeout bounds how long a connection may stay open without
 // sending its request line. Declared as a var so tests can shorten it.
@@ -98,7 +51,7 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		return
 	}
 
-	if req.Cmd == "subscribe" {
+	if req.Cmd == api.CmdSubscribe {
 		// Acknowledge and keep the connection open for event streaming. Clear
 		// the deadline first: a subscription is idle by design between button
 		// presses, and the daemon only ever writes on it from here on.
@@ -120,34 +73,83 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	_ = conn.Close()
 }
 
-// ecGuarded reports whether cmd reaches the embedded controller through
-// asus-wmi or asus-armoury, and so must be refused while d.ecWedged is set.
-// Writes are the obvious half. The *-get commands for the firmware toggles are
-// here because their attributes are not driver caches: each read is a live WMI
-// call, and into a stalled EC a read holds the ACPI global mutex exactly as a
-// write does. Lighting is hidraw, the profile CRUD commands touch only state,
-// cpuboost is cpufreq, telemetry-history is the in-memory ring, and undervolt is
-// the SMU rather than the EC, so none of those are guarded.
-func ecGuarded(cmd string) bool {
-	switch cmd {
-	case "profile", "fancurve", "fancurve-reset", "tdp", "tdp-reset", "tuning-reset",
-		"batterylimit", "bootsound", "paneloverdrive", "feature",
-		"bootsound-get", "paneloverdrive-get", "feature-get", "tdp-get":
-		return true
-	}
-	return false
+// errECWedged is what a guarded command gets while the EC is not answering.
+const errECWedged = api.ECWedgedMessage
+
+// command is one entry of the daemon's command table.
+type command struct {
+	handle func(d *Daemon, req request) response
+	// ec says the command reaches the embedded controller through asus-wmi or
+	// asus-armoury, and so is refused while d.ecWedged is set. Writes are the
+	// obvious half. The firmware toggles' gets are here because their
+	// attributes are not driver caches: each read is a live WMI call, and into
+	// a stalled EC a read holds the ACPI global mutex exactly as a write does;
+	// tdp-get likewise (each asus-armoury read evaluates _PSR). Lighting is
+	// hidraw, the profile CRUD commands touch only state, cpuboost is cpufreq,
+	// rumble is the controller's HID driver, telemetry-history is the in-memory
+	// ring, and undervolt is the SMU rather than the EC. get-state and
+	// autoswitch-get decide per read inside the handler. Every entry states it,
+	// so a new command cannot be added without deciding.
+	ec bool
 }
 
-// errECWedged is what a guarded command gets while the EC is not answering.
-const errECWedged = "the embedded controller has not answered since resume; " +
-	"refusing to touch it (this clears on its own once it responds)"
+// noReq adapts a handler that takes no request.
+func noReq(h func(*Daemon) response) func(*Daemon, request) response {
+	return func(d *Daemon, _ request) response { return h(d) }
+}
+
+// commands is every command the daemon answers, keyed by its wire name.
+// subscribe is not here: handleConn keeps that connection open itself.
+var commands = map[string]command{
+	api.CmdApply:             {(*Daemon).handleApply, false},
+	api.CmdOff:               {(*Daemon).handleOff, false},
+	api.CmdBrightness:        {(*Daemon).handleBrightness, false},
+	api.CmdProfile:           {(*Daemon).handleProfile, true},
+	api.CmdProfileGet:        {noReq((*Daemon).handleProfileGet), false},
+	api.CmdProfileCreate:     {(*Daemon).handleProfileCreate, false},
+	api.CmdProfileSave:       {(*Daemon).handleProfileSave, false},
+	api.CmdProfileDelete:     {(*Daemon).handleProfileDelete, false},
+	api.CmdProfileList:       {noReq((*Daemon).handleProfileList), false},
+	api.CmdAutoswitch:        {(*Daemon).handleAutoswitch, false},
+	api.CmdAutoswitchGet:     {noReq((*Daemon).handleAutoswitchGet), false},
+	api.CmdBatteryLimit:      {(*Daemon).handleBatteryLimit, true},
+	api.CmdBatteryLimitGet:   {noReq((*Daemon).handleBatteryLimitGet), false},
+	api.CmdDeviceGet:         {noReq((*Daemon).handleDeviceGet), false},
+	api.CmdTelemetryHistory:  {(*Daemon).handleTelemetryHistory, false},
+	api.CmdFeature:           {(*Daemon).handleFeature, true},
+	api.CmdFeatureGet:        {(*Daemon).handleFeatureGet, true},
+	api.CmdBootSound:         {(*Daemon).handleBootSound, true},
+	api.CmdBootSoundGet:      {noReq((*Daemon).handleBootSoundGet), true},
+	api.CmdButtonSet:         {(*Daemon).handleButtonSet, false},
+	api.CmdCPUBoost:          {(*Daemon).handleCPUBoost, false},
+	api.CmdCPUBoostGet:       {noReq((*Daemon).handleCPUBoostGet), false},
+	api.CmdRumble:            {(*Daemon).handleRumble, false},
+	api.CmdRumbleGet:         {noReq((*Daemon).handleRumbleGet), false},
+	api.CmdPanelOverdrive:    {(*Daemon).handlePanelOverdrive, true},
+	api.CmdPanelOverdriveGet: {noReq((*Daemon).handlePanelOverdriveGet), true},
+	api.CmdFanCurve:          {(*Daemon).handleFanCurve, true},
+	api.CmdFanCurveGet:       {noReq((*Daemon).handleFanCurveGet), false},
+	api.CmdFanCurveReset:     {(*Daemon).handleFanCurveReset, true},
+	api.CmdTDP:               {(*Daemon).handleTDP, true},
+	api.CmdTDPGet:            {noReq((*Daemon).handleTDPGet), true},
+	api.CmdTDPReset:          {(*Daemon).handleTDPReset, true},
+	api.CmdTuningReset:       {(*Daemon).handleTuningReset, true},
+	api.CmdUndervolt:         {(*Daemon).handleUndervolt, false},
+	api.CmdUndervoltGet:      {noReq((*Daemon).handleUndervoltGet), false},
+	api.CmdUndervoltReset:    {(*Daemon).handleUndervoltReset, false},
+	api.CmdGetState:          {noReq((*Daemon).handleGetState), false},
+}
 
 func (d *Daemon) dispatch(req request) response {
+	c, ok := commands[req.Cmd]
+	if !ok {
+		return response{OK: false, Error: "unknown command: " + req.Cmd}
+	}
 	// A user command into a stalled EC hard-locks the machine just as surely as
 	// a watcher's does, and nobody asking for a TDP change wants that instead.
 	// Refused up front, before any handler runs, so a click in the GUI during the
 	// wedge costs an error message rather than a power-button reset.
-	if ecGuarded(req.Cmd) {
+	if c.ec {
 		d.mu.Lock()
 		wedged := d.ecWedged
 		d.mu.Unlock()
@@ -155,204 +157,133 @@ func (d *Daemon) dispatch(req request) response {
 			return response{OK: false, Error: errECWedged}
 		}
 	}
+	return c.handle(d, req)
+}
 
-	switch req.Cmd {
-	case "apply":
-		return d.handleApply(req)
-	case "off":
-		return d.handleOff(req)
-	case "brightness":
-		return d.handleBrightness(req)
-	case "profile":
-		return d.handleProfile(req)
-	case "profile-get":
-		return d.handleProfileGet()
-	case "profile-create":
-		return d.handleProfileCreate(req)
-	case "profile-save":
-		return d.handleProfileSave(req)
-	case "profile-delete":
-		return d.handleProfileDelete(req)
-	case "profile-list":
-		return d.handleProfileList()
-	case "autoswitch":
-		return d.handleAutoswitch(req)
-	case "autoswitch-get":
-		return d.handleAutoswitchGet()
-	case "batterylimit":
-		return d.handleBatteryLimit(req)
-	case "batterylimit-get":
-		return d.handleBatteryLimitGet()
-	case "device-get":
-		return d.handleDeviceGet()
-	case "telemetry-history":
-		return d.handleTelemetryHistory(req)
-	case "feature":
-		return d.handleFeature(req)
-	case "feature-get":
-		return d.handleFeatureGet(req)
-	case "bootsound":
-		return d.handleBootSound(req)
-	case "bootsound-get":
-		return d.handleBootSoundGet()
-	case "button-set":
-		return d.handleButtonSet(req)
-	case "cpuboost":
-		return d.handleCPUBoost(req)
-	case "cpuboost-get":
-		return d.handleCPUBoostGet()
-	case "rumble":
-		return d.handleRumble(req)
-	case "rumble-get":
-		return d.handleRumbleGet()
-	case "paneloverdrive":
-		return d.handlePanelOverdrive(req)
-	case "paneloverdrive-get":
-		return d.handlePanelOverdriveGet()
-	case "fancurve":
-		return d.handleFanCurve(req)
-	case "fancurve-get":
-		return d.handleFanCurveGet()
-	case "fancurve-reset":
-		return d.handleFanCurveReset(req)
-	case "tdp":
-		return d.handleTDP(req)
-	case "tdp-get":
-		return d.handleTDPGet()
-	case "tdp-reset":
-		return d.handleTDPReset(req)
-	case "tuning-reset":
-		return d.handleTuningReset(req)
-	case "undervolt":
-		return d.handleUndervolt(req)
-	case "undervolt-get":
-		return d.handleUndervoltGet()
-	case "undervolt-reset":
-		return d.handleUndervoltReset(req)
-	case "get-state":
-		d.mu.Lock()
-		// The legacy FanCurve/TDP/Undervolt fields are projected here from the
-		// active custom profile so clients written before named profiles existed
-		// still see the settings that are in force. Two of the three are then
-		// overwritten with live sysfs readings below.
-		s := withLegacyProjection(cloneState(d.state))
-		wedged := d.ecWedged
-		d.mu.Unlock()
-		// While the EC is not answering, skip the reads that are live ACPI/WMI
-		// calls rather than driver caches — the battery and AC status, the
-		// firmware toggles (asus-armoury), and the telemetry sample and fan RPM
-		// (asus-wmi). A GUI polls this, so it would otherwise be the first thing to
-		// walk into the stalled EC. Those fields keep the values in daemon state;
-		// the reads left live below are cached or not the EC at all.
-		var bat driver.BatteryStatus
-		batOK := false
-		if !wedged {
-			bat, batOK = d.batteryStatus()
-		}
-		if batOK {
-			if bat.ACKnown {
-				s.OnAC = bat.OnAC
-				// SourceKnown is what lets a client distinguish "on battery"
-				// from "no Mains supply exists here" (a VM, a desktop): OnAC is
-				// false in both. Left false, a client must claim nothing about
-				// power.
-				s.SourceKnown = true
-			}
-			// Zero unless the device declares battery.health, which is what
-			// DeviceInfo.Battery.Health tells a client to expect.
-			s.BatteryHealth = bat.HealthPercent
-			// The level and what the pack is doing. Both were read here and
-			// discarded, which left BatteryPowerW travelling with nothing that
-			// makes it legible: a pack resting above its charge threshold
-			// reports a correct 0 W that reads as a broken sensor.
-			s.BatteryLevel = bat.Capacity
-			s.BatteryState = string(bat.State)
-			s.Charger = string(bat.Charger)
-			// The pair a client divides the flow into for a time estimate;
-			// zero when the pack reports neither energy form.
-			s.BatteryEnergyWh = bat.EnergyWh
-			s.BatteryEnergyFullWh = bat.EnergyFullWh
-		}
-		// Populate firmware toggles from hardware (not cached in daemon state).
-		// Read once, generically, over whatever the device declares — a device
-		// with a different set of toggles is described by Features, while the
-		// two named fields are the fixed vocabulary older clients know and are
-		// filled from the same reads. A failed read reports zero in the named
-		// fields, as it always has, but is *absent* from Features: zero there
-		// would be a claim the toggle is off.
-		if !wedged {
-			s.BootSound, s.PanelOverdrive = 0, 0
-			s.Features = d.readFeatures()
-			s.BootSound = s.Features["boot_sound"]
-			s.PanelOverdrive = s.Features["panel_overdrive"]
-		}
-		// Left nil when the device's firmware interface has no such flag or the
-		// read fails — a client renders that as unknown, never as "nothing
-		// pending", which would be a claim about the firmware.
-		s.PendingReboot = d.readPendingReboot()
-		// Boost from the kernel rather than from the state we just cloned:
-		// cpufreq's switch is writable by anything with the grant and resets
-		// across a reboot, so cached state is an instruction and not a reading.
-		// Left nil when the read fails, which a client renders as unknown —
-		// false would say the CPU is not boosting.
-		s.CPUBoost = d.readCPUBoost()
-		// The controller's vibration strength, live, on the same terms.
-		s.Rumble = d.readRumble()
-		// The button that opens voltaire, resolved, so a client never applies
-		// the device default itself. Absent with no buttons to choose from.
-		if d.hw != nil && len(d.hw.ButtonList) > 0 {
-			choice := s.DrawerButton
-			s.DrawerButton = api.DrawerButtonNone
-			if id := d.resolveDrawerButton(choice); id != "" {
-				s.DrawerButton = id
-			}
-		}
-		// Populate fan curve from hardware for ground truth.
-		s.FanCurve = d.readFanCurveHW()
-		// Populate TDP: a firmware profile's stock row, a custom profile's
-		// readback (displayTDP). Not while wedged: on asus-armoury each PPT read
-		// evaluates the AC adapter's _PSR to pick the AC or battery table — a
-		// live ACPI call, where asus-nb-wmi's ppt_* were caches. s.TDP keeps the
-		// state projection.
-		if !wedged && d.hw != nil && d.hw.Power != nil {
-			if tdp, err := d.displayTDP(); err == nil {
-				s.TDP = &tdp
-			}
-			// The bounds the kernel accepts, for z13ctl 1.4 clients; device-get
-			// carries the same ranges. Inside this gate for the same reason as
-			// the read above — on armoury the bounds are _PSR calls too — and
-			// through d.env(), whose cache keeps a 1 Hz poll from re-reading them.
-			s.TDPLimits = tdpLimitsFrom(d.env())
-		}
-		// Whether undervolt is available, without probing: see uvAvailable.
-		s.UndervoltAvailable = d.uvAvailable()
-		// Populate live telemetry from hardware. A sample fails only when the
-		// temperature is unreadable, so fall back to the fan controller for RPM
-		// there — the two readings were always independent on the wire.
-		sampled := false
-		if !wedged && d.hw != nil && d.hw.Telemetry != nil {
-			if sample, err := d.liveSample(); err == nil {
-				sampled = true
-				d.applyLiveTelemetry(&s, sample)
-			}
-		}
-		if !wedged && !sampled && d.hw != nil && d.hw.Fans != nil {
-			if rpms, err := d.hw.Fans.ReadRPM(); err == nil && len(rpms) > 0 {
-				s.RPM = append([]int(nil), rpms...)
-				s.FanRPM = rpms[0]
-			}
-		}
-		return response{OK: true, State: &s}
-	default:
-		return response{OK: false, Error: "unknown command: " + req.Cmd}
+// handleGetState answers get-state: daemon state, with the legacy projection,
+// overlaid by live readings of everything a client displays. It is polled at
+// 1 Hz by the GUI, so every read here is weighed against the EC wedge.
+func (d *Daemon) handleGetState() response {
+	d.mu.Lock()
+	// The legacy FanCurve/TDP/Undervolt fields are projected here from the
+	// active custom profile so clients written before named profiles existed
+	// still see the settings that are in force. Two of the three are then
+	// overwritten with live sysfs readings below.
+	s := withLegacyProjection(cloneState(d.state))
+	wedged := d.ecWedged
+	d.mu.Unlock()
+	// While the EC is not answering, skip the reads that are live ACPI/WMI
+	// calls rather than driver caches — the battery and AC status, the
+	// firmware toggles (asus-armoury), and the telemetry sample and fan RPM
+	// (asus-wmi). A GUI polls this, so it would otherwise be the first thing to
+	// walk into the stalled EC. Those fields keep the values in daemon state;
+	// the reads left live below are cached or not the EC at all.
+	var bat driver.BatteryStatus
+	batOK := false
+	if !wedged {
+		bat, batOK = d.batteryStatus()
 	}
+	if batOK {
+		if bat.ACKnown {
+			s.OnAC = bat.OnAC
+			// SourceKnown is what lets a client distinguish "on battery"
+			// from "no Mains supply exists here" (a VM, a desktop): OnAC is
+			// false in both. Left false, a client must claim nothing about
+			// power.
+			s.SourceKnown = true
+		}
+		// Zero unless the device declares battery.health, which is what
+		// DeviceInfo.Battery.Health tells a client to expect.
+		s.BatteryHealth = bat.HealthPercent
+		// The level and what the pack is doing. Both were read here and
+		// discarded, which left BatteryPowerW travelling with nothing that
+		// makes it legible: a pack resting above its charge threshold
+		// reports a correct 0 W that reads as a broken sensor.
+		s.BatteryLevel = bat.Capacity
+		s.BatteryState = string(bat.State)
+		s.Charger = string(bat.Charger)
+		// The pair a client divides the flow into for a time estimate;
+		// zero when the pack reports neither energy form.
+		s.BatteryEnergyWh = bat.EnergyWh
+		s.BatteryEnergyFullWh = bat.EnergyFullWh
+	}
+	// Populate firmware toggles from hardware (not cached in daemon state).
+	// Read once, generically, over whatever the device declares — a device
+	// with a different set of toggles is described by Features, while the
+	// two named fields are the fixed vocabulary older clients know and are
+	// filled from the same reads. A failed read reports zero in the named
+	// fields, as it always has, but is *absent* from Features: zero there
+	// would be a claim the toggle is off.
+	if !wedged {
+		s.BootSound, s.PanelOverdrive = 0, 0
+		s.Features = d.readFeatures()
+		s.BootSound = s.Features["boot_sound"]
+		s.PanelOverdrive = s.Features["panel_overdrive"]
+	}
+	// Left nil when the device's firmware interface has no such flag or the
+	// read fails — a client renders that as unknown, never as "nothing
+	// pending", which would be a claim about the firmware.
+	s.PendingReboot = d.readPendingReboot()
+	// Boost from the kernel rather than from the state we just cloned:
+	// cpufreq's switch is writable by anything with the grant and resets
+	// across a reboot, so cached state is an instruction and not a reading.
+	// Left nil when the read fails, which a client renders as unknown —
+	// false would say the CPU is not boosting.
+	s.CPUBoost = d.readCPUBoost()
+	// The controller's vibration strength, live, on the same terms.
+	s.Rumble = d.readRumble()
+	// The button that opens voltaire, resolved, so a client never applies
+	// the device default itself. Absent with no buttons to choose from.
+	if len(d.hw.ButtonList) > 0 {
+		choice := s.DrawerButton
+		s.DrawerButton = api.DrawerButtonNone
+		if id := d.resolveDrawerButton(choice); id != "" {
+			s.DrawerButton = id
+		}
+	}
+	// Populate fan curve from hardware for ground truth.
+	s.FanCurve = d.readFanCurveHW()
+	// Populate TDP: a firmware profile's stock row, a custom profile's
+	// readback (displayTDP). Not while wedged: on asus-armoury each PPT read
+	// evaluates the AC adapter's _PSR to pick the AC or battery table — a
+	// live ACPI call, where asus-nb-wmi's ppt_* were caches. s.TDP keeps the
+	// state projection.
+	if !wedged && d.hw.Power != nil {
+		if tdp, err := d.displayTDP(); err == nil {
+			s.TDP = &tdp
+		}
+		// The bounds the kernel accepts, for z13ctl 1.4 clients; device-get
+		// carries the same ranges. Inside this gate for the same reason as
+		// the read above — on armoury the bounds are _PSR calls too — and
+		// through d.env(), whose cache keeps a 1 Hz poll from re-reading them.
+		s.TDPLimits = tdpLimitsFrom(d.env())
+	}
+	// Whether undervolt is available, without probing: see uvAvailable.
+	s.UndervoltAvailable = d.uvAvailable()
+	// Populate live telemetry from hardware. A sample fails only when the
+	// temperature is unreadable, so fall back to the fan controller for RPM
+	// there — the two readings were always independent on the wire.
+	sampled := false
+	if !wedged && d.hw.Telemetry != nil {
+		if sample, err := d.liveSample(); err == nil {
+			sampled = true
+			d.applyLiveTelemetry(&s, sample)
+		}
+	}
+	if !wedged && !sampled && d.hw.Fans != nil {
+		if rpms, err := d.hw.Fans.ReadRPM(); err == nil && len(rpms) > 0 {
+			s.RPM = append([]int(nil), rpms...)
+			s.FanRPM = rpms[0]
+		}
+	}
+	return response{OK: true, State: &s}
 }
 
 // handleProfileGet reads the current performance profile from hardware.
 // Reading hardware (not daemon state) ensures accurate values even if the
 // profile was changed by another process.
 func (d *Daemon) handleProfileGet() response {
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return response{OK: false, Error: "reading profile: no platform profile control on this device"}
 	}
 	p, err := d.hw.Profiles.Get()
@@ -364,7 +295,7 @@ func (d *Daemon) handleProfileGet() response {
 
 // handleBatteryLimitGet reads the current battery charge limit from hardware.
 func (d *Daemon) handleBatteryLimitGet() response {
-	if d.hw == nil || d.hw.Battery == nil {
+	if d.hw.Battery == nil {
 		return response{OK: false, Error: "reading battery limit: no battery charge control on this device"}
 	}
 	limit, err := d.hw.Battery.ChargeLimit()
@@ -379,7 +310,7 @@ func (d *Daemon) handleBatteryLimitGet() response {
 // the wire protocol's field-specific errors, which its single return cannot
 // distinguish, and refuses before d.mu is taken.
 func (d *Daemon) lightingRequestError(req request) string {
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return "no HID device available"
 	}
 	c := d.hw.Lighting.Caps()
@@ -396,16 +327,8 @@ func (d *Daemon) handleApply(req request) response {
 	if msg := d.lightingRequestError(req); msg != "" {
 		return response{OK: false, Error: msg}
 	}
-	c := d.hw.Lighting.Caps()
-	if _, ok := c.Mode(req.Mode); !ok {
-		names := make([]string, len(c.Modes))
-		for i, m := range c.Modes {
-			names[i] = m.Name
-		}
-		return response{OK: false, Error: fmt.Sprintf("mode: unknown mode %q (valid: %s)", req.Mode, strings.Join(names, " "))}
-	}
-	if !c.HasSpeed(req.Speed) {
-		return response{OK: false, Error: fmt.Sprintf("speed: unknown speed %q (valid: %s)", req.Speed, strings.Join(c.Speeds, " "))}
+	if e := d.hw.Lighting.Caps().CheckEffect(req.Mode, req.Speed); e != nil {
+		return response{OK: false, Error: e.Error()}
 	}
 	if _, _, _, err := aura.ParseColor(req.Color); err != nil {
 		return response{OK: false, Error: "color: " + err.Error()}
@@ -417,7 +340,7 @@ func (d *Daemon) handleApply(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
 	ls := api.LightingState{
@@ -463,7 +386,7 @@ func (d *Daemon) handleOff(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
 	if err := d.hw.Lighting.Off(req.Device); err != nil {
@@ -514,7 +437,7 @@ func (d *Daemon) handleBrightness(req request) response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.hw == nil || d.hw.Lighting == nil {
+	if d.hw.Lighting == nil {
 		return response{OK: false, Error: "no HID device available"}
 	}
 	on := req.Brightness > 0
@@ -584,7 +507,7 @@ func (d *Daemon) restoreStockPPT(profile string) {
 // and "the limits are now at a level the fans need no floor for" are different
 // answers, and only the second one makes a release safe.
 func (d *Daemon) restoreStockPPTErr(profile string) error {
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return fmt.Errorf("%s", d.hw.Missing("power", noPowerControl))
 	}
 	if err := d.hw.Power.RestoreStock(profile); err != nil {
@@ -596,7 +519,7 @@ func (d *Daemon) restoreStockPPTErr(profile string) error {
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
-	if d.hw == nil || d.hw.Battery == nil || !d.hw.Battery.Caps().ChargeLimit {
+	if d.hw.Battery == nil || !d.hw.Battery.Caps().ChargeLimit {
 		return response{OK: false, Error: "batterylimit: " + d.hw.Missing("charge-limit", "no battery charge control on this device")}
 	}
 	caps := d.hw.Battery.Caps()
@@ -605,6 +528,8 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 		return response{OK: false, Error: fmt.Sprintf("battery limit must be an integer %d–%d",
 			caps.ChargeLimitMin, caps.ChargeLimitMax)}
 	}
+	d.hwMu.Lock()
+	defer d.hwMu.Unlock()
 	if err := d.hw.Battery.SetChargeLimit(limit); err != nil {
 		return response{OK: false, Error: "batterylimit: " + err.Error()}
 	}
@@ -618,7 +543,7 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 }
 
 func (d *Daemon) handleBootSoundGet() response {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return response{OK: false, Error: "reading boot sound: no firmware toggles on this device"}
 	}
 	v, err := d.hw.Toggles.Get("boot_sound")
@@ -629,7 +554,7 @@ func (d *Daemon) handleBootSoundGet() response {
 }
 
 func (d *Daemon) handleBootSound(req request) response {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return response{OK: false, Error: "bootsound: no firmware toggles on this device"}
 	}
 	// The legal values are the firmware's (ToggleSpec.Accepts), as for the
@@ -642,19 +567,14 @@ func (d *Daemon) handleBootSound(req request) response {
 	if err != nil || !spec.Accepts(value) {
 		return response{OK: false, Error: "boot sound must be " + spec.ValuesText()}
 	}
-	if err := d.hw.Toggles.Set("boot_sound", value); err != nil {
+	if err := d.writeToggle("boot_sound", value); err != nil {
 		return response{OK: false, Error: "bootsound: " + err.Error()}
 	}
-	slog.Info("bootsound", "set", value)
-	// Its sibling below has notified since panel overdrive existed; this one
-	// never did, which no client could see until one rendered toggle rows from
-	// State.Features. See notifyToggleChanged.
-	d.notifyToggleChanged("boot_sound", value)
 	return response{OK: true}
 }
 
 func (d *Daemon) handlePanelOverdriveGet() response {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return response{OK: false, Error: "reading panel overdrive: no firmware toggles on this device"}
 	}
 	v, err := d.hw.Toggles.Get("panel_overdrive")
@@ -665,7 +585,7 @@ func (d *Daemon) handlePanelOverdriveGet() response {
 }
 
 func (d *Daemon) handlePanelOverdrive(req request) response {
-	if d.hw == nil || d.hw.Toggles == nil {
+	if d.hw.Toggles == nil {
 		return response{OK: false, Error: "paneloverdrive: no firmware toggles on this device"}
 	}
 	// The legal values are the firmware's (ToggleSpec.Accepts), as for the
@@ -678,13 +598,9 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 	if err != nil || !spec.Accepts(value) {
 		return response{OK: false, Error: "panel overdrive must be " + spec.ValuesText()}
 	}
-	if err := d.hw.Toggles.Set("panel_overdrive", value); err != nil {
+	if err := d.writeToggle("panel_overdrive", value); err != nil {
 		return response{OK: false, Error: "paneloverdrive: " + err.Error()}
 	}
-	slog.Info("paneloverdrive", "set", value)
-	// Through the same helper as the other two write paths, so all three
-	// notify identically rather than one of them open-coding it.
-	d.notifyToggleChanged("panel_overdrive", value)
 	return response{OK: true}
 }
 
@@ -693,7 +609,7 @@ func (d *Daemon) handlePanelOverdrive(req request) response {
 // grounds every *-get handler avoids it: blocking a dashboard read behind a
 // fan write sequence is the regression, not the protection.
 func (d *Daemon) readCPUBoost() *bool {
-	if d.hw == nil || d.hw.CPUBoost == nil {
+	if d.hw.CPUBoost == nil {
 		return nil
 	}
 	on, err := d.hw.CPUBoost.Get()
@@ -709,7 +625,7 @@ func (d *Daemon) readCPUBoost() *bool {
 // matters more here than most: cpufreq's switch is writable by anything with
 // the grant, and it resets itself across a reboot.
 func (d *Daemon) handleCPUBoostGet() response {
-	if d.hw == nil || d.hw.CPUBoost == nil {
+	if d.hw.CPUBoost == nil {
 		return response{OK: false, Error: "reading cpu boost: not supported on this device"}
 	}
 	on, err := d.hw.CPUBoost.Get()
@@ -731,7 +647,7 @@ func (d *Daemon) handleCPUBoost(req request) response {
 	if err != nil || (value != 0 && value != 1) {
 		return response{OK: false, Error: "cpu boost must be 0 or 1"}
 	}
-	if d.hw == nil || d.hw.CPUBoost == nil {
+	if d.hw.CPUBoost == nil {
 		return response{OK: false, Error: "cpuboost: not supported on this device"}
 	}
 	d.hwMu.Lock()
@@ -774,7 +690,7 @@ func (d *Daemon) handleFanCurveGet() response {
 // truth VerifyFanCurveActive and the reconcile watcher act on. nil when
 // neither the mode nor the curve is readable, or the device has no fans.
 func (d *Daemon) readFanCurveHW() *api.FanCurveState {
-	if d.hw == nil || d.hw.Fans == nil {
+	if d.hw.Fans == nil {
 		return nil
 	}
 	mode, modeErr := d.hw.Fans.ReadMode()
@@ -782,19 +698,19 @@ func (d *Daemon) readFanCurveHW() *api.FanCurveState {
 	if modeErr != nil && curveErr != nil {
 		return nil
 	}
-	if modeErr != nil || mode == -1 {
-		mode = 0
+	if modeErr != nil || mode == driver.FanModeUnknown {
+		mode = driver.FanModeFullSpeed // the wire's historical "unknown": 0
 	}
-	return &api.FanCurveState{Mode: mode, Points: points}
+	return &api.FanCurveState{Mode: int(mode), Points: points}
 }
 
 func (d *Daemon) handleFanCurve(req request) response {
 	// Capability before parse: the parse is judged against this device's fan
 	// shape, so there is no shape to parse against without fan control.
-	if d.hw == nil || d.hw.Fans == nil {
+	if d.hw.Fans == nil {
 		return response{OK: false, Error: "fancurve: no fan control on this device"}
 	}
-	points, err := cli.ParseFanCurve(d.hw.Fans.Shape(), req.Set)
+	points, err := safety.ParseFanCurve(d.hw.Fans.Shape(), req.Set)
 	if err != nil {
 		return response{OK: false, Error: "fancurve: " + err.Error()}
 	}
@@ -864,7 +780,7 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 	}
 
 	if target.Live {
-		if d.hw == nil || d.hw.Fans == nil {
+		if d.hw.Fans == nil {
 			return response{OK: false, Error: "fancurve-reset: no fan control on this device"}
 		}
 		// A running custom profile keeps its TDP through the release, which would
@@ -907,7 +823,7 @@ func (d *Daemon) handleFanCurveReset(req request) response {
 const noPowerControl = "no power limit control on this device"
 
 func (d *Daemon) handleTDPGet() response {
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return response{OK: false, Error: "reading TDP: " + d.hw.Missing("power", noPowerControl)}
 	}
 	tdp, err := d.displayTDP()
@@ -982,7 +898,7 @@ func (d *Daemon) handleTDP(req request) response {
 		}
 	}
 
-	if d.hw == nil || d.hw.Power == nil {
+	if d.hw.Power == nil {
 		return response{OK: false, Error: "tdp: " + d.hw.Missing("power", noPowerControl)}
 	}
 	env := d.env()
@@ -1162,7 +1078,7 @@ func (d *Daemon) leaveProfileForSlider(from string, tdp api.TDPState) response {
 // nothing remembered, or not a slider device). The caller holds hwMu and must
 // not hold d.mu.
 func (d *Daemon) applyDeviceTDP(why string) (bool, error) {
-	if d.hw == nil || d.hw.Power == nil || !d.hw.PowerSlider {
+	if d.hw.Power == nil || !d.hw.PowerSlider {
 		return false, nil
 	}
 	d.mu.Lock()
@@ -1250,7 +1166,7 @@ func (d *Daemon) resetToStock(req request, cmd string, clearAll bool) response {
 	// what makes the order below fail closed. Resolved before anything is
 	// touched: a device with no safe landing profile refuses the reset outright
 	// rather than clearing the undervolt and then failing the switch.
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return response{OK: false, Error: cmd + ": no platform profile control on this device"}
 	}
 	landing := d.hw.Profiles.Default()
@@ -1362,10 +1278,7 @@ func (d *Daemon) handleUndervoltGet() response {
 		uvState = *uv
 	}
 	// Include the current profile so the client can tell whether CO is active.
-	data, _ := json.Marshal(struct {
-		api.UndervoltState
-		Profile string `json:"profile"`
-	}{uvState, profile})
+	data, _ := json.Marshal(api.UndervoltReading{UndervoltState: uvState, Profile: profile})
 	return response{OK: true, Value: string(data)}
 }
 

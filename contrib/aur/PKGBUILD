@@ -41,7 +41,6 @@ package() {
     install -Dm644 "contrib/systemd/user/voltaire.socket"            "${pkgdir}/usr/lib/systemd/user/voltaire.socket"
     install -Dm644 "contrib/systemd/user/voltaire.service"           "${pkgdir}/usr/lib/systemd/user/voltaire.service"
     install -Dm644 "contrib/systemd/user/voltaire-gui.service"       "${pkgdir}/usr/lib/systemd/user/voltaire-gui.service"
-    install -Dm644 "contrib/systemd/system/voltaire-perms.service"   "${pkgdir}/usr/lib/systemd/system/voltaire-perms.service"
     install -Dm644 "contrib/voltaire-gui.desktop"                    "${pkgdir}/usr/share/applications/voltaire-gui.desktop"
     install -Dm644 "contrib/udev/99-voltaire-gamepad.rules"          "${pkgdir}/usr/lib/udev/rules.d/99-voltaire-gamepad.rules"
 }

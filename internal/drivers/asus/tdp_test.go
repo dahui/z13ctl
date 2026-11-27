@@ -60,10 +60,7 @@ func z13Engine(t *testing.T) (safety.Engine, driver.PowerEnvelope) {
 	t.Helper()
 	c := z13Config(t)
 	env := c.Power.Envelope()
-	return safety.Engine{
-		Fans:  NewFanController(c.Fans.Shape()),
-		Power: NewPowerLimiter(env),
-	}, env
+	return *safety.NewEngine(NewFanController(c.Fans.Shape()), NewPowerLimiter(env)), env
 }
 
 // tdpAll returns a TDPState with every limit at w.
@@ -80,7 +77,7 @@ func TestSetTDPStateWritesStockValuesVerbatim(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			usePPTTempDir(t)
 
-			if err := SetTDPState(stock); err != nil {
+			if err := setTDPState(stock); err != nil {
 				t.Fatalf("SetTDPState(%s) = %v, want nil", profile, err)
 			}
 			got, err := ReadAllPPT()
@@ -98,7 +95,7 @@ func TestSetTDPStateWritesEveryAttribute(t *testing.T) {
 	dir := usePPTTempDir(t)
 
 	s := api.TDPState{PL1SPL: 11, PL2SPPT: 22, FPPT: 33, APUSPPT: 44, PlatformSPPT: 55}
-	if err := SetTDPState(s); err != nil {
+	if err := setTDPState(s); err != nil {
 		t.Fatalf("SetTDPState() = %v, want nil", err)
 	}
 
@@ -182,7 +179,7 @@ func TestApplyTDPSafely(t *testing.T) {
 		// Establish a known baseline, then break fan discovery so the high-TDP
 		// curve cannot be written.
 		baseline := env.StockProfilePPT["balanced"]
-		if err := SetTDPState(baseline); err != nil {
+		if err := setTDPState(baseline); err != nil {
 			t.Fatalf("SetTDPState(baseline) = %v, want nil", err)
 		}
 		swap(t, &sysHwmonDir, t.TempDir())
@@ -209,7 +206,7 @@ func TestApplyTDPSafely(t *testing.T) {
 		f := newFakeSysfs(t)
 		f.seedFanCurveFiles(t, 40, 50) // pwm_enable = 2 (auto)
 		baseline := env.StockProfilePPT["balanced"]
-		if err := SetTDPState(baseline); err != nil {
+		if err := setTDPState(baseline); err != nil {
 			t.Fatalf("SetTDPState(baseline) = %v, want nil", err)
 		}
 		orig := fanWriteInt
@@ -498,7 +495,7 @@ func TestEditTimeFloorCheck(t *testing.T) {
 
 	t.Run("rejects a low curve above the safe max", func(t *testing.T) {
 		newFakeSysfs(t)
-		if err := SetTDPState(tdpAll(90)); err != nil {
+		if err := setTDPState(tdpAll(90)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := check("custom", lowCurve); err == nil {
@@ -508,7 +505,7 @@ func TestEditTimeFloorCheck(t *testing.T) {
 
 	t.Run("accepts the floor curve above the safe max", func(t *testing.T) {
 		newFakeSysfs(t)
-		if err := SetTDPState(tdpAll(90)); err != nil {
+		if err := setTDPState(tdpAll(90)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := check("custom", env.FloorCurve); err != nil {
@@ -518,7 +515,7 @@ func TestEditTimeFloorCheck(t *testing.T) {
 
 	t.Run("accepts a low curve at a safe TDP", func(t *testing.T) {
 		newFakeSysfs(t)
-		if err := SetTDPState(tdpAll(45)); err != nil {
+		if err := setTDPState(tdpAll(45)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := check("custom", lowCurve); err != nil {
@@ -547,7 +544,7 @@ func TestCheckFanFloorRelease(t *testing.T) {
 
 	t.Run("refuses above the safe max", func(t *testing.T) {
 		newFakeSysfs(t)
-		if err := SetTDPState(tdpAll(90)); err != nil {
+		if err := setTDPState(tdpAll(90)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := eng.CheckFanFloorRelease("custom"); err == nil {
@@ -557,7 +554,7 @@ func TestCheckFanFloorRelease(t *testing.T) {
 
 	t.Run("allows at the safe max", func(t *testing.T) {
 		newFakeSysfs(t)
-		if err := SetTDPState(tdpAll(env.TDPMaxSafe)); err != nil {
+		if err := setTDPState(tdpAll(env.TDPMaxSafe)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := eng.CheckFanFloorRelease("custom"); err != nil {
@@ -568,7 +565,7 @@ func TestCheckFanFloorRelease(t *testing.T) {
 	t.Run("stock profile with a stale cache is allowed", func(t *testing.T) {
 		newFakeSysfs(t)
 		// PL1 == TDPMin is the kernel's boot cache; the balanced fallback is 52W.
-		if err := SetTDPState(tdpAll(env.TDPMin)); err != nil {
+		if err := setTDPState(tdpAll(env.TDPMin)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		if err := eng.CheckFanFloorRelease("balanced"); err != nil {
@@ -584,7 +581,7 @@ func TestReadEffective(t *testing.T) {
 	t.Run("stale cache falls back to stock table", func(t *testing.T) {
 		usePPTTempDir(t)
 		// TDPMin (5W) is the value the kernel caches on module load.
-		if err := SetTDPState(tdpAll(env.TDPMin)); err != nil {
+		if err := setTDPState(tdpAll(env.TDPMin)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		got, err := eng.ReadEffective("quiet")
@@ -598,7 +595,7 @@ func TestReadEffective(t *testing.T) {
 
 	t.Run("real values are returned as-is", func(t *testing.T) {
 		usePPTTempDir(t)
-		if err := SetTDPState(tdpAll(15)); err != nil {
+		if err := setTDPState(tdpAll(15)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		got, err := eng.ReadEffective("quiet")
@@ -612,7 +609,7 @@ func TestReadEffective(t *testing.T) {
 
 	t.Run("unknown profile keeps stale values", func(t *testing.T) {
 		usePPTTempDir(t)
-		if err := SetTDPState(tdpAll(env.TDPMin)); err != nil {
+		if err := setTDPState(tdpAll(env.TDPMin)); err != nil {
 			t.Fatalf("SetTDPState() = %v, want nil", err)
 		}
 		got, err := eng.ReadEffective("custom")

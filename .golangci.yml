@@ -8,7 +8,34 @@ linters:
     - misspell      # common spelling mistakes in comments/strings
     - revive        # idiomatic Go style (golint successor)
     - gocritic      # opinionated but practical checks
+    # The ratchet (2026-11-26): set at the baseline after the quality pass, so
+    # today's code passes and a new oversized function, copy-pasted block,
+    # non-wrapping error or stale //nolint fails. Lower the thresholds as the
+    # largest functions are split; never raise them to admit new code.
+    - funlen
+    - gocognit
+    - dupl
+    - errorlint
+    - nolintlint
+  exclusions:
+    rules:
+      # Test tables legitimately mirror the code they pin (limits' fixture is
+      # DefaultLimits by design).
+      - path: _test\.go
+        linters:
+          - dupl
+          - funlen
+          - gocognit
+      # ...and the code side of such a pair.
+      - linters:
+          - dupl
+        text: "duplicate of `[^`]*_test\\.go"
   settings:
+    funlen:
+      lines: 200
+      statements: -1
+    gocognit:
+      min-complexity: 100
     govet:
       enable:
         - shadow

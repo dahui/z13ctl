@@ -128,12 +128,12 @@ func TestAnimatedModesHaveSpeed(t *testing.T) {
 
 func TestKnownMode(t *testing.T) {
 	for _, mode := range []string{"static", "breathe", "cycle", "rainbow", "strobe", ModeOff} {
-		if !fallback.KnownMode(mode) {
+		if !fallback.knownMode(mode) {
 			t.Errorf("KnownMode(%q) = false, want true", mode)
 		}
 	}
 	for _, mode := range []string{"", "future-effect", "STATIC"} {
-		if fallback.KnownMode(mode) {
+		if fallback.knownMode(mode) {
 			t.Errorf("KnownMode(%q) = true, want false", mode)
 		}
 	}

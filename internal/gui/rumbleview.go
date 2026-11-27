@@ -13,10 +13,8 @@ import (
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/settingsui"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -31,13 +29,7 @@ type rumbleSection struct {
 	value   *gtk.Label
 	hi      int
 	section string // focus section: "controller" on Settings, "rumble" in the drawer
-	timer   *time.Timer
-
-	// pending holds sync off from the first move until the send has landed,
-	// so a refresh cannot yank the handle mid-drag; gen keeps an earlier send
-	// from clearing a later drag's hold. Main thread only.
-	pending bool
-	gen     int
+	send    settleSend
 }
 
 // newRumbleSection builds the slider, or returns nil when the device offers
@@ -49,7 +41,7 @@ func (w *Window) newRumbleSection(desktop bool) (*rumbleSection, *gtk.Box) {
 	if !ok {
 		return nil, nil
 	}
-	r := &rumbleSection{w: w, hi: hi, section: "rumble"}
+	r := &rumbleSection{w: w, hi: hi, section: "rumble", send: settleSend{delay: rumbleDebounce}}
 	r.scale = gtk.NewScaleWithRange(gtk.OrientationHorizontal, float64(lo), float64(hi), 1)
 	r.scale.SetDigits(0)
 	r.scale.SetDrawValue(false)
@@ -123,43 +115,13 @@ func (s *settingsView) buildRumbleCard() *gtk.Box {
 // syncing check and the pending hold. The refresh afterwards moves every
 // instance onto the daemon's answer.
 func (r *rumbleSection) queueSend() {
-	w := r.w
-	if w.syncing {
-		return
-	}
-	r.pending = true
-	r.gen++
-	if r.timer != nil {
-		r.timer.Stop()
-	}
-	r.timer = time.AfterFunc(rumbleDebounce, func() {
-		glib.IdleAdd(func() bool {
-			v := int(r.scale.Value()) // read on the GTK thread
-			gen := r.gen
-			go func() {
-				err := apiresult.Err(api.SendRumbleSet(v))
-				glib.IdleAdd(func() bool {
-					if r.gen == gen {
-						r.pending = false
-					}
-					return false
-				})
-				if err != nil {
-					w.reportError("Set vibration strength", err)
-				} else {
-					w.clearErrorAsync()
-				}
-				w.refreshState()
-			}()
-			return false
-		})
-	})
+	r.send.queue(r.w, func() int { return int(r.scale.Value()) }, api.SendRumbleSet, "Set vibration strength", true)
 }
 
 // sync moves the slider onto get-state's live strength. Callers hold
 // w.syncing.
 func (r *rumbleSection) sync() {
-	if r == nil || r.pending {
+	if r == nil || r.send.pending {
 		return
 	}
 	v, ok := settingsui.RumbleValue(r.w.state)

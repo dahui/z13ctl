@@ -124,8 +124,8 @@ what you do not understand, and never repurpose a field.
 
 Plugins run as the user, like the daemon. Hardware access comes from the same
 udev grants voltaire uses for itself: each manifest's `[[perms]]` entries are
-folded into the rules and permissions unit `voltaire setup` writes, under the
-same drift guard that keeps the packaged copies identical. voltaire never
+folded into the grants `voltaire setup` derives for the machine
+(`internal/perms`), and so into the rules file and the boot pass. voltaire never
 escalates. A plugin that genuinely needs root ships its own privileged
 component (a kernel module, a system service) and talks to it.
 

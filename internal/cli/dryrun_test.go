@@ -12,7 +12,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asus"
+	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
 // z13Env returns the Z13 power envelope from the embedded device data — the
@@ -259,15 +259,15 @@ func TestDryRunFanCurveReset(t *testing.T) {
 
 // tdpAt is a unified request, resolved the way the CLI resolves one before the
 // dry run (APU/Platform sPPT follow PL2).
-func tdpAt(watts, pl1, pl2, pl3 int) api.TDPState { return cli.TDPStateFor(watts, pl1, pl2, pl3) }
+func tdpAt(watts, pl1, pl2, pl3 int) api.TDPState { return safety.TDPStateFor(watts, pl1, pl2, pl3) }
 
 func TestDryRunTdp(t *testing.T) {
 	// The plan is passed in: the dry run prints the writes it is given rather
 	// than discovering the interface, which would depend on this machine.
-	plan := []asus.PPTWrite{
-		{Path: "/fw/ppt_pl1_spl/current_value", Watts: 30},
-		{Path: "/fw/ppt_pl2_sppt/current_value", Watts: 32},
-		{Path: "/fw/ppt_pl3_fppt/current_value", Watts: 45},
+	plan := []string{
+		"write 30 to /fw/ppt_pl1_spl/current_value",
+		"write 32 to /fw/ppt_pl2_sppt/current_value",
+		"write 45 to /fw/ppt_pl3_fppt/current_value",
 	}
 	out := captureStdout(t, func() { cli.DryRunTdp(z13Env(t), tdpAt(30, 0, 32, 45), false, nil, plan) })
 

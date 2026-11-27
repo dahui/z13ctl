@@ -32,7 +32,7 @@ func TestSendSMUCommandEncodesArgsLittleEndian(t *testing.T) {
 	fake.install(t)
 
 	args := [6]uint32{0x0FFFEC, 2, 3, 4, 5, 6}
-	code, out, err := SendSMUCommand(MailboxMP1, strixHaloCO, args)
+	code, out, err := sendSMUCommand(MailboxMP1, strixHaloCO, args)
 	if err != nil {
 		t.Fatalf("SendSMUCommand() = %v, want nil", err)
 	}
@@ -59,7 +59,7 @@ func TestSendSMUCommandPropagatesReadFailure(t *testing.T) {
 	fake := &fakeSMU{response: SMUReturnOK, failRead: true}
 	fake.install(t)
 
-	if _, _, err := SendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
+	if _, _, err := sendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
 		t.Error("SendSMUCommand() = nil, want an error when the mailbox read fails")
 	}
 }
@@ -71,7 +71,7 @@ func TestSendSMUCommandPropagatesWriteFailure(t *testing.T) {
 	t.Cleanup(func() { smuWriteFile = origW })
 	resetSMUProbe(t)
 
-	if _, _, err := SendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
+	if _, _, err := sendSMUCommand(MailboxMP1, strixHaloCO, [6]uint32{}); err == nil {
 		t.Error("SendSMUCommand() = nil, want an error when smu_args is not writable")
 	}
 }
@@ -97,7 +97,7 @@ func TestSMUProbeUndervoltGatesOnResponse(t *testing.T) {
 			fake := &fakeSMU{response: tt.response}
 			fake.install(t)
 
-			if got := SMUProbeUndervolt(); got != tt.want {
+			if got := smuProbeUndervolt(); got != tt.want {
 				t.Errorf("SMUProbeUndervolt() = %v, want %v for response 0x%X", got, tt.want, tt.response)
 			}
 		})
@@ -107,7 +107,7 @@ func TestSMUProbeUndervoltGatesOnResponse(t *testing.T) {
 func TestSMUProbeUndervoltFalseWithoutModule(t *testing.T) {
 	newFakeSysfs(t) // no rsmu_cmd file
 	resetSMUProbe(t)
-	if SMUProbeUndervolt() {
+	if smuProbeUndervolt() {
 		t.Error("SMUProbeUndervolt() = true without ryzen_smu loaded, want false")
 	}
 }
@@ -121,7 +121,7 @@ func TestSMUProbeUndervoltCachesResult(t *testing.T) {
 	fake.install(t)
 
 	for range 5 {
-		if !SMUProbeUndervolt() {
+		if !smuProbeUndervolt() {
 			t.Fatal("SMUProbeUndervolt() = false, want true")
 		}
 	}
@@ -159,7 +159,7 @@ func TestSetCurveOptimizerSendsEncodedOffset(t *testing.T) {
 	fake := &fakeSMU{response: SMUReturnOK}
 	fake.install(t)
 
-	if err := SetCurveOptimizer(-20); err != nil {
+	if err := setCurveOptimizer(-20); err != nil {
 		t.Fatalf("SetCurveOptimizer(-20) = %v, want nil", err)
 	}
 	got := binary.LittleEndian.Uint32(fake.args[:4])
@@ -171,10 +171,10 @@ func TestSetCurveOptimizerSendsEncodedOffset(t *testing.T) {
 func TestSetCurveOptimizerUnavailableWithoutModule(t *testing.T) {
 	newFakeSysfs(t)
 	resetSMUProbe(t)
-	if err := SetCurveOptimizer(-10); err == nil {
+	if err := setCurveOptimizer(-10); err == nil {
 		t.Error("SetCurveOptimizer() = nil, want an error when ryzen_smu is absent")
 	}
-	if err := ResetCurveOptimizer(); err == nil {
+	if err := resetCurveOptimizer(); err == nil {
 		t.Error("ResetCurveOptimizer() = nil, want an error when ryzen_smu is absent")
 	}
 }
@@ -185,14 +185,14 @@ func TestSetCurveOptimizerSurfacesFirmwareRejection(t *testing.T) {
 	// Probe succeeds, then the real command is rejected.
 	fake := &fakeSMU{response: SMUReturnOK}
 	fake.install(t)
-	if !SMUProbeUndervolt() {
+	if !smuProbeUndervolt() {
 		t.Fatal("probe should succeed before the rejection case")
 	}
 	fake.mu.Lock()
 	fake.response = SMUReturnRejected
 	fake.mu.Unlock()
 
-	if err := SetCurveOptimizer(-15); err == nil {
+	if err := setCurveOptimizer(-15); err == nil {
 		t.Error("SetCurveOptimizer() = nil, want an error when the firmware rejects the command")
 	}
 }
@@ -203,7 +203,7 @@ func TestResetCurveOptimizerSendsZeroOffset(t *testing.T) {
 	fake := &fakeSMU{response: SMUReturnOK}
 	fake.install(t)
 
-	if err := ResetCurveOptimizer(); err != nil {
+	if err := resetCurveOptimizer(); err != nil {
 		t.Fatalf("ResetCurveOptimizer() = %v, want nil", err)
 	}
 	got := binary.LittleEndian.Uint32(fake.args[:4])
@@ -228,14 +228,14 @@ func TestSMUProbeIsDestructive(t *testing.T) {
 
 	probe := &fakeSMU{response: SMUReturnOK}
 	probe.install(t)
-	if !SMUProbeUndervolt() {
+	if !smuProbeUndervolt() {
 		t.Fatal("SMUProbeUndervolt() = false, want true")
 	}
 	probeArgs := append([]byte(nil), probe.args...)
 
 	reset := &fakeSMU{response: SMUReturnOK}
 	reset.install(t)
-	if err := ResetCurveOptimizer(); err != nil {
+	if err := resetCurveOptimizer(); err != nil {
 		t.Fatalf("ResetCurveOptimizer() = %v, want nil", err)
 	}
 
@@ -262,7 +262,7 @@ func TestSMUUndervoltAvailableNeverProbes(t *testing.T) {
 		t.Fatalf("mailbox writes = %d, want 0: asking must not probe", fake.writes)
 	}
 
-	if SMUProbeUndervolt() {
+	if smuProbeUndervolt() {
 		t.Fatal("SMUProbeUndervolt() = true for an unknown-command fork, want false")
 	}
 	if SMUUndervoltAvailable() {
@@ -272,7 +272,7 @@ func TestSMUUndervoltAvailableNeverProbes(t *testing.T) {
 	resetSMUProbe(t)
 	ok := &fakeSMU{response: SMUReturnOK}
 	ok.install(t)
-	if !SMUProbeUndervolt() || !SMUUndervoltAvailable() {
+	if !smuProbeUndervolt() || !SMUUndervoltAvailable() {
 		t.Error("after a successful probe = false, want true")
 	}
 }

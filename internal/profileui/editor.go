@@ -91,9 +91,9 @@ func joinAnd(parts []string) string {
 	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
-// UndervoltNote is the caution above the undervolt slider. It names no
+// undervoltNote is the caution above the undervolt slider. It names no
 // profile: every custom profile can carry an offset, not one called Custom.
-func UndervoltNote() string {
+func undervoltNote() string {
 	return "Undervolt offsets are only active while a custom profile is selected. " +
 		"Switching to a firmware profile resets them to 0. Unstable values may cause crashes."
 }

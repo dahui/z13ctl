@@ -163,7 +163,7 @@ func (d *Daemon) drawerButton() string {
 // cleared, so a choice survives a device file that drops and later restores
 // a button.
 func (d *Daemon) resolveDrawerButton(choice string) string {
-	if d.hw == nil || choice == api.DrawerButtonNone {
+	if choice == api.DrawerButtonNone {
 		return ""
 	}
 	if d.declaresButton(choice) {
@@ -174,7 +174,7 @@ func (d *Daemon) resolveDrawerButton(choice string) string {
 
 // declaresButton reports whether id names one of the device's buttons.
 func (d *Daemon) declaresButton(id string) bool {
-	if d.hw == nil || id == "" {
+	if id == "" {
 		return false
 	}
 	for _, b := range d.hw.ButtonList {
@@ -192,7 +192,7 @@ func (d *Daemon) declaresButton(id string) bool {
 // Where InputPlumber carries the button, the route watcher moves its profile
 // mapping afterwards, off this goroutine.
 func (d *Daemon) handleButtonSet(req request) response {
-	if d.hw == nil || len(d.hw.ButtonList) == 0 {
+	if len(d.hw.ButtonList) == 0 {
 		return response{OK: false, Error: "button-set: this device declares no hardware buttons"}
 	}
 	choice := strings.TrimSpace(req.Set)

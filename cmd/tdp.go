@@ -4,7 +4,6 @@ package cmd
 // power limiter (asus-armoury or asus-nb-wmi PPT on the Z13). No HID access required.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"github.com/dahui/voltaire/v2/internal/daemon"
 	"github.com/dahui/voltaire/v2/internal/device"
 	"github.com/dahui/voltaire/v2/internal/driver"
-	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
 	"github.com/spf13/cobra"
@@ -132,14 +130,12 @@ func runTdpGet() error {
 	profile := effectiveProfileForTDP(hw)
 	stock := stockRowFor(hw, env, profile)
 	var tdp api.TDPState
-	handled, value, sendErr := api.SendTdpGet()
+	handled, got, sendErr := api.SendTdpGet()
 	switch {
 	case handled && sendErr != nil:
 		return sendErr
 	case handled:
-		if err = json.Unmarshal([]byte(value), &tdp); err != nil {
-			return fmt.Errorf("reading TDP: %w", err)
-		}
+		tdp = *got
 	default:
 		key := profile
 		if stock != "" {
@@ -250,7 +246,7 @@ func runTdpSet() error {
 			cli.DryRunProfileEdit(tdpProfileFlag, "power limits")
 			return nil
 		}
-		cli.DryRunTdp(env, tdp, tdpForceFlag, liveFanCurve(hw), asus.PlanTDPWrites(tdp))
+		cli.DryRunTdp(env, tdp, tdpForceFlag, liveFanCurve(hw), hw.Power.PlanWrites(tdp))
 		printNotes(notes)
 		return nil
 	}
@@ -307,7 +303,7 @@ func runTdpSet() error {
 	// which never wrote anything on this branch, so it is still current.
 	want := preCurve
 	if err := hw.Power.ApplyTDPSafely(tdp, want); err != nil {
-		return fmt.Errorf("setting TDP: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("setting TDP", err)
 	}
 	printFloorNotice(env, fanPWMMax(hw), pl1, want, false)
 	// Not only above the safe maximum: any profile change or fan release
@@ -442,7 +438,7 @@ func runTdpResetDirect() (string, error) {
 		}
 	}
 	if err := hw.Profiles.Set(landing); err != nil {
-		return "", fmt.Errorf("switching to the %s profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", landing, err)
+		return "", withSetupHint(fmt.Sprintf("switching to the %s profile", landing), err)
 	}
 	if err := hw.HandBackToFirmware(landing); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to restore the %s power limits: %v\n", landing, err)

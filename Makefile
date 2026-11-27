@@ -33,11 +33,18 @@ HIDBLOCKER_DIR := internal/gui/gamepad/hidblocker
 # arrived from z13gui carrying 280 lines of tests that would never have run, and
 # how hidblocker_test.go went unexecuted since it was written. Keep this list
 # derived from the rule, not from where a file happens to sit.
-HERMETIC_PKGS := $(shell go list ./... 2>/dev/null | \
+#
+# It is a recursive (=) variable so `sudo make install` never runs go list, and
+# -e keeps a package that fails to load in the list, where go test then fails on
+# it loudly. Without -e a broken package simply vanished, and with stderr
+# discarded nothing said so. hermetic-check is the backstop: a run that finds
+# fewer than HERMETIC_MIN packages is a load failure, not a smaller codebase.
+HERMETIC_PKGS = $(shell go list -e ./... 2>/dev/null | \
 	grep -v -e '/internal/gui' -e '/voltaire-gui'; \
-	go list ./internal/gui/gamepad/... 2>/dev/null)
+	go list -e ./internal/gui/gamepad/... 2>/dev/null)
+HERMETIC_MIN := 40
 
-.PHONY: build build-gui build-all build-hwtest test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
+.PHONY: build build-gui build-all build-hwtest hermetic-check test race fmt-check cover lint mod-tidy snapshot release install install-service uninstall-service install-perms-service uninstall-perms-service docs docs-api docs-build clean help
 
 ## build: compile voltaire with version from git tags
 build:
@@ -78,23 +85,32 @@ build-hwtest:
 ## internal/gui is the cgo island and voltaire-gui is the main package that
 ## imports it; ./... would compile both, dragging GTK4 headers into what must
 ## stay a hermetic run. See HERMETIC_PKGS for the two subpackages that are in.
-test:
+test: hermetic-check
 	go test $(HERMETIC_PKGS)
 	cd api && go test ./...
 
 ## race: run unit tests under the race detector (both modules)
-race:
+race: hermetic-check
 	go test -race $(HERMETIC_PKGS)
 	cd api && go test -race ./...
 
-## cover: run tests with coverage report
-cover:
+## cover: run tests with coverage report (both modules)
+cover: hermetic-check
 	go test -coverprofile=coverage.out $(HERMETIC_PKGS)
 	go tool cover -func=coverage.out
+	cd api && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
+
+# hermetic-check fails when the package list came back short (see HERMETIC_PKGS).
+hermetic-check:
+	@n=$$(echo $(HERMETIC_PKGS) | wc -w); \
+	if [ "$$n" -lt $(HERMETIC_MIN) ]; then \
+		echo "only $$n hermetic packages listed (expected at least $(HERMETIC_MIN)): go list failed? run: go list ./..."; \
+		exit 1; \
+	fi
 
 ## fmt-check: fail if any file needs gofmt (generated bpf2go bindings excluded)
 fmt-check:
-	@unformatted="$$(gofmt -l . | grep -v -e '^$(HIDBLOCKER_DIR)/blocker_' -e '^dist/' -e '^site/' || true)"; \
+	@unformatted="$$(gofmt -l . | grep -v -e '^$(HIDBLOCKER_DIR)/blocker_' -e '^dist/' || true)"; \
 	if [ -n "$$unformatted" ]; then \
 		echo "These files need gofmt:"; \
 		echo "$$unformatted"; \
@@ -220,21 +236,17 @@ uninstall-service:
 	systemctl --user daemon-reload
 	@echo "Units removed."
 
-## install-perms-service: install system service to chmod battery + firmware-attributes sysfs on boot (requires sudo; disables pre-rename z13ctl unit)
+## install-perms-service: run voltaire setup for this machine: udev rules + boot unit (requires sudo)
+# setup writes the unit (and the udev rules) for this machine, cleans up the
+# pre-2.0 z13ctl-perms.service, and enables it. Run after `sudo make install`.
 install-perms-service:
-	-systemctl disable --now z13ctl-perms.service 2>/dev/null
-	rm -f $(SYSTEMD_SYSTEM_DIR)/z13ctl-perms.service
-	install -Dm644 contrib/systemd/system/voltaire-perms.service $(SYSTEMD_SYSTEM_DIR)/voltaire-perms.service
-	systemctl daemon-reload
-	systemctl enable --now voltaire-perms.service
-	@echo "Permissions service installed. Run 'systemctl status voltaire-perms' to verify."
+	@test -x /usr/local/bin/voltaire || { echo "run 'sudo make install' first"; exit 1; }
+	/usr/local/bin/voltaire setup
+	@echo "Permissions installed. Run 'systemctl status voltaire-perms' to verify."
 
-## uninstall-perms-service: remove the sysfs permissions service (requires sudo)
+## uninstall-perms-service: undo voltaire setup (requires sudo)
 uninstall-perms-service:
-	-systemctl disable --now voltaire-perms.service
-	rm -f $(SYSTEMD_SYSTEM_DIR)/voltaire-perms.service
-	systemctl daemon-reload
-	@echo "Permissions service removed."
+	/usr/local/bin/voltaire setup --remove
 
 API_GO_PAGE := website/docs/reference/api-go.md
 # gomarkdoc links each symbol to its source line, and left to itself it takes

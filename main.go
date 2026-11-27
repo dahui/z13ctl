@@ -1,13 +1,7 @@
-// voltaire — system control for the 2025 ASUS ROG Flow Z13
-//
-// Controls keyboard and lightbar RGB (via Linux hidraw), performance profile,
-// and battery charge limit (via asus-wmi sysfs interfaces).
-//
-// Usage:
-//
-//	voltaire [--device keyboard|lightbar|PATH] [--dry-run] <command>
-//
-// Commands: apply  brightness  list  off  profile  batterylimit  setup
+// voltaire controls power, fans, lighting and firmware settings on the
+// handhelds and laptops its device files describe (internal/device/devices).
+// This is the CLI and daemon binary; voltaire-gui is the drawer. `voltaire
+// --help` lists the commands.
 package main
 
 import (

@@ -43,7 +43,7 @@ func sliderDaemon(t *testing.T, state api.State) (*Daemon, *powerRecorder) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	rec := &powerRecorder{env: oxpEnv()}
 	d := &Daemon{
-		hw:    &device.Device{Power: &safety.Engine{Power: rec}, PowerSlider: true},
+		hw:    &device.Device{Power: safety.NewEngine(nil, rec), PowerSlider: true},
 		state: state,
 	}
 	return d, rec

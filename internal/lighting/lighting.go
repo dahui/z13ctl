@@ -173,8 +173,8 @@ func (c Caps) ControlsFor(mode string) Controls {
 	return Controls{Color1: true, Color2: true, Speed: true, Brightness: true}
 }
 
-// KnownMode reports whether mode is one the device offers (or the drawer's off).
-func (c Caps) KnownMode(mode string) bool {
+// knownMode reports whether mode is one the device offers (or the drawer's off).
+func (c Caps) knownMode(mode string) bool {
 	if mode == ModeOff {
 		return true
 	}

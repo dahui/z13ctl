@@ -127,12 +127,3 @@ func parseLightingBrightness(s string, maxLevel int, names ...string) (int, erro
 	}
 	return n, nil
 }
-
-// modeNamesText lists the device's modes for help and errors.
-func modeNamesText(c driver.LightingCaps) string {
-	names := make([]string, len(c.Modes))
-	for i, m := range c.Modes {
-		names[i] = m.Name
-	}
-	return strings.Join(names, "|")
-}

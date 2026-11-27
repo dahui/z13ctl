@@ -42,7 +42,7 @@ func Choices(info *api.DeviceInfo) []Choice {
 	}
 	out := make([]Choice, 0, len(info.HardwareButtons)+1)
 	for _, b := range info.HardwareButtons {
-		out = append(out, Choice{ID: b.ID, Label: Capitalize(b.Label)})
+		out = append(out, Choice{ID: b.ID, Label: capitalize(b.Label)})
 	}
 	return append(out, Choice{ID: api.DrawerButtonNone, Label: NoButtonLabel})
 }
@@ -78,14 +78,14 @@ func Drawer(info *api.DeviceInfo, st *api.State) (id, label string, ok bool) {
 // or NoButtonLabel.
 func ChooserText(info *api.DeviceInfo, st *api.State) string {
 	if _, label, ok := Drawer(info, st); ok {
-		return Capitalize(Name(label))
+		return capitalize(Name(label))
 	}
 	return NoButtonLabel
 }
 
-// Capitalize upper-cases the first letter of a mid-sentence label for use as
+// capitalize upper-cases the first letter of a mid-sentence label for use as
 // a heading or list row.
-func Capitalize(s string) string {
+func capitalize(s string) string {
 	if s == "" {
 		return s
 	}

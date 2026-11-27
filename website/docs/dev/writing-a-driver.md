@@ -187,7 +187,8 @@ for one machine; a new device wants its own.
 - [ ] The method is registered in `internal/drivers/register` and named after
       its kernel interface.
 - [ ] Any new device-file key is documented in Device files (`make test` checks).
-- [ ] Files the driver writes get a grant in `voltaire setup` and the packaged
-      udev rules and perms unit (`cmd/setup_test.go` compares them).
+- [ ] Files the driver writes get a grant: a case for its method in
+      `perms.For` (`internal/perms/grants.go`), and the device goldens
+      regenerated and reviewed (`go test ./internal/perms -run TestGoldens -update`).
 - [ ] `make test`, `make lint` and `make build-all` pass; power, fan and sleep
       changes have had a `make build-hwtest` run on the machine.

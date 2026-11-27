@@ -1,61 +1,20 @@
 # voltaire-gui (`internal/gui`) — Project Context for Claude
 
-> **This file predates the 2.0 merge and has not been refreshed yet.** It was
-> the standalone z13gui repo's CLAUDE.md, moved here unchanged so its reasoning
-> survives the merge. The GTK, gamescope, focus, animation and CSS decisions
-> below are all still accurate — that is the value of the file. The *names
-> around them* are not:
->
-> | It says | It is now |
-> |---|---|
-> | module `github.com/dahui/z13gui` | `github.com/dahui/voltaire/v2` (one module, two binaries) |
-> | binary / command `z13gui` | `voltaire-gui` (built to `voltaire-gui/voltaire-gui`) |
-> | sibling repo `z13ctl`, its `api/` at `api/v1.1.7` | same repo; `github.com/dahui/voltaire/api/v2` |
-> | `internal/power` | `internal/limits` |
-> | `internal/daemon` (the `Err` helper) | `internal/apiresult` |
-> | `main.go` at the repo root | `voltaire-gui/main.go` |
-> | socket `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock` | `…/voltaire/voltaire.sock` (legacy path still served through 2.x) |
-> | config `~/.config/z13gui` | `~/.config/voltaire` (copied on first run) |
-> | `Z13GUI_SCALE`, `Z13GUI_NO_GAMEPAD` | `VOLTAIRE_GUI_*` via `startup.GUIEnv` (old names honoured through 2.x) |
-> | app ID `com.github.dahui.z13gui` | `io.github.dahui.Voltaire` |
-> | `contrib/z13gui.{service,desktop}` | `contrib/systemd/user/voltaire-gui.service`, `contrib/voltaire-gui.desktop` |
-> | `make test` greps out `internal/gui` | root Makefile's `HERMETIC_PKGS` does, for both binaries |
-> | the 2×2 profile grid | the drawer: firmware buttons (from `device-get`) + one `Custom` **picker dropdown** that activates a saved profile (`mainprofile.go`, `profileui.PickerRows`); the full window: a profile selector dropdown in the Profiles editor (`profiles.go` + `dropdown.go` + `internal/profileui`) |
-> | `GtkDropDown in gamescope` → "use buttons" | still true for GtkDropDown itself — but dropdowns now exist, drawn **inside our own surface** by the popup layer (`popup.go`, and "The in-surface popup layer" below) |
-> | bare `api.SendTdpSet`/`SendFanCurveSet`/`SendUndervoltSet` everywhere | the `...For` variants, addressed per operation by `profileui.PlanEdit` (live vs stored) with a `SendProfileList` probe before every stored send |
->
-> The root `CLAUDE.md` is authoritative for layout, build and release.
-> The GUI work of 2026-08-14/15 — Reset All in the editor's commit bar, the
-> Settings reboot banner, the charger label on the battery header, the fan
-> chart's operating-point dot and the preset row above it — is recorded in the
-> root file's decision entries, not here, as is the GUI verification procedure
-> (focus dump needs `-d`, the service stopped, and the daemon under test
-> running).
+The GTK4 overlay drawer and full window, `voltaire-gui`. It talks to the daemon
+only through `api/` (a socket client like any other); the root `CLAUDE.md` is
+authoritative for layout, build, release and the daemon. This file holds the
+GTK-level decisions — gamescope, focus, popups, CSS, animation — which still
+matter whenever the island is touched. The GUI decision records the root file
+indexes ("GUI" under Key architectural decisions, in `docs/decisions/`) hold the
+rest, including the GUI verification procedure (the focus dump needs `-d`, the
+service stopped, and the daemon under test running).
 
-## What this project is
-
-`z13gui` is a GTK4 Wayland layer-shell overlay drawer for controlling the 2025 ASUS ROG
-Flow Z13 via the `z13ctl` daemon. It slides in from the right edge of the screen when the
-Armoury Crate button (KEY_PROG3) is pressed. The daemon broadcasts `gui-toggle` events over
-a subscribe socket; this GUI listens for them.
-
-It has three display backends:
-- **Layer-shell** (KDE/Wayland): margin-based slide animation
-- **Overlay** (GNOME and any compositor without layer-shell): fullscreen
-  transparent window, drawer right-aligned inside it, click-through everywhere else
-- **Gamescope** (Steam Gaming Mode): X11 overlay via `STEAM_OVERLAY` atom
-
-- Module: `github.com/dahui/z13gui`
-- Binary: `z13gui`
-
-## Companion project: z13ctl
-
-The `z13ctl` daemon (module `github.com/dahui/z13ctl`) is a sibling repo.
-Its `api/` submodule (`github.com/dahui/z13ctl/api`) is published at tag `api/v1.1.7`
-on GitHub.
-
-During local development, a `go.work` file in this repo (if present, gitignored) provides
-the local override. In production the `go.mod` imports the published tag.
+Three display backends: **layer-shell** (KDE, Hyprland, Sway; margin-based
+slide), **overlay** (GNOME and anything without layer-shell: a fullscreen
+click-through window with the drawer inside), and **gamescope** (Steam Gaming
+Mode: an X11 overlay via the `STEAM_OVERLAY` atom, which also hosts the full
+window inside its own surface). The hardware button reaches the GUI as the
+daemon's `gui-toggle` and `gui-open-full` events.
 
 ## Package layout
 
@@ -159,8 +118,8 @@ internal/panelgeom/             Overlay backend panel rectangle + slide interpol
 internal/startup/               CLI arg scanning + split-level slog handler
 internal/togglegate/            Debounce helper for duplicate gui-toggle bursts
 contrib/
-  z13gui.service                systemd user service (EnvironmentFile for gamescope-session)
-  z13gui.desktop                Desktop entry
+  systemd/user/voltaire-gui.service   user service (EnvironmentFile for gamescope-session)
+  voltaire-gui.desktop          Desktop entry
 ```
 
 ## Key architectural decisions
@@ -210,14 +169,14 @@ contrib/
     would otherwise bleed onto that monitor because KWin doesn't clip layer-surface
     overflow to the assigned output. `Backend.margin`/`Backend.opacity` track current
     state; use `setMargin`/`setOpacity` to keep them in sync.
-- **Single instance / activate guard**: `gtk.NewApplication("com.github.dahui.z13gui", 0)`
+- **Single instance / activate guard**: `gtk.NewApplication("io.github.dahui.Voltaire", 0)`
   registers the app on the session bus, so launching the binary a second time does not
   start a second process — GApplication forwards `activate` to the running instance and
   the new process exits. `main.go` therefore holds the `*gui.Window` and only calls
   `gui.New` on first activation; re-activation calls `Toggle()` instead. Without that
   guard each re-activation builds an entire second drawer (its own layer surface,
   subscribe loop, gamepad reader, telemetry poller) overlapping the first, and both stay
-  live and interactive. One click on `contrib/z13gui.desktop` while the user service is
+  live and interactive. One click on `contrib/voltaire-gui.desktop` while the user service is
   running is enough to trigger it. Diagnostic: two `drawer initialized` log lines under
   a single PID means the guard is missing or broken.
 - **State source of truth**: daemon is the source of truth. On show, `api.SendGetState()`
@@ -238,13 +197,13 @@ contrib/
 - **`handled == false` means the daemon is not running, and it is not an error.**
   Every `api.Send*` returns `(handled bool, err error)`; when the socket dial fails
   it returns `handled=false, err=nil`, because nothing was sent. **Never test `err`
-  alone** — wrap every call in `daemon.Err(api.SendX(...))`, which takes the result
+  alone** — wrap every call in `apiresult.Err(api.SendX(...))`, which takes the result
   pair directly so a site cannot read one and forget the other. All thirteen call
   sites used to discard `handled`, so with the daemon stopped every operation took
   its success path: `Save TDP` cleared the error bar, logged "custom TDP saved" and
   left the typed values on screen. That is z13ctl issue #14's dead-button failure
   rebuilt one layer up, and it defeated the error bar entirely.
-  `internal/daemon`'s contract test dials a temp `XDG_RUNTIME_DIR` to pin the api
+  `internal/apiresult`'s contract test dials a temp `XDG_RUNTIME_DIR` to pin the api
   convention rather than trusting its doc comment.
   - The telemetry poll is the one deliberate exception, and says so in a comment:
     it is a background poll, and reporting it every second would overwrite
@@ -256,7 +215,7 @@ contrib/
 - **Decisions live outside `internal/gui`; widgets live inside it.** `internal/gui`
   needs CGO + GTK4 headers, so `make test` cannot even compile it — anything left in
   there is permanently unverifiable. Every rule, calculation or classification
-  belongs in a pure package (`power`, `focusgrid`, `colorconv`, `lighting`,
+  belongs in a pure package (`limits`, `focusgrid`, `colorconv`, `lighting`,
   `uiscale`, `startup`, `togglegate`); the GTK files are thin adaptors that read
   widgets, call out, and apply the answer. Extracting logic this way has caught
   seven real bugs so far, none of which were found by reading the code.
@@ -292,11 +251,11 @@ contrib/
   hands the game the same D-pad presses navigating the drawer. `Window.grabGen` is
   incremented on the GTK thread and passed to `gamepad.Reader.SetGrabbed(seq, grab)`,
   which drops superseded requests. Add a sequence to any similar pair.
-- **Device limits are a value, not constants.** `power.Limits` holds the TDP range,
+- **Device limits are a value, not constants.** `limits.Limits` holds the TDP range,
   fan floor, temperature axis and stock PPT table; `Window.limits` is initialised to
-  `power.DefaultLimits()` (the Z13's values). **No TDP or fan bound may be hardcoded
-  in `internal/gui`** — derive it from `w.limits` / `fc.limits()`, because z13ctl is
-  being extended to devices with different envelopes. That covers the undervolt
+  `limits.DefaultLimits()` (the Z13's values). **No TDP or fan bound may be hardcoded
+  in `internal/gui`** — derive it from `w.limits` / `fc.limits()`, because voltaire
+  runs on devices with different envelopes. That covers the undervolt
   and charge-limit sliders too (`UVMin`/`UVMax`, `BatteryMin`/`BatteryMax`), and
   any other number a device can report: read it from the device, never a literal.
   - **The limits follow the daemon, not just startup** (`limitsync.go`, 2026-10-09).
@@ -348,7 +307,7 @@ contrib/
   (never a tooltip — see "Hints and block notes" below). Both the threshold and
   the floor come from `w.limits`, not from literals.
 - **Basic vs advanced TDP view**: basic mode is one slider applying a single value to
-  all three limits, capped at `BasicSliderMax()` (the safe maximum less 5 W). `power.NeedsAdvanced` decides whether a state can be
+  all three limits, capped at `BasicSliderMax()` (the safe maximum less 5 W). `limits.NeedsAdvanced` decides whether a state can be
   shown there; `syncCustomView` force-checks the Advanced box when it cannot. Without
   that the slider clamps, the label misreports the hardware, and a save sends the
   clamped value — silently lowering the user's power limit.
@@ -393,7 +352,7 @@ contrib/
     - `.scale-name` — slider name labels ("PL1 (SPL)", "CPU Curve Optimizer"): 10px, bold, no letter-spacing, dim
     - `.scale-value` — slider value readouts ("50 W", "CPU CO: -20"): 10px, normal weight, bright
     - `.error-bar` / `.error-text` / `.error-dismiss` — error surface; colored via the
-      `@z13-error` theme token, as is `.tdp-warning`
+      `@voltaire-error` theme token, as is `.tdp-warning`
 - **Profile buttons (main view)**: buttons (`gtk.Button`), stored in
   `profileSection.btns`, plus the `Custom` picker dropdown. The custom view's profile selector and
   the autoswitch targets are `dropdown`s (`dropdown.go`) over the in-surface
@@ -406,14 +365,14 @@ contrib/
   Do NOT add a `focusedSinceShow` guard — it causes first-show dismiss regression on KDE
   where the compositor drops focus during keyboard-mode transition and never re-grants it.
   Escape key also dismisses in both backends.
-- **GTK_A11Y=none**: set in `main.go` and `contrib/z13gui.service`. Disables GTK4
+- **GTK_A11Y=none**: set in `main.go` and `contrib/systemd/user/voltaire-gui.service`. Disables GTK4
   AT-SPI accessibility bridge, which sends D-Bus events on every widget state change.
   Under systemd (especially gamescope sessions), the AT-SPI bus may be unavailable,
   causing D-Bus timeouts that block GTK initialization.
 
 ## Gamescope backend (`internal/gui/gamescope/gamescope.go`)
 
-The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
+The gamescope backend renders voltaire-gui as an X11 overlay in Steam Gaming Mode.
 
 - **Overlay type**: `STEAM_OVERLAY` atom (z-pos 3, interactive with input routing).
   NOT `GAMESCOPE_EXTERNAL_OVERLAY` (z-pos 2, display-only, no input).
@@ -422,7 +381,7 @@ The gamescope backend renders z13gui as an X11 overlay in Steam Gaming Mode.
   `XGrabPointer` was removed because its core X11 event mask interferes with XI2
   touch delivery. STEAM_INPUT_FOCUS handles pointer/touch routing natively.
 - **Scaling**: resolution-based CSS scaling (`outputWidth / 1707`). Reference 1707 = 2560/1.5
-  (matches KDE 150% at Z13 native resolution). `Z13GUI_SCALE` env var overrides.
+  (matches KDE 150% at Z13 native resolution). `VOLTAIRE_GUI_SCALE` env var overrides.
   GDK_SCALE CANNOT be used — causes double scaling (GTK + gamescope scaler).
 - **Layout**: fullscreen window → horizontal box (backdrop + right-aligned panel).
   Panel has 5% top/bottom margins, scaled drawer width.
@@ -1715,103 +1674,9 @@ check: run it once under `GTK_THEME=Adwaita` before calling it styled.
 
 ### Service environment
 
-`contrib/z13gui.service` uses `EnvironmentFile=-%t/gamescope-environment` (optional).
+`contrib/systemd/user/voltaire-gui.service` uses `EnvironmentFile=-%t/gamescope-environment` (optional).
 `main.go` validates the gamescope Wayland socket exists before selecting the backend
 to handle stale environment files after session switching.
-
-## API usage (`github.com/dahui/z13ctl/api`)
-
-Functions used:
-- `api.SendGetState() (bool, *api.State, error)` — fetch full daemon state on show
-- `api.Subscribe([]string{"gui-toggle"}) (<-chan string, func(), error)` — event stream
-- `api.SendApply(device, color1, color2, mode, speed string, brightness int) (bool, error)`
-- `api.SendOff(device string) (bool, error)` — turn off lighting for a device
-- `api.SendProfileSet(profile string) (bool, error)`
-- `api.SendBatteryLimitSet(limit int) (bool, error)`
-- `api.SendPanelOverdriveSet(value int) (bool, error)` — 0 or 1
-- `api.SendBootSoundSet(value int) (bool, error)` — 0 or 1
-- `api.SendTdpSet(watts, pl1, pl2, pl3 string, force bool) (bool, error)` — set TDP.
-  **`watts` (the `set` field) is mandatory even in advanced mode.** The daemon's
-  `handleTDP` does `strconv.Atoi(req.Set)` before it looks at `pl1`/`pl2`/`pl3` and
-  rejects the request with `TDP value must be an integer` if it is empty. `watts` is
-  then used only as the default for any PL field left blank, so advanced mode passes
-  PL1 as the base value. The editor now goes through `customView.readTdpRequest()`
-  → `tdpRequest.send(plan)`, which calls `api.SendTdpSetFor` with the same rule.
-- `api.SendTdpReset() (bool, error)` — reset TDP to firmware defaults
-- `api.SendFanCurveSet(curve string) (bool, error)` — set custom fan curve ("temp:pwm,..." format)
-- `api.SendFanCurveReset() (bool, error)` — reset fan curves to auto
-- `api.SendUndervoltSet(cpu string) (bool, error)` — set CPU Curve Optimizer offset
-- `api.SendUndervoltReset() (bool, error)` — reset undervolt to stock (0)
-
-Key types from `api`:
-```go
-type State struct {
-    Lighting           LightingState
-    Devices            map[string]LightingState  // keyed by "keyboard", "lightbar"
-    Profile            string
-    Battery            int
-    BootSound          int  // 0 or 1
-    PanelOverdrive     int  // 0 or 1
-    TDP                *TDPState
-    FanCurve           *FanCurveState
-    Undervolt          *UndervoltState
-    UndervoltAvailable bool  // true if ryzen_smu is loaded
-    Temperature        int   // APU temp, degrees Celsius
-    FanRPM             int   // fan1 speed in RPM
-}
-type LightingState struct {
-    Enabled bool; Mode string; Color string; Color2 string
-    Speed string; Brightness int
-}
-type TDPState struct {
-    PL1SPL int; PL2SPPT int; FPPT int
-}
-type FanCurveState struct {
-    Mode   int              // 0=auto, 1=custom
-    Points []FanCurvePoint  // 8 points
-}
-type FanCurvePoint struct {
-    Temp int; PWM int
-}
-type UndervoltState struct {
-    CPUCO  int   // all-core CPU Curve Optimizer offset (0 to -40)
-    Active bool  // true when CO is applied to hardware
-}
-```
-
-## Daemon socket
-
-Path: `$XDG_RUNTIME_DIR/z13ctl/z13ctl.sock`
-
-Daemon must be running for any `api.*` calls to succeed. If the daemon is not running,
-`api.Subscribe` returns `nil, nil, nil` and `SendGetState` returns `false, nil, nil`.
-The subscribe loop handles this with backoff retry.
-
-## Build
-
-```sh
-make build      # CGO_ENABLED=1 go build -o z13gui .
-sudo make install  # installs pre-built binary to /usr/local/bin/z13gui
-make test       # unit tests for the pure-Go packages (no GTK4 headers needed)
-make lint       # golangci-lint run ./...
-make clean      # rm z13gui
-make snapshot   # goreleaser local build (no publish)
-make release    # goreleaser build + publish
-```
-
-Requires at build time: `gtk4-layer-shell` C library (`pkg-config gtk4-layer-shell-0`).
-
-`make test` derives its package list (`HERMETIC_PKGS`) rather than hand-listing
-it, excluding `internal/gui` because it needs CGO and GTK4 headers while
-`go list` only reads source — but adding back `internal/gui/gamepad/...`, which
-is cgo-free. A new pure package is therefore tested automatically. `make race`
-runs the same set under the race detector; `make cover` reports per-function
-coverage.
-
-CI (`.github/workflows/ci.yml`) runs tests + race on plain ubuntu and
-build + gofmt + lint in the same Arch container as the release job. Before this
-existed nothing ran tests on a push, which is how PR #10 merged tests that never
-executed.
 
 ## Known GTK issues (do not re-introduce)
 
@@ -1843,39 +1708,3 @@ executed.
   affected widget. Do not remove — without it, all CheckButtons and Switches are
   untappable via touchscreen in gamescope mode.
 
-## Current status
-
-Feature-complete for both KDE and gamescope modes:
-- Margin-based slide animation (smoothstep, 200ms) — KDE
-- Gamescope X11 overlay with opacity-based visibility + keyboard grab + STEAM_INPUT_FOCUS
-- Touch activation workaround for gamescope (CAPTURE-phase GestureClick on CheckButton/Switch)
-- Pointer-inside guard for KDE focus-loss handling (spurious drop vs genuine click-outside)
-- 50ms duplicate filter on daemon `gui-toggle` events (`internal/togglegate`)
-- Single-instance activate guard (re-activation toggles instead of building a second drawer)
-- GTK_A11Y=none for systemd AT-SPI timeout prevention
-- RGB lighting controls (mode, color presets + custom chooser/HSL picker, speed, brightness)
-- Profile switching: firmware buttons + a Custom picker dropdown (drawer); the
-  editor on the full window's Profiles tab
-- Custom profile view with:
-  - TDP control: basic (single watt slider) and advanced (PL1/PL2/PL3) modes
-  - Fan curve editor: Cairo graph with drag interaction, sized by the device's fans.points/pwm_max over its temp_min–temp_max axis
-  - Undervolt: CPU Curve Optimizer slider (inside advanced TDP box, hidden when
-    `ryzen_smu` unavailable). Slider shows 0 when not on custom profile.
-    iGPU CO is not supported on Strix Halo.
-  - One commit bar (Apply/Save Changes, Reset All) with per-card resets
-- Live CPU temp + fan RPM in the drawer header, polled every 1s; the Dashboard's
-  eight telemetry cards over up to an hour of history
-- The full window: Dashboard, Profiles and Settings tabs, its own title row and
-  window controls, hosted inside the gamescope surface in Gaming Mode
-- Quickbar customization (Settings tab QUICKBAR card; gui.toml override)
-- Battery charge limit slider
-- Firmware toggles (panel overdrive, boot sound) on the full window's Settings
-  tab, rendered from the device document — never from a written list
-- Screen refresh rate on the full window's Dashboard (KDE; absent elsewhere)
-- 15 built-in themes with accent variants + custom theme.toml support
-- Gamescope view switching for the theme picker; the HSL picker is a popup in
-  the in-surface layer, shared by both surfaces
-- Resolution-based CSS scaling for gamescope (VOLTAIRE_GUI_SCALE override)
-- Split-level logging (app=Info, GTK=Error; `-d` enables all Debug)
-- goreleaser + GitHub Actions release pipeline
-- systemd user service with optional gamescope-environment loading

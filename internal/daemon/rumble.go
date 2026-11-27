@@ -24,7 +24,7 @@ import (
 // read (a client renders that as unknown, never as off). Not under hwMu, as
 // every read here avoids it.
 func (d *Daemon) readRumble() *int {
-	if d.hw == nil || d.hw.Rumble == nil {
+	if d.hw.Rumble == nil {
 		return nil
 	}
 	v, err := d.hw.Rumble.Get()
@@ -36,7 +36,7 @@ func (d *Daemon) readRumble() *int {
 }
 
 func (d *Daemon) handleRumbleGet() response {
-	if d.hw == nil || d.hw.Rumble == nil {
+	if d.hw.Rumble == nil {
 		return response{OK: false, Error: "reading rumble: not supported on this device"}
 	}
 	v, err := d.hw.Rumble.Get()
@@ -53,7 +53,7 @@ func (d *Daemon) handleRumble(req request) response {
 	if err != nil {
 		return response{OK: false, Error: "rumble strength must be a whole number"}
 	}
-	if d.hw == nil || d.hw.Rumble == nil {
+	if d.hw.Rumble == nil {
 		return response{OK: false, Error: "rumble: not supported on this device"}
 	}
 	d.hwMu.Lock()
@@ -79,7 +79,7 @@ func (d *Daemon) handleRumble(req request) response {
 // startup and after a resume; a failure is logged and left, since the
 // controller may still be enumerating and nothing else depends on it.
 func (d *Daemon) restoreRumble(when string) {
-	if d.hw == nil || d.hw.Rumble == nil {
+	if d.hw.Rumble == nil {
 		return
 	}
 	d.mu.Lock()

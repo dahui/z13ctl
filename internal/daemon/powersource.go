@@ -410,11 +410,7 @@ func (d *Daemon) handleAutoswitchGet() response {
 
 	// Include the live source so a client can render "active on battery"
 	// without a second round trip.
-	out := struct {
-		api.AutoswitchState
-		OnAC  bool `json:"on_ac"`
-		Known bool `json:"source_known"`
-	}{AutoswitchState: a}
+	out := api.AutoswitchReading{AutoswitchState: a}
 	// acPower reads the Mains supply's online attribute, which the ACPI AC
 	// driver answers by evaluating _PSR — an EC call, not a cached value. While
 	// the EC is not answering that read can hold the ACPI global mutex like any
@@ -425,7 +421,7 @@ func (d *Daemon) handleAutoswitchGet() response {
 	if !wedged {
 		if onAC, known := d.acPower(); known {
 			out.OnAC = onAC
-			out.Known = true
+			out.SourceKnown = true
 		}
 	}
 	data, _ := json.Marshal(out)

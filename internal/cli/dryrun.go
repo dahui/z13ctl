@@ -207,12 +207,6 @@ func dryRunACPath() string {
 	return "(no mains power supply found)"
 }
 
-// DryRunBootSound prints the sysfs write that would be performed for a boot sound change.
-func DryRunBootSound(value int) {
-	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, asus.FindBootSoundPath())
-}
-
 // DryRunCPUBoost prints the sysfs write that would be performed for a CPU
 // boost change.
 func DryRunCPUBoost(on bool) {
@@ -235,12 +229,6 @@ func DryRunRumble(v, lo, hi int, rangeErr error) {
 		return
 	}
 	fmt.Printf("Would write %d (range %d–%d) to hid-oxp's rumble_intensity\n", v, lo, hi)
-}
-
-// DryRunPanelOverdrive prints the sysfs write that would be performed for a panel overdrive change.
-func DryRunPanelOverdrive(value int) {
-	fmt.Println("=== DRY RUN (no sysfs write) ===")
-	fmt.Printf("Would write %d to %s\n", value, asus.FindPanelOverdrivePath())
 }
 
 // DryRunFeature prints the sysfs write a generic firmware-toggle set would
@@ -321,10 +309,11 @@ func DryRunFanCurveReset(curveDir string, chans []int) {
 // being true once the floor became a per-point minimum rather than a replacement
 // curve.
 //
-// writes is the plan from asus.PlanTDPWrites, passed in for the same reason
-// as live: discovering the PPT interface in here would make the output depend on
-// the machine running the tests.
-func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.FanCurvePoint, writes []asus.PPTWrite) {
+// writes is the power driver's own plan (safety.Engine.PlanWrites), passed in
+// for the same reason as live: discovering the interface in here would make
+// the output depend on the machine running the tests, and would name ASUS paths
+// on a machine whose limits go through the SMU.
+func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.FanCurvePoint, writes []string) {
 	fmt.Println("=== DRY RUN (no sysfs write) ===")
 	if force {
 		fmt.Printf("--force given: sustained limit allowed above %dW (up to %dW)\n",
@@ -355,12 +344,12 @@ func DryRunTdp(env driver.PowerEnvelope, s api.TDPState, force bool, live []api.
 			s.PL1SPL, env.TDPMaxSafe)
 	}
 	if len(writes) == 0 {
-		fmt.Printf("Would write PL1=%dW PL2=%dW PL3=%dW (no PPT power limit interface found)\n",
+		fmt.Printf("Would set PL1=%dW PL2=%dW PL3=%dW (the power driver cannot describe its writes)\n",
 			s.PL1SPL, s.PL2SPPT, s.FPPT)
 		return
 	}
 	for _, w := range writes {
-		fmt.Printf("Would write %d to %s\n", w.Watts, w.Path)
+		fmt.Println("Would " + w)
 	}
 }
 

@@ -37,7 +37,7 @@ var gamingModeNow = func() bool { return device.GamingMode() }
 // watchSession sends errSessionChanged on restart once the session kind
 // differs from d.hw.GamingMode, and returns.
 func (d *Daemon) watchSession(ctx context.Context, restart chan<- error) {
-	if d.hw == nil || !d.hw.YieldsInGamingMode {
+	if !d.hw.YieldsInGamingMode {
 		return
 	}
 	t := time.NewTicker(sessionPollInterval)

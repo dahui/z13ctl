@@ -179,7 +179,7 @@ func ReadCPUBoost() (bool, error) {
 // exactly that reason): the amd-pstate driver refuses the write in some modes,
 // and the write itself succeeds either way. A caller that is told "on" must be
 // able to believe it.
-func SetCPUBoost(on bool) error {
+func setCPUBoost(on bool) error {
 	v := "0"
 	if on {
 		v = "1"

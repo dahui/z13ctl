@@ -149,7 +149,7 @@ func TestTelemetryHistoryHandler(t *testing.T) {
 	})
 
 	t.Run("no telemetry capability is an error", func(t *testing.T) {
-		bare := &Daemon{}
+		bare := &Daemon{hw: &device.Device{}}
 		resp := bare.handleTelemetryHistory(request{Cmd: "telemetry-history", Seconds: 60})
 		if resp.OK {
 			t.Error("a device with no telemetry source answered ok")
@@ -314,7 +314,7 @@ func TestEnergyGapMatchesThePlotsGapThreshold(t *testing.T) {
 func TestApplyLiveTelemetryCarriesEveryMeasuredQuantity(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{telemetry: telemetryring.New(8)}
+	d := &Daemon{hw: &device.Device{}, telemetry: telemetryring.New(8)}
 	now := time.Now()
 	// The sampler's most recent figure, which is where a counter device's
 	// package power has to come from.
@@ -353,7 +353,7 @@ func TestApplyLiveTelemetryCarriesEveryMeasuredQuantity(t *testing.T) {
 func TestLiveBatteryZeroIsAReading(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{telemetry: telemetryring.New(8)}
+	d := &Daemon{hw: &device.Device{}, telemetry: telemetryring.New(8)}
 
 	var known api.State
 	d.applyLiveTelemetry(&known, driver.Sample{BatteryPowerW: 0, BatteryPowerKnown: true})
@@ -376,7 +376,7 @@ func TestLiveBatteryZeroIsAReading(t *testing.T) {
 func TestLivePackagePowerPrefersAnInstantaneousReading(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{telemetry: telemetryring.New(8)}
+	d := &Daemon{hw: &device.Device{}, telemetry: telemetryring.New(8)}
 	d.telemetry.Add(time.Now(), driver.Sample{PackagePowerW: 9})
 
 	var st api.State
@@ -397,7 +397,7 @@ func TestLivePackagePowerIsAbsentWhenStale(t *testing.T) {
 
 	t.Run("nothing sampled yet", func(t *testing.T) {
 		t.Parallel()
-		d := &Daemon{telemetry: telemetryring.New(8)}
+		d := &Daemon{hw: &device.Device{}, telemetry: telemetryring.New(8)}
 		var st api.State
 		d.applyLiveTelemetry(&st, counter)
 		if st.PackagePowerW != 0 {
@@ -407,7 +407,7 @@ func TestLivePackagePowerIsAbsentWhenStale(t *testing.T) {
 
 	t.Run("older than liveTelemetryMaxAge", func(t *testing.T) {
 		t.Parallel()
-		d := &Daemon{telemetry: telemetryring.New(8)}
+		d := &Daemon{hw: &device.Device{}, telemetry: telemetryring.New(8)}
 		d.telemetry.Add(time.Now().Add(-time.Hour), driver.Sample{PackagePowerW: 42.5})
 		var st api.State
 		d.applyLiveTelemetry(&st, counter)
@@ -627,7 +627,7 @@ type stubFans struct {
 
 func (stubFans) Shape() driver.FanShape                  { return driver.FanShape{} }
 func (f stubFans) ReadRPM() ([]int, error)               { return f.rpm, f.err }
-func (stubFans) ReadMode() (int, error)                  { return 2, nil }
+func (stubFans) ReadMode() (driver.FanMode, error)       { return driver.FanModeAuto, nil }
 func (stubFans) ApplyCurve([]api.FanCurvePoint) error    { return nil }
 func (stubFans) Release() error                          { return nil }
 func (stubFans) LiveCurve() ([]api.FanCurvePoint, error) { return nil, nil }

@@ -14,9 +14,6 @@ package daemon
 // call site from quietly going back to the wrong one.
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -113,80 +110,26 @@ func TestUndervoltActiveRoundTrips(t *testing.T) {
 func TestEveryUndervoltResetIsGatedOnApplied(t *testing.T) {
 	t.Parallel()
 
-	const window = 8 // lines to look back for the enclosing guard
-
 	// Both packages, because the first version of this guard scanned only
 	// internal/daemon and missed cmd/tdp.go's no-daemon reset entirely — a real
 	// sixth call site, on the path taken whenever the daemon is down. A guard
 	// scoped to one package is a guard that certifies the package, not the rule.
-	dirs := []string{".", "../../cmd"}
-
-	var files []string
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
-		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			files = append(files, filepath.Join(dir, name))
+	sites := findCalls(t, []string{".", "../../cmd"}, "Undervolt.Reset")
+	for _, c := range sites {
+		// uvApplied inside the daemon, daemon.UndervoltApplied from cmd/ —
+		// the same predicate over the same state file, by necessity: the CLI
+		// has no Daemon to ask and must not answer differently.
+		if !c.callsBefore("uvApplied", "UndervoltApplied") {
+			t.Errorf("%s: Undervolt.Reset() in %s is not gated on an applied-offset check "+
+				"(uvApplied / daemon.UndervoltApplied); an offset that was never applied must never be cleared",
+				c.pos, c.fnName())
 		}
 	}
-
-	found := 0
-	for _, name := range files {
-		raw, err := os.ReadFile(filepath.Clean(name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-
-		// Strip comments the same way funcBody does, so prose about the rule is
-		// never mistaken for the rule.
-		var code []string
-		for _, line := range strings.Split(string(raw), "\n") {
-			if i := strings.Index(line, "//"); i >= 0 {
-				line = line[:i]
-			}
-			code = append(code, line)
-		}
-
-		for i, line := range code {
-			if !strings.Contains(line, "Undervolt.Reset()") {
-				continue
-			}
-			found++
-			lo := max(0, i-window)
-			guard := strings.Join(code[lo:i], "\n")
-			// uvApplied inside the daemon, daemon.UndervoltApplied from cmd/ —
-			// the same predicate over the same state file, by necessity: the CLI
-			// has no Daemon to ask and must not answer differently.
-			gated := strings.Contains(guard, "uvApplied") ||
-				strings.Contains(guard, "UndervoltApplied")
-			if !gated {
-				t.Errorf("%s:%d — Undervolt.Reset() is not gated on an applied-offset "+
-					"check; an offset that was never applied must never be cleared. Guard was:\n%s",
-					name, i+1, guard)
-			}
-			if strings.Contains(guard, "uvAvailable()") {
-				t.Errorf("%s:%d — Undervolt.Reset() is gated on uvAvailable(), which is "+
-					"true on every machine with the module loaded. Use uvApplied().",
-					name, i+1)
-			}
-			if strings.Contains(guard, "Undervolt.Present()") && !gated {
-				t.Errorf("%s:%d — Undervolt.Reset() is gated on Present(), which only "+
-					"stats the module. Use daemon.UndervoltApplied().", name, i+1)
-			}
-		}
-	}
-
 	// Guard the premise: if a refactor renames the call, this test would pass by
 	// finding nothing at all. Five in internal/daemon plus two in cmd/.
-	if found < 7 {
+	if len(sites) < 7 {
 		t.Fatalf("found %d Undervolt.Reset() call sites, expected at least 7 — "+
-			"this guard needs updating with the rename", found)
+			"this guard needs updating with the rename", len(sites))
 	}
 }
 
@@ -236,54 +179,28 @@ func TestOnlyWritersProbeTheSMU(t *testing.T) {
 	t.Parallel()
 
 	allowed := map[string][]string{
-		"uvProbe()": {
-			"func (d *Daemon) handleUndervolt(",      // writes the requested offset
-			"func (d *Daemon) applyCustomHW(",        // writes the profile's offset
-			"func (d *Daemon) reconcileOnce(",        // re-applies after a lost resume
-			"func (d *Daemon) uvApplied(",            // only once state says applied
-			"func (d *Daemon) applyDeviceUndervolt(", // writes the slider device's offset
+		"uvProbe": {
+			"Daemon.handleUndervolt",      // writes the requested offset
+			"Daemon.applyCustomHW",        // writes the profile's offset
+			"Daemon.reconcileOnce",        // re-applies after a lost resume
+			"Daemon.uvApplied",            // only once state says applied
+			"Daemon.applyDeviceUndervolt", // writes the slider device's offset
 		},
-		"ProbeAvailable()": {"func (d *Daemon) uvProbe("},
+		"ProbeAvailable": {"Daemon.uvProbe"},
 	}
-
-	for _, dir := range []string{".", "../../cmd"} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
+	for call, fns := range allowed {
+		sites := findCalls(t, []string{".", "../../cmd"}, call)
+		if len(sites) == 0 {
+			t.Fatalf("no call to %s found; this guard needs updating with the rename", call)
 		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
+		for _, c := range sites {
+			ok := false
+			for _, fn := range fns {
+				ok = ok || c.fnName() == fn
 			}
-			path := filepath.Join(dir, name)
-			raw, err := os.ReadFile(filepath.Clean(path))
-			if err != nil {
-				t.Fatalf("read %s: %v", path, err)
-			}
-			fn := ""
-			for i, line := range strings.Split(string(raw), "\n") {
-				if j := strings.Index(line, "//"); j >= 0 {
-					line = line[:j]
-				}
-				if strings.HasPrefix(line, "func ") {
-					fn = line
-				}
-				for call, fns := range allowed {
-					if !strings.Contains(line, call) || strings.HasPrefix(line, "func ") {
-						continue
-					}
-					ok := false
-					for _, prefix := range fns {
-						if strings.HasPrefix(fn, prefix) {
-							ok = true
-						}
-					}
-					if !ok {
-						t.Errorf("%s:%d — %q calls %s, which can write a CO reset; a caller that "+
-							"is only asking must use uvAvailable()", path, i+1, fn, call)
-					}
-				}
+			if !ok {
+				t.Errorf("%s: %s calls %s, which can write a CO reset; a caller that "+
+					"is only asking must use uvAvailable()", c.pos, c.fnName(), call)
 			}
 		}
 	}

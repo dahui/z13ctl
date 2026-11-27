@@ -295,6 +295,12 @@ func cloneState(s api.State) api.State {
 		l := *s.TDPLimits
 		c.TDPLimits = &l
 	}
+	if s.Features != nil {
+		c.Features = make(map[string]int, len(s.Features))
+		for k, v := range s.Features {
+			c.Features[k] = v
+		}
+	}
 	return c
 }
 

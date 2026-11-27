@@ -10,7 +10,6 @@ package cmd
 // profile and can never be shadowed by a custom profile.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -123,7 +122,7 @@ func runProfileSet() error {
 	// auto, and the release last, so the profile's own limits end in force. The
 	// same order as the daemon and 'tdp --reset'.
 	if err := hw.Profiles.Set(profile); err != nil {
-		return fmt.Errorf("setting platform profile: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("setting platform profile", err)
 	}
 	if err := hw.HandBackToFirmware(profile); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to restore the %s power limits: %v\n", profile, err)
@@ -154,23 +153,13 @@ func runProfileGet() error {
 	return nil
 }
 
-// profileRow mirrors the daemon's profile-list entry.
-type profileRow struct {
-	api.CustomProfile
-	Active bool `json:"active"`
-}
-
 func runProfileList() error {
-	handled, value, err := api.SendProfileList()
+	handled, rows, err := api.SendProfileList()
 	if !handled {
 		return fmt.Errorf("listing custom profiles requires the daemon; start it first")
 	}
 	if err != nil {
 		return err
-	}
-	var rows []profileRow
-	if err := json.Unmarshal([]byte(value), &rows); err != nil {
-		return fmt.Errorf("parsing profile list: %w", err)
 	}
 
 	fmt.Println("Firmware profiles: " + strings.Join(firmwareProfilesOrNone(), ", "))
@@ -207,7 +196,7 @@ func describeProfile(p api.CustomProfile) string {
 func runProfileCreate() error {
 	// Validated as typed: see handleProfileCreate on why the case is not folded.
 	name := strings.TrimSpace(profileCreateFlag)
-	if err := cli.ValidateProfileName(name); err != nil {
+	if err := api.ValidateProfileName(name); err != nil {
 		return err
 	}
 	if dryRunFlag {
@@ -228,7 +217,7 @@ func runProfileCreate() error {
 
 func runProfileSaveAs() error {
 	name := strings.TrimSpace(profileSaveAsFlag)
-	if err := cli.ValidateProfileName(name); err != nil {
+	if err := api.ValidateProfileName(name); err != nil {
 		return err
 	}
 	if dryRunFlag {

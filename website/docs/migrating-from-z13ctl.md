@@ -61,7 +61,8 @@ itself:
 sudo voltaire setup
 ```
 
-That writes `99-voltaire.rules` and `voltaire-perms.service`, removes the old
+That writes `99-voltaire.rules` and `voltaire-perms.service` for this machine,
+removes the old
 `99-z13ctl.rules` (after verifying z13ctl generated it — a hand-edited rules
 file is left alone with a note), and runs `disable --now` on the old
 `z13ctl-perms.service`. Then swap the user units:

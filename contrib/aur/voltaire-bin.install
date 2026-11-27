@@ -2,12 +2,12 @@ post_install() {
     udevadm control --reload-rules
     udevadm trigger
 
-    # setup writes the udev rules and the perms unit, applies sysfs permissions
-    # immediately, and cleans up what a pre-2.0 "z13ctl setup" installed (the
-    # old rules file — only after verifying z13ctl generated it — and the old
-    # RemainAfterExit perms unit, which stays active holding stale grants
-    # through anything short of an explicit disable).
-    voltaire setup
+    # setup grants voltaire's group what this machine's device file needs:
+    # it writes the udev rules and the perms unit for this machine only,
+    # applies the grants immediately, and cleans up what a pre-2.0
+    # "z13ctl setup" installed. Full path, so a source-install copy in
+    # /usr/local/bin never becomes the boot unit's binary.
+    /usr/bin/voltaire setup || echo "voltaire: setup did not complete; run 'sudo voltaire setup'."
 
     # CAP_BPF + CAP_PERFMON let the gamescope overlay block controller input at
     # the kernel level instead of freezing Steam. Optional — the SIGSTOP
@@ -33,11 +33,24 @@ post_install() {
 post_upgrade() {
     udevadm control --reload-rules
     udevadm trigger
-    # Re-run so an upgrade applies added permission grants without a reboot.
-    voltaire setup
+    # Re-run so an upgrade applies changed grants without a reboot.
+    /usr/bin/voltaire setup || echo "voltaire: setup did not complete; run 'sudo voltaire setup'."
     setcap cap_bpf,cap_perfmon+ep /usr/bin/voltaire-gui 2>/dev/null || true
     echo ""
     echo ">>> voltaire upgraded. Reload the user daemon and restart:"
     echo ">>>   systemctl --user daemon-reload"
     echo ">>>   systemctl --user restart voltaire.service voltaire-gui.service"
+}
+
+pre_remove() {
+    # Removes the unit and rules file setup wrote (only if they carry its
+    # marker) and takes voltaire's group back from everything it granted.
+    /usr/bin/voltaire setup --remove || true
+    systemctl --global disable voltaire.socket voltaire.service voltaire-gui.service 2>/dev/null || true
+}
+
+post_remove() {
+    udevadm control --reload-rules || true
+    udevadm trigger || true
+    systemctl daemon-reload || true
 }

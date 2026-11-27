@@ -68,7 +68,7 @@ controller but nothing will restore it.`,
 				return nil
 			}
 			if setErr := hw.Rumble.Set(v); setErr != nil {
-				return fmt.Errorf("setting vibration strength: %w\n  (run 'sudo voltaire setup' to enable non-root access)", setErr)
+				return withSetupHint("setting vibration strength", setErr)
 			}
 			fmt.Printf("Vibration strength %s (daemon not running — this will not be restored after a reboot or suspend)\n", rumbleText(v, hi))
 			return nil

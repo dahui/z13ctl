@@ -964,13 +964,13 @@ not require the daemon to be running.
 
 ## setup
 
-Install udev rules and a boot service granting a group read/write access to
-the ASUS HID devices, performance profile, battery charge limit, firmware
-attributes (boot sound, panel overdrive), hwmon fan curve attributes,
-asus-armoury PPT power limit attributes (and asus-nb-wmi's, as the fallback)
-for TDP control, the cpufreq boost switch, ryzen_smu sysfs files for
-undervolting (if the module is loaded), and read-only access to the powercap
-RAPL energy counter for package-power telemetry.
+Grant a group what this machine's device file needs for voltaire to run without
+root: the lighting and hardware-button device nodes, and the sysfs attributes
+for profiles, fans, power limits, firmware switches, the charge limit, CPU
+boost and (read only) the package-power counter, each only where the device
+file declares it. Writes `/etc/udev/rules.d/99-voltaire.rules` and the boot
+unit `voltaire-perms.service`, and applies the grants immediately.
+Distribution packages run it on install and upgrade.
 
 ```
 sudo voltaire setup [flags]
@@ -979,13 +979,17 @@ sudo voltaire setup [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--group` | `users` | Group to grant device access to |
-| `--perms-only` | | Reapply sysfs permissions without writing udev rules or the service |
+| `--machine` | | Device file id to use instead of matching this machine's firmware (DMI); for the same hardware under another name, or with `--dry-run` to preview another machine's grants |
+| `--perms-only` | | Apply the grants now without writing either file (what the boot unit runs) |
+| `--remove` | | Remove the rules file and boot unit (only if setup wrote them) and take the group back from everything granted |
 
-On a machine that previously ran `z13ctl setup`, the old rules file and
-permissions unit are cleaned up automatically — see
-[Migrating from z13ctl](/migrating-from-z13ctl).
+On a machine no device file describes, setup grants nothing and prints the
+firmware's vendor and product strings to report. On a machine that previously
+ran `z13ctl setup`, the old rules file and permissions unit are cleaned up
+automatically — see [Migrating from z13ctl](/migrating-from-z13ctl).
 
-Use `--dry-run` to preview exactly what would be written — no root required:
+Use `--dry-run` to preview exactly what would be written and changed, without
+root:
 
 ```sh
 voltaire --dry-run setup    # preview (no root needed)
@@ -995,8 +999,7 @@ sudo voltaire setup         # apply
 After running setup, log out and back in (or run `newgrp <group>`) for the
 group membership to take effect in your current session.
 
-For a detailed explanation of what `setup` installs and why the battery limit
-requires a separate systemd service, see
+For what setup installs and why a boot unit is needed, see
 [Installation](/installation#what-setup-does).
 
 ## button

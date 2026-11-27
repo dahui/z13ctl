@@ -6,31 +6,8 @@ package asus
 // can name.
 
 import (
-	"os"
-	"strconv"
-
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
-
-// FindBootSoundPath returns the sysfs path for the boot sound firmware attribute.
-func FindBootSoundPath() string {
-	return sysFirmwareAttrDir + "/boot_sound/current_value"
-}
-
-// FindPanelOverdrivePath returns the sysfs path for the panel overdrive firmware attribute.
-func FindPanelOverdrivePath() string {
-	return sysFirmwareAttrDir + "/panel_overdrive/current_value"
-}
-
-// SetBootSound writes the given boot sound value (0 or 1) to the firmware attribute.
-func SetBootSound(value int) error {
-	return os.WriteFile(FindBootSoundPath(), []byte(strconv.Itoa(value)+"\n"), 0o644)
-}
-
-// SetPanelOverdrive writes the given panel overdrive value (0 or 1) to the firmware attribute.
-func SetPanelOverdrive(value int) error {
-	return os.WriteFile(FindPanelOverdrivePath(), []byte(strconv.Itoa(value)+"\n"), 0o644)
-}
 
 // ReadCharger reports which power input is supplying the machine, or
 // driver.ChargerUnknown when the firmware does not say.

@@ -51,7 +51,7 @@ text_dim = "#999999"
 border = "#555555"
 error = "#ff8888"
 `)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#ff0000" {
 		t.Errorf("Accent = %q, want #ff0000", c.Accent)
 	}
@@ -91,7 +91,7 @@ text = "#eeeeee"
 text_dim = "#999999"
 border = "#555555"
 `)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Error != DefaultColors.Error {
 		t.Errorf("Error = %q, want default %q", c.Error, DefaultColors.Error)
 	}
@@ -102,7 +102,7 @@ border = "#555555"
 
 func TestParseThemeTOML_MissingKeysKeepDefaults(t *testing.T) {
 	data := []byte(`accent = "#ff0000"`)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#ff0000" {
 		t.Errorf("Accent = %q, want #ff0000", c.Accent)
 	}
@@ -113,7 +113,7 @@ func TestParseThemeTOML_MissingKeysKeepDefaults(t *testing.T) {
 
 func TestParseThemeTOML_InvalidHexIgnored(t *testing.T) {
 	data := []byte(`accent = "not-a-color"`)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != DefaultColors.Accent {
 		t.Errorf("Accent = %q, want default %q", c.Accent, DefaultColors.Accent)
 	}
@@ -127,7 +127,7 @@ accent = "#aabbcc"
 # Another comment
 background = "#112233"
 `)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#aabbcc" {
 		t.Errorf("Accent = %q, want #aabbcc", c.Accent)
 	}
@@ -138,7 +138,7 @@ background = "#112233"
 
 func TestParseThemeTOML_InlineComments(t *testing.T) {
 	data := []byte(`accent = "#aabbcc" # the accent color`)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#aabbcc" {
 		t.Errorf("Accent = %q, want #aabbcc", c.Accent)
 	}
@@ -158,7 +158,7 @@ func TestParseThemeTOML_QuotedValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := ParseThemeTOML([]byte(tt.input))
+			c := parseThemeTOML([]byte(tt.input))
 			if c.Accent != tt.want {
 				t.Errorf("Accent = %q, want %q", c.Accent, tt.want)
 			}
@@ -172,7 +172,7 @@ accent = "#ff0000"
 unknown_key = "#00ff00"
 another_thing = "hello"
 `)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#ff0000" {
 		t.Errorf("Accent = %q, want #ff0000", c.Accent)
 	}
@@ -180,7 +180,7 @@ another_thing = "hello"
 }
 
 func TestParseThemeTOML_Empty(t *testing.T) {
-	c := ParseThemeTOML([]byte(""))
+	c := parseThemeTOML([]byte(""))
 	if c != DefaultColors {
 		t.Error("empty input should return DefaultColors")
 	}
@@ -188,7 +188,7 @@ func TestParseThemeTOML_Empty(t *testing.T) {
 
 func TestParseThemeTOML_NoEquals(t *testing.T) {
 	data := []byte("this is not valid toml\n")
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c != DefaultColors {
 		t.Error("invalid lines should be ignored, returning DefaultColors")
 	}
@@ -336,7 +336,7 @@ background = "#111111"
 [accents]
 blue = "#0000ff"
 `)
-	c := ParseThemeTOML(data)
+	c := parseThemeTOML(data)
 	if c.Accent != "#ff0000" {
 		t.Errorf("Accent = %q, want #ff0000", c.Accent)
 	}
@@ -368,7 +368,7 @@ func TestParseThemeTOMLValueForms(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseThemeTOML([]byte(tt.in)).Accent; got != "#ff0000" {
+			if got := parseThemeTOML([]byte(tt.in)).Accent; got != "#ff0000" {
 				t.Errorf("ParseThemeTOML(%q).Accent = %q, want %q", tt.in, got, "#ff0000")
 			}
 		})
@@ -386,7 +386,7 @@ func TestParseThemeTOMLIgnoresJunk(t *testing.T) {
 		`accent = "#12345"`,
 		`accent`,
 	} {
-		if got := ParseThemeTOML([]byte(in)).Accent; got != DefaultColors.Accent {
+		if got := parseThemeTOML([]byte(in)).Accent; got != DefaultColors.Accent {
 			t.Errorf("ParseThemeTOML(%q).Accent = %q, want the default %q",
 				in, got, DefaultColors.Accent)
 		}

@@ -80,9 +80,9 @@ type reconcileObs struct {
 	WantCurve  []api.FanCurvePoint // that profile's curve; nil if none
 	WantTDP    *api.TDPState       // that profile's TDP; nil if none
 	WantCO     *int                // that profile's Curve Optimizer offset; nil if none
-	CurveMode  int                 // curve device pwm1_enable; -1 if unreadable
-	PL1        int                 // effective sustained limit in watts; -1 if unreadable
-	ProfileHW  string              // platform_profile; a change means the firmware reset the power limits
+	CurveMode  driver.FanMode
+	PL1        int    // effective sustained limit in watts; -1 if unreadable
+	ProfileHW  string // platform_profile; a change means the firmware reset the power limits
 	// PolicyWritten: the kernel reported a thermal policy write since the last
 	// tick — a platform_profile write or a fan release, same-value ones included
 	// (watchPolicyWrites). Like a change in ProfileHW it means the firmware reset
@@ -277,11 +277,11 @@ func reconcileTick(prev reconcileState, obs reconcileObs, env driver.PowerEnvelo
 	var act reconcileAction
 
 	switch obs.CurveMode {
-	case -1:
+	case driver.FanModeUnknown:
 		// Unreadable: never act on an unknown.
-	case 1:
+	case driver.FanModeCustom:
 		// Curve is live.
-	case 0:
+	case driver.FanModeFullSpeed:
 		// Someone deliberately forced full speed. That is more cooling than
 		// any curve we would write, so leave it.
 	default:
@@ -487,7 +487,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		ECWedged:   wedged,
 		Suspending: suspending,
 		SuspendGen: suspendGen,
-		CurveMode:  -1,
+		CurveMode:  driver.FanModeUnknown,
 		PL1:        -1,
 	}
 	if active, ok := s.ActiveCustomProfile(); ok {
@@ -515,7 +515,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// lastHW meaningful for the log line. A capability the device does not have
 	// observes as unreadable, which the tick never acts on — the watcher is
 	// inert per missing capability by construction.
-	if d.hw != nil && d.hw.Fans != nil {
+	if d.hw.Fans != nil {
 		if mode, err := d.hw.Fans.ReadMode(); err == nil {
 			obs.CurveMode = mode
 		}
@@ -526,7 +526,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// wait for the EC (waitForEC) before the wedge latch is set: the tick stands
 	// down then anyway. Past the stand-down ceiling the tick acts with PL1
 	// unread, and the next tick, with the flag cleared, reads it.
-	readPower := obs.Custom && !suspending && d.hw != nil && d.hw.Power != nil
+	readPower := obs.Custom && !suspending && d.hw.Power != nil
 	if readPower {
 		if tdp, err := d.hw.Power.ReadEffective(d.effectiveProfile()); err == nil {
 			obs.PL1 = tdp.PL1SPL
@@ -542,7 +542,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// cache — on amd-smu no SMU transaction — and the source after it, for the
 	// charger-edge grace.
 	obs.RawPL1 = -1
-	if !obs.Custom && !suspending && d.hw != nil && d.hw.Power != nil && d.hw.PowerSlider && s.DeviceTDP != nil {
+	if !obs.Custom && !suspending && d.hw.Power != nil && d.hw.PowerSlider && s.DeviceTDP != nil {
 		obs.DeviceTDP = s.DeviceTDP
 		if tdp, err := d.hw.Power.Read(); err == nil {
 			obs.RawPL1 = tdp.PL1SPL
@@ -550,7 +550,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 		obs.OnAC, obs.SourceKnown = d.acPower()
 		readPower = true
 	}
-	if d.hw != nil && d.hw.ProfilePin != "" && d.hw.Profiles != nil && !suspending {
+	if d.hw.ProfilePin != "" && d.hw.Profiles != nil && !suspending {
 		obs.Pin = d.hw.ProfilePin
 		_, err := d.hw.Profiles.Get()
 		obs.OffPin = errors.Is(err, driver.ErrProfileNotOffered)
@@ -632,7 +632,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 	// guards keep that reasoning local rather than load-bearing at a distance.
 	ok := true
 	floorLimit := obs.PL1
-	if act.TDP != nil && d.hw != nil && d.hw.Power != nil {
+	if act.TDP != nil && d.hw.Power != nil {
 		// obs.WantCurve, not nil: restoring a drifted PPT must not throw away a
 		// live user curve that already satisfies the floor. Passing nil here was
 		// the same defect as on the apply path, reached from the other direction.
@@ -645,7 +645,7 @@ func (d *Daemon) reconcileOnce(prev reconcileState) reconcileState {
 			floorLimit = act.TDP.PL1SPL
 		}
 	}
-	if act.Curve != nil && d.hw != nil && d.hw.Fans != nil {
+	if act.Curve != nil && d.hw.Fans != nil {
 		if curve := reconcileCurveFor(d.env(), floorLimit, obs.WantCurve); curve == nil {
 			slog.Debug("fan floor no longer required and the profile has no curve of its own; leaving the fans alone",
 				"pl1", floorLimit)

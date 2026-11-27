@@ -6,7 +6,9 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -212,7 +214,7 @@ func TestCloneStateHandlesNilFields(t *testing.T) {
 func TestSaveStateSnapshotIsRaceFree(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	d := &Daemon{state: sampleState()}
+	d := &Daemon{hw: &device.Device{}, state: sampleState()}
 
 	var wg sync.WaitGroup
 	for range 3 {
@@ -257,7 +259,7 @@ func TestBroadcastEventShape(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(server, nil)
 
 	go d.broadcast(response{OK: true, Event: "gui-toggle"})
@@ -289,7 +291,7 @@ func TestBroadcastPrunesDeadSubscribers(t *testing.T) {
 	_ = dead.Close()
 	_ = deadServer.Close()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(deadServer, nil)
 	d.addSubscriber(liveServer, nil)
 
@@ -302,9 +304,7 @@ func TestBroadcastPrunesDeadSubscribers(t *testing.T) {
 	}
 	<-done
 
-	d.subMu.Lock()
-	n := len(d.subscribers)
-	d.subMu.Unlock()
+	n := d.subs.count()
 	if n != 1 {
 		t.Errorf("subscribers after broadcast = %d, want 1 (dead one not pruned)", n)
 	}
@@ -389,5 +389,39 @@ func TestNormalizedStateIsAppliable(t *testing.T) {
 	}
 	if _, _, _, err := cli.ParseColor(ls.Color2); err != nil {
 		t.Errorf("ParseColor(%q) = %v, want nil", ls.Color2, err)
+	}
+}
+
+// TestCloneStateCopiesEveryReferenceField walks api.State by reflection, so a
+// pointer, map or slice field added later cannot be shared between the clone
+// and the live state without this failing. The hand-written field lists in the
+// tests above miss exactly that case, and Features went uncopied that way:
+// harmless only while nothing mutated it after cloning.
+func TestCloneStateCopiesEveryReferenceField(t *testing.T) {
+	var s api.State
+	v := reflect.ValueOf(&s).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.Pointer:
+			f.Set(reflect.New(f.Type().Elem()))
+		case reflect.Map:
+			m := reflect.MakeMap(f.Type())
+			m.SetMapIndex(reflect.New(f.Type().Key()).Elem(), reflect.New(f.Type().Elem()).Elem())
+			f.Set(m)
+		case reflect.Slice:
+			f.Set(reflect.MakeSlice(f.Type(), 1, 1))
+		}
+	}
+	c := reflect.ValueOf(cloneState(s))
+	for i := 0; i < v.NumField(); i++ {
+		switch v.Field(i).Kind() {
+		case reflect.Pointer, reflect.Map, reflect.Slice:
+			if c.Field(i).IsNil() {
+				t.Errorf("%s: the clone dropped the value", v.Type().Field(i).Name)
+			} else if c.Field(i).Pointer() == v.Field(i).Pointer() {
+				t.Errorf("%s: the clone shares memory with the live state (add it to cloneState)", v.Type().Field(i).Name)
+			}
+		}
 	}
 }

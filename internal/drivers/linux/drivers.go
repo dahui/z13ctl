@@ -80,7 +80,7 @@ func (p *profileController) Get() (string, error) {
 
 // Set writes name to the platform. The daemon is what guarantees name is one
 // of Names; this driver does not second-guess it.
-func (p *profileController) Set(name string) error { return SetProfileFor(p.handler, name) }
+func (p *profileController) Set(name string) error { return setProfileFor(p.handler, name) }
 
 // Default is the reset target from device data, or "balanced" when the data
 // names none and the device offers it. A device with neither has no safe
@@ -379,4 +379,4 @@ type cpuBoost struct{}
 
 func (cpuBoost) Get() (bool, error) { return ReadCPUBoost() }
 
-func (cpuBoost) Set(on bool) error { return SetCPUBoost(on) }
+func (cpuBoost) Set(on bool) error { return setCPUBoost(on) }

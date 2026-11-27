@@ -13,13 +13,10 @@ package gui
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -31,7 +28,7 @@ type batterySection struct {
 	w     *Window
 	scale *gtk.Scale
 	value *gtk.Label // window only: the inline readout beside the slider
-	timer *time.Timer
+	send  settleSend
 }
 
 // buildBatterySection creates the drawer main view's BATTERY LIMIT section and
@@ -53,7 +50,7 @@ func (w *Window) buildBatterySection() *gtk.Box {
 // wrong on a page you are scanning, where the number you want to read is the
 // one that will not hold still.
 func (w *Window) newBatterySection(desktop bool) (*batterySection, *gtk.Box) {
-	b := &batterySection{w: w}
+	b := &batterySection{w: w, send: settleSend{delay: batteryLimitDebounce}}
 
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal,
 		float64(w.limits.BatteryMin), float64(w.limits.BatteryMax), 1)
@@ -100,38 +97,7 @@ func (b *batterySection) syncValueLabel() {
 // a slider passes through every value between its ends, and each is a real
 // sysfs write on the way to the one the user meant.
 func (b *batterySection) queueSend() {
-	w := b.w
-	// The syncing guard every other input has. sync() sets this scale from
-	// daemon state, which fires this handler, so without it every drawer open
-	// wrote the limit straight back to the hardware 200ms later. Harmless while
-	// the write succeeds — it is the value the daemon just reported — but on a
-	// device that rejects it that is now a visible error bar on every open,
-	// since daemon failures are no longer swallowed.
-	//
-	// Checked here rather than in the timer: by the time it fires the sync has
-	// long finished and the flag is false again.
-	if w.syncing {
-		return
-	}
-	if b.timer != nil {
-		b.timer.Stop()
-	}
-	b.timer = time.AfterFunc(batteryLimitDebounce, func() {
-		glib.IdleAdd(func() bool {
-			val := int(b.scale.Value()) // scale read must stay on the GTK thread
-			go func() {
-				slog.Debug("sendBatteryLimitSet: calling daemon", "limit", val)
-				start := time.Now()
-				if err := apiresult.Err(api.SendBatteryLimitSet(val)); err != nil {
-					w.reportError("Set battery limit", err)
-					return
-				}
-				w.clearErrorAsync()
-				slog.Debug("sendBatteryLimitSet: done", "elapsed", time.Since(start))
-			}()
-			return false
-		})
-	})
+	b.send.queue(b.w, func() int { return int(b.scale.Value()) }, api.SendBatteryLimitSet, "Set battery limit", false)
 }
 
 // sync sets the scale from daemon state. Callers must hold w.syncing.

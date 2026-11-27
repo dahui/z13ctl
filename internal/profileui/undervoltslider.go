@@ -60,7 +60,7 @@ func UndervoltSliderNote(s *api.State) string {
 // offset of its own.
 func UndervoltNoteOn(slider bool) string {
 	if !slider {
-		return UndervoltNote()
+		return undervoltNote()
 	}
 	return "A profile's offset applies while that profile runs; otherwise the " +
 		"undervolt setting on the Dashboard does. Unstable values may cause crashes."

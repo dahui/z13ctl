@@ -225,8 +225,6 @@ func TestIntGettersRejectMalformedValues(t *testing.T) {
 		call func() (bool, int, error)
 	}{
 		{"batterylimit-get", SendBatteryLimitGet},
-		{"bootsound-get", SendBootSoundGet},
-		{"paneloverdrive-get", SendPanelOverdriveGet},
 	}
 	malformed := []string{"80 garbage", "", "eighty", "8.0", "80,"}
 

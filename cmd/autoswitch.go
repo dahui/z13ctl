@@ -4,7 +4,6 @@ package cmd
 // power source. Configuration only; the daemon does the switching.
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -125,26 +124,15 @@ func runAutoswitchSet(cmd *cobra.Command) error {
 	return nil
 }
 
-// autoswitchStatus mirrors the daemon's autoswitch-get payload.
-type autoswitchStatus struct {
-	api.AutoswitchState
-	OnAC        bool `json:"on_ac"`
-	SourceKnown bool `json:"source_known"`
-}
-
-func currentAutoswitch() (autoswitchStatus, error) {
-	var st autoswitchStatus
-	handled, value, err := api.SendAutoswitchGet()
+func currentAutoswitch() (api.AutoswitchReading, error) {
+	handled, st, err := api.SendAutoswitchGet()
 	if !handled {
-		return st, fmt.Errorf("autoswitch requires the daemon, which watches the power source; start it first")
+		return api.AutoswitchReading{}, fmt.Errorf("autoswitch requires the daemon, which watches the power source; start it first")
 	}
 	if err != nil {
-		return st, err
+		return api.AutoswitchReading{}, err
 	}
-	if err := json.Unmarshal([]byte(value), &st); err != nil {
-		return st, fmt.Errorf("parsing autoswitch state: %w", err)
-	}
-	return st, nil
+	return *st, nil
 }
 
 func runAutoswitchGet() error {

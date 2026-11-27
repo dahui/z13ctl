@@ -15,17 +15,11 @@ import (
 	"github.com/dahui/voltaire/v2/internal/aura"
 )
 
-// NamedColors is the name → hex lookup table (aura's, aliased).
-var NamedColors = aura.NamedColors
-
-// ResolveColor forwards to aura.ResolveColor.
-func ResolveColor(s string) string { return aura.ResolveColor(s) }
-
 // ColorDisplay returns a human-readable label for a color string.
 // If s is a known name it returns the name; otherwise it returns "#XXXXXX".
 func ColorDisplay(s string) string {
 	lower := strings.ToLower(s)
-	if _, ok := NamedColors[lower]; ok {
+	if _, ok := aura.NamedColors[lower]; ok {
 		return lower
 	}
 	hex := strings.ToUpper(strings.TrimPrefix(s, "#"))

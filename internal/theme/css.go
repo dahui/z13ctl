@@ -35,7 +35,7 @@ func BuildThemeCSS(c Colors, templateCSS string) string {
 		fmt.Fprintf(&defs, "@define-color z13-%-12s %s;\n", tok.name, tok.value)
 		fmt.Fprintf(&defs, "@define-color voltaire-%-12s %s;\n", tok.name, tok.value)
 	}
-	return defs.String() + "\n" + StripDefineColors(templateCSS)
+	return defs.String() + "\n" + stripDefineColors(templateCSS)
 }
 
 // definePattern matches an "@define-color voltaire-foo …;" declaration,
@@ -92,8 +92,8 @@ func UndefinedColorTokens(css string) []string {
 	return missing
 }
 
-// StripDefineColors removes all @define-color lines from a CSS string.
-func StripDefineColors(css string) string {
+// stripDefineColors removes all @define-color lines from a CSS string.
+func stripDefineColors(css string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(css, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "@define-color") {

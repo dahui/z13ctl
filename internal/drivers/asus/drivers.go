@@ -113,27 +113,27 @@ func (*fanController) ReadRPM() ([]int, error) { return ReadFanRPMs() }
 // the answer would leave the reconcile watcher and the sleep hook blind on the
 // channel the machine does have. Only when no channel is readable at all does
 // this return -1, meaning unknown.
-func (*fanController) ReadMode() (int, error) {
+func (*fanController) ReadMode() (driver.FanMode, error) {
 	modes, err := ReadFanCurveModes()
 	if err != nil {
-		return 0, err
+		return driver.FanModeUnknown, err
 	}
-	mode := -1
+	mode := driver.FanModeUnknown
 	for _, m := range modes {
-		if m == -1 {
+		if m == driver.FanModeUnknown {
 			continue
 		}
-		if m != 1 {
+		if m != driver.FanModeCustom {
 			return m, nil
 		}
-		mode = 1
+		mode = driver.FanModeCustom
 	}
 	return mode, nil
 }
 
-func (*fanController) ApplyCurve(pts []api.FanCurvePoint) error { return SetFanCurves(pts) }
+func (*fanController) ApplyCurve(pts []api.FanCurvePoint) error { return setFanCurves(pts) }
 
-func (*fanController) Release() error { return ResetAllFanCurves() }
+func (*fanController) Release() error { return resetAllFanCurves() }
 
 // LiveCurve returns the curve programmed into the curve registers whether or
 // not it is active — the interface's contract, since the registers survive a
@@ -164,7 +164,17 @@ func NewPowerLimiter(env driver.PowerEnvelope) driver.PowerLimiter {
 type powerLimiter struct{ env driver.PowerEnvelope }
 
 func (powerLimiter) Read() (api.TDPState, error) { return ReadAllPPT() }
-func (powerLimiter) Apply(s api.TDPState) error  { return SetTDPState(s) }
+func (powerLimiter) Apply(s api.TDPState) error  { return setTDPState(s) }
+
+// PlanWrites is driver.WritePlanner: the attribute writes setTDPState(s) would
+// make on the interface in use.
+func (powerLimiter) PlanWrites(s api.TDPState) []string {
+	var out []string
+	for _, w := range PlanTDPWrites(s) {
+		out = append(out, fmt.Sprintf("write %d to %s", w.Watts, w.Path))
+	}
+	return out
+}
 
 // DeviceEnvelope is the device data alone (driver.DeviceEnvelope). Envelope
 // reads armoury's bounds, and every armoury PPT read evaluates the AC adapter's

@@ -43,13 +43,38 @@ type Power interface {
 // driver.PowerLimiter, so these orderings are not a convention callers follow
 // but the only route that exists.
 type Engine struct {
-	Fans  Fans
-	Power Power
+	fans  Fans
+	power Power
+}
+
+// NewEngine binds a fan controller and a power limiter. fans may be nil on a
+// device with no fan control (the floor then cannot be written, so a limit
+// that needs it is refused).
+func NewEngine(fans Fans, power Power) *Engine {
+	return &Engine{fans: fans, power: power}
+}
+
+// PlanWrites is what the power limiter would write for s, for a dry run
+// (driver.WritePlanner); nil when it cannot say.
+func (e Engine) PlanWrites(s api.TDPState) []string {
+	if p, ok := e.power.(driver.WritePlanner); ok {
+		return p.PlanWrites(s)
+	}
+	return nil
+}
+
+// Forget drops whatever the power limiter caches about what it last wrote, so
+// the next write goes to hardware (driver.PowerForgetter). After a resume
+// nothing knows whether the limits survived s2idle.
+func (e Engine) Forget() {
+	if f, ok := e.power.(driver.PowerForgetter); ok {
+		f.Forget()
+	}
 }
 
 // Read returns the current power limits from hardware.
 func (e Engine) Read() (api.TDPState, error) {
-	return e.Power.Read()
+	return e.power.Read()
 }
 
 // ReadEffective returns the current power limits, substituting the envelope's
@@ -67,7 +92,7 @@ func (e Engine) Read() (api.TDPState, error) {
 // Any profile name absent from the envelope's StockProfilePPT disables the
 // fallback, which is exactly what a custom profile needs.
 func (e Engine) ReadEffective(profile string) (api.TDPState, error) {
-	s, err := e.Power.Read()
+	s, err := e.power.Read()
 	if err != nil {
 		return s, err
 	}
@@ -76,10 +101,10 @@ func (e Engine) ReadEffective(profile string) (api.TDPState, error) {
 	// call), and a custom profile — what the reconcile watcher reads every two
 	// seconds — never substitutes. The row itself is device data, and the same
 	// in every envelope a driver reports.
-	if _, ok := e.deviceEnvelope().StockProfilePPT[profile]; !ok {
+	if _, ok := e.DeviceEnvelope().StockProfilePPT[profile]; !ok {
 		return s, nil
 	}
-	if env := e.Power.Envelope(); CacheStale(env, s) {
+	if env := e.power.Envelope(); CacheStale(env, s) {
 		return env.StockProfilePPT[profile], nil
 	}
 	return s, nil
@@ -118,14 +143,15 @@ func (e Engine) ReadDisplayed(env driver.PowerEnvelope, profile string) (api.TDP
 	return e.ReadEffective(profile)
 }
 
-// deviceEnvelope is the envelope from device data alone where the driver can
+// DeviceEnvelope is the envelope from device data alone where the driver can
 // give it without reading the kernel (driver.DeviceEnvelope), and the full
-// envelope where it cannot.
-func (e Engine) deviceEnvelope() driver.PowerEnvelope {
-	if de, ok := e.Power.(driver.DeviceEnvelope); ok {
+// envelope where it cannot. It is what the daemon serves while the EC is not
+// answering, when the kernel's ranges must not be read.
+func (e Engine) DeviceEnvelope() driver.PowerEnvelope {
+	if de, ok := e.power.(driver.DeviceEnvelope); ok {
 		return de.DeviceEnvelope()
 	}
-	return e.Power.Envelope()
+	return e.power.Envelope()
 }
 
 // CheckFanFloorRelease reports whether the fans may be released to firmware
@@ -144,7 +170,7 @@ func (e Engine) CheckFanFloorRelease(profile string) error {
 	if err != nil {
 		return nil
 	}
-	return CheckFanFloorReleaseAt(e.Power.Envelope(), tdp.PL1SPL)
+	return CheckFanFloorReleaseAt(e.power.Envelope(), tdp.PL1SPL)
 }
 
 // RestoreStock writes the envelope's stock PPT row for a firmware profile
@@ -158,11 +184,11 @@ func (e Engine) CheckFanFloorRelease(profile string) error {
 // no row in the envelope is an error — the caller decides whether that means
 // "nothing to do" or "the limit did not come down".
 func (e Engine) RestoreStock(profile string) error {
-	stock, ok := e.Power.Envelope().StockProfilePPT[profile]
+	stock, ok := e.power.Envelope().StockProfilePPT[profile]
 	if !ok {
 		return fmt.Errorf("no stock PPT row for profile %q", profile)
 	}
-	return e.Power.Apply(stock)
+	return e.power.Apply(stock)
 }
 
 // HandBackToFirmware puts a firmware profile's own power limits back in force:
@@ -184,7 +210,7 @@ func (e Engine) RestoreStock(profile string) error {
 // and still releases. A device with no fan control writes the row and stops.
 func (e Engine) HandBackToFirmware(profile string) error {
 	var rowErr error
-	if _, ok := e.Power.Envelope().StockProfilePPT[profile]; ok {
+	if _, ok := e.power.Envelope().StockProfilePPT[profile]; ok {
 		if err := e.RestoreStock(profile); err != nil {
 			rowErr = fmt.Errorf("writing the %s stock PPT row: %w", profile, err)
 		}
@@ -197,7 +223,7 @@ func (e Engine) HandBackToFirmware(profile string) error {
 
 // Envelope returns the device's power envelope.
 func (e Engine) Envelope() driver.PowerEnvelope {
-	return e.Power.Envelope()
+	return e.power.Envelope()
 }
 
 // ApplyTDPSafely writes s, first putting the fans into the state the sustained
@@ -230,20 +256,20 @@ func (e Engine) Envelope() driver.PowerEnvelope {
 // Values are written verbatim; resolve mirrored fields (APU/Platform sPPT)
 // before calling.
 func (e Engine) ApplyTDPSafely(s api.TDPState, want []api.FanCurvePoint) error {
-	env := e.Power.Envelope()
+	env := e.power.Envelope()
 	if c := FanCurveForTDP(env, s.PL1SPL, want); c != nil {
 		// A floor with no fan control cannot be satisfied, only refused. The
 		// device registry validates this pairing out of existence; the guard is
 		// for an engine assembled by hand.
-		if e.Fans == nil {
+		if e.fans == nil {
 			return fmt.Errorf("refusing to apply %dW sustained TDP: the device declares a fan floor but no fan control", s.PL1SPL)
 		}
-		if err := e.Fans.ApplyCurve(c); err != nil {
+		if err := e.fans.ApplyCurve(c); err != nil {
 			return fmt.Errorf("setting high-TDP fan curve: %w (refusing to apply %dW sustained TDP without the %d PWM floor)",
 				err, s.PL1SPL, env.FloorCurve[0].PWM)
 		}
 	}
-	return e.Power.Apply(s)
+	return e.power.Apply(s)
 }
 
 // ReleaseTDP lowers the power limits to stock and only then releases the fans
@@ -256,13 +282,13 @@ func (e Engine) ApplyTDPSafely(s api.TDPState, want []api.FanCurvePoint) error {
 // envelope's StockProfilePPT) and decides whether releasing is right at all —
 // a profile with its own curve restores that curve instead of calling this.
 func (e Engine) ReleaseTDP(stock api.TDPState) error {
-	if err := e.Power.Apply(stock); err != nil {
+	if err := e.power.Apply(stock); err != nil {
 		return fmt.Errorf("lowering power limits: %w (fans stay on the floor until the limit comes down)", err)
 	}
-	if e.Fans == nil {
+	if e.fans == nil {
 		return nil // power-only device: nothing to release
 	}
-	return e.Fans.Release()
+	return e.fans.Release()
 }
 
 // ReleaseFans hands the fans back to firmware auto and then re-applies keep —
@@ -285,21 +311,21 @@ func (e Engine) ReleaseTDP(stock api.TDPState) error {
 // ApplyTDPSafely's fail-closed ordering. ReleaseTDP is the other release: it
 // lowers to stock first and then releases, landing on the firmware's own limits.
 func (e Engine) ReleaseFans(keep *api.TDPState) error {
-	if keep != nil && e.Power != nil {
-		if err := CheckFanFloorReleaseAt(e.Power.Envelope(), keep.PL1SPL); err != nil {
+	if keep != nil && e.power != nil {
+		if err := CheckFanFloorReleaseAt(e.power.Envelope(), keep.PL1SPL); err != nil {
 			return err
 		}
 	}
-	if e.Fans == nil {
+	if e.fans == nil {
 		return nil // power-only device: nothing to release, so nothing reset
 	}
-	if err := e.Fans.Release(); err != nil {
+	if err := e.fans.Release(); err != nil {
 		return err
 	}
-	if keep == nil || e.Power == nil {
+	if keep == nil || e.power == nil {
 		return nil
 	}
-	if err := e.Power.Apply(*keep); err != nil {
+	if err := e.power.Apply(*keep); err != nil {
 		return fmt.Errorf("fans released, but re-applying the %dW power limit failed "+
 			"(the firmware profile's own limit is in force): %w", keep.PL1SPL, err)
 	}

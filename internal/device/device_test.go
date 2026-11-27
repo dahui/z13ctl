@@ -2,7 +2,9 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/dahui/voltaire/v2/internal/safety"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +12,6 @@ import (
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
 
@@ -89,7 +90,7 @@ func TestZ13StockTableNamesAreReserved(t *testing.T) {
 		if !api.IsReservedProfileName(name) {
 			t.Errorf("stock_ppt key %q is not reserved by api.IsReservedProfileName", name)
 		}
-		if err := cli.ValidateProfileName(name); err == nil {
+		if err := api.ValidateProfileName(name); err == nil {
 			t.Errorf("ValidateProfileName(%q) = nil, want an error — a custom profile may not shadow a stock table row", name)
 		}
 	}
@@ -140,7 +141,7 @@ func TestZ13FloorCurveIsWellFormed(t *testing.T) {
 			}
 		}
 	}
-	if _, err := cli.ParseFanCurve(c.Fans.Shape(), formatCurve(curve)); err != nil {
+	if _, err := safety.ParseFanCurve(c.Fans.Shape(), formatCurve(curve)); err != nil {
 		t.Errorf("floor_curve is rejected by cli.ParseFanCurve: %v", err)
 	}
 }
@@ -177,13 +178,17 @@ func TestZ13MatchesItsOwnDMI(t *testing.T) {
 	}
 }
 
-func TestDetectAssemblesTheZ13(t *testing.T) {
+func TestMatchAssemblesTheZ13(t *testing.T) {
 	fakeDMI(t, z13Vendor, z13Product)
 	registerFakeFactories(t)
 
-	d, err := Detect()
+	c, unmatched, err := MatchOrFallback()
+	if err != nil || unmatched != nil {
+		t.Fatalf("MatchOrFallback: %v, %v", unmatched, err)
+	}
+	d, err := Assemble(c)
 	if err != nil {
-		t.Fatalf("Detect: %v", err)
+		t.Fatalf("Assemble: %v", err)
 	}
 	if d.ID != "asus-rog-flow-z13-2025" || d.Model != "GZ302" {
 		t.Errorf("identity = %q/%q", d.ID, d.Model)
@@ -201,17 +206,48 @@ func TestDetectAssemblesTheZ13(t *testing.T) {
 	}
 }
 
-func TestDetectUnknownDeviceNamesTheMachine(t *testing.T) {
+func TestUnknownDeviceFallsBackAndNamesTheMachine(t *testing.T) {
 	fakeDMI(t, "FRAMEWORK", "Laptop 13")
-	_, err := Detect()
-	if err == nil {
-		t.Fatal("unknown machine detected as something")
+	c, unmatched, err := MatchOrFallback()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The error must carry what a new device file needs: the DMI strings.
+	if unmatched == nil || !errors.Is(unmatched, ErrUnknownDevice) {
+		t.Fatalf("an unknown machine was not reported as one: %v", unmatched)
+	}
+	if c.Device.ID != FallbackID {
+		t.Errorf("fell back to %q, want %q", c.Device.ID, FallbackID)
+	}
+	// The note must carry what a new device file needs: the DMI strings.
 	for _, want := range []string{"FRAMEWORK", "Laptop 13"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not carry DMI string %q", err, want)
+		if !strings.Contains(unmatched.Error(), want) {
+			t.Errorf("error %q does not carry DMI string %q", unmatched, want)
 		}
+	}
+}
+
+// TestSessionIsAskedOnlyWhenTheDeviceYields: asking costs a system-bus
+// connection, so a device that yields nothing never pays it.
+func TestSessionIsAskedOnlyWhenTheDeviceYields(t *testing.T) {
+	registerFakeFactories(t)
+	asked := false
+	ask := func() bool { asked = true; return true }
+	if _, err := AssembleForSession(z13Config(t), ask); err != nil {
+		t.Fatal(err)
+	}
+	if asked {
+		t.Error("the Z13 yields nothing to Steam, yet the session was asked")
+	}
+	ally, err := ConfigByID("asus-rog-xbox-ally-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := AssembleForSession(ally, ask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !asked || !d.GamingMode || d.Power != nil {
+		t.Errorf("the Ally in Gaming Mode: asked %v, GamingMode %v, power %v", asked, d.GamingMode, d.Power != nil)
 	}
 }
 
@@ -304,7 +340,7 @@ func TestValidateCatchesBrokenConfigs(t *testing.T) {
 			c.Fans = &FansConfig{Method: "m", Points: 8, TempMin: 30, TempMax: 100}
 			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40,
 				FloorCurve: [][]int{{50, 100}, {40, 200}}}
-		}, "strictly increase"},
+		}, "temps must be monotonically increasing"},
 		{"stock table missing a profile", func(c *Config) {
 			c.Power = &PowerConfig{Method: "m", TDPMin: 5, TDPMaxSafe: 30, TDPMaxForced: 40,
 				StockPPT: map[string]StockRow{"quiet": {}}}
@@ -528,7 +564,7 @@ type fakeFans struct{}
 
 func (fakeFans) Shape() driver.FanShape                  { return driver.FanShape{} }
 func (fakeFans) ReadRPM() ([]int, error)                 { return nil, nil }
-func (fakeFans) ReadMode() (int, error)                  { return 2, nil }
+func (fakeFans) ReadMode() (driver.FanMode, error)       { return driver.FanModeAuto, nil }
 func (fakeFans) ApplyCurve([]api.FanCurvePoint) error    { return nil }
 func (fakeFans) Release() error                          { return nil }
 func (fakeFans) LiveCurve() ([]api.FanCurvePoint, error) { return nil, nil }
@@ -818,5 +854,15 @@ func TestUnavailableUndervoltIsRecorded(t *testing.T) {
 	undervoltFactories["test-uv"] = func(UndervoltConfig) (driver.Undervolter, error) { return nil, fmt.Errorf("broken") }
 	if _, err := Assemble(c); err == nil {
 		t.Error("a failing undervolt factory assembled a device")
+	}
+}
+
+func TestConfigByID(t *testing.T) {
+	c, err := ConfigByID("onexplayer-x2-mini-pro")
+	if err != nil || c.Device.ID != "onexplayer-x2-mini-pro" {
+		t.Fatalf("ConfigByID = %q, %v", c.Device.ID, err)
+	}
+	if _, err := ConfigByID("no-such-device"); err == nil || !strings.Contains(err.Error(), "asus-rog-flow-z13-2025") {
+		t.Errorf("an unknown id must fail and list the ids there are: %v", err)
 	}
 }

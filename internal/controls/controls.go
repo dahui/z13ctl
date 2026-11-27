@@ -275,14 +275,14 @@ func Defaults() []Control {
 	return out
 }
 
-// DefaultsFor returns the drawer a user who has not chosen gets on the device
+// defaultsFor returns the drawer a user who has not chosen gets on the device
 // info describes: the device's own list (api.DeviceInfo.Quickbar) where it
 // declares one, else Defaults. A device's list may name the opt-in controls —
 // that is what it is for: the OXP's drawer holds CPU boost and the refresh
 // rate. An ID this build does not know is skipped; the device file's test
 // keeps the embedded ones honest, and a newer daemon may name a control an
 // older GUI lacks.
-func DefaultsFor(info *api.DeviceInfo) []Control {
+func defaultsFor(info *api.DeviceInfo) []Control {
 	if info == nil || len(info.Quickbar) == 0 {
 		return Defaults()
 	}
@@ -328,14 +328,14 @@ func IDsOf(cs []Control) []string {
 // document says otherwise, which is the posture limits.FromDevice already
 // takes for the same reason.
 func Supports(info *api.DeviceInfo, c Control, session ...Capability) bool {
-	return SupportsHere(info, session, c.Requires)
+	return supportsHere(info, session, c.Requires)
 }
 
-// SupportsHere is SupportsAll with session capabilities — those only the
+// supportsHere is SupportsAll with session capabilities — those only the
 // client can know (CapRefreshRate). A session capability is satisfied by
 // being listed in session and by nothing else; every other capability is
 // answered by the document exactly as SupportsAll answers it.
-func SupportsHere(info *api.DeviceInfo, session, want []Capability) bool {
+func supportsHere(info *api.DeviceInfo, session, want []Capability) bool {
 	var fromDoc []Capability
 	for _, c := range want {
 		if !sessionCapability(c) {

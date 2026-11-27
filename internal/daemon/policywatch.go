@@ -22,7 +22,7 @@ const policyNotifyTimeout = 1000 // milliseconds
 // policyWritePaths returns the attributes the device's profile driver says the
 // kernel notifies on a thermal policy write, or nil when it names none.
 func (d *Daemon) policyWritePaths() []string {
-	if d.hw == nil || d.hw.Profiles == nil {
+	if d.hw.Profiles == nil {
 		return nil
 	}
 	n, ok := d.hw.Profiles.(driver.PolicyWriteNotifier)

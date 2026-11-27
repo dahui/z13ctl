@@ -5,6 +5,7 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/dahui/voltaire/v2/internal/device"
 	"net"
 	"testing"
 	"time"
@@ -179,7 +180,7 @@ func TestPressEmitsTheEventsInOrder(t *testing.T) {
 			client, server := net.Pipe()
 			defer func() { _ = client.Close() }()
 
-			d := &Daemon{}
+			d := &Daemon{hw: &device.Device{}}
 			d.addSubscriber(server, api.AllEvents)
 
 			go d.emitPress(tc.act)
@@ -217,7 +218,7 @@ func TestOpenFullIsFilterable(t *testing.T) {
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
 
-	d := &Daemon{}
+	d := &Daemon{hw: &device.Device{}}
 	d.addSubscriber(server, []string{api.EventGUIToggle})
 
 	go d.emitPress(pressAction{Toggle: true, OpenFull: true})
@@ -226,9 +227,7 @@ func TestOpenFullIsFilterable(t *testing.T) {
 		t.Fatalf("first event = %q, want the toggle", got)
 	}
 
-	d.subMu.Lock()
-	n := len(d.subscribers)
-	d.subMu.Unlock()
+	n := d.subs.count()
 	if n != 1 {
 		t.Errorf("subscribers = %d, want 1 — an unwanted event must not drop the subscriber", n)
 	}

@@ -52,7 +52,7 @@ func (u undervolter) Text() driver.UndervoltText {
 // says nothing about whether CO commands work on this platform — that is
 // ProbeAvailable's (destructive) question.
 func (undervolter) Present() bool         { return SMUAvailable() }
-func (undervolter) ProbeAvailable() bool  { return SMUProbeUndervolt() }
+func (undervolter) ProbeAvailable() bool  { return smuProbeUndervolt() }
 func (undervolter) Available() bool       { return SMUUndervoltAvailable() }
 func (u undervolter) Range() (lo, hi int) { return u.lo, u.hi }
 
@@ -63,10 +63,10 @@ func (u undervolter) Apply(cpuCO int) error {
 	if cpuCO < u.lo || cpuCO > u.hi {
 		return fmt.Errorf("CPU undervolt %d out of range %d to %d", cpuCO, u.lo, u.hi)
 	}
-	return SetCurveOptimizer(cpuCO)
+	return setCurveOptimizer(cpuCO)
 }
 
-func (undervolter) Reset() error { return ResetCurveOptimizer() }
+func (undervolter) Reset() error { return resetCurveOptimizer() }
 
 // Command names this CPU's Curve Optimizer message for the dry run.
 func (undervolter) Command() (string, error) { return CurveOptimizerCommand() }

@@ -59,7 +59,7 @@ func SMUAvailable() bool {
 //  2. Write 4 bytes (u32 LE command ID) to the mailbox file
 //  3. Read 4 bytes (u32 LE response code) from the mailbox file
 //  4. Read 24 bytes (6 × u32 LE) from smu_args for response arguments
-func SendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, outArgs [6]uint32, retErr error) {
+func sendSMUCommand(mailbox string, cmdID uint32, args [6]uint32) (code uint32, outArgs [6]uint32, retErr error) {
 	smuMu.Lock()
 	defer smuMu.Unlock()
 
@@ -132,7 +132,7 @@ var (
 // undervolt, since the sync.Once cache does not survive the process. Ask the
 // daemon (get-state's undervolt_available) or use SMUAvailable, which only stats
 // the sysfs interface.
-func SMUProbeUndervolt() bool {
+func smuProbeUndervolt() bool {
 	if !SMUAvailable() {
 		return false
 	}

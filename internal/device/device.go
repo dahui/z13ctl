@@ -44,7 +44,7 @@ type Device struct {
 	Model string // short hardware name, for display
 	Name  string // display name from device data ("" when it gives none)
 
-	Fans      driver.FanController
+	Fans      driver.FanCurves
 	Power     *safety.Engine // power limits, reachable only through the engine
 	Profiles  driver.ProfileController
 	Lighting  driver.Lighting
@@ -93,6 +93,11 @@ type Device struct {
 	// device does not have, and the reason is what every surface says instead
 	// of "no such control".
 	Unavailable []Unavailable
+
+	// releaseFans is the fan controller's raw Release, for ReleaseFans on a
+	// device with no power control (and so no engine). Unexported: a release
+	// anywhere else would drop the custom power limit without restoring it.
+	releaseFans func() error
 
 	// YieldsInGamingMode says the device data leaves something to Steam in
 	// Gaming Mode, and GamingMode whether this Device was assembled for such
@@ -151,10 +156,10 @@ func (d *Device) ReleaseFans(keep *api.TDPState) error {
 	if d.Power != nil {
 		return d.Power.ReleaseFans(keep)
 	}
-	if d.Fans == nil {
+	if d.releaseFans == nil {
 		return nil
 	}
-	return d.Fans.Release()
+	return d.releaseFans()
 }
 
 // HandBackToFirmware puts a firmware profile's own power limits back in force:
@@ -230,14 +235,28 @@ func Configs() ([]Config, error) {
 	return configsAll, configsErr
 }
 
+// ConfigByID returns the embedded device config with the given id, for a
+// caller told which device file to use rather than matching DMI (setup's
+// --device). The error lists the ids there are.
+func ConfigByID(id string) (Config, error) {
+	configs, err := Configs()
+	if err != nil {
+		return Config{}, err
+	}
+	ids := make([]string, 0, len(configs))
+	for _, c := range configs {
+		if c.Device.ID == id {
+			return c, nil
+		}
+		ids = append(ids, c.Device.ID)
+	}
+	return Config{}, fmt.Errorf("device: no device file %q (there are: %s)", id, strings.Join(ids, ", "))
+}
+
 // MatchConfig identifies this machine and returns its device config,
 // unassembled. It returns ErrUnknownDevice (wrapped with the DMI strings, so a
 // bug report contains exactly what a new device file needs) when no device
 // file matches.
-//
-// Most callers want Detect. MatchConfig exists for the transitional daemon,
-// which strips the capabilities whose drivers still live inside it before
-// assembling; it goes away when that gap closes.
 func MatchConfig() (Config, error) {
 	configs, err := Configs()
 	if err != nil {
@@ -255,14 +274,26 @@ func MatchConfig() (Config, error) {
 	return Config{}, fmt.Errorf("%w (vendor %q, product %q)", ErrUnknownDevice, vendor, product)
 }
 
-// Detect identifies this machine and assembles its Device for the session
-// running now (GamingMode).
-func Detect() (*Device, error) {
-	c, err := MatchConfig()
-	if err != nil {
-		return nil, err
+// FallbackID is the device file the daemon and CLI assume when none matches
+// this machine. Every earlier z13ctl ran best-effort on any machine as a Z13,
+// and the Z13's drivers all fail soft on absent sysfs, so this keeps that.
+// voltaire setup deliberately does not use it: granting another machine's
+// attributes is not best-effort.
+const FallbackID = "asus-rog-flow-z13-2025"
+
+// MatchOrFallback returns this machine's device config, or FallbackID's when
+// no device file matches; unmatched is then the match error (it names the DMI
+// strings), for the caller to say so. err is a build defect only.
+func MatchOrFallback() (c Config, unmatched, err error) {
+	c, unmatched = MatchConfig()
+	if unmatched == nil {
+		return c, nil, nil
 	}
-	return AssembleForSession(c, GamingMode())
+	if !errors.Is(unmatched, ErrUnknownDevice) {
+		return Config{}, nil, unmatched // the device files themselves are broken
+	}
+	c, err = ConfigByID(FallbackID)
+	return c, unmatched, err
 }
 
 // GamingMode reports whether a Steam Gaming Mode (gamescope) session is
@@ -299,12 +330,16 @@ func YieldToSteam(c Config) (Config, []Unavailable) {
 }
 
 // AssembleForSession assembles c, first yielding to Steam what the device
-// data says to when gamingMode is true.
-func AssembleForSession(c Config, gamingMode bool) (*Device, error) {
+// data says to when a Gaming Mode session is running. gamingMode is asked
+// only when the device yields anything: answering it costs a system-bus
+// connection, which every CLI call on every other machine would pay for
+// nothing.
+func AssembleForSession(c Config, gamingMode func() bool) (*Device, error) {
 	yields := (c.Power != nil && c.Power.YieldInGamingMode) ||
 		(c.Battery != nil && c.Battery.YieldInGamingMode)
+	inGaming := yields && gamingMode()
 	var gone []Unavailable
-	if gamingMode {
+	if inGaming {
 		c, gone = YieldToSteam(c)
 	}
 	d, err := Assemble(c)
@@ -312,7 +347,7 @@ func AssembleForSession(c Config, gamingMode bool) (*Device, error) {
 		return nil, err
 	}
 	d.Unavailable = append(d.Unavailable, gone...)
-	d.YieldsInGamingMode, d.GamingMode = yields, gamingMode
+	d.YieldsInGamingMode, d.GamingMode = yields, inGaming
 	return d, nil
 }
 
@@ -323,6 +358,7 @@ func AssembleForSession(c Config, gamingMode bool) (*Device, error) {
 // client.
 func Assemble(c Config) (*Device, error) {
 	d := &Device{ID: c.Device.ID, Model: c.Device.Model, Name: c.Device.Name}
+	var fans driver.FanController // with Release: for the engine and releaseFans only
 	if c.Quickbar != nil {
 		d.Quickbar = append([]string(nil), c.Quickbar.Controls...)
 	}
@@ -332,9 +368,10 @@ func Assemble(c Config) (*Device, error) {
 		if err != nil {
 			return nil, err
 		}
-		if d.Fans, err = f(*c.Fans); err != nil {
+		if fans, err = f(*c.Fans); err != nil {
 			return nil, fmt.Errorf("fans (%s): %w", c.Fans.Method, err)
 		}
+		d.Fans, d.releaseFans = fans, fans.Release
 	}
 	if c.Power != nil {
 		f, err := lookup("power", powerFactories, c.Power.Method)
@@ -350,7 +387,7 @@ func Assemble(c Config) (*Device, error) {
 			return nil, fmt.Errorf("power (%s): %w", c.Power.Method, err)
 		default:
 			// The raw limiter goes into the engine and nowhere else.
-			d.Power = &safety.Engine{Fans: d.Fans, Power: raw}
+			d.Power = safety.NewEngine(fans, raw)
 			d.PowerSlider = c.Power.Slider
 			d.PowerPerSource = c.Power.TDPMaxBattery > 0 || len(c.Power.StockPPTBattery) > 0
 		}

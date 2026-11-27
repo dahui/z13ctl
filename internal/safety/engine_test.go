@@ -64,7 +64,7 @@ func (p rigPower) Envelope() driver.PowerEnvelope { return p.r.env }
 
 func newRig() (*fakeRig, Engine) {
 	r := &fakeRig{env: smallDevice()}
-	return r, Engine{Fans: rigFans{r}, Power: rigPower{r}}
+	return r, Engine{fans: rigFans{r}, power: rigPower{r}}
 }
 
 func sequence(t *testing.T, got []string, want ...string) {
@@ -213,7 +213,7 @@ func TestReleaseFansDoesNotReapplyWhenTheReleaseFailed(t *testing.T) {
 
 func TestReleaseFansIsANoOpWithoutFans(t *testing.T) {
 	r, e, keep := releaseRig()
-	e.Fans = nil
+	e.fans = nil
 	if err := e.ReleaseFans(&keep); err != nil {
 		t.Fatalf("ReleaseFans with no fan control = %v", err)
 	}
@@ -270,7 +270,7 @@ func TestHandBackToFirmwareWithoutARowStillReleases(t *testing.T) {
 
 func TestHandBackToFirmwareWithoutFansWritesTheRow(t *testing.T) {
 	r, e := handBackRig()
-	e.Fans = nil
+	e.fans = nil
 	if err := e.HandBackToFirmware("balanced"); err != nil {
 		t.Fatalf("HandBackToFirmware with no fan control = %v", err)
 	}

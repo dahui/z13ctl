@@ -13,7 +13,6 @@ import (
 	"github.com/dahui/voltaire/api/v2"
 	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/device"
-	"github.com/dahui/voltaire/v2/internal/driver"
 	"github.com/dahui/voltaire/v2/internal/drivers/asus"
 	"github.com/dahui/voltaire/v2/internal/safety"
 
@@ -169,7 +168,7 @@ func runFanCurveGet() error {
 
 	modeStr := "N/A"
 	if modeErr == nil {
-		modeStr = driver.FanModeName(mode)
+		modeStr = mode.String()
 	}
 	tempStr := ""
 	if live.TempC > 0 {
@@ -195,7 +194,7 @@ func runFanCurveSet() error {
 	if hw.Fans == nil {
 		return fmt.Errorf("no fan control on this device")
 	}
-	points, err := cli.ParseFanCurve(hw.Fans.Shape(), fanCurveSetFlag)
+	points, err := safety.ParseFanCurve(hw.Fans.Shape(), fanCurveSetFlag)
 	if err != nil {
 		return fmt.Errorf("invalid fan curve: %w", err)
 	}
@@ -260,7 +259,7 @@ func runFanCurveSet() error {
 		return err
 	}
 	if err := hw.Fans.ApplyCurve(points); err != nil {
-		return fmt.Errorf("setting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("setting fan curves", err)
 	}
 	fmt.Println("Fan curve set on every fan (custom mode enabled)")
 	fmt.Println("  Warning: the kernel driver drops custom fan curves whenever the system power")
@@ -328,7 +327,7 @@ func runFanCurveReset() error {
 		return err
 	}
 	if err := hw.ReleaseFans(customLimitInForce(hw)); err != nil {
-		return fmt.Errorf("resetting fan curves: %w\n  (run 'sudo voltaire setup' to enable non-root access)", err)
+		return withSetupHint("resetting fan curves", err)
 	}
 	fmt.Println("Fan curves reset to auto mode (every fan)")
 	return nil

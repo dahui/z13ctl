@@ -6,7 +6,7 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/driver"
 
 	"github.com/spf13/cobra"
 )
@@ -87,7 +86,7 @@ func statusReport(out io.Writer) error {
 	if hw.Fans != nil {
 		modeStr := ""
 		if mode, mErr := hw.Fans.ReadMode(); mErr == nil {
-			modeStr = ", mode: " + driver.FanModeName(mode)
+			modeStr = ", mode: " + mode.String()
 		}
 		outf("Fans:    %s%s\n", formatRPM(live.RPM), modeStr)
 	} else if len(live.RPM) > 0 {
@@ -98,7 +97,11 @@ func statusReport(out io.Writer) error {
 	// Performance profile. platform_profile is never a custom profile name, so
 	// the effective profile comes from the daemon when it is running; show the
 	// firmware profile underneath it when the two differ.
-	profile := effectiveProfileForTDP(hw)
+	// From the get-state above, not a second one.
+	profile := readCurrentProfile(hw)
+	if st != nil && st.Profile != "" {
+		profile = st.Profile
+	}
 	if hwProf := readCurrentProfile(hw); hwProf != profile && hwProf != "unknown" {
 		outf("Profile: %s (platform: %s)\n", profile, hwProf)
 	} else {
@@ -110,7 +113,11 @@ func statusReport(out io.Writer) error {
 	// on-battery" distinction: no Mains supply, or a daemon withholding the
 	// read, means the line is simply omitted.
 	if live.ACKnown {
-		outf("Power:   %s%s\n", powerSourceText(live.OnAC, live.Charger), autoswitchNote(live.OnAC))
+		note := ""
+		if t := autoswitchTarget(st, live.OnAC); t != "" {
+			note = " (autoswitch: " + t + ")"
+		}
+		outf("Power:   %s%s\n", powerSourceText(live.OnAC, live.Charger), note)
 	}
 
 	// TDP power limits: the daemon's reading when it is running, since it
@@ -129,12 +136,12 @@ func statusReport(out io.Writer) error {
 		if stock != "" {
 			stockNote = " (" + stock + " stock)"
 		}
-		if handled, value, err := api.SendTdpGet(); handled {
-			var tdp api.TDPState
+		if handled, got, err := api.SendTdpGet(); handled {
 			// The daemon refuses EC-backed reads while the EC is not answering;
 			// say so once at the end, rather than leaving the N/As unexplained.
-			ecWithheld = err != nil && strings.Contains(err.Error(), "embedded controller has not answered")
-			if err == nil && json.Unmarshal([]byte(value), &tdp) == nil {
+			ecWithheld = errors.Is(err, api.ErrECWedged)
+			if err == nil {
+				tdp := *got
 				if sliderStock(hw, env, stock, tdp) == "" {
 					stockNote = ""
 				}
@@ -256,32 +263,19 @@ func runStatusWatch(interval time.Duration) error {
 	}
 }
 
-// autoswitchNote returns a parenthetical naming the profile autoswitch selects
-// for the current source, or "" when it is off, unconfigured, or the daemon is
-// not running. Best-effort: status must not fail because autoswitch is unset.
-func autoswitchNote(onAC bool) string {
-	handled, value, err := api.SendAutoswitchGet()
-	if !handled || err != nil {
-		return ""
-	}
-	var st autoswitchStatus
-	if err := json.Unmarshal([]byte(value), &st); err != nil || !st.Enabled {
-		return ""
-	}
-	target := st.Battery
-	if onAC {
-		target = st.AC
-	}
-	if target == "" {
-		return ""
-	}
-	return " (autoswitch: " + target + ")"
-}
-
 func init() {
 	statusCmd.Flags().BoolVarP(&statusWatchFlag, "watch", "w", false, "Redraw the status continuously until interrupted")
 	// One second matches the daemon's sampler, so a shorter interval would redraw
 	// faster than the numbers can change.
 	statusCmd.Flags().DurationVar(&statusIntervalFlag, "interval", time.Second, "How often to redraw with --watch")
 	rootCmd.AddCommand(statusCmd)
+}
+
+// autoswitchTarget is the profile autoswitch selects for the source, from the
+// get-state status already made; "" when off, unset or with no daemon.
+func autoswitchTarget(st *api.State, onAC bool) string {
+	if st == nil {
+		return ""
+	}
+	return st.Autoswitch.Target(onAC)
 }

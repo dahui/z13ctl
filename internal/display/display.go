@@ -129,7 +129,7 @@ func Rates(o Output) []Rate {
 		if m.Width != cur.Width || m.Height != cur.Height {
 			continue
 		}
-		label := FormatHz(m.RefreshHz)
+		label := formatHz(m.RefreshHz)
 		prev, seen := byLabel[label]
 		// Keep the higher exact rate, except that the mode actually running
 		// always wins — a control must be able to show the state it is in.
@@ -154,10 +154,10 @@ func Rates(o Output) []Rate {
 	return out
 }
 
-// FormatHz is a rate as a menu entry. Panels report 59.96 for what every other
+// formatHz is a rate as a menu entry. Panels report 59.96 for what every other
 // piece of software on the machine calls 60, so the label rounds; the exact
 // value is never compared against the rounded one.
-func FormatHz(hz float64) string {
+func formatHz(hz float64) string {
 	return fmt.Sprintf("%d Hz", int(math.Round(hz)))
 }
 

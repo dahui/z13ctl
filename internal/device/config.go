@@ -7,6 +7,7 @@ package device
 import (
 	"errors"
 	"fmt"
+	"github.com/dahui/voltaire/v2/internal/safety"
 	"regexp"
 	"slices"
 	"strconv"
@@ -608,13 +609,31 @@ var evdevMethods = []string{"evdev-key", "evdev-chord"}
 // udevGlob reports whether s holds a character udev treats as a pattern.
 func udevGlob(s string) bool { return strings.ContainsAny(s, "*?[|") }
 
+// failFunc records one validation failure.
+type failFunc func(format string, a ...any)
+
 // Validate reports everything wrong with a config at once, so a device data PR
 // gets one round of feedback rather than one error per push. A valid config is
 // one the registry can assemble without further checks.
 func (c Config) Validate() error {
 	var errs []error
 	fail := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	c.validateIdentity(fail)
+	c.validateQuickbar(fail)
+	c.validateRumble(fail)
+	c.validateFans(fail)
+	c.validatePower(fail)
+	c.validateProfiles(fail)
+	c.validateLighting(fail)
+	c.validateToggles(fail)
+	c.validateBattery(fail)
+	c.validateSmall(fail)
+	c.validateButtons(fail)
+	return errors.Join(errs...)
+}
 
+// validateIdentity checks the device block and its DMI match.
+func (c Config) validateIdentity(fail failFunc) {
 	if c.Device.ID == "" {
 		fail("device.id is required")
 	}
@@ -632,7 +651,10 @@ func (c Config) Validate() error {
 			fail("device.match[%d]: exactly one of product or product_prefix is required", i)
 		}
 	}
+}
 
+// validateQuickbar checks [quickbar].
+func (c Config) validateQuickbar(fail failFunc) {
 	if c.Quickbar != nil {
 		if len(c.Quickbar.Controls) == 0 {
 			fail("quickbar.controls is empty: drop the block for the built-in default")
@@ -645,7 +667,10 @@ func (c Config) Validate() error {
 			seen[id] = true
 		}
 	}
+}
 
+// validateRumble checks [rumble].
+func (c Config) validateRumble(fail failFunc) {
 	if c.Rumble != nil {
 		if c.Rumble.Method == "" {
 			fail("rumble.method is required")
@@ -654,7 +679,10 @@ func (c Config) Validate() error {
 			fail("rumble.usb: %v", err)
 		}
 	}
+}
 
+// validateFans checks [fans], its presets and the floor curve's shape.
+func (c Config) validateFans(fail failFunc) {
 	if c.Fans != nil {
 		if c.Fans.Method == "" {
 			fail("fans.method is required")
@@ -667,12 +695,12 @@ func (c Config) Validate() error {
 		if c.Fans.TempMax-c.Fans.TempMin < c.Fans.Points-1 {
 			fail("fans temperature range %d–%d is too narrow for %d points", c.Fans.TempMin, c.Fans.TempMax, c.Fans.Points)
 		}
-		// The hold runs inside logind's delay budget, 5 s by default; the daemon
-		// cuts it short to fit anyway, but a value at or past the budget would
-		// never be what the file says.
 		if c.Fans.RPMMax < 0 {
 			fail("fans.rpm_max %d must not be negative", c.Fans.RPMMax)
 		}
+		// The hold runs inside logind's delay budget, 5 s by default; the daemon
+		// cuts it short to fit anyway, but a value at or past the budget would
+		// never be what the file says.
 		if c.Fans.SleepReleaseSettleMs < 0 || c.Fans.SleepReleaseSettleMs >= 5000 {
 			fail("fans.sleep_release_settle_ms %d must be 0 or more and under 5000", c.Fans.SleepReleaseSettleMs)
 		}
@@ -691,29 +719,17 @@ func (c Config) Validate() error {
 			if c.Fans.Points > 0 && len(p.Curve) != c.Fans.Points {
 				fail("fans.presets[%d] (%s) has %d points, want the fans block's %d", i, p.Name, len(p.Curve), c.Fans.Points)
 			}
-			for j, pt := range p.Curve {
-				if len(pt) != 2 {
-					fail("fans.presets[%d] (%s) point %d must be a [temp, pwm] pair", i, p.Name, j)
-					continue
-				}
-				if pt[0] < 0 || pt[0] > 120 {
-					fail("fans.presets[%d] (%s) temp %d outside [0, 120]", i, p.Name, pt[0])
-				}
-				if pt[1] < 0 || pt[1] > 255 {
-					fail("fans.presets[%d] (%s) PWM %d outside [0, 255]", i, p.Name, pt[1])
-				}
-				if j > 0 && len(p.Curve[j-1]) == 2 {
-					if pt[0] <= p.Curve[j-1][0] {
-						fail("fans.presets[%d] (%s) temperatures must strictly increase (index %d)", i, p.Name, j)
-					}
-					if pt[1] < p.Curve[j-1][1] {
-						fail("fans.presets[%d] (%s) PWMs must not decrease (index %d)", i, p.Name, j)
-					}
-				}
+			if pts, ok := curvePoints(p.Curve); !ok {
+				fail("fans.presets[%d] (%s): every point must be a [temp, pwm] pair", i, p.Name)
+			} else if err := safety.CheckCurve(pts, 255); err != nil {
+				fail("fans.presets[%d] (%s): %v", i, p.Name, err)
 			}
 		}
 	}
+}
 
+// validatePower checks [power] and its stock rows.
+func (c Config) validatePower(fail failFunc) {
 	if c.Power != nil {
 		p := c.Power
 		if p.Method == "" {
@@ -742,22 +758,10 @@ func (c Config) Validate() error {
 		if len(p.Limits) > 0 && !seenLimit["pl1"] {
 			fail("power.limits must include pl1, the sustained limit every TDP sets")
 		}
-		for i, pt := range p.FloorCurve {
-			if len(pt) != 2 {
-				fail("power.floor_curve[%d] must be a [temp, pwm] pair", i)
-				continue
-			}
-			if pt[1] < 0 || pt[1] > 255 {
-				fail("power.floor_curve[%d] PWM %d outside [0, 255]", i, pt[1])
-			}
-			if i > 0 && len(p.FloorCurve[i-1]) == 2 {
-				if pt[0] <= p.FloorCurve[i-1][0] {
-					fail("power.floor_curve temperatures must strictly increase (index %d)", i)
-				}
-				if pt[1] < p.FloorCurve[i-1][1] {
-					fail("power.floor_curve PWMs must not decrease (index %d)", i)
-				}
-			}
+		if pts, ok := curvePoints(p.FloorCurve); !ok {
+			fail("power.floor_curve: every point must be a [temp, pwm] pair")
+		} else if err := safety.CheckCurve(pts, 255); err != nil {
+			fail("power.floor_curve: %v", err)
 		}
 		// A floor with no fan control cannot be satisfied, only refused —
 		// safety.Engine would deny every high-TDP request. Refuse the data
@@ -786,7 +790,7 @@ func (c Config) Validate() error {
 			// is keyed by nothing the daemon will ever look up, and reads as
 			// a typo nobody is told about.
 			for name := range p.StockPPT {
-				if !slicesContains(c.Profiles.Names, name) {
+				if !slices.Contains(c.Profiles.Names, name) {
 					fail("power.stock_ppt has a row for %q, which profiles.names does not list", name)
 				}
 			}
@@ -821,8 +825,12 @@ func (c Config) Validate() error {
 			fail("power.method amd-smu needs exactly one stock_ppt row, the firmware profile it runs under (got %d)", len(p.StockPPT))
 		}
 	}
+}
+
+// validateProfiles checks [profiles], including the pin.
+func (c Config) validateProfiles(fail failFunc) {
 	if c.Profiles != nil && c.Profiles.Pin != "" {
-		if !slicesContains(c.Profiles.Names, c.Profiles.Pin) {
+		if !slices.Contains(c.Profiles.Names, c.Profiles.Pin) {
 			fail("profiles.pin %q is not in profiles.names", c.Profiles.Pin)
 		}
 		if c.Power == nil {
@@ -841,15 +849,19 @@ func (c Config) Validate() error {
 				fail("profiles.names entry %q is not a kernel platform_profile name", name)
 			}
 		}
-		if d := c.Profiles.Default; d != "" && !slicesContains(c.Profiles.Names, d) {
+		if d := c.Profiles.Default; d != "" && !slices.Contains(c.Profiles.Names, d) {
 			fail("profiles.default %q is not in profiles.names", d)
 		}
 		for name := range c.Profiles.Labels {
-			if !slicesContains(c.Profiles.Names, name) {
+			if !slices.Contains(c.Profiles.Names, name) {
 				fail("profiles.labels has a label for %q, which profiles.names does not list", name)
 			}
 		}
 	}
+}
+
+// validateLighting checks [lighting] and its zones.
+func (c Config) validateLighting(fail failFunc) {
 	if c.Lighting != nil {
 		if c.Lighting.Method == "" {
 			fail("lighting.method is required")
@@ -880,6 +892,10 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+}
+
+// validateToggles checks [toggles].
+func (c Config) validateToggles(fail failFunc) {
 	if c.Toggles != nil {
 		if c.Toggles.Method == "" {
 			fail("toggles.method is required")
@@ -893,6 +909,10 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+}
+
+// validateBattery checks [battery].
+func (c Config) validateBattery(fail failFunc) {
 	if c.Battery != nil {
 		if c.Battery.Method == "" {
 			fail("battery.method is required")
@@ -916,6 +936,10 @@ func (c Config) Validate() error {
 				caps.ChargeLimitMin, caps.ChargeLimitMax)
 		}
 	}
+}
+
+// validateSmall checks [cpu], [undervolt] and [telemetry].
+func (c Config) validateSmall(fail failFunc) {
 	if c.CPU != nil && c.CPU.Boost == "" {
 		fail("[cpu] declares nothing; drop the block instead")
 	}
@@ -930,6 +954,10 @@ func (c Config) Validate() error {
 	if c.Telemetry != nil && c.Telemetry.Method == "" {
 		fail("telemetry.method is required")
 	}
+}
+
+// validateButtons checks [[buttons]].
+func (c Config) validateButtons(fail failFunc) {
 	seenButton := map[string]bool{}
 	defaults := 0
 	for i, b := range c.Buttons {
@@ -978,7 +1006,7 @@ func (c Config) Validate() error {
 				}
 			}
 		}
-		if slicesContains(evdevMethods, b.Method) && (b.USB != "" || b.Interface != nil) {
+		if slices.Contains(evdevMethods, b.Method) && (b.USB != "" || b.Interface != nil) {
 			if _, _, err := b.USBIDs(); err != nil {
 				fail("%s: %v", name, err)
 			}
@@ -1001,7 +1029,7 @@ func (c Config) Validate() error {
 			}
 		}
 		if b.KeyboardNode != "" {
-			if !slicesContains(evdevMethods, b.Method) {
+			if !slices.Contains(evdevMethods, b.Method) {
 				fail("%s: keyboard_node applies only to evdev methods", name)
 			}
 			for _, m := range c.Device.Match {
@@ -1016,16 +1044,17 @@ func (c Config) Validate() error {
 	if defaults > 1 {
 		fail("at most one button may be the default (got %d)", defaults)
 	}
-
-	return errors.Join(errs...)
 }
 
-// slicesContains reports whether s holds v.
-func slicesContains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
+// curvePoints converts a device file's [[temp, pwm], ...] to points, false
+// when any entry is not a pair.
+func curvePoints(raw [][]int) ([]api.FanCurvePoint, bool) {
+	pts := make([]api.FanCurvePoint, len(raw))
+	for i, p := range raw {
+		if len(p) != 2 {
+			return nil, false
 		}
+		pts[i] = api.FanCurvePoint{Temp: p[0], PWM: p[1]}
 	}
-	return false
+	return pts, true
 }

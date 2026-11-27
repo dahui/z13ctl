@@ -195,7 +195,7 @@ func (d *Daemon) sampleOnce() {
 	act := telemetryTick(telemetryObs{
 		Suspending: suspending,
 		ECWedged:   wedged,
-		HasSource:  d.hw != nil && d.hw.Telemetry != nil,
+		HasSource:  d.hw.Telemetry != nil,
 		RingCap:    d.history().Cap(),
 	})
 	if !act.Sample {
@@ -212,39 +212,7 @@ func (d *Daemon) sampleOnce() {
 	}
 
 	now := time.Now()
-	// Energy counter to power. This is the sampler's job rather than the
-	// driver's because it needs the previous reading, and Sample is also
-	// called by every get-state handler — a driver remembering one would be
-	// mutable state shared across concurrent callers. Here there is exactly
-	// one goroutine, so prevEnergy needs no lock.
-	if s.PackageEnergyUJ != 0 {
-		cur := energyReading{at: now, uj: s.PackageEnergyUJ, maxUJ: s.PackageEnergyMaxUJ}
-		if watts, ok := packagePowerW(d.prevEnergy, cur); ok {
-			s.PackagePowerW = watts
-		}
-		// Re-baselined even when the conversion was refused, so one bad
-		// interval costs one sample instead of every sample after it.
-		d.prevEnergy = cur
-	}
-	// Jiffie counters to utilisation — the same rate-needs-two-readings shape
-	// as the energy counter, owned by this goroutine for the same reason.
-	if s.CPUTotalJiffies != 0 {
-		cur := jiffieReading{busy: s.CPUBusyJiffies, total: s.CPUTotalJiffies}
-		if pct, ok := cpuUtilPct(d.prevJiffies, cur); ok {
-			s.CPUUtilPct, s.CPUUtilKnown = pct, true
-		}
-		d.prevJiffies = cur
-	}
-	// Network byte counters to throughput — the energy counter's shape again,
-	// wall-clock interval and all.
-	if s.NetRxBytes != 0 || s.NetTxBytes != 0 {
-		cur := netReading{at: now, rx: s.NetRxBytes, tx: s.NetTxBytes}
-		if rx, tx, ok := netRateMBps(d.prevNet, cur); ok {
-			s.NetRxMBps, s.NetTxMBps, s.NetRateKnown = rx, tx, true
-		}
-		d.prevNet = cur
-	}
-
+	d.rates.derive(now, &s)
 	d.history().Add(now, s)
 }
 
@@ -324,7 +292,7 @@ const liveTelemetryMaxAge = 3 * telemetrySampleInterval
 // sample. Package power is a *rate*, and on any device whose hardware offers a
 // cumulative energy counter (powercap RAPL, which is what x86 offers) a single
 // reading cannot become one: it needs a previous reading and the interval since.
-// This handler has neither, and must not acquire them — d.prevEnergy is owned by
+// This handler has neither, and must not acquire them — d.rates is owned by
 // the sampler's goroutine and unguarded precisely because that goroutine is the
 // only writer, so re-baselining it from a socket handler would be a data race
 // *and* would corrupt the series the dashboard is drawing. Serving the sampler's
@@ -425,7 +393,7 @@ func freshEnough(now, at time.Time, limit time.Duration) bool {
 // a telemetry-history that returned nothing for the obvious hand-typed request
 // would be the surprising one.
 func (d *Daemon) handleTelemetryHistory(req request) response {
-	if d.hw == nil || d.hw.Telemetry == nil {
+	if d.hw.Telemetry == nil {
 		return response{OK: false, Error: "telemetry-history: no telemetry source on this device"}
 	}
 
@@ -530,4 +498,51 @@ func (d *Daemon) history() *telemetryring.Ring {
 		return emptyTelemetryRing
 	}
 	return d.telemetry
+}
+
+// rates turns the sample's cumulative counters into the rates the wire
+// carries, which needs the previous reading of each. Owned by the sampler
+// goroutine alone and so deliberately unguarded: sampleOnce, on the single
+// watchTelemetry timer, is its only caller. Anything else that wants a rate
+// takes its own baseline (get-state serves the sampler's latest figure
+// instead, for that reason).
+//
+// This is the sampler's job rather than the driver's because Sample is also
+// called by every get-state handler: a driver remembering a previous reading
+// would be mutable state shared across concurrent callers.
+type rates struct {
+	energy  energyReading
+	jiffies jiffieReading
+	net     netReading
+}
+
+// derive fills s's rates from its counters and re-baselines each counter,
+// even when a conversion was refused, so one bad interval costs one sample
+// instead of every sample after it.
+func (r *rates) derive(now time.Time, s *driver.Sample) {
+	if s.PackageEnergyUJ != 0 {
+		cur := energyReading{at: now, uj: s.PackageEnergyUJ, maxUJ: s.PackageEnergyMaxUJ}
+		if watts, ok := packagePowerW(r.energy, cur); ok {
+			s.PackagePowerW = watts
+		}
+		r.energy = cur
+	}
+	// Jiffies only advance while awake, so unlike energy they need no gap
+	// ceiling.
+	if s.CPUTotalJiffies != 0 {
+		cur := jiffieReading{busy: s.CPUBusyJiffies, total: s.CPUTotalJiffies}
+		if pct, ok := cpuUtilPct(r.jiffies, cur); ok {
+			s.CPUUtilPct, s.CPUUtilKnown = pct, true
+		}
+		r.jiffies = cur
+	}
+	// Network byte counters: the energy counter's shape again, wall-clock
+	// interval and all.
+	if s.NetRxBytes != 0 || s.NetTxBytes != 0 {
+		cur := netReading{at: now, rx: s.NetRxBytes, tx: s.NetTxBytes}
+		if rx, tx, ok := netRateMBps(r.net, cur); ok {
+			s.NetRxMBps, s.NetTxMBps, s.NetRateKnown = rx, tx, true
+		}
+		r.net = cur
+	}
 }

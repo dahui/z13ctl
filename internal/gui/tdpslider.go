@@ -15,15 +15,12 @@ package gui
 
 import (
 	"fmt"
-	"log/slog"
 	"strconv"
 	"time"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/apiresult"
 	"github.com/dahui/voltaire/v2/internal/focusgrid"
 	"github.com/dahui/voltaire/v2/internal/profileui"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -44,15 +41,11 @@ type tdpSliderSection struct {
 	scale *gtk.Scale
 	value *gtk.Label // the readout: beside the heading in the drawer, beside the slider in the window
 	note  *gtk.Label
-	timer *time.Timer
-
-	// pending is set from the first move of a drag until its send has landed,
-	// and sync leaves the slider alone meanwhile: a state refresh arriving
-	// mid-drag (another client, a charger edge) would otherwise yank the
-	// handle out from under the finger, and the refresh after our own send
-	// brings the daemon's answer anyway. Main thread only.
-	pending bool
-	gen     int // counts drags, so an earlier send landing cannot clear a later drag's pending
+	// send holds sync off from the first move of a drag until its send has
+	// landed (settleSend.pending): a refresh arriving mid-drag (another client,
+	// a charger edge) would otherwise yank the handle out from under the
+	// finger, and the refresh after our own send brings the daemon's answer.
+	send settleSend
 }
 
 // buildTDPSliderSection creates the drawer's TDP block and registers it as
@@ -72,7 +65,7 @@ func (w *Window) buildTDPSliderSection() *gtk.Box {
 // nothing about the unit, and a heading row with its value at the far end is
 // how the drawer's other headed rows read.
 func (w *Window) newTDPSliderSection(desktop bool) (*tdpSliderSection, *gtk.Box) {
-	s := &tdpSliderSection{w: w}
+	s := &tdpSliderSection{w: w, send: settleSend{delay: tdpSliderDebounce}}
 
 	sc := gtk.NewScaleWithRange(gtk.OrientationHorizontal,
 		float64(w.limits.TDPMin), float64(w.limits.TDPSliderMax()), 1)
@@ -138,47 +131,15 @@ func (s *tdpSliderSection) applyLimits() {
 // unchanged (the note under the slider says so beforehand). The slider never
 // edits a profile; that is the Profiles page's job.
 func (s *tdpSliderSection) queueSend() {
-	w := s.w
-	// sync sets the scale from daemon state, which fires this handler; see
-	// batterySection.queueSend for why the check is here and not in the timer.
-	if w.syncing {
-		return
-	}
-	s.pending = true
-	s.gen++
-	if s.timer != nil {
-		s.timer.Stop()
-	}
-	s.timer = time.AfterFunc(tdpSliderDebounce, func() {
-		glib.IdleAdd(func() bool {
-			watts := strconv.Itoa(int(s.scale.Value())) // scale read stays on the GTK thread
-			gen := s.gen
-			go func() {
-				slog.Debug("tdp slider: calling daemon", "watts", watts)
-				err := apiresult.Err(api.SendTdpSet(watts, "", "", "", false))
-				glib.IdleAdd(func() bool {
-					if s.gen == gen {
-						s.pending = false
-					}
-					return false
-				})
-				if err != nil {
-					w.reportError("Set TDP", err)
-					w.refreshState() // put the slider back on what the daemon holds
-					return
-				}
-				w.clearErrorAsync()
-				w.refreshState()
-			}()
-			return false
-		})
-	})
+	s.send.queue(s.w, func() int { return int(s.scale.Value()) }, func(watts int) (bool, error) {
+		return api.SendTdpSet(strconv.Itoa(watts), "", "", "", false)
+	}, "Set TDP", true)
 }
 
 // sync sets the slider from daemon state. Callers must hold w.syncing.
 func (s *tdpSliderSection) sync() {
 	st := s.w.state
-	if s.pending {
+	if s.send.pending {
 		return
 	}
 	watts, ok := profileui.TDPSliderValue(st)

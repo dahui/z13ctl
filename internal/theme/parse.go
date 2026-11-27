@@ -5,12 +5,12 @@ package theme
 
 import "strings"
 
-// ParseThemeTOML reads a theme.toml file and returns its color definitions.
+// parseThemeTOML reads a theme.toml file and returns its color definitions.
 // Lines of the form key = "value" or key = value are parsed. Comment lines (#)
 // and blank lines are ignored. Unknown keys are silently ignored. Invalid hex
 // values fall back to the corresponding default. Missing keys keep their default
 // value. Any [accents] section is ignored; use ParseThemeTOMLFull to get accents.
-func ParseThemeTOML(data []byte) Colors {
+func parseThemeTOML(data []byte) Colors {
 	c, _ := ParseThemeTOMLFull(data)
 	return c
 }

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/api/v2"
-	"github.com/dahui/voltaire/v2/internal/cli"
 	"github.com/dahui/voltaire/v2/internal/safety"
 )
 
@@ -31,7 +30,7 @@ func TestZ13PresetsParseAsUserCurves(t *testing.T) {
 		if got, want := len(p.Curve), c.Fans.Points; got != want {
 			t.Errorf("preset %q has %d points, want %d", p.Name, got, want)
 		}
-		if _, err := cli.ParseFanCurve(c.Fans.Shape(), api.FormatFanCurve(p.Curve)); err != nil {
+		if _, err := safety.ParseFanCurve(c.Fans.Shape(), api.FormatFanCurve(p.Curve)); err != nil {
 			t.Errorf("preset %q is rejected by the curve parser: %v", p.Name, err)
 		}
 	}
@@ -136,9 +135,9 @@ func TestPresetValidationRejectsMalformedData(t *testing.T) {
 		{"no label", FanPresetConfig{Name: "n", Curve: good}, "needs both name and label"},
 		{"wrong point count", FanPresetConfig{Name: "n", Label: "L", Curve: good[:3]}, "has 3 points"},
 		{"not a pair", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30}, {50, 40}, {70, 120}, {90, 255}}}, "must be a [temp, pwm] pair"},
-		{"pwm out of range", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {50, 40}, {70, 120}, {90, 300}}}, "PWM 300 outside"},
-		{"temp not increasing", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {30, 40}, {70, 120}, {90, 255}}}, "must strictly increase"},
-		{"pwm decreasing", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {50, 40}, {70, 20}, {90, 255}}}, "must not decrease"},
+		{"pwm out of range", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {50, 40}, {70, 120}, {90, 300}}}, "pwm 300 in point 4 out of range"},
+		{"temp not increasing", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {30, 40}, {70, 120}, {90, 255}}}, "temps must be monotonically increasing"},
+		{"pwm decreasing", FanPresetConfig{Name: "n", Label: "L", Curve: [][]int{{30, 0}, {50, 40}, {70, 20}, {90, 255}}}, "pwm values must be non-decreasing"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

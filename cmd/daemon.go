@@ -4,8 +4,8 @@ package cmd
 //
 // The daemon holds HID devices open, restores lighting state on startup,
 // watches the hardware button, and serves a Unix socket for CLI and GUI
-// clients. Designed to run as a systemd user service (z13ctl.socket +
-// z13ctl.service); can also be launched directly for development.
+// clients. Designed to run as a systemd user service (voltaire.socket +
+// voltaire.service); can also be launched directly for development.
 
 import (
 	"context"
@@ -30,9 +30,8 @@ one (the Armoury Crate button on the Z13), and serves a
 Unix socket at $XDG_RUNTIME_DIR/voltaire/voltaire.sock (plus the pre-rename
 $XDG_RUNTIME_DIR/z13ctl/z13ctl.sock, kept through 2.x for older clients).
 
-CLI commands (apply, off, brightness, profile, batterylimit, bootsound,
-paneloverdrive) will automatically use the socket if the daemon is running,
-falling back to direct hardware access when it is not.
+Other commands use the socket when the daemon is running and fall back to
+direct hardware access when it is not.
 
 Use --no-button to disable the hardware button watcher, allowing other
 tools to exclusively grab the button device.
