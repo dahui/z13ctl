@@ -13,8 +13,11 @@
 # equivalent rules for "z13ctl setup"; cmd/setup_test.go asserts they do not drift.
 #
 # To use a different group, run: sudo z13ctl setup --group=<group>
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="18c6", MODE="0660", GROUP="users"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", MODE="0660", GROUP="users"
+# Lighting: interface 0 of each device only, the one carrying the Aura report.
+# The cover keyboard's other interfaces include the one it types through, so a
+# rule by vendor:product alone would let the group read raw keystrokes.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="18c6", ENV{ID_USB_INTERFACE_NUM}=="00", MODE="0660", GROUP="users"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1a30", ENV{ID_USB_INTERFACE_NUM}=="00", MODE="0660", GROUP="users"
 ACTION=="add", SUBSYSTEM=="platform-profile", RUN+="/usr/bin/chgrp users /sys%p/profile", RUN+="/usr/bin/chmod g+w /sys%p/profile"
 ACTION=="add", SUBSYSTEM=="platform-profile", KERNELS=="asus-nb-wmi", RUN+="/usr/bin/chgrp users /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"
 ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Asus WMI hotkeys", MODE="0660", GROUP="users"

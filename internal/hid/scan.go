@@ -70,12 +70,17 @@ func findAll() (*Device, error) {
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
-			"no ASUS Aura devices found (keyboard / lightbar); try sudo or add a udev rule:\n" +
-				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+			"no ASUS Aura devices found (keyboard / lightbar); " + grantHint,
 		)
 	}
 	return &Device{nodes: nodes}, nil
 }
+
+// grantHint is how to fix a permission failure. It names z13ctl setup and
+// deliberately no hand-written rule: the obvious one, a grant by vendor alone,
+// reaches every interface of every ASUS device, the cover keyboard's typing
+// interface included. Setup grants only the lighting interface.
+const grantHint = "run 'sudo z13ctl setup' to grant access to the lighting interface"
 
 func findByName(want string) (*Device, error) {
 	entries, _ := filepath.Glob("/sys/class/hidraw/hidraw*/device/uevent")
@@ -99,14 +104,12 @@ func findByName(want string) (*Device, error) {
 	}
 	if nameFound {
 		return nil, fmt.Errorf(
-			"no Aura-capable node found for %q; try sudo or add a udev rule:\n"+
-				"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+			"no Aura-capable node found for %q; "+grantHint,
 			want,
 		)
 	}
 	return nil, fmt.Errorf(
-		"%q device not found; try sudo or add a udev rule:\n"+
-			"  SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b05\", MODE=\"0660\", GROUP=\"users\"",
+		"%q device not found; "+grantHint,
 		want,
 	)
 }
