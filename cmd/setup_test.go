@@ -7,6 +7,7 @@ package cmd
 // here: no test in this file can change a real permission.
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/user"
@@ -16,11 +17,13 @@ import (
 	"testing"
 
 	"github.com/dahui/voltaire/v2/internal/device"
+	"github.com/dahui/voltaire/v2/internal/drivers/inputplumber"
 	"github.com/dahui/voltaire/v2/internal/perms"
 )
 
 type setupRig struct {
 	dir      string
+	upstream string // InputPlumber's device configs, empty until a test adds one
 	commands []string
 	applied  []perms.Grants
 	reverted int
@@ -45,14 +48,28 @@ func newSetupRig(t *testing.T) *setupRig {
 		match                                                func() (device.Config, error)
 		apply                                                func(perms.Grants, []perms.HIDRaw, perms.Options) perms.Result
 		revert                                               func([]perms.Grants, perms.Options) perms.Result
+		groupSet, machineSet, ipFlag, ipSet                  bool
+		ipOverride                                           string
+		ipUpstream                                           func() string
+		ipDMI                                                func() inputplumber.DMI
 	}{rulesPath, servicePath, oldRulesPath, oldServicePath, setupGroup, setupMachineFlag,
-		permsOnlyFlag, setupRemoveFlag, dryRunFlag, runCommand, isRoot, matchConfig, applyGrants, revertGrants}
+		permsOnlyFlag, setupRemoveFlag, dryRunFlag, runCommand, isRoot, matchConfig, applyGrants, revertGrants,
+		setupGroupSet, setupMachineSet, ipPassthroughFlag, ipPassthroughSet,
+		inputplumber.OverrideDir, ipUpstreamDir, ipReadDMI}
 	t.Cleanup(func() {
 		rulesPath, servicePath, oldRulesPath, oldServicePath = saved.rules, saved.service, saved.oldRules, saved.oldService
 		setupGroup, setupMachineFlag = saved.group, saved.machine
 		permsOnlyFlag, setupRemoveFlag, dryRunFlag = saved.permsOnly, saved.remove, saved.dry
 		runCommand, isRoot, matchConfig, applyGrants, revertGrants = saved.run, saved.root, saved.match, saved.apply, saved.revert
+		setupGroupSet, setupMachineSet, ipPassthroughFlag, ipPassthroughSet = saved.groupSet, saved.machineSet, saved.ipFlag, saved.ipSet
+		inputplumber.OverrideDir, ipUpstreamDir, ipReadDMI = saved.ipOverride, saved.ipUpstream, saved.ipDMI
 	})
+	setupGroupSet, setupMachineSet, ipPassthroughFlag, ipPassthroughSet = false, false, false, false
+	inputplumber.OverrideDir = filepath.Join(r.dir, "etc-inputplumber", "devices.d")
+	ipUpstreamDir = func() string { return r.upstream }
+	ipReadDMI = func() inputplumber.DMI {
+		return inputplumber.DMI{"board_name": "RC73XA", "sys_vendor": "ASUSTeK COMPUTER INC."}
+	}
 
 	rulesPath = filepath.Join(r.dir, "99-voltaire.rules")
 	servicePath = filepath.Join(r.dir, serviceName)
@@ -310,5 +327,150 @@ func TestPostinstallCleansUpPreRenameUnits(t *testing.T) {
 		if !strings.Contains(postinstall, want) {
 			t.Errorf("contrib/nfpm/postinstall.sh is missing %q", want)
 		}
+	}
+}
+
+// withAllyInputPlumber gives the rig InputPlumber 0.85.0's Ally config and
+// makes the machine the Ally.
+func (r *setupRig) withAllyInputPlumber(t *testing.T) {
+	t.Helper()
+	r.upstream = filepath.Join(r.dir, "usr-share-inputplumber", "devices")
+	if err := os.MkdirAll(r.upstream, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../internal/drivers/inputplumber/testdata/50-rog_xbox_ally.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.upstream, "50-rog_xbox_ally.yaml"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matchConfig = func() (device.Config, error) { return device.ConfigByID("asus-rog-xbox-ally-x") }
+}
+
+func (r *setupRig) ran(cmd string) int {
+	for i, c := range r.commands {
+		if c == cmd {
+			return i
+		}
+	}
+	return -1
+}
+
+const ipRestart = "systemctl try-restart inputplumber.service"
+
+// TestSetupPassthroughOptIn: nothing without the flag; with it, the override,
+// an InputPlumber restart before the grants and a boot unit ordered before
+// InputPlumber; a plain rerun and the boot pass keep it without restarting;
+// =false removes it.
+func TestSetupPassthroughOptIn(t *testing.T) {
+	r := newSetupRig(t)
+	r.withAllyInputPlumber(t)
+	override := filepath.Join(inputplumber.OverrideDir, "50-rog_xbox_ally.yaml")
+
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(override); err == nil || r.ran(ipRestart) >= 0 {
+		t.Fatal("an override was written, or InputPlumber restarted, without the opt-in")
+	}
+
+	ipPassthroughFlag, ipPassthroughSet = true, true
+	r.commands = nil
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(override)
+	if err != nil || !inputplumber.IsOverride(data) {
+		t.Fatalf("no override written: %v", err)
+	}
+	restart, reload := r.ran(ipRestart), r.ran("udevadm control --reload-rules")
+	if restart < 0 || restart > reload {
+		t.Errorf("InputPlumber must restart before the grants: %v", r.commands)
+	}
+	if !strings.Contains(r.read(t, servicePath), "Before=inputplumber.service") {
+		t.Error("the boot unit does not run before InputPlumber")
+	}
+
+	// A package upgrade's plain run keeps it and restarts nothing.
+	ipPassthroughFlag, ipPassthroughSet = false, false
+	r.commands = nil
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(override); err != nil || r.ran(ipRestart) >= 0 {
+		t.Errorf("a plain rerun dropped the override or restarted InputPlumber: %v", r.commands)
+	}
+	if !strings.Contains(r.read(t, servicePath), "Before=inputplumber.service") {
+		t.Error("a plain rerun lost the boot ordering")
+	}
+
+	// The boot pass remakes it and never restarts InputPlumber.
+	if err := os.WriteFile(override, append([]byte(inputplumber.OverrideMarker+"\n"), "stale\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	permsOnlyFlag = true
+	r.commands = nil
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(override); !bytes.Equal(got, data) || r.ran(ipRestart) >= 0 {
+		t.Errorf("boot pass: remade %v, commands %v", bytes.Equal(got, data), r.commands)
+	}
+	permsOnlyFlag = false
+
+	ipPassthroughFlag, ipPassthroughSet = false, true
+	r.commands = nil
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(override); err == nil || r.ran(ipRestart) < 0 {
+		t.Errorf("=false left the override or did not restart InputPlumber: %v", r.commands)
+	}
+	if strings.Contains(r.read(t, servicePath), "inputplumber") {
+		t.Error("the boot unit still orders against InputPlumber after =false")
+	}
+}
+
+func TestSetupRemoveTakesTheOverride(t *testing.T) {
+	r := newSetupRig(t)
+	r.withAllyInputPlumber(t)
+	ipPassthroughFlag, ipPassthroughSet = true, true
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	ipPassthroughFlag, ipPassthroughSet = false, false
+	setupRemoveFlag = true
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	if len(inputplumber.Overrides()) != 0 || r.ran(ipRestart) < 0 {
+		t.Errorf("remove left the override or did not restart InputPlumber: %v", r.commands)
+	}
+}
+
+// TestSetupKeepsEarlierChoices: a plain run keeps the group and --machine
+// the boot unit was written with.
+func TestSetupKeepsEarlierChoices(t *testing.T) {
+	r := newSetupRig(t)
+	earlier := setupGroup
+	setupMachineFlag = "asus-rog-xbox-ally-x"
+	if err := runSetup(); err != nil {
+		t.Fatal(err)
+	}
+	// The next run as a package upgrade makes it: no flags, defaults.
+	setupMachineFlag, setupGroup = "", "no-such-group-voltaire-test"
+	matchConfig = func() (device.Config, error) { return device.Config{}, device.ErrUnknownDevice }
+	if err := runSetup(); err != nil {
+		t.Fatalf("a plain rerun did not keep the earlier choices: %v", err)
+	}
+	unit := r.read(t, servicePath)
+	if !strings.Contains(unit, "--group "+earlier+" --machine asus-rog-xbox-ally-x\n") {
+		t.Errorf("unit after a plain rerun:\n%s", unit)
+	}
+	// Given again, a flag wins.
+	setupMachineFlag, setupMachineSet = "no-such-device", true
+	if err := runSetup(); err == nil {
+		t.Error("an explicit --machine was overridden by the earlier one")
 	}
 }

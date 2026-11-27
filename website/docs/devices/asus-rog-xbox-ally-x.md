@@ -24,7 +24,7 @@ different machine and is not supported yet.
 | **CPU undervolt** | No | ([why](#undervolt)) |
 | **Fan curves** | Yes | Two fans, eight points. No presets yet ([why](#fan-presets)). |
 | **Fan speed** | Yes | |
-| **RGB lighting** | Yes | The joystick rings: static, breathe, colour cycle and strobe, four brightness levels, put back after a suspend. With InputPlumber it needs one InputPlumber setting ([how](#joystick-lighting)). |
+| **RGB lighting** | Yes | The joystick rings: static, breathe, colour cycle and strobe, four brightness levels, put back after a suspend. With InputPlumber it needs one setup option ([how](#joystick-lighting)). |
 | **Battery** | Yes | Level, charge and discharge rate, time estimate and pack health. |
 | **Charge limit** | Yes | 40–100 %. On the desktop only: in Steam Gaming Mode, Steam sets it. |
 | **Brightness and volume** | Yes | |
@@ -51,9 +51,10 @@ sends them the packets G-Helper sends the Ally.
 InputPlumber hides that interface along with the rest of the controller, so
 on a machine where it runs (CachyOS's handheld edition starts it), the
 lighting shows as unavailable until InputPlumber is told to leave the
-interface visible. [Using InputPlumber](/inputplumber#ally-lighting) has the
-one-line setting, what it costs, and how to undo it. Without InputPlumber
-there is nothing to do.
+interface visible. `sudo voltaire setup --inputplumber-passthrough` does that,
+and keeps doing it through InputPlumber's updates;
+[Using InputPlumber](/inputplumber#ally-lighting) says what it changes, what
+it costs, and how to undo it. Without InputPlumber there is nothing to do.
 
 The kernel's own LED device for the rings (`ally:rgb:joystick_rings`) is no
 substitute: it only shows shades of blue.

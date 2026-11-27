@@ -15,10 +15,12 @@
 // that action's InputEvent into a button press (Buttons). Deciding when to
 // edit which device's profile is the daemon's.
 //
-// voltaire never writes an InputPlumber file. A profile is loaded over DBus
+// None of that writes an InputPlumber file. A profile is loaded over DBus
 // into the running daemon only; InputPlumber starts every composite device
 // on its default profile again when it restarts, which is why the daemon
-// re-applies the mapping.
+// re-applies the mapping. The one file voltaire writes is the device-config
+// override in override.go, and only setup writes it, only when the user opts
+// in.
 package inputplumber
 
 import (

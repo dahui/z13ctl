@@ -362,7 +362,7 @@ func TestInputGrantedFollowsTheGuard(t *testing.T) {
 }
 
 func TestUnit(t *testing.T) {
-	u := Unit("/usr/bin/voltaire", testHeader("asus-rog-flow-z13-2025"), "")
+	u := Unit("/usr/bin/voltaire", testHeader("asus-rog-flow-z13-2025"), "", false)
 	for _, want := range []string{
 		Marker + "\n", "Type=oneshot", "RemainAfterExit=yes",
 		"ConditionPathExists=/usr/bin/voltaire",
@@ -374,9 +374,21 @@ func TestUnit(t *testing.T) {
 			t.Errorf("unit missing %q:\n%s", want, u)
 		}
 	}
-	if u := Unit("/usr/local/bin/voltaire", testHeader("x"), "onexplayer-x2-mini-pro"); !strings.Contains(u,
-		"ExecStart=/usr/local/bin/voltaire setup --perms-only --group users --machine onexplayer-x2-mini-pro\n") {
+	if strings.Contains(u, "inputplumber") {
+		t.Errorf("a unit without the passthrough override orders against InputPlumber:\n%s", u)
+	}
+	u = Unit("/usr/local/bin/voltaire", testHeader("x"), "onexplayer-x2-mini-pro", true)
+	if !strings.Contains(u, "ExecStart=/usr/local/bin/voltaire setup --perms-only --group users --machine onexplayer-x2-mini-pro\n") {
 		t.Errorf("a --machine run must reach the boot pass:\n%s", u)
+	}
+	if !strings.Contains(u, "\nBefore=inputplumber.service\n") {
+		t.Errorf("with the override the boot pass must run before InputPlumber:\n%s", u)
+	}
+	if g, m := ParseUnit(u); g != "users" || m != "onexplayer-x2-mini-pro" {
+		t.Errorf("ParseUnit = %q, %q", g, m)
+	}
+	if g, m := ParseUnit("[Service]\nExecStart=/x setup --group wheel\n"); g != "" || m != "" {
+		t.Errorf("ParseUnit read a unit setup did not write: %q, %q", g, m)
 	}
 }
 

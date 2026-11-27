@@ -684,7 +684,9 @@ diff whenever a main release touches `api/`.
 1. **ASUS ROG Xbox Ally X** (`.claude/plans/xbox-ally-x.md`): device file,
    Steam yield, stock rows (AC and battery), the charge limit, controller
    intercept (decision 0177) and the ring lighting (decision 0178; needs
-   InputPlumber's `passthrough` on interface 2, upstream request drafted in
+   InputPlumber's `passthrough` on interface 2, which
+   `setup --inputplumber-passthrough` writes on opt-in, remade from
+   InputPlumber's config every run and boot; upstream request drafted in
    `.claude/plans/inputplumber-ally-passthrough-request.md`) done; the Gaming
    Mode check remains; controller settings wait for the upstream hid-asus Ally
    series.

@@ -60,7 +60,7 @@ type HiddenError struct{ Zone, Node string }
 
 func (e *HiddenError) Error() string {
 	return fmt.Sprintf("the %s lighting interface (%s) is hidden, which InputPlumber does to the devices it "+
-		"manages; it needs InputPlumber's config to mark that interface passthrough (see the device's page)", e.Zone, e.Node)
+		"manages; to have InputPlumber leave it visible, run: sudo voltaire setup --inputplumber-passthrough", e.Zone, e.Node)
 }
 
 // Lighting drives Aura RGB zones over hidraw. The zero value is unopened;

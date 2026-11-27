@@ -25,18 +25,28 @@ import (
 // node name, so a late event can grant an interface no rule matches (seen
 // on the Z13's lightbar: docs/decisions/0006). The pass must run after that
 // to reset it. Bounded, and "-" so a slow queue delays the pass, never
-// fails it; only this unit waits, nothing else at boot.
-func Unit(exe string, h Header, deviceID string) string {
+// fails it; only this unit waits, and InputPlumber when beforeInputPlumber.
+//
+// beforeInputPlumber is set when the user opted into the InputPlumber
+// passthrough override: the boot pass remakes it from InputPlumber's current
+// config, which must happen before InputPlumber reads its configs.
+func Unit(exe string, h Header, deviceID string, beforeInputPlumber bool) string {
 	args := []string{exe, "setup", "--perms-only", "--group", h.Group}
 	if deviceID != "" {
 		args = append(args, "--machine", deviceID)
+	}
+	before := ""
+	if beforeInputPlumber {
+		before = "# Remakes the InputPlumber passthrough override from its current config\n" +
+			"# before InputPlumber reads it (voltaire setup --inputplumber-passthrough).\n" +
+			"Before=inputplumber.service\n"
 	}
 	return fmt.Sprintf(`[Unit]
 Description=voltaire device permissions (the boot pass of voltaire setup)
 %s# Grants voltaire's group the attributes this machine's device file needs that
 # appear after their udev event, or have none (cpufreq boost, ryzen_smu).
 After=systemd-udev-trigger.service systemd-modules-load.service
-ConditionPathExists=%s
+%sConditionPathExists=%s
 
 [Service]
 Type=oneshot
@@ -46,5 +56,31 @@ ExecStart=%s
 
 [Install]
 WantedBy=multi-user.target
-`, h.lines(), exe, strings.Join(args, " "))
+`, h.lines(), before, exe, strings.Join(args, " "))
+}
+
+// ParseUnit reads back the group and --machine a unit setup wrote was
+// written with, "" for each when content is not such a unit. A later plain
+// "voltaire setup" (every package upgrade runs one) keeps them rather than
+// falling back to the defaults.
+func ParseUnit(content string) (group, machine string) {
+	if !strings.Contains(content, Marker) {
+		return "", ""
+	}
+	for _, line := range strings.Split(content, "\n") {
+		rest, ok := strings.CutPrefix(line, "ExecStart=")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(rest)
+		for i := 0; i+1 < len(f); i++ {
+			switch f[i] {
+			case "--group":
+				group = f[i+1]
+			case "--machine":
+				machine = f[i+1]
+			}
+		}
+	}
+	return group, machine
 }

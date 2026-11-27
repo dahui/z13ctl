@@ -982,6 +982,11 @@ sudo voltaire setup [flags]
 | `--machine` | | Device file id to use instead of matching this machine's firmware (DMI); for the same hardware under another name, or with `--dry-run` to preview another machine's grants |
 | `--perms-only` | | Apply the grants now without writing either file (what the boot unit runs) |
 | `--remove` | | Remove the rules file and boot unit (only if setup wrote them) and take the group back from everything granted |
+| `--inputplumber-passthrough` | | Where InputPlumber hides the interface this machine's lighting uses, write an override of InputPlumber's own config that leaves it visible, and restart InputPlumber. `=false` removes it. See [the Ally's joystick lighting](/inputplumber#ally-lighting) |
+
+A later run keeps the previous run's `--group`, `--machine` and
+`--inputplumber-passthrough` choice unless the flag is given again, so the
+plain `voltaire setup` a package upgrade runs changes none of them.
 
 On a machine no device file describes, setup grants nothing and prints the
 firmware's vendor and product strings to report. On a machine that previously

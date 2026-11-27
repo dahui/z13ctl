@@ -74,41 +74,37 @@ it manages. Hidden, it is out of voltaire's reach, so the lighting shows as
 unavailable with that reason.
 
 InputPlumber has a setting for exactly this, `passthrough`: the interface is
-still used, but not hidden. voltaire will not change InputPlumber's
-configuration for you; to turn it on yourself, copy the device's config and
-add one line:
+still used, but not hidden. voltaire changes InputPlumber's configuration only
+if you ask it to:
 
 ```sh
-sudo mkdir -p /etc/inputplumber/devices.d
-sudo cp /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml /etc/inputplumber/devices.d/
-sudoedit /etc/inputplumber/devices.d/50-rog_xbox_ally.yaml
-```
-
-In the copy, add `passthrough: true` to the source device with
-`interface_num: 2` (leave `interface_num: 5`, the gamepad, alone):
-
-```yaml
-  - group: gamepad # Used for setting attributes on load
-    hidraw:
-      vendor_id: 0x0b05
-      product_id: 0x1b4c
-      interface_num: 2
-    passthrough: true
-```
-
-Then restart InputPlumber and voltaire:
-
-```sh
-sudo systemctl restart inputplumber
-sudo voltaire setup --perms-only
+sudo voltaire setup --inputplumber-passthrough
 systemctl --user restart voltaire.service
 ```
 
-What to know before you do:
+Setup reads InputPlumber's installed config for this machine
+(`/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml` on the Xbox Ally X),
+adds `passthrough: true` to the source with the lighting's interface
+(`interface_num: 2`; the gamepad's `interface_num: 5` is left alone), and
+writes the result under the same name in `/etc/inputplumber/devices.d/`, which
+InputPlumber reads in preference to its own. Then it restarts InputPlumber
+(the controller pauses for a moment) and grants the interface.
 
-- **It is a copy.** It replaces InputPlumber's own config for the Ally, so a
-  later InputPlumber update to that file does not reach you until you copy
-  it again. Delete the copy and restart InputPlumber to undo everything.
+- **It follows InputPlumber's updates.** The file is remade from
+  InputPlumber's installed config every time setup runs, including at every
+  boot, before InputPlumber starts. The edit is a single inserted line, and
+  setup checks that this line is the only difference; if InputPlumber's file
+  ever changes in a way that makes that impossible, setup writes no override
+  and InputPlumber uses its own file (the lighting is hidden again, and the
+  controller is unaffected). If InputPlumber starts passing the interface
+  through itself, setup removes the override.
+- **It stays until you turn it off.** Later plain `voltaire setup` runs,
+  including the ones package upgrades make, keep it. To undo it:
+  `sudo voltaire setup --inputplumber-passthrough=false` (or
+  `sudo voltaire setup --remove`, which undoes all of setup).
+- **Setup touches only its own file.** It marks the file in its first line,
+  and a file of the same name without that mark (one you wrote yourself) is
+  left alone, with a note.
 - **voltaire's group can then write to that interface**, which also carries
   the controller's own settings (button remaps, gamepad mode, vibration).
   voltaire sends it lighting commands only; the grant is the same kind of
@@ -116,6 +112,12 @@ What to know before you do:
   given only on this machine.
 - Controller input, rumble and the drawer's controller navigation all work
   with it in place (checked on the Ally, 2026-11-26).
+
+Without the option, setup notes when InputPlumber hides this machine's
+lighting and names the command. To make the same change by hand instead,
+copy the config to `/etc/inputplumber/devices.d/`, add `passthrough: true` to
+the `interface_num: 2` source, and restart InputPlumber; a hand-made copy does
+not follow InputPlumber's updates.
 
 ## Checking it
 

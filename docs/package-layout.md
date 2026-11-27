@@ -46,6 +46,8 @@ cmd/                         Cobra subcommands
   status.go                  display system status (temperature, fans, profile, TDP, battery)
   setup.go                   setup: finds the machine, writes the rules + boot unit, runs
                              udevadm/systemctl, --remove; the grants are internal/perms'
+  setup_inputplumber.go      setup --inputplumber-passthrough: whether the user opted in,
+                             the plan printed, InputPlumber restarted after a change
   setup_test.go              setup's orchestration (seams: commands, root, DMI, the passes)
                              and the packaging that runs it
   undervolt_test.go          --set parse rejections (CLI/daemon parity; no SMU access)
@@ -210,7 +212,9 @@ internal/
                              controller's vibration strength; range from rumble_intensity_range)
     inputplumber/            the InputPlumber route: pure profile merge (SetMapping, YAML),
                              a DBus client (composite devices, Get/LoadProfile, change
-                             signals) and the driver.Buttons for voltaire_<id> InputEvents
+                             signals) and the driver.Buttons for voltaire_<id> InputEvents;
+                             override.go: the opt-in device-config override that passes the
+                             lighting interface through (edit, check, DMI match, plan)
   safety/                    the thermal-safety rules between handlers and drivers, pure and
                              parameterized by driver.PowerEnvelope
     safety.go                pure rules: FanCurveForTDP, FloorPWMAt, FloorAdjustsCurve,

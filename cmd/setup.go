@@ -46,6 +46,13 @@ var (
 	permsOnlyFlag    bool
 	setupMachineFlag string
 	setupRemoveFlag  bool
+
+	// Whether --group and --machine were given: when not, an earlier run's
+	// choice (read back from the boot unit) stands.
+	setupGroupSet, setupMachineSet bool
+
+	ipPassthroughFlag bool // --inputplumber-passthrough
+	ipPassthroughSet  bool // given at all, either way
 )
 
 // The seams that keep setup's tests off the machine: commands, the root
@@ -131,9 +138,33 @@ func setupExecutable() string {
 	return exe
 }
 
+// keepEarlierChoices carries --group and --machine over from the boot unit
+// an earlier run wrote, unless given again. Every package upgrade runs a
+// plain "voltaire setup", which would otherwise reset a custom group to
+// "users" and drop a --machine choice (failing outright on a machine DMI
+// does not match).
+func keepEarlierChoices() {
+	data, err := os.ReadFile(servicePath)
+	if err != nil {
+		return
+	}
+	group, machine := perms.ParseUnit(string(data))
+	if !setupGroupSet && group != "" && group != setupGroup {
+		setupGroup = group
+		fmt.Printf("Keeping group %s from the existing setup (--group changes it).\n", group)
+	}
+	if !setupMachineSet && machine != "" && setupMachineFlag == "" {
+		setupMachineFlag = machine
+		fmt.Printf("Keeping --machine %s from the existing setup.\n", machine)
+	}
+}
+
 func runSetup() error {
 	if setupRemoveFlag {
 		return runSetupRemove()
+	}
+	if !permsOnlyFlag {
+		keepEarlierChoices() // the boot pass is told both by its unit
 	}
 	m, err := resolveSetupMachine(setupMachineFlag)
 	if errors.Is(err, device.ErrUnknownDevice) {
@@ -161,7 +192,8 @@ func runSetup() error {
 	opts := perms.Options{Group: setupGroup, GID: gid, DMIMatch: m.dmiMatch, DryRun: dryRunFlag, Out: os.Stdout}
 	opts.OnlyOurs = onlyOursGrant(setupGroup)
 	rules := grants.Rules(header)
-	unit := perms.Unit(setupExecutable(), header, setupMachineFlag)
+	passthrough := wantPassthrough()
+	unit := perms.Unit(setupExecutable(), header, setupMachineFlag, passthrough && len(lightingSources(m.cfg)) > 0)
 
 	if dryRunFlag {
 		fmt.Printf("=== DRY RUN for %s (no changes will be made) ===\n", m.cfg.Device.Name)
@@ -170,6 +202,7 @@ func runSetup() error {
 			fmt.Printf("Would write %s:\n\n%s\n", servicePath, unit)
 			cleanupOldArtifacts(true)
 		}
+		syncPassthrough(m.cfg, passthrough, !permsOnlyFlag)
 		fmt.Println("Would apply now (files present on this machine):")
 		res := applyGrants(grants, knownHIDRaw(), opts)
 		fmt.Printf("  %d to grant, %d already granted, %d to revoke, %d left alone (anything else is absent)\n",
@@ -181,6 +214,9 @@ func runSetup() error {
 	}
 
 	if permsOnlyFlag {
+		// Before InputPlumber starts (the unit's ordering), so it reads an
+		// override made from its current config.
+		syncPassthrough(m.cfg, passthrough, false)
 		res := applyGrants(grants, knownHIDRaw(), opts)
 		fmt.Printf("voltaire permissions for %s: %s\n", m.cfg.Device.ID, res)
 		if data, err := os.ReadFile(rulesPath); err == nil {
@@ -199,6 +235,8 @@ func runSetup() error {
 	// The pre-rename artifacts go after the new rules exist and before udev
 	// reloads, so there is no window with neither in place.
 	cleanupOldArtifacts(false)
+	// Before the grants: a node InputPlumber stops hiding is granted below.
+	syncPassthrough(m.cfg, passthrough, true)
 	if note("udevadm", "control", "--reload-rules") {
 		note("udevadm", "trigger", "--subsystem-match=hidraw")
 	}
@@ -276,6 +314,7 @@ func runSetupRemove() error {
 		note("systemctl", "daemon-reload")
 		note("udevadm", "control", "--reload-rules")
 	}
+	syncPassthrough(device.Config{}, false, true)
 
 	gid, err := lookupGID(group)
 	if err != nil {
@@ -373,10 +412,27 @@ describes, setup grants nothing and says so.
                   boot unit runs)
   --remove        undo setup: disable and remove the unit and rules file, and
                   take the group back from everything it was granted
+  --inputplumber-passthrough
+                  where InputPlumber hides the interface this machine's
+                  lighting uses (the ROG Xbox Ally X's joystick rings), write
+                  an override of InputPlumber's own config for this machine
+                  that leaves it visible, and restart InputPlumber. The
+                  override is remade from InputPlumber's installed config on
+                  every setup run and at boot, so it follows InputPlumber's
+                  updates. =false removes it, as does --remove.
   --dry-run       show what would be written and changed, without root
 
+A later run keeps the group, --machine and the passthrough choice of the
+previous one unless they are given again, so a package upgrade's plain
+"voltaire setup" changes none of them.
+
 This command must be run with sudo (unless --dry-run is used).`,
-	RunE: func(_ *cobra.Command, _ []string) error { return runSetup() },
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		setupGroupSet = cmd.Flags().Changed("group")
+		setupMachineSet = cmd.Flags().Changed("machine")
+		ipPassthroughSet = cmd.Flags().Changed("inputplumber-passthrough")
+		return runSetup()
+	},
 }
 
 func init() {
@@ -384,5 +440,7 @@ func init() {
 	setupCmd.Flags().BoolVar(&permsOnlyFlag, "perms-only", false, "Apply the grants now without writing the rules file or boot unit")
 	setupCmd.Flags().StringVar(&setupMachineFlag, "machine", "", "Device file id to grant for, instead of matching this machine's DMI")
 	setupCmd.Flags().BoolVar(&setupRemoveFlag, "remove", false, "Remove the rules file and boot unit and take back every grant")
+	setupCmd.Flags().BoolVar(&ipPassthroughFlag, "inputplumber-passthrough", false,
+		"Have InputPlumber leave this machine's lighting interface visible (=false undoes it)")
 	rootCmd.AddCommand(setupCmd)
 }
