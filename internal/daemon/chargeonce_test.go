@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dahui/voltaire/v2/internal/driver"
 )
@@ -52,13 +53,13 @@ func TestChargeOnceLiftsTheLimitUntilFull(t *testing.T) {
 	}
 
 	bat.at(95, driver.BatteryStateCharging)
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	if len(log.all()) != n {
 		t.Errorf("the tick wrote before the pack was full: %v", log.all())
 	}
 
 	bat.at(100, driver.BatteryStateFull)
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	if got := lastWrite(log); got != "battery.limit 80" || d.state.ChargeOnce {
 		t.Errorf("full: wrote %q, once %v; want the 80 %% limit back", got, d.state.ChargeOnce)
 	}
@@ -140,10 +141,10 @@ func TestChargeOnceStandsDown(t *testing.T) {
 	n := len(log.all())
 
 	d.setSuspending(true)
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	d.setSuspending(false)
 	d.setECWedged(true)
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	d.setECWedged(false)
 	if len(log.all()) != n {
 		t.Errorf("wrote while suspending or wedged: %v", log.all()[n:])
@@ -151,7 +152,7 @@ func TestChargeOnceStandsDown(t *testing.T) {
 
 	// Gaming Mode: the capability is off and the driver stays.
 	bat.caps.ChargeLimit = false
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	if r := d.handleChargeOnce(request{Set: "off"}); r.OK {
 		t.Error("a cancel was accepted while the limit is Steam's")
 	}
@@ -160,9 +161,52 @@ func TestChargeOnceStandsDown(t *testing.T) {
 	}
 
 	bat.caps.ChargeLimit = true
-	d.chargeOnceTick()
+	d.chargeOnceTick(time.Now())
 	if got := lastWrite(log); got != "battery.limit 80" {
 		t.Errorf("back on the desktop: wrote %q, want the limit restored", got)
+	}
+}
+
+// TestChargeOnceTopsOff: a pack that trickles at 99 % on mains and never
+// says it is full still gets the limit back, after chargeOnceTopOff of it;
+// dropping below 99 % or unplugging restarts the wait.
+func TestChargeOnceTopsOff(t *testing.T) {
+	d, log, bat := chargeOnceRig(t)
+	if r := d.handleChargeOnce(request{Set: "on"}); !r.OK {
+		t.Fatal(r.Error)
+	}
+	n := len(log.all())
+	t0 := time.Unix(1_800_000_000, 0)
+
+	bat.at(99, driver.BatteryStateCharging)
+	d.chargeOnceTick(t0)
+	d.chargeOnceTick(t0.Add(chargeOnceTopOff - time.Minute))
+	if len(log.all()) != n {
+		t.Fatalf("ended before the top-off wait: %v", log.all()[n:])
+	}
+
+	// A dip below 99 %, then an unplug at 99 %: each restarts the wait.
+	bat.at(98, driver.BatteryStateCharging)
+	d.chargeOnceTick(t0.Add(chargeOnceTopOff))
+	bat.at(99, driver.BatteryStateCharging)
+	t1 := t0.Add(chargeOnceTopOff + time.Minute)
+	d.chargeOnceTick(t1)
+	bat.status.OnAC = false
+	d.chargeOnceTick(t1.Add(chargeOnceTopOff))
+	if len(log.all()) != n || !d.state.ChargeOnce {
+		t.Fatalf("ended across a dip or off mains: %v", log.all()[n:])
+	}
+
+	bat.status.OnAC = true
+	t2 := t1.Add(chargeOnceTopOff + time.Minute)
+	d.chargeOnceTick(t2)
+	d.chargeOnceTick(t2.Add(chargeOnceTopOff - time.Second))
+	if len(log.all()) != n {
+		t.Fatalf("the wait did not restart after the unplug: %v", log.all()[n:])
+	}
+	d.chargeOnceTick(t2.Add(chargeOnceTopOff))
+	if got := lastWrite(log); got != "battery.limit 80" || d.state.ChargeOnce {
+		t.Errorf("topped off: wrote %q, once %v; want the 80 %% limit back", got, d.state.ChargeOnce)
 	}
 }
 

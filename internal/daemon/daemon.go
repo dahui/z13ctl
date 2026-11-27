@@ -101,6 +101,11 @@ type Daemon struct {
 	// the socket dispatcher and get-state consult it.
 	ecWedged bool
 
+	// chargeOnceTopSince is when a one-time charge was first seen at 99 % or
+	// more on mains without the pack saying it is full; zero otherwise. Read
+	// and written by chargeOnceTick under hwMu (chargeonce.go).
+	chargeOnceTopSince time.Time
+
 	// policyWritten is set by watchPolicyWrites whenever the kernel reports a
 	// thermal policy write — a platform_profile write or a fan release,
 	// same-value ones included — and consumed by the next reconcile tick. Atomic

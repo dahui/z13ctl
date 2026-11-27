@@ -30,6 +30,18 @@ mains (firmware that tops off a point short). The watcher checks once a minute
 wedged, like every path into the EC (0113, 0114). A failed restore keeps the
 flag, so the next tick retries rather than leaving the limit lifted silently.
 
+**A pack that never says it is full still ends it** (added 2026-11-26, after
+the Z13's first run sat at 99 % `Charging` an hour in, still taking 5.5 W at
+64.38 of 65.04 Wh). The kernel's capacity is energy over full *rounded down*,
+so it reads 100 only when the two are equal, and nothing obliges the firmware
+to report `full` or `not-charging` at the end of a trickle. Without a further
+rule such a pack would hold the maximum for as long as it stays plugged in,
+the one outcome the user's limit exists to prevent. So 99 % or more on mains
+for `chargeOnceTopOff` (30 min) of consecutive ticks also ends it ("topped
+off"); dropping below 99 % or leaving mains restarts the wait. It is a time
+rule rather than a wattage threshold so it needs no per-device number.
+`TestChargeOnceTopsOff` (negative control run).
+
 **The startup restore had to learn the Gaming Mode yield.** The yield turns
 `BatteryCaps.ChargeLimit` off but keeps the driver, whose `SetChargeLimit`
 does not check it, so the restore (which tested only for a driver) would have

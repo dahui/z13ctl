@@ -56,6 +56,9 @@ back on its own when the battery is full.
 - It needs a limit to lift: with no limit set, or with the battery already
   full, it is refused.
 - It needs the daemon, which watches for the battery to fill.
+- Some batteries spend a long time on the last percent and never report
+  themselves full. If yours stays at 99 % or more on the charger for half an
+  hour, voltaire counts it as full and puts the limit back.
 
 ### In the GUI
 

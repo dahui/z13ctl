@@ -28,6 +28,15 @@ import (
 // more, so a minute late is nothing, and the read is a sysfs file.
 const chargeOncePollInterval = time.Minute
 
+// chargeOnceTopOff is how long a pack may sit at 99 % or more on mains, still
+// saying it is charging, before the charge counts as done. The kernel's
+// capacity is energy over full rounded down, so it reads 100 only when the
+// two are equal, and some packs trickle the last fraction of a percent for
+// as long as they are plugged in without ever reporting full. Without this
+// the maximum would stay in place indefinitely, which is the opposite of
+// what the user's limit is for.
+const chargeOnceTopOff = 30 * time.Minute
+
 // batteryFull reports whether a one-time charge has done its job. Capacity
 // reads 100 on most packs; some firmware tops off at 99 % and reports Full or
 // stops ("not charging") on mains there, which is as full as it will get.
@@ -99,6 +108,7 @@ func (d *Daemon) handleChargeOnce(req request) response {
 		return response{OK: false, Error: "batterylimit: " + err.Error()}
 	}
 	slog.Info("charge once: charging to full", "limit", caps.ChargeLimitMax, "then", limit)
+	d.chargeOnceTopSince = time.Time{}
 	d.mu.Lock()
 	d.state.ChargeOnce = true
 	d.state.Battery = limit
@@ -123,6 +133,7 @@ func (d *Daemon) endChargeOnceLocked(why string) {
 		}
 	}
 	slog.Info("charge once: done", "why", why, "limit", limit)
+	d.chargeOnceTopSince = time.Time{}
 	d.mu.Lock()
 	d.state.ChargeOnce = false
 	s := cloneState(d.state)
@@ -139,14 +150,15 @@ func (d *Daemon) watchChargeOnce(ctx context.Context) {
 			return
 		case <-time.After(chargeOncePollInterval):
 		}
-		d.chargeOnceTick()
+		d.chargeOnceTick(time.Now())
 	}
 }
 
 // chargeOnceTick is one check. It stands down while the machine is entering
 // sleep and while a resume has left the EC unresponsive, as every path into
 // the EC does (docs/decisions/0113, 0114), and while the limit is Steam's.
-func (d *Daemon) chargeOnceTick() {
+// now is the time of the check (the tests step it).
+func (d *Daemon) chargeOnceTick(now time.Time) {
 	d.mu.Lock()
 	active := d.state.ChargeOnce
 	d.mu.Unlock()
@@ -163,8 +175,22 @@ func (d *Daemon) chargeOnceTick() {
 		return
 	}
 	st, err := bat.Status()
-	if err != nil || !batteryFull(st) {
+	if err != nil {
 		return
 	}
-	d.endChargeOnceLocked("full")
+	if batteryFull(st) {
+		d.endChargeOnceLocked("full")
+		return
+	}
+	if st.Capacity < 99 || !st.ACKnown || !st.OnAC {
+		d.chargeOnceTopSince = time.Time{}
+		return
+	}
+	if d.chargeOnceTopSince.IsZero() {
+		d.chargeOnceTopSince = now
+		return
+	}
+	if now.Sub(d.chargeOnceTopSince) >= chargeOnceTopOff {
+		d.endChargeOnceLocked("topped off")
+	}
 }
