@@ -687,9 +687,10 @@ diff whenever a main release touches `api/`.
    InputPlumber's `passthrough` on interface 2, which
    `setup --inputplumber-passthrough` writes on opt-in, remade from
    InputPlumber's config every run and boot; upstream request drafted in
-   `.claude/plans/inputplumber-ally-passthrough-request.md`) done; the Gaming
-   Mode check remains; controller settings wait for the upstream hid-asus Ally
-   series.
+   `.claude/plans/inputplumber-ally-passthrough-request.md`) done, Gaming Mode
+   checked 2026-11-26; controller settings wait for the upstream hid-asus Ally
+   series. The other Ally models (Ally X next, then the Ally, then the Xbox
+   Ally's amdgpu power): `.claude/plans/ally-family.md`.
 
 1. ~~Quickbar customization~~ — landed 2026-10-09 (entry above;
    `.claude/plans/quickbar-customization.md`). M4 is complete but for the

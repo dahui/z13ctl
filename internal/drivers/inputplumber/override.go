@@ -379,8 +379,9 @@ func overrideContent(from string, srcs []HIDRawSource, patched []byte) []byte {
 		names[i] = s.String()
 	}
 	header := OverrideMarker + "\n" +
-		"# InputPlumber's " + from + " with passthrough on the lighting\n" +
-		"# interface (" + strings.Join(names, ", ") + "), so voltaire can reach it.\n" +
+		"# InputPlumber's " + from + "\n" +
+		"# with passthrough on the lighting interface (" + strings.Join(names, ", ") + "),\n" +
+		"# so voltaire can reach it.\n" +
 		"# Remade from that file by every voltaire setup run and at boot; edits here\n" +
 		"# are lost. Remove: sudo voltaire setup --inputplumber-passthrough=false\n\n"
 	return append([]byte(header), patched...)
