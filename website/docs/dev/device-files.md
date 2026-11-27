@@ -72,6 +72,7 @@ only when a user picks it. No profile switch selects one.
 | `tdp_default` | Optional starting value for a new custom TDP, within `tdp_min`..`tdp_max_safe`. |
 | `floor_curve` | `[temp, pwm]` pairs the fans must hold, per point, while the sustained limit exceeds `tdp_max_safe`. Needs a `[fans]` block. Leave it out on a device that needs no floor. |
 | `boot_cache_pl1` | The PL1 the attributes read after boot before anything writes them (5 on the Z13's asus-nb-wmi attributes). A readback equal to it describes no limit in force. Optional. |
+| `yield_in_gaming_mode` | `true` when Steam writes these power limits in Gaming Mode on this device (steamos-manager's TDP slider, as on the ROG Xbox Ally X). While a gamescope session runs the power limits are then unavailable, with that reason, as for a missing module; the desktop session keeps them. |
 | `limits` | Which settable limits to offer, in order, and their wording: `[[power.limits]]`. |
 | `stock_ppt` | Each firmware profile's own limits, as a row. |
 | `tdp_max_battery` | Optional cap on the sustained limit while on battery, within `tdp_min`..`tdp_max_forced` (55 W on the OneXPlayer X2 Mini Pro, OneXConsole's). |
@@ -149,6 +150,7 @@ black-screen a machine. The file supplies the words.
 | `health` | Whether state of health is reported. |
 | `charger` | Where the charger kind (adapter or USB-C) comes from: absent for the generic `power_supply` view, `asus-armoury` for ASUS's `charge_mode`. |
 | `charging_needs_flow` | `true` when the pack's `status` reads "Charging" whether or not current flows. A Charging read is then checked against the flow (`power_now`, or current × voltage): with no flow the pack is reported as not charging, or full at 100 %. Default false, which takes `status` at its word. |
+| `yield_in_gaming_mode` | `true` when Steam writes the charge limit in Gaming Mode on this device (steamos-manager). While a gamescope session runs the charge limit is then unavailable, with that reason; the desktop session keeps it. |
 
 ## `[cpu]`: CPU controls
 

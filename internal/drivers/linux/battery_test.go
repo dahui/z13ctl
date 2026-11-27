@@ -248,3 +248,17 @@ func TestChargingNeedsFlowLeavesOtherStatesAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestUnsetChargeLimitReadsAsFull: a threshold of 0 is firmware's "never
+// written", which charges to full, so it is reported as 100; any other value
+// is reported as read.
+func TestUnsetChargeLimitReadsAsFull(t *testing.T) {
+	for raw, want := range map[string]int{"0": 100, "80": 80, "100": 100} {
+		f := newFakeSysfs(t)
+		f.writeFile(t, f.battery+"/charge_control_end_threshold", raw)
+		got, err := NewBattery(driver.BatteryCaps{ChargeLimit: true}, nil).ChargeLimit()
+		if err != nil || got != want {
+			t.Errorf("threshold %s: ChargeLimit() = %d, %v; want %d", raw, got, err, want)
+		}
+	}
+}

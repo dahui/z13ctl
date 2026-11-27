@@ -28,6 +28,7 @@ import (
 	"github.com/dahui/voltaire/v2/internal/drivers/hidrawbtn"
 	"github.com/dahui/voltaire/v2/internal/drivers/inputplumber"
 	"github.com/dahui/voltaire/v2/internal/drivers/linux"
+	"github.com/dahui/voltaire/v2/internal/session"
 )
 
 // smuMissing says why a capability through the SMU cannot be offered ("" when
@@ -36,6 +37,9 @@ import (
 var smuMissing = amd.SMUMissingReasonFor
 
 func init() {
+	// Whether a Steam Gaming Mode session is running, for the device data that
+	// yields capabilities to Steam there (device.YieldToSteam).
+	device.GamingMode = session.GamingMode
 	device.RegisterFans("asus-nb-wmi", func(c device.FansConfig) (driver.FanController, error) {
 		return asus.NewFanController(c.Shape()), nil
 	})

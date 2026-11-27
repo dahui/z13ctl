@@ -193,7 +193,7 @@ func assembleDevice() (*device.Device, error) {
 			return nil, fmt.Errorf("fallback device %q is not in the embedded device data", fallbackDeviceID)
 		}
 	}
-	return device.Assemble(c)
+	return device.AssembleForSession(c, device.GamingMode())
 }
 
 // Run starts the daemon and blocks until ctx is cancelled. It opens HID devices,
@@ -336,7 +336,8 @@ func Run(ctx context.Context, opts Options) error {
 	// first accept error wins and takes the daemon down (the deferred closeAll
 	// unblocks the sibling loops), except during shutdown, where the closes
 	// above surface here as expected errors.
-	errc := make(chan error, len(lns))
+	errc := make(chan error, len(lns)+1)
+	go d.watchSession(ctx, errc)
 	for _, ln := range lns {
 		go func(ln net.Listener) {
 			for {
@@ -350,6 +351,11 @@ func Run(ctx context.Context, opts Options) error {
 		}(ln)
 	}
 	err = <-errc
+	if errors.Is(err, errSessionChanged) {
+		// No InputPlumber cleanup: nothing cancelled its context, and the
+		// daemon systemd starts next re-applies the same mapping.
+		return err
+	}
 	if ctx.Err() != nil {
 		d.waitInputPlumberCleanup()
 		return nil

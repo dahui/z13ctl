@@ -597,7 +597,7 @@ func (d *Daemon) restoreStockPPTErr(profile string) error {
 
 func (d *Daemon) handleBatteryLimit(req request) response {
 	if d.hw == nil || d.hw.Battery == nil || !d.hw.Battery.Caps().ChargeLimit {
-		return response{OK: false, Error: "batterylimit: no battery charge control on this device"}
+		return response{OK: false, Error: "batterylimit: " + d.hw.Missing("charge-limit", "no battery charge control on this device")}
 	}
 	caps := d.hw.Battery.Caps()
 	limit, err := strconv.Atoi(req.Set)

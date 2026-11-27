@@ -57,6 +57,7 @@ export default defineConfig({
           { text: 'Supported devices', link: '/devices/' },
           { text: 'ASUS ROG Flow Z13 (2025)', link: '/devices/asus-rog-flow-z13-2025' },
           { text: 'OneXPlayer X2 Mini Pro', link: '/devices/onexplayer-x2-mini-pro' },
+          { text: 'ASUS ROG Xbox Ally X', link: '/devices/asus-rog-xbox-ally-x' },
         ],
       },
       {

@@ -93,6 +93,12 @@ type Device struct {
 	// device does not have, and the reason is what every surface says instead
 	// of "no such control".
 	Unavailable []Unavailable
+
+	// YieldsInGamingMode says the device data leaves something to Steam in
+	// Gaming Mode, and GamingMode whether this Device was assembled for such
+	// a session. The daemon re-assembles (restarts) when the session kind
+	// changes under a device that yields.
+	YieldsInGamingMode, GamingMode bool
 }
 
 // Unavailable is one declared capability this machine cannot offer.
@@ -249,13 +255,65 @@ func MatchConfig() (Config, error) {
 	return Config{}, fmt.Errorf("%w (vendor %q, product %q)", ErrUnknownDevice, vendor, product)
 }
 
-// Detect identifies this machine and assembles its Device.
+// Detect identifies this machine and assembles its Device for the session
+// running now (GamingMode).
 func Detect() (*Device, error) {
 	c, err := MatchConfig()
 	if err != nil {
 		return nil, err
 	}
-	return Assemble(c)
+	return AssembleForSession(c, GamingMode())
+}
+
+// GamingMode reports whether a Steam Gaming Mode (gamescope) session is
+// running. A var so the daemon and CLI tests can answer without a session;
+// the real answer is internal/session's, wired in by register.
+var GamingMode = func() bool { return false }
+
+// Reasons the capabilities a device yields to Steam give on every surface.
+const (
+	yieldPowerReason  = "Steam sets the power limits in Gaming Mode (its performance overlay); switch to the desktop to set them here"
+	yieldChargeReason = "Steam sets the charge limit in Gaming Mode; switch to the desktop to set it here"
+)
+
+// YieldToSteam returns c with the capabilities its device data yields to
+// Steam in Gaming Mode taken out, and why each one went. Pure: the caller
+// decides whether a gamescope session is running.
+//
+// Only what steamos-manager writes on such a device is yielded — the power
+// limits and the charge limit. Fans, profiles, lighting and the rest stay.
+func YieldToSteam(c Config) (Config, []Unavailable) {
+	var gone []Unavailable
+	if c.Power != nil && c.Power.YieldInGamingMode {
+		c.Power = nil
+		gone = append(gone, Unavailable{Capability: "power", Reason: yieldPowerReason})
+	}
+	if c.Battery != nil && c.Battery.YieldInGamingMode && c.Battery.Caps().ChargeLimit {
+		b := *c.Battery
+		off := false
+		b.ChargeLimit = &off
+		c.Battery = &b
+		gone = append(gone, Unavailable{Capability: "charge-limit", Reason: yieldChargeReason})
+	}
+	return c, gone
+}
+
+// AssembleForSession assembles c, first yielding to Steam what the device
+// data says to when gamingMode is true.
+func AssembleForSession(c Config, gamingMode bool) (*Device, error) {
+	yields := (c.Power != nil && c.Power.YieldInGamingMode) ||
+		(c.Battery != nil && c.Battery.YieldInGamingMode)
+	var gone []Unavailable
+	if gamingMode {
+		c, gone = YieldToSteam(c)
+	}
+	d, err := Assemble(c)
+	if err != nil {
+		return nil, err
+	}
+	d.Unavailable = append(d.Unavailable, gone...)
+	d.YieldsInGamingMode, d.GamingMode = yields, gamingMode
+	return d, nil
 }
 
 // Assemble builds a Device from a validated config by running each present

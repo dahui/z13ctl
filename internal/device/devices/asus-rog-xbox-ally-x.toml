@@ -1,0 +1,157 @@
+# ASUS ROG Xbox Ally X (RC73XA): Ryzen AI Z2 Extreme handheld.
+#
+# Everything here was surveyed or measured on one machine (BIOS RC73XA.317,
+# CachyOS 7.3.5) on 2026-11-26; .claude/plans/xbox-ally-x.md has the
+# evidence. It runs the same ASUS interfaces as the Z13 (asus-wmi,
+# asus-armoury, the custom fan curve), with this machine's limits.
+
+[device]
+id    = "asus-rog-xbox-ally-x"
+model = "RC73XA"
+name  = "ASUS ROG Xbox Ally X"
+
+# product_name reads "ROG Xbox Ally X RC73XA_RC73XA". The non-X Xbox Ally
+# (RC73YA) is a different machine: steamos-manager drives its TDP through
+# amdgpu at 4–20 W, so it would need a file of its own.
+[[device.match]]
+vendor         = "ASUSTeK COMPUTER INC."
+product_prefix = "ROG Xbox Ally X RC73XA"
+
+# Two fans, two curve channels of eight points (asus_custom_fan_curve), as on
+# the Z13. The scale is 0–255 with 255 at full speed (8000–8200 rpm with every
+# point below the current temperature); lower values are not linear on this
+# EC (30, 56 and 100 all ran ~6300–6600 rpm), so no presets until the low end
+# is characterised. The factory curve spans 48–62 °C.
+[fans]
+method   = "asus-nb-wmi"
+points   = 8
+temp_min = 30
+temp_max = 100
+labels   = ["Fan 1", "Fan 2"]
+rpm_max  = 8200
+
+# asus-armoury publishes PL1 7–35, PL2 14–45, PL3 19–55 W and the driver takes
+# its ranges from there; these numbers are the asus-nb-wmi fallback and the
+# envelope before the kernel is read. The safe sustained maximum is the
+# kernel's own maximum, so the high-TDP fan floor never applies (G-Helper has
+# none for the Ally either): 35 W ran at 85–88 °C under a full load on the
+# firmware's own curve.
+[power]
+method         = "asus-nb-wmi-ppt"
+tdp_min        = 7
+tdp_max_safe   = 35
+tdp_max_forced = 35
+tdp_default    = 17
+boot_cache_pl1 = 5
+
+# Steam's TDP slider writes these same limits in Gaming Mode (steamos-manager's
+# rog_xbox_ally_x config: asus-armoury, after forcing the performance profile),
+# so there they are Steam's and voltaire offers them on the desktop only.
+yield_in_gaming_mode = true
+
+# The firmware's own limits per profile, measured on AC under yes x16 with
+# RAPL (2026-11-26): low-power held 13.7 W (16.8 W for the first second),
+# balanced 27 W for ~6 s, then 22 W, then 17.8 W; performance 57 W for ~6 s,
+# then 43–50 W, then 36.5 W. These match ASUS's Silent/Performance/Turbo
+# figures for this model (13/17/35 W on AC). low-power's fast limits sit
+# below asus-armoury's minimums (PL2 14, PL3 19), so its row names those.
+# apu and platform mirror PL2: asus-armoury has neither here, but the
+# deprecated asus-nb-wmi fallback does, and a row without them would write 0.
+[power.stock_ppt]
+low-power   = { pl1 = 13, pl2 = 14, fppt = 19, apu = 14, platform = 14 }
+balanced    = { pl1 = 17, pl2 = 22, fppt = 27, apu = 22, platform = 22 }
+performance = { pl1 = 35, pl2 = 45, fppt = 55, apu = 45, platform = 45 }
+
+# The same measurement on battery (pack at 100–97 %, 2026-11-26): low-power
+# 13.0 W flat; balanced 27 W for ~7 s, then 21.7 W, still 21.6 W at three
+# minutes (on AC it had dropped to 17.8 W by then, so its sustained limit on
+# battery is at least 22 W over that horizon); performance 37 W for ~7 s, then
+# 30.8 W, then 28.1 W at 76 °C. armoury still accepts 35 W on battery, so no
+# tdp_max_battery.
+[power.stock_ppt_battery]
+low-power   = { pl1 = 13, pl2 = 14, fppt = 19, apu = 14, platform = 14 }
+balanced    = { pl1 = 22, pl2 = 22, fppt = 27, apu = 22, platform = 22 }
+performance = { pl1 = 28, pl2 = 31, fppt = 37, apu = 31, platform = 31 }
+
+# The asus-wmi handler's names on this kernel (amd-pmf offers the same three).
+# The labels are G-Helper's for the Ally.
+[profiles]
+method  = "platform-profile"
+names   = ["low-power", "balanced", "performance"]
+handler = "asus-wmi"
+default = "balanced"
+
+[profiles.labels]
+low-power   = "Silent"
+balanced    = "Balanced"
+performance = "Turbo"
+
+[toggles]
+method = "asus-armoury"
+
+[[toggles.entries]]
+id          = "boot_sound"
+label       = "POST boot sound"
+description = "Play the startup sound when the handheld powers on"
+
+[[toggles.entries]]
+id          = "mcu_powersave"
+label       = "Controller power saving"
+description = "Power the controller down while asleep: less battery drain, slightly slower wake"
+
+# The charge limit holds (2026-11-26, on AC at 95–97 %): charging at ~30 W,
+# writing 90 to charge_control_end_threshold gave "Not charging" within 5 s
+# and power_now fell to 0 (it decays by halves over ~60 s; the flow stopped
+# at the write); writing 100 restarted it within 10 s. The threshold reads 0
+# until something writes it (0 is accepted back) and the kernel publishes no
+# range, so the range is G-Helper's, the Z13's. charge_mode reads 10, outside
+# its own 0/1/2, so the charger kind comes from power_supply.
+[battery]
+method           = "power-supply"
+health           = true
+charge_limit_min = 40
+charge_limit_max = 100
+# steamos-manager writes the threshold in Gaming Mode too (acpi_sb).
+yield_in_gaming_mode = true
+
+[cpu]
+boost = "cpufreq"
+
+# No [undervolt]: there is no ryzen_smu here, G-Helper hides undervolting on
+# the Z2 Extreme, and our Strix Point Curve Optimizer row has never run on
+# hardware.
+
+[telemetry]
+method          = "hwmon-rapl"
+power_draw      = "rapl"
+gpu             = "amdgpu"
+cpu_stats       = "procfs"
+npu             = "amdxdna"
+net             = "procfs"
+history_seconds = 3600
+
+# The Armoury Crate button (left of the screen) and the Library button (right)
+# reach the controller's gamepad node
+# ("ASUS ROG Ally X Gamepad", not a typing keyboard to udev) as keys, and
+# InputPlumber, which manages the controller, maps them (capability map aly2):
+# the left Armoury Crate button to Keyboard, the right Library button to
+# QuickAccess. Long presses are not declared until captured on this machine.
+[[buttons]]
+id           = "armoury-crate"
+label        = "Armoury Crate button"
+default      = true
+method       = "evdev-key"
+device       = "ASUS ROG Ally X Gamepad"
+keycode      = 186 # KEY_F16
+inputplumber = "Keyboard"
+
+[[buttons]]
+id           = "library"
+label        = "Library button"
+method       = "evdev-key"
+device       = "ASUS ROG Ally X Gamepad"
+keycode      = 148 # KEY_PROG1
+inputplumber = "QuickAccess"
+
+[quickbar]
+controls = ["profile", "brightness", "volume", "cpu-boost", "refresh-rate"]

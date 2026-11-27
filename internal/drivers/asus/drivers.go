@@ -204,7 +204,11 @@ func ThrottlePolicyPath() string { return pptBasePath + "/throttle_thermal_polic
 // as a row like any other. An attribute joins this list only once offering it
 // as a casual switch has been judged safe; the kernel then supplies its legal
 // values and writability, and device data its wording.
-var safeToggles = []string{"boot_sound", "panel_overdrive"}
+//
+// mcu_powersave (the ROG Ally family's controller MCU powering down in
+// suspend) joined for the Xbox Ally X: a 0/1 switch whose either value leaves
+// the machine working, read 1 on that machine as shipped.
+var safeToggles = []string{"boot_sound", "panel_overdrive", "mcu_powersave"}
 
 // toggleValuePath is an armoury attribute's value file.
 func toggleValuePath(id string) string { return sysFirmwareAttrDir + "/" + id + "/current_value" }

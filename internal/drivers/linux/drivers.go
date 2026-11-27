@@ -148,7 +148,18 @@ type battery struct {
 
 func (b battery) Caps() driver.BatteryCaps { return b.caps }
 
-func (battery) ChargeLimit() (int, error) { return readIntFile(FindBatteryThresholdPath()) }
+// ChargeLimit reads the end threshold. 0 is reported as 100: it is the
+// value firmware leaves when nothing has written a threshold, and it charges
+// to full then (the Xbox Ally X reads 0 from boot and charged at 97 %); no
+// firmware stops charging at 0 %. Reported as is, the CLI printed "0%" and
+// the GUI's slider, whose range starts at 40, could not show it at all.
+func (battery) ChargeLimit() (int, error) {
+	v, err := readIntFile(FindBatteryThresholdPath())
+	if err == nil && v == 0 {
+		v = 100
+	}
+	return v, err
+}
 
 func (battery) SetChargeLimit(percent int) error {
 	return writeIntFile(FindBatteryThresholdPath(), percent)

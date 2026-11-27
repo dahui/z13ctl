@@ -15,42 +15,43 @@ does nothing.
 |---|---|
 | [ASUS ROG Flow Z13 (2025)](/devices/asus-rog-flow-z13-2025) | every GZ302 variant (GZ302EA and others) |
 | [OneXPlayer X2 Mini Pro](/devices/onexplayer-x2-mini-pro) | the X2 Mini Pro (AMD Strix Halo) |
+| [ASUS ROG Xbox Ally X](/devices/asus-rog-xbox-ally-x) | the Xbox Ally X (RC73XA) |
 
 ## Compatibility
 
 "No" links to the explanation on the device's page. Most gaps are in the
 kernel, not in voltaire, and close when a kernel with the support ships.
 
-| Feature | ROG Flow Z13 (2025) | OneXPlayer X2 Mini Pro |
-|---|---|---|
-| **Power** | | |
-| TDP (power limits) | Yes: three limits, 28–80 W sustained | Yes: one slider, 10–85 W ([needs ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu)) |
-| Firmware power profiles | Yes: quiet, balanced, performance | [Only without ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu) |
-| Saved custom profiles | Yes: fan curve, TDP and undervolt | Yes: TDP and undervolt |
-| Switch profile on AC / battery | Yes | Yes |
-| CPU boost on/off | Yes | Yes |
-| CPU undervolt (Curve Optimizer) | Yes ([needs ryzen_smu](/installation#optional-ryzen_smu-kernel-module)) | Yes: [a setting like the TDP slider](/devices/onexplayer-x2-mini-pro#undervolt) (needs ryzen_smu) |
-| **Cooling** | | |
-| Fan speed readout | Yes: two fans | Yes |
-| Custom fan curves | Yes, with presets | [No](/devices/onexplayer-x2-mini-pro#fan-control) |
-| **Lighting** | | |
-| RGB lighting | Yes: keyboard and lightbar | [No: joystick rings not supported yet](/devices/onexplayer-x2-mini-pro#joystick-lighting) |
-| **Battery** | | |
-| Charge level, rate, time left, health | Yes | Yes |
-| Charge limit | Yes: 40–100 % | [No](/devices/onexplayer-x2-mini-pro#charge-limit) |
-| **Display and sound** | | |
-| Screen brightness | Yes | Yes |
-| Volume | Yes | Yes |
-| Refresh rate | Yes ([KDE Plasma](#refresh-rate)) | Yes ([KDE Plasma](#refresh-rate)) |
-| HDR on/off | [No](#hdr) | [No](#hdr) |
-| **Buttons and controller** | | |
-| Hardware button opens voltaire | Armoury Crate button | Keyboard, OneXPlayer or Home button |
-| Controller vibration strength | No built-in controller | Yes: off to 5 |
-| **Firmware settings** | | |
-| Firmware switches | Yes: POST boot sound, panel overdrive | [None](/devices/onexplayer-x2-mini-pro#firmware-settings) |
-| **Telemetry** | | |
-| Temperatures, power, load, clocks, memory, network | Yes | Yes |
-| NPU power and load | Yes | [No, while suspend needs `amd_iommu=off`](/devices/onexplayer-x2-mini-pro#npu-telemetry) |
+| Feature | ROG Flow Z13 (2025) | OneXPlayer X2 Mini Pro | ROG Xbox Ally X |
+|---|---|---|---|
+| **Power** | | | |
+| TDP (power limits) | Yes: three limits, 28–80 W sustained | Yes: one slider, 10–85 W ([needs ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu)) | Yes: three limits, 7–35 W sustained |
+| Firmware power profiles | Yes: quiet, balanced, performance | [Only without ryzen_smu](/devices/onexplayer-x2-mini-pro#tdp-needs-ryzen-smu) | Yes: Silent, Balanced, Turbo |
+| Saved custom profiles | Yes: fan curve, TDP and undervolt | Yes: TDP and undervolt | Yes: fan curve and TDP |
+| Switch profile on AC / battery | Yes | Yes | Yes |
+| CPU boost on/off | Yes | Yes | Yes |
+| CPU undervolt (Curve Optimizer) | Yes ([needs ryzen_smu](/installation#optional-ryzen_smu-kernel-module)) | Yes: [a setting like the TDP slider](/devices/onexplayer-x2-mini-pro#undervolt) (needs ryzen_smu) | [No](/devices/asus-rog-xbox-ally-x#undervolt) |
+| **Cooling** | | | |
+| Fan speed readout | Yes: two fans | Yes | Yes: two fans |
+| Custom fan curves | Yes, with presets | [No](/devices/onexplayer-x2-mini-pro#fan-control) | Yes, [no presets yet](/devices/asus-rog-xbox-ally-x#fan-presets) |
+| **Lighting** | | | |
+| RGB lighting | Yes: keyboard and lightbar | [No: joystick rings not supported yet](/devices/onexplayer-x2-mini-pro#joystick-lighting) | [No: joystick rings not supported yet](/devices/asus-rog-xbox-ally-x#joystick-lighting) |
+| **Battery** | | | |
+| Charge level, rate, time left, health | Yes | Yes | Yes |
+| Charge limit | Yes: 40–100 % | [No](/devices/onexplayer-x2-mini-pro#charge-limit) | Yes: 40–100 %, desktop only (Steam sets it in Gaming Mode) |
+| **Display and sound** | | | |
+| Screen brightness | Yes | Yes | Yes |
+| Volume | Yes | Yes | Yes |
+| Refresh rate | Yes ([KDE Plasma](#refresh-rate)) | Yes ([KDE Plasma](#refresh-rate)) | Yes ([KDE Plasma](#refresh-rate)) |
+| HDR on/off | [No](#hdr) | [No](#hdr) | [No](#hdr) |
+| **Buttons and controller** | | | |
+| Hardware button opens voltaire | Armoury Crate button | Keyboard, OneXPlayer or Home button | Armoury Crate or Library button |
+| Controller vibration strength | No built-in controller | Yes: off to 5 | [Not yet](/devices/asus-rog-xbox-ally-x#controller-settings) |
+| **Firmware settings** | | | |
+| Firmware switches | Yes: POST boot sound, panel overdrive | [None](/devices/onexplayer-x2-mini-pro#firmware-settings) | Yes: POST boot sound, controller power saving |
+| **Telemetry** | | | |
+| Temperatures, power, load, clocks, memory, network | Yes | Yes | Yes |
+| NPU power and load | Yes | [No, while suspend needs `amd_iommu=off`](/devices/onexplayer-x2-mini-pro#npu-telemetry) | Yes |
 
 Each device's page has the details: what each feature needs installed, the
 numbers measured on that machine, and what does not work yet.

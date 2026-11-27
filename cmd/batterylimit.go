@@ -45,7 +45,7 @@ top of the range removes any limit (charges to full).`,
 				return err
 			}
 			if hw.Battery == nil || !hw.Battery.Caps().ChargeLimit {
-				return fmt.Errorf("no battery charge control on this device")
+				return fmt.Errorf("%s", hw.Missing("charge-limit", "no battery charge control on this device"))
 			}
 			caps := hw.Battery.Caps()
 			limit, err := strconv.Atoi(batterySetFlag)

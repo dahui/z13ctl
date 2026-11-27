@@ -175,6 +175,13 @@ type PowerConfig struct {
 	// Optional: 0 leaves safety.CacheStale's own fallback (PL1 at tdp_min), and
 	// an interface that reports its defaults (asus-armoury) supplies its own.
 	BootCachePL1 int `toml:"boot_cache_pl1"`
+
+	// YieldInGamingMode leaves the power limits to Steam while a gamescope
+	// session runs: on a handheld whose SteamOS configuration has
+	// steamos-manager write the same limits (Steam's TDP slider), both
+	// writing is a fight. The capability is then unavailable with that
+	// reason, as for a missing module; the desktop session keeps it.
+	YieldInGamingMode bool `toml:"yield_in_gaming_mode"`
 	// Limits ([[power.limits]]) narrows and names the settable limits: which of
 	// pl1/pl2/pl3 to offer, in order, and their wording. Optional — without it
 	// the power driver offers every limit the kernel exposes, in its own words;
@@ -394,6 +401,10 @@ type BatteryConfig struct {
 	// ChargingNeedsFlow marks a pack whose `status` reads "Charging" whether
 	// or not current flows (driver.BatteryCaps.ChargingNeedsFlow).
 	ChargingNeedsFlow bool `toml:"charging_needs_flow"`
+
+	// YieldInGamingMode leaves the charge limit to Steam while a gamescope
+	// session runs (steamos-manager writes it there); see the power key.
+	YieldInGamingMode bool `toml:"yield_in_gaming_mode"`
 }
 
 // The charge-limit range a device gets when its data declares none: what

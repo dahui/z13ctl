@@ -66,7 +66,7 @@ func hardware() (*device.Device, error) {
 			}
 		}
 		hwConfig = c
-		hwDev, hwErr = device.Assemble(c)
+		hwDev, hwErr = device.AssembleForSession(c, device.GamingMode())
 	})
 	return hwDev, hwErr
 }
