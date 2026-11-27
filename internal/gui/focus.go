@@ -205,7 +205,13 @@ func (w *Window) setFocusIdx(idx int) {
 		// shown once the focus rests on the control (showHintAfter), so
 		// stepping through the list does not flash a hint at every stop.
 		// showHint hides the label when the widget has no registered text.
-		w.showHintAfter(w.focusItems[idx].widget)
+		// Switched off in Settings, a focus move still hides any hint
+		// showing; pointer hover keeps its own dwell either way.
+		if w.gamepadHints {
+			w.showHintAfter(w.focusItems[idx].widget)
+		} else {
+			w.hideHint()
+		}
 		slog.Debug("gamepad: focus", "idx", idx,
 			"row", w.focusItems[idx].row, "col", w.focusItems[idx].col,
 			"section", w.focusItems[idx].section)

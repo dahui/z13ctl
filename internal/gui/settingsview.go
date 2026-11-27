@@ -70,6 +70,9 @@ type settingsView struct {
 	pressLbl  *gtk.Label
 	pressRow  *gtk.Box // hidden while no button opens voltaire: nothing to arrange
 
+	// hintsSw switches hints on controller focus (Window.gamepadHints).
+	hintsSw *gtk.Switch
+
 	// chooser picks which of the device's buttons opens voltaire, or none;
 	// nil when the daemon lists no buttons to choose from.
 	chooser *dropdown
@@ -116,11 +119,10 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	inner.SetMarginTop(10)
 	inner.SetMarginBottom(8)
 
-	// The VOLTAIRE card holds the hardware button's preference and nothing
-	// else, so a device with no button gets no card (buttonpref.ShowPreference).
-	if buttonpref.ShowPreference(w.device) {
-		inner.Append(s.buildAppCard())
-	}
+	// The VOLTAIRE card: voltaire's own preferences. The hardware button's
+	// rows only where there is a button (buttonpref.ShowPreference); the hints
+	// switch everywhere.
+	inner.Append(s.buildAppCard())
 	inner.Append(s.buildQuickbarCard())
 	// The controller's vibration strength, above FIRMWARE: a setting of this
 	// machine's hardware, but one voltaire keeps rather than the BIOS.
@@ -177,8 +179,9 @@ func newSettingsView(w *Window, host viewHost) *settingsView {
 	return s
 }
 
-// buildAppCard builds voltaire's own preferences — today, which surface the
-// hardware button opens.
+// buildAppCard builds voltaire's own preferences: which button opens it and
+// which surface a press opens, where the device has a button, and whether a
+// control's hint appears on controller focus.
 //
 // The control is a pair of buttons rather than a switch: a switch would have to
 // be labelled for one of the two outcomes ("single press opens the full
@@ -194,6 +197,50 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 	heading.AddCSSClass("section-label")
 	card.Append(heading)
 
+	if buttonpref.ShowPreference(s.w.device) {
+		s.buildPressRows(card)
+	}
+	card.Append(s.buildHintsRow())
+	return card
+}
+
+// buildHintsRow builds the switch for hints on controller focus. A switch,
+// unlike the press preference: "off" here describes something (no hint until
+// the pointer asks for one), so the negation is a real choice, not an absence.
+func (s *settingsView) buildHintsRow() *gtk.Box {
+	line := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	line.SetMarginTop(4)
+	text := gtk.NewBox(gtk.OrientationVertical, 2)
+	text.SetHExpand(true)
+	label := gtk.NewLabel("Hints on controller focus")
+	label.SetHAlign(gtk.AlignStart)
+	label.AddCSSClass("setting-name")
+	text.Append(label)
+	desc := gtk.NewLabel("Show a control's help when the controller rests on it. Hovering with the mouse always shows it.")
+	desc.SetHAlign(gtk.AlignStart)
+	desc.SetXAlign(0)
+	desc.SetWrap(true)
+	desc.AddCSSClass("setting-desc")
+	text.Append(desc)
+	line.Append(text)
+
+	sw := gtk.NewSwitch()
+	sw.SetVAlign(gtk.AlignCenter)
+	sw.SetActive(s.w.gamepadHints)
+	sw.ConnectStateSet(func(on bool) bool {
+		s.w.setGamepadHints(on) // a no-op when it already says so
+		return false
+	})
+	if s.w.gamescope {
+		addTouchActivate(sw, func() { sw.SetActive(!sw.Active()) })
+	}
+	s.hintsSw = sw
+	line.Append(sw)
+	return line
+}
+
+// buildPressRows appends the hardware button's rows to the VOLTAIRE card.
+func (s *settingsView) buildPressRows(card *gtk.Box) {
 	if buttonpref.ShowChooser(s.w.device) {
 		card.Append(s.buildChooser())
 	}
@@ -243,7 +290,6 @@ func (s *settingsView) buildAppCard() *gtk.Box {
 	card.Append(line)
 
 	s.syncPress()
-	return card
 }
 
 // buildChooser builds the "Open voltaire with" row: the device's buttons and
@@ -447,11 +493,9 @@ func (s *settingsView) buildFocusList() {
 	// right has to reach the second. A coordinate that disagrees with what is on
 	// screen is the failure nobody notices with a mouse in their hand — the
 	// profile row on the dashboard was written the wrong way round first.
-	// No card, no section: a device without a hardware button builds no
-	// preference buttons (pressBtns stays empty).
-	if s.chooser != nil || len(s.pressBtns) > 0 {
-		b.Section("voltaire")
-	}
+	// The card is always there now (the hints switch); a device without a
+	// hardware button builds no preference buttons (pressBtns stays empty).
+	b.Section("voltaire")
 	if s.chooser != nil {
 		c := b.One()
 		btn := s.chooser.btn
@@ -471,6 +515,14 @@ func (s *settingsView) buildFocusList() {
 				onActivate: func() { btn.Activate() },
 			})
 		}
+	}
+
+	if sw := s.hintsSw; sw != nil {
+		c := b.One()
+		items = append(items, focusItem{
+			widget: sw, row: c.Row, col: c.Col, section: c.Section,
+			onActivate: func() { sw.SetActive(!sw.Active()) },
+		})
 	}
 
 	s.appendQuickbarFocus(b, &items)

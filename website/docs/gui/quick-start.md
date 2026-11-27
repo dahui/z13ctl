@@ -320,6 +320,13 @@ The change takes effect at once; there is nothing to restart and nothing to
 save. It is stored in `~/.config/voltaire/config.toml` as `button_press`, beside
 your theme.
 
+### Hints on controller focus
+
+**Hints on controller focus** (on by default) shows a control's help when the
+controller's focus rests on it for about a second. Switch it off once you know
+the controls; hovering with the mouse still shows the hint. It is stored in
+`config.toml` as `gamepad_hints = "off"`.
+
 ### The drawer's layout
 
 The **Quickbar** card lists every drawer section your machine supports, each
@@ -376,7 +383,8 @@ voltaire-gui supports full gamepad control for use in Steam Gaming Mode:
 
 Rest on a control for about a second and its help hint appears beside it;
 moving on hides it, so stepping through the drawer does not cover the controls
-next to the one you are on.
+next to the one you are on. **Hints on controller focus** in the Settings tab
+turns this off; mouse hover still shows hints.
 
 Gamepad focus (indicated by a highlight border) is automatically hidden when
 the mouse moves. To disable gamepad input entirely, set

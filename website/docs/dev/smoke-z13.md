@@ -380,7 +380,7 @@ cgo); the rules behind them are unit tested in `internal/profileui`.
 - [x] Hints: hovering the theme button (or any hinted control) for ~half a
       second shows its help text anchored to it, on KDE **and** in Gaming
       Mode; it never appears over an open dropdown.
-- [ ] Gamepad hints (changed 2026-11-18): resting the gamepad focus on a
+- [x] Gamepad hints (changed 2026-11-18): resting the gamepad focus on a
       hinted control for ~1 s shows its hint; stepping on before then shows
       none, and opening a dropdown or moving the mouse within that second
       cancels it.

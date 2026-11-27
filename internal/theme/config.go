@@ -50,7 +50,17 @@ type AppConfig struct {
 	// comparable, which TestUpdateAppConfigPreservesEveryOtherField relies on.
 	// A controls list in the hand-edited gui.toml takes precedence over it.
 	QuickbarControls string
+
+	// GamepadHints is whether a control's hint appears when the controller's
+	// focus rests on it: "" is on (the default), "off" turns it off. Pointer
+	// hover shows hints either way. Read through GamepadHintsOn.
+	GamepadHints string
 }
+
+// GamepadHintsOn reports whether hints appear on controller focus. Anything
+// but "off" is on, so an unreadable value keeps the default rather than
+// silently hiding help.
+func (c AppConfig) GamepadHintsOn() bool { return c.GamepadHints != "off" }
 
 // LoadAppConfig reads ~/.config/voltaire/config.toml.
 // Returns a default config (theme "rog-dark") if the file doesn't exist or can't be parsed.
@@ -92,6 +102,8 @@ func LoadAppConfig() AppConfig {
 			cfg.RefreshBattery = v
 		case "quickbar_controls":
 			cfg.QuickbarControls = v
+		case "gamepad_hints":
+			cfg.GamepadHints = v
 		}
 	}
 	return cfg
@@ -122,6 +134,9 @@ func SaveAppConfig(cfg AppConfig) {
 	}
 	if cfg.QuickbarControls != "" {
 		content += "quickbar_controls = \"" + cfg.QuickbarControls + "\"\n"
+	}
+	if cfg.GamepadHints != "" {
+		content += "gamepad_hints = \"" + cfg.GamepadHints + "\"\n"
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o644); err != nil {
 		slog.Warn("failed to write config", "err", err)

@@ -148,7 +148,7 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	SaveAppConfig(AppConfig{
 		Theme: "nord", Accent: "sapphire", ButtonPress: "window",
 		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
-		QuickbarControls: "battery,lighting",
+		QuickbarControls: "battery,lighting", GamepadHints: "off",
 	})
 
 	UpdateAppConfig(func(cfg *AppConfig) { cfg.Accent = "lavender" })
@@ -160,7 +160,7 @@ func TestUpdateAppConfigPreservesEveryOtherField(t *testing.T) {
 	want := AppConfig{
 		Theme: "nord", Accent: "lavender", ButtonPress: "window",
 		RefreshAutoswitch: "true", RefreshAC: "180", RefreshBattery: "60",
-		QuickbarControls: "battery,lighting",
+		QuickbarControls: "battery,lighting", GamepadHints: "off",
 	}
 	// Compared whole rather than field by field: every previous field here was
 	// added by hand, and a new one that nobody remembers to assert is exactly
@@ -214,5 +214,15 @@ func TestRefreshPrefsRoundTrip(t *testing.T) {
 	if got.RefreshAutoswitch != "" || got.RefreshAC != "" || got.RefreshBattery != "" {
 		t.Errorf("refresh = %q %q/%q, want empty when unset",
 			got.RefreshAutoswitch, got.RefreshAC, got.RefreshBattery)
+	}
+}
+
+// Hints on controller focus are on unless switched off, and only "off" is
+// off: a value nobody recognises keeps the help visible.
+func TestGamepadHintsOn(t *testing.T) {
+	for v, want := range map[string]bool{"": true, "off": false, "on": true, "nonsense": true} {
+		if got := (AppConfig{GamepadHints: v}).GamepadHintsOn(); got != want {
+			t.Errorf("GamepadHints %q: on = %v, want %v", v, got, want)
+		}
 	}
 }

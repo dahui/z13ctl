@@ -224,6 +224,11 @@ type Window struct {
 	// made inside that closure, so this needs no atomic. See internal/buttonpref.
 	press buttonpref.Surface
 
+	// gamepadHints is whether a hint appears when the controller's focus rests
+	// on a control (setFocusIdx). Pointer hover is unaffected. The Settings
+	// tab's VOLTAIRE card switches it; GTK thread only, like press.
+	gamepadHints bool
+
 	// refreshPrefs is the screen refresh rate to select on each power source,
 	// and onAC/sourceKnown are the latch that makes the switch edge-triggered.
 	// They live on Window rather than on the DISPLAY card because the switch
@@ -387,6 +392,7 @@ func New(app *gtk.Application) *Window {
 		hasVolume:     audio.Available(),
 		edge:          resolveEdge(guiFile),
 		press:         resolveButtonPress(),
+		gamepadHints:  theme.LoadAppConfig().GamepadHintsOn(),
 		refreshPrefs:  resolveRefreshPrefs(),
 		colors:        theme.DefaultColors,
 		gamescope:     os.Getenv("GAMESCOPE_WAYLAND_DISPLAY") != "",
@@ -691,6 +697,26 @@ func (w *Window) setButtonPress(s buttonpref.Surface) {
 	w.press = s
 	theme.UpdateAppConfig(func(cfg *theme.AppConfig) { cfg.ButtonPress = string(s) })
 	slog.Info("button preference changed", "single_press_opens", s)
+}
+
+// setGamepadHints switches hints on controller focus and saves the choice.
+// A hint now showing is hidden on switching off, so the switch's own hint
+// (if any) does not linger as a contradiction.
+func (w *Window) setGamepadHints(on bool) {
+	if on == w.gamepadHints {
+		return
+	}
+	w.gamepadHints = on
+	theme.UpdateAppConfig(func(cfg *theme.AppConfig) {
+		cfg.GamepadHints = ""
+		if !on {
+			cfg.GamepadHints = "off"
+		}
+	})
+	if !on {
+		w.hideHint()
+	}
+	slog.Info("gamepad hints", "on", on)
 }
 
 // show delegates to the display backend.

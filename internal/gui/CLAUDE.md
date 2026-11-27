@@ -296,8 +296,9 @@ contrib/
     `scaleText`, `advValues`) or checks — `commitDirty`, `readTdpRequest`,
     `applyLimits` and `buildFocusList` all do. A limit the device does not let
     the user set is sent blank, which the daemon fills from `watts`. The
-    Settings page drops its VOLTAIRE card without a hardware button and its
-    FIRMWARE card without toggles. Absence is decided at build time, like the
+    Settings page drops the VOLTAIRE card's button rows without a hardware
+    button (the card itself stays since 2026-11-26, for the hints-on-focus
+    switch) and its FIRMWARE card without toggles. Absence is decided at build time, like the
     widgets; a later change in the capability set is logged and needs a
     restart, as before. On the Z13 every card exists and the focus dump is
     byte-identical.
