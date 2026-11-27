@@ -206,6 +206,19 @@ func (w *Window) sendProfileSet(prof string) {
 	}()
 }
 
+// sendChargeOnce starts or cancels a one-time charge to full. The daemon's
+// state-changed broadcast resyncs the switch and its note.
+func (w *Window) sendChargeOnce(on bool) {
+	go func() {
+		if err := apiresult.Err(api.SendChargeOnce(on)); err != nil {
+			w.reportError("Charge to full once", err)
+			w.refreshState() // put the switch back where the daemon has it
+			return
+		}
+		w.clearErrorAsync()
+	}()
+}
+
 // sendCPUBoostSet turns boost clocks on or off through the daemon.
 //
 // Deliberately not sendFeatureSet: boost is not one of the device's firmware

@@ -21,6 +21,7 @@ const (
 	CmdAutoswitchGet     = "autoswitch-get"
 	CmdBatteryLimit      = "batterylimit"
 	CmdBatteryLimitGet   = "batterylimit-get"
+	CmdChargeOnce        = "batterylimit-full-once"
 	CmdDeviceGet         = "device-get"
 	CmdTelemetryHistory  = "telemetry-history"
 	CmdFeature           = "feature"

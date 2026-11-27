@@ -399,6 +399,7 @@ Each mode in `lighting.modes` says which inputs it uses — `color`, `color2`,
 | Get profile | `{"cmd":"profile-get"}` | `ok`, `value` |
 | Set battery limit | `{"cmd":"batterylimit","set":"80"}` | `ok` |
 | Get battery limit | `{"cmd":"batterylimit-get"}` | `ok`, `value` |
+| Charge to full once / cancel | `{"cmd":"batterylimit-full-once","set":"on"}` (`"off"` cancels) | `ok` |
 | Set boot sound | `{"cmd":"bootsound","set":"1"}` | `ok` |
 | Get boot sound | `{"cmd":"bootsound-get"}` | `ok`, `value` |
 | Choose the button that opens voltaire | `{"cmd":"button-set","set":"armoury-crate"}` | `ok` |
@@ -410,6 +411,14 @@ Each mode in `lighting.modes` says which inputs it uses — `color`, `color2`,
 | Get panel overdrive | `{"cmd":"paneloverdrive-get"}` | `ok`, `value` |
 | Set firmware toggle | `{"cmd":"feature","id":"boot_sound","set":"1"}` | `ok` |
 | Get firmware toggle | `{"cmd":"feature-get","id":"boot_sound"}` | `ok`, `value` |
+
+`batterylimit-full-once` lifts the charge limit to the device's maximum until
+the battery is full, then puts the saved limit back; as in G-Helper, unplugging
+part-way does not end it. `get-state`'s `charge_once` is true while it runs,
+and `battery_limit` stays the limit it returns to. Setting a limit with
+`batterylimit` cancels it. It is refused when no limit is set (the battery
+already charges to full), when the battery is already full, and in Gaming Mode
+where Steam owns the limit.
 
 `profile` accepts one of the device's firmware profiles (`device-get`'s
 `profiles.names`; `quiet`, `balanced` and `performance` on the Z13) or the name
@@ -705,6 +714,8 @@ The file is written atomically after every successful command. It stores:
   effect. (Daemons before 2.0 cleared the rest of the entry on a per-zone off.)
 - `profile` — the active profile: a firmware profile, or a custom profile name
 - `battery_limit` — last-set charge limit
+- `charge_once` — a one-time charge to full is in progress (`battery_limit` is
+  the limit it returns to)
 - `custom_profiles` — saved custom profiles keyed by name, each holding its own
   `fan_curve`, `tdp`, and `undervolt`. This is the source of truth for custom
   settings.

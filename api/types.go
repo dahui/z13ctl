@@ -19,11 +19,17 @@ import (
 // values selecting "custom" would recall. Undervolt.Active is what says whether
 // an offset is applied to hardware right now; the values themselves survive a
 // switch to a firmware profile so they can be recalled.
+//
+// ChargeOnce is a one-time charge to full in progress (SendChargeOnce): the
+// hardware limit is held at the device's maximum until the pack is full, and
+// then the daemon writes Battery back. Battery stays the user's limit
+// throughout, so a client shows it as the limit to return to.
 type State struct {
 	Lighting           LightingState            `json:"lighting"`
 	Devices            map[string]LightingState `json:"devices,omitempty"` // per-device overrides keyed by name
 	Profile            string                   `json:"profile,omitempty"`
 	Battery            int                      `json:"battery_limit,omitempty"`
+	ChargeOnce         bool                     `json:"charge_once,omitempty"`
 	BootSound          int                      `json:"boot_sound,omitempty"`
 	PanelOverdrive     int                      `json:"panel_overdrive,omitempty"`
 	CustomProfiles     map[string]CustomProfile `json:"custom_profiles,omitempty"` // saved custom profiles keyed by name

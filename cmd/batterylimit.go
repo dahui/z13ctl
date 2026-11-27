@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/dahui/voltaire/api/v2"
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	batteryGetFlag bool
-	batterySetFlag string
+	batteryGetFlag      bool
+	batterySetFlag      string
+	batteryFullOnceFlag bool
 )
 
 var batterylimitCmd = &cobra.Command{
@@ -29,9 +31,18 @@ With --set, writes the threshold to the kernel (root or group access required).
 
 The accepted range is device data, since the kernel does not publish one; an
 out-of-range value is refused with the range this machine accepts. Writing the
-top of the range removes any limit (charges to full).`,
+top of the range removes any limit (charges to full).
+
+With --full-once, the limit is lifted until the battery is full, and then the
+daemon puts it back (G-Helper's "charge to 100% once"). Unplugging part-way
+does not end it; --full-once=false cancels it and restores the limit now, and
+so does setting a limit. It needs the daemon, which watches for the battery to
+fill.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		if cmd.Flags().Changed("full-once") {
+			return runChargeOnce(batteryFullOnceFlag)
+		}
 		if !batteryGetFlag && batterySetFlag == "" {
 			return cmd.Help()
 		}
@@ -87,12 +98,54 @@ top of the range removes any limit (charges to full).`,
 			return fmt.Errorf("reading battery limit: %w", err)
 		}
 		fmt.Println(limit)
+		// The number is what the hardware holds (scripts parse it); the
+		// note goes to stderr.
+		if _, st, err := api.SendGetState(); err == nil && st != nil && st.ChargeOnce {
+			fmt.Fprintf(os.Stderr, "note: charging to full once; the limit returns to %d%% when the battery is full\n", st.Battery)
+		}
 		return nil
 	},
+}
+
+// runChargeOnce starts or cancels a one-time charge to full. Daemon only: it
+// is the daemon that notices the pack is full and restores the limit, so a
+// direct write would lift the limit for good.
+func runChargeOnce(on bool) error {
+	hw, err := hardware()
+	if err != nil {
+		return err
+	}
+	if hw.Battery == nil || !hw.Battery.Caps().ChargeLimit {
+		return fmt.Errorf("%s", hw.Missing("charge-limit", "no battery charge control on this device"))
+	}
+	if dryRunFlag {
+		if on {
+			fmt.Printf("Would lift the battery charge limit to %d%% until the battery is full, then put the current limit back\n",
+				hw.Battery.Caps().ChargeLimitMax)
+		} else {
+			fmt.Println("Would cancel a one-time charge to full and put the limit back")
+		}
+		return nil
+	}
+	handled, err := api.SendChargeOnce(on)
+	if !handled {
+		return fmt.Errorf("charging to full once needs the voltaire daemon running: it watches for the battery to fill and puts the limit back")
+	}
+	if err != nil {
+		return err
+	}
+	if on {
+		fmt.Println("Charging to full once; the limit comes back when the battery is full")
+	} else {
+		fmt.Println("One-time charge cancelled; the limit is back")
+	}
+	return nil
 }
 
 func init() {
 	batterylimitCmd.Flags().BoolVar(&batteryGetFlag, "get", false, "Print the current battery charge limit")
 	batterylimitCmd.Flags().StringVar(&batterySetFlag, "set", "", "Set the battery charge limit, in percent")
+	batterylimitCmd.Flags().BoolVar(&batteryFullOnceFlag, "full-once", false,
+		"Charge to full once, then put the limit back (=false cancels)")
 	rootCmd.AddCommand(batterylimitCmd)
 }

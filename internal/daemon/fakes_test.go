@@ -117,9 +117,10 @@ func (t *memToggles) Set(id string, v int) error {
 }
 
 type memBattery struct {
-	log   *hwLog
-	caps  driver.BatteryCaps
-	limit int
+	log    *hwLog
+	caps   driver.BatteryCaps
+	limit  int
+	status *driver.BatteryStatus // nil: 80 % on mains
 }
 
 func (b *memBattery) Caps() driver.BatteryCaps  { return b.caps }
@@ -130,6 +131,9 @@ func (b *memBattery) SetChargeLimit(p int) error {
 	return nil
 }
 func (b *memBattery) Status() (driver.BatteryStatus, error) {
+	if b.status != nil {
+		return *b.status, nil
+	}
 	return driver.BatteryStatus{Capacity: 80, OnAC: true, ACKnown: true}, nil
 }
 

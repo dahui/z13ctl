@@ -110,7 +110,7 @@ func (w *Window) rebuildDrawer() {
 	}
 	w.profiles, w.autoswitch, w.battery, w.lighting = nil, nil, nil, nil
 	w.tdpSlider, w.uvSlider = nil, nil
-	w.boostSw, w.display = nil, nil
+	w.boostSw, w.display, w.chargeOnce = nil, nil, nil
 	w.brightness, w.volume = nil, nil
 	w.rumble = nil
 

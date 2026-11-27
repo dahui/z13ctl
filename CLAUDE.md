@@ -200,6 +200,7 @@ the record before changing what it covers.
 - [The token regexes must match *both* prefixes, and widening them was the load-bearing half of the migration](docs/decisions/0176-the-token-regexes-must-match-both-prefixes-and-widening-them.md)
 - [Where InputPlumber manages the controller, the drawer takes it through intercept mode, owned by the daemon](docs/decisions/0177-where-inputplumber-manages-the-controller-the-drawer-takes-it-through-intercept-mode.md)
 - [The Ally's rings are Aura over interface 2, and InputPlumber must leave it visible](docs/decisions/0178-the-ally-s-rings-are-aura-over-interface-2-and-inputplumber-must-leave-it-visible.md)
+- [A one-time charge to full lasts until the pack is full, and the saved limit stays the limit](docs/decisions/0179-a-one-time-charge-to-full-lasts-until-the-pack-is-full-and-the-saved-limit-stays-the-limit.md)
 
 ### GUI (see also `internal/gui/CLAUDE.md`)
 
@@ -774,10 +775,13 @@ diff whenever a main release touches `api/`.
    **M6** (Ally + generic AMD TOMLs).
 12. **Ports from main**: none outstanding (1.4.3 ported 2026-11-15); after any
     new main release, `git log v1.4.3..main`.
-13. **Port the hidraw interface fix to main (z13ctl 1.4.4)** — the lighting
-    grant there still covers every interface of the cover keyboard, its typing
-    interface included (entry above). The port is the rule change plus setup's
-    revocation; Jeff tags and decides on disclosure.
+13. **Port the hidraw interface fix to main (z13ctl 1.4.4)** — ported
+    2026-11-26 on branch `fix/hidraw-interface-grant` (worktree
+    `../z13ctl-1.4.4`): the ENV rule in setup and the packaged file, setup's
+    revocation (also run by the deb/rpm postinstall via `setup --perms-only`),
+    the daemon hints no longer suggesting a vendor-wide rule, both protocol
+    docs. Jeff commits, tags and decides on disclosure; release notes drafted
+    in `.claude/plans/z13ctl-1.4.4-release-notes.md`.
 14. **Z13 button candidates**: an evtest capture on "Asus WMI hotkeys" while
     pressing the Fn keys, keeping only keys that arrive there and do nothing
     else, would give the Settings chooser more than the Armoury Crate button.

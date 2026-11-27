@@ -148,8 +148,9 @@ type Window struct {
 
 	// The opt-in drawer sections (quickbar.go): nil unless the user's layout
 	// includes them.
-	boostSw *gtk.Switch
-	display *displaySection
+	boostSw    *gtk.Switch
+	display    *displaySection
+	chargeOnce *chargeOnceControl
 
 	// device is the capability document, kept for the readers that need more
 	// than the bounds limits.FromDevice narrows it to — the dashboard asks it

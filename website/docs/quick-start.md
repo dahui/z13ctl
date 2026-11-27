@@ -78,6 +78,9 @@ voltaire batterylimit --set 80
 
 # Remove the limit (charge to 100%)
 voltaire batterylimit --set 100
+
+# Charge to 100% this once, then go back to the limit (needs the daemon)
+voltaire batterylimit --full-once
 ```
 
 ## Fan curves

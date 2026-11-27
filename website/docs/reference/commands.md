@@ -296,14 +296,25 @@ voltaire batterylimit [flags]
 |------|-------------|
 | `--get` | Print the current battery charge limit (percentage) |
 | `--set <percent>` | Set the battery charge limit, within the device's range (40–100 on the GZ302EA) |
+| `--full-once` | Charge to full once, then put the limit back; `--full-once=false` cancels |
 
 The range is device data — the kernel publishes none for the threshold — and an
 out-of-range value is refused with the range your machine accepts. Writing the
 top of the range (`100` on the GZ302EA) removes any limit (charges to full).
 
+`--full-once` lifts the limit until the battery is full, and then the daemon
+puts it back: for a day when you need the whole battery, without giving up the
+limit. Unplugging part-way does not end it; the next charge carries on to full.
+`--full-once=false` cancels it and restores the limit at once, and so does
+setting a limit. It needs the daemon (which watches for the battery to fill),
+and is refused when no limit is set, since the battery already charges to full
+then. While it runs, `--get` prints what the hardware holds (the maximum) and
+notes the limit it will return to on stderr.
+
 ```sh
 voltaire batterylimit --get
 voltaire batterylimit --set 80
+voltaire batterylimit --full-once
 ```
 
 ## bootsound

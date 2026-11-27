@@ -26,7 +26,7 @@ func list(ids ...string) *[]string { return &ids }
 func TestEditorRowsDefault(t *testing.T) {
 	rows := controls.EditorRows(nil, withBoost(z13()), controls.CapRefreshRate)
 	all, shown := rowIDs(rows)
-	if want := []string{"profile", "autoswitch", "battery", "cpu-boost", "refresh-rate", "lighting"}; !equal(all, want) {
+	if want := []string{"profile", "autoswitch", "battery", "charge-once", "cpu-boost", "refresh-rate", "lighting"}; !equal(all, want) {
 		t.Errorf("rows = %v, want %v", all, want)
 	}
 	if want := []string{"profile", "autoswitch", "battery", "lighting"}; !equal(shown, want) {
@@ -37,7 +37,7 @@ func TestEditorRowsDefault(t *testing.T) {
 // A control the machine cannot do is not offered at all.
 func TestEditorRowsOfferOnlyWhatIsSupported(t *testing.T) {
 	all, _ := rowIDs(controls.EditorRows(nil, z13())) // no boost, no display backend
-	if want := []string{"profile", "autoswitch", "battery", "lighting"}; !equal(all, want) {
+	if want := []string{"profile", "autoswitch", "battery", "charge-once", "lighting"}; !equal(all, want) {
 		t.Errorf("rows = %v, want %v", all, want)
 	}
 }
@@ -48,7 +48,7 @@ func TestEditorRowsOfferOnlyWhatIsSupported(t *testing.T) {
 func TestEditorRowsPlaceHiddenControlsByTheDefaultOrder(t *testing.T) {
 	saved := list("lighting", "battery", "profile")
 	all, shown := rowIDs(controls.EditorRows(saved, withBoost(z13()), controls.CapRefreshRate))
-	want := []string{"lighting", "battery", "cpu-boost", "refresh-rate", "profile", "autoswitch"}
+	want := []string{"lighting", "battery", "charge-once", "cpu-boost", "refresh-rate", "profile", "autoswitch"}
 	if !equal(all, want) {
 		t.Errorf("rows = %v, want %v", all, want)
 	}
@@ -58,21 +58,21 @@ func TestEditorRowsPlaceHiddenControlsByTheDefaultOrder(t *testing.T) {
 
 	// Nothing before it shown: it goes first.
 	all, _ = rowIDs(controls.EditorRows(list("lighting"), z13()))
-	if want := []string{"profile", "autoswitch", "battery", "lighting"}; !equal(all, want) {
+	if want := []string{"profile", "autoswitch", "battery", "charge-once", "lighting"}; !equal(all, want) {
 		t.Errorf("rows = %v, want %v", all, want)
 	}
 }
 
 func TestMoveRow(t *testing.T) {
 	rows := controls.EditorRows(nil, z13())
-	got, ok := controls.MoveRow(rows, 3, -1)
-	if all, _ := rowIDs(got); !ok || !equal(all, []string{"profile", "autoswitch", "lighting", "battery"}) {
+	got, ok := controls.MoveRow(rows, 4, -1)
+	if all, _ := rowIDs(got); !ok || !equal(all, []string{"profile", "autoswitch", "battery", "lighting", "charge-once"}) {
 		t.Errorf("move lighting up = %v, %v", all, ok)
 	}
-	if all, _ := rowIDs(rows); all[3] != "lighting" {
+	if all, _ := rowIDs(rows); all[4] != "lighting" {
 		t.Error("MoveRow changed its input")
 	}
-	for _, tc := range []struct{ i, d int }{{0, -1}, {3, 1}, {-1, 1}, {4, -1}} {
+	for _, tc := range []struct{ i, d int }{{0, -1}, {4, 1}, {-1, 1}, {5, -1}} {
 		if _, ok := controls.MoveRow(rows, tc.i, tc.d); ok {
 			t.Errorf("MoveRow(%d, %d) = ok, want refused", tc.i, tc.d)
 		}
@@ -97,7 +97,7 @@ func TestSavedList(t *testing.T) {
 	}
 
 	// A change is the shown IDs in order.
-	rows[3].Shown = true // cpu-boost
+	rows[4].Shown = true // cpu-boost
 	if got := controls.SavedList(rows, nil, info); got == nil ||
 		!equal(*got, []string{"profile", "autoswitch", "battery", "cpu-boost", "lighting"}) {
 		t.Errorf("saved = %v", got)

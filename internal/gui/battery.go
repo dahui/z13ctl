@@ -3,7 +3,8 @@
 
 package gui
 
-// battery.go — the charge-limit slider.
+// battery.go — the charge-limit slider (and, in the window, the one-time full
+// charge under it: chargeonce.go).
 //
 // One control, one file, because it is now built twice: the drawer main view's
 // and the dashboard rail's. It was three fragments on Window (a scale field, a
@@ -29,6 +30,11 @@ type batterySection struct {
 	scale *gtk.Scale
 	value *gtk.Label // window only: the inline readout beside the slider
 	send  settleSend
+
+	// once is the one-time full charge, window only: the drawer has it as an
+	// opt-in control of its own (w.chargeOnce), off by default, because it is
+	// not used often enough to earn space there (Jeff, 2026-11-26).
+	once *chargeOnceControl
 }
 
 // buildBatterySection creates the drawer main view's BATTERY LIMIT section and
@@ -69,7 +75,11 @@ func (w *Window) newBatterySection(desktop bool) (*batterySection, *gtk.Box) {
 	if desktop {
 		b.value = formValueLabel("")
 		b.syncValueLabel()
-		return b, formRow("Charge limit", formSlider(sc, b.value))
+		b.once = w.newChargeOnceControl(true)
+		box := gtk.NewBox(gtk.OrientationVertical, 4)
+		box.Append(formRow("Charge limit", formSlider(sc, b.value)))
+		box.Append(subFormRow("Full charge", b.once.row))
+		return b, box
 	}
 
 	box := gtk.NewBox(gtk.OrientationVertical, 4)
@@ -100,17 +110,23 @@ func (b *batterySection) queueSend() {
 	b.send.queue(b.w, func() int { return int(b.scale.Value()) }, api.SendBatteryLimitSet, "Set battery limit", false)
 }
 
-// sync sets the scale from daemon state. Callers must hold w.syncing.
+// sync sets the scale (and the window's one-time charge) from daemon state.
+// Callers must hold w.syncing.
 func (b *batterySection) sync() {
 	st := b.w.state
-	if st == nil || st.Battery == 0 || b.scale == nil {
+	if b.scale == nil {
+		return
+	}
+	b.once.sync(st)
+	if st == nil || st.Battery == 0 {
 		return
 	}
 	b.scale.SetValue(float64(st.Battery))
 	b.syncValueLabel()
 }
 
-// appendFocus appends this instance's focus item: the charge-limit slider.
+// appendFocus appends this instance's focus items: the charge-limit slider,
+// then (in the window) the one-time charge switch below it.
 func (b *batterySection) appendFocus(bd *focusgrid.Builder, items *[]focusItem) {
 	if b.scale == nil {
 		return
@@ -123,6 +139,7 @@ func (b *batterySection) appendFocus(bd *focusgrid.Builder, items *[]focusItem) 
 		onLeft:   left, onRight: right,
 		getValue: get, setValue: set,
 	})
+	b.once.appendFocus(bd, items)
 }
 
 // focusBatterySection appends the drawer main view's charge-limit slider; the
@@ -149,4 +166,5 @@ func (w *Window) syncBattery() {
 	for _, b := range w.batterySections() {
 		b.sync()
 	}
+	w.chargeOnce.sync(w.state) // the drawer's opt-in control, when built
 }

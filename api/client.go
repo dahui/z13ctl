@@ -285,6 +285,20 @@ func SendButtonSet(choice string) (bool, error) {
 	return sendOK(Request{Cmd: CmdButtonSet, Set: choice})
 }
 
+// SendChargeOnce starts (on) or cancels a one-time charge to full: the
+// charge limit is lifted until the battery is full, and then the daemon puts
+// the saved limit back. Setting a limit with SendBatteryLimitSet cancels it
+// too. State.ChargeOnce reports it. Returns (false, nil) if the daemon is not
+// running; it is the daemon that watches for the pack to fill, so there is no
+// direct path.
+func SendChargeOnce(on bool) (bool, error) {
+	v := "off"
+	if on {
+		v = "on"
+	}
+	return sendOK(Request{Cmd: CmdChargeOnce, Set: v})
+}
+
 // SendCPUBoostSet turns the CPU's opportunistic boost clocks on or off.
 // Returns (false, nil) if the daemon is not running.
 //

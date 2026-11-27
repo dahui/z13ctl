@@ -179,7 +179,7 @@ now — as opposed to the Profiles tab, which edits what a saved profile *says*.
 | Setting | What it does |
 |---------|-------------|
 | **Profile** | The three firmware profiles. **Custom…** opens the Profiles tab — the trailing dots mean it goes somewhere rather than selecting a fourth profile; its label is whichever custom profile is running. |
-| **Charge limit** | The charge cap, 40–100%, with the current value beside the slider. |
+| **Charge limit** | The charge cap, 40–100%, with the current value beside the slider. **Full charge** under it charges to 100% once and then goes back to the cap; unplugging part-way does not end it. |
 | **CPU boost** | Turns the CPU's boost clocks on or off. Off caps every core at its base clock — 3.0 GHz instead of 5.19 GHz on the Z13 — for less peak power and heat. The kernel re-enables boost at every boot, so voltaire remembers your choice and restores it. |
 | **Autoswitch** | Turn it on and the two indented rows appear: a profile to apply on AC, and one on battery. |
 

@@ -77,6 +77,7 @@ the other axis. Asking for one logs a warning saying so and uses `right`.
 | `tdp` | The TDP slider (first in the drawer where it exists), on a device whose TDP is one setting rather than part of a profile (the OneXPlayer X2 Mini Pro). It sets the machine's TDP and is remembered across reboots. With a custom profile running, moving it leaves the profile (unchanged) for the TDP setting; change a profile's TDP on the Profiles page |
 | `autoswitch` | The AC/battery autoswitch row and its two targets |
 | `battery` | The charge-limit slider, where the device has a charge limit to set |
+| `charge-once` | The one-time full charge switch: charge to 100% once, then go back to the limit (off by default; always under the charge limit on the Dashboard) |
 | `lighting` | The whole RGB block — zone tabs, effect, colours, speed, brightness |
 | `cpu-boost` | The CPU boost switch (off by default) |
 | `undervolt` | The undervolt setting, on a device whose TDP is one slider (the OneXPlayer X2 Mini Pro): one offset that stays in force when the TDP slider moves; also on the Dashboard. Off by default |

@@ -108,6 +108,10 @@ func (w *Window) controlBuilders() map[string]controlBuilder {
 			build: func(inner *gtk.Box) { inner.Append(w.buildBoostSection()) },
 			focus: w.focusBoostSection,
 		},
+		"charge-once": {
+			build: func(inner *gtk.Box) { inner.Append(w.buildChargeOnceSection()) },
+			focus: w.focusChargeOnceSection,
+		},
 		"refresh-rate": {
 			build: w.buildDisplaySection,
 			focus: w.focusDisplaySection,

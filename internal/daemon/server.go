@@ -123,6 +123,7 @@ var commands = map[string]command{
 	api.CmdAutoswitchGet:     {noReq((*Daemon).handleAutoswitchGet), false},
 	api.CmdBatteryLimit:      {(*Daemon).handleBatteryLimit, true},
 	api.CmdBatteryLimitGet:   {noReq((*Daemon).handleBatteryLimitGet), false},
+	api.CmdChargeOnce:        {(*Daemon).handleChargeOnce, true},
 	api.CmdDeviceGet:         {noReq((*Daemon).handleDeviceGet), false},
 	api.CmdTelemetryHistory:  {(*Daemon).handleTelemetryHistory, false},
 	api.CmdFeature:           {(*Daemon).handleFeature, true},
@@ -533,7 +534,7 @@ func (d *Daemon) restoreStockPPTErr(profile string) error {
 }
 
 func (d *Daemon) handleBatteryLimit(req request) response {
-	if d.hw.Battery == nil || !d.hw.Battery.Caps().ChargeLimit {
+	if d.chargeLimitControl() == nil {
 		return response{OK: false, Error: "batterylimit: " + d.hw.Missing("charge-limit", "no battery charge control on this device")}
 	}
 	caps := d.hw.Battery.Caps()
@@ -549,7 +550,13 @@ func (d *Daemon) handleBatteryLimit(req request) response {
 	}
 	slog.Info("batterylimit", "set", limit)
 	d.mu.Lock()
+	if d.state.ChargeOnce {
+		// A limit set by hand ends a one-time charge, as G-Helper's slider
+		// does: the user has just said what the limit is.
+		slog.Info("charge once: cancelled by a new limit", "limit", limit)
+	}
 	d.state.Battery = limit
+	d.state.ChargeOnce = false
 	s := cloneState(d.state)
 	d.mu.Unlock()
 	d.saveAndNotify(s)

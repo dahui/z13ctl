@@ -187,6 +187,11 @@ var defaultOrder = []Control{
 		Requires: []Capability{CapProfiles, CapBattery}, Default: true},
 	{ID: "battery", Label: "Charge limit", Group: GroupPower,
 		Requires: []Capability{CapChargeLimit}, Default: true},
+	// The one-time full charge, under the charge limit in the window.
+	// Opt-in here: it is not used often enough to earn drawer space by
+	// default (Jeff, 2026-11-26).
+	{ID: "charge-once", Label: "Full charge once", Group: GroupPower,
+		Requires: []Capability{CapChargeLimit}},
 	{ID: "cpu-boost", Label: "CPU boost", Group: GroupPower,
 		Requires: []Capability{CapCPUBoost}},
 	// The undervolt setting of a slider device, beside its TDP slider: a

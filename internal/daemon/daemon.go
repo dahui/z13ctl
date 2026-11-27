@@ -278,6 +278,9 @@ func Run(ctx context.Context, opts Options) error {
 	// Likewise inert until autoswitch is configured.
 	go d.watchPowerSource(ctx)
 
+	// Inert until a one-time charge to full is started.
+	go d.watchChargeOnce(ctx)
+
 	// Inert on a device with no telemetry source or no declared history; the
 	// tick decides, so there is one place to read the rule.
 	go d.watchTelemetry(ctx)
@@ -341,6 +344,27 @@ func Run(ctx context.Context, opts Options) error {
 		return nil
 	}
 	return fmt.Errorf("accept: %w", err)
+}
+
+// restoreChargeLimit puts the saved battery charge limit back at startup: the
+// device's maximum while a one-time charge to full is in progress
+// (chargeonce.go), the user's limit otherwise. Not while the limit is Steam's:
+// Gaming Mode turns the capability off but keeps the driver, which would write
+// regardless. Part of restoreHardwareAtStartup, so it takes no locks either.
+func (d *Daemon) restoreChargeLimit() {
+	bat := d.chargeLimitControl()
+	if bat == nil || d.state.Battery == 0 {
+		return
+	}
+	limit := d.state.Battery
+	if d.state.ChargeOnce {
+		limit = bat.Caps().ChargeLimitMax
+	}
+	if err := bat.SetChargeLimit(limit); err != nil {
+		slog.Warn("failed to restore battery limit", "err", err)
+		return
+	}
+	slog.Info("battery limit restored", "limit", limit, "charge_once", d.state.ChargeOnce)
 }
 
 // restoreHardwareAtStartup puts the saved profile, power limits, battery limit
@@ -443,14 +467,7 @@ func (d *Daemon) restoreHardwareAtStartup() {
 		}
 	}
 
-	// Restore battery charge limit if saved.
-	if d.state.Battery > 0 && d.hw.Battery != nil {
-		if batErr := d.hw.Battery.SetChargeLimit(d.state.Battery); batErr != nil {
-			slog.Warn("failed to restore battery limit", "err", batErr)
-		} else {
-			slog.Info("battery limit restored", "limit", d.state.Battery)
-		}
-	}
+	d.restoreChargeLimit()
 
 	// Restore panel overdrive if enabled (firmware may not persist this across reboot).
 	if d.state.PanelOverdrive != 0 && d.hw.Toggles != nil {
